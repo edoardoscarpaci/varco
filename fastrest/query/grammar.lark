@@ -1,0 +1,26 @@
+?start: expr
+
+?expr: expr "AND" term   -> and_expr
+     | expr "OR" term    -> or_expr
+     | term
+
+?term: "NOT" term        -> not_expr
+     | "(" expr ")"      -> group
+     | factor
+
+?factor: field OP value  -> comparison
+       | field "IS" "NULL" -> is_null
+       | field "IS" "NOT" "NULL" -> is_not_null
+       | field "IN" "(" [value ("," value)*] ")" -> in_list
+
+field: CNAME
+value: ESCAPED_STRING    -> string
+     | SIGNED_NUMBER     -> number
+
+OP: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE"
+
+%import common.CNAME
+%import common.SIGNED_NUMBER
+%import common.ESCAPED_STRING
+%import common.WS
+%ignore WS
