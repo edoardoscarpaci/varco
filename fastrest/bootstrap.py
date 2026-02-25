@@ -3,7 +3,6 @@ import pkgutil
 from fastrest.registry.model_assembler import ModelAssemblerRegistry
 from fastrest.models.entity import Entity
 
-
 def import_submodules(package_name: str):
     package = importlib.import_module(package_name)
     for _, module_name, _ in pkgutil.walk_packages(package.__path__, package.__name__ + "."):

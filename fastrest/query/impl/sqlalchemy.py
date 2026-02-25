@@ -3,7 +3,8 @@ from sqlalchemy.orm import Query,DeclarativeBase,MappedColumn
 from sqlalchemy import and_, or_, not_, asc, desc
 from fastrest.query.applicator import QueryApplicator
 from fastrest.query.type import TransformerNode,SortField,ComparisonNode,AndNode,OrNode,NotNode,Operation
-from fastrest.exception.query import FieldNotFound,OperationNotSupported
+from fastrest.exception.query import OperationNotSupported
+from fastrest.exception.repository import FieldNotFound
 class SQLAlchemyQueryApplicator(QueryApplicator):
     def __init__(self,model_cls : DeclarativeBase,*args,**kwargs):
         self.model_cls = model_cls

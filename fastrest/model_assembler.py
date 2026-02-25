@@ -7,7 +7,7 @@ import inspect
 if TYPE_CHECKING:
     from fastrest.models.database_model import TDatabaseModel
     from fastrest.models.entity import TEntity
-    from fastrest.models.dto import TCreateDTO,TReadDTO
+    from fastrest.models.dto import TCreateDTO,TReadDTO,TUpdateDTO
 
 class AutoRegisterModelAssemblerMeta(ABCMeta):
     def __new__(cls, name, bases, attrs):
@@ -28,8 +28,8 @@ class AutoRegisterModelAssemblerMeta(ABCMeta):
 class ModelAssembler(Generic[TEntity,TDatabaseModel,TCreateDTO,TReadDTO],metaclass=AutoRegisterModelAssemblerMeta):
     entity_class : Type[TEntity]
     database_model_class : Type[TDatabaseModel]
-    createTEntity_class : Type[TCreateDTO]
-    readTEntity_class : Type[TReadDTO]
+    create_entity_class : Type[TCreateDTO]
+    read_entity_class : Type[TReadDTO]
 
     def __init__(self,*args,**kwargs) -> None:
         super().__init__()
@@ -52,20 +52,20 @@ class ModelAssembler(Generic[TEntity,TDatabaseModel,TCreateDTO,TReadDTO],metacla
 
     def to_read_dto_from_entity(self, entity: TEntity) -> TReadDTO:
         data =  {}
-        for field_name,field_info in self.readTEntity_class.model_fields.items():
+        for field_name,field_info in self.read_entity_class.model_fields.items():
             if hasattr(entity, field_name):
                 data[field_name] = getattr(entity, field_name)
             elif field_info.is_required():
                 raise FieldNotFoundInEntity(field_name=field_name,entity_class=type(entity))
 
-        return self.readTEntity_class(**data)
+        return self.read_entity_class(**data)
     
     def to_create_dto_from_entity(self,entity: TEntity) -> TCreateDTO:
         data =  {}
-        for field_name,field_info in self.createTEntity_class.model_fields.items():
+        for field_name,field_info in self.create_entity_class.model_fields.items():
             if hasattr(entity, field_name):
                 data[field_name] = getattr(entity, field_name)
             elif field_info.is_required():
                 raise FieldNotFoundInEntity(field_name=field_name,entity_class=type(entity))
 
-        return self.createTEntity_class(**data)
+        return self.create_entity_class(**data)
