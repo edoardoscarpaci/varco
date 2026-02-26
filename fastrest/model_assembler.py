@@ -4,6 +4,8 @@ import warnings
 from fastrest.exception.model_assembler import FieldNotFoundInEntity
 from fastrest.exception.registry import RegistrationFailedWarning
 import inspect
+
+from fastrest.models.dto import UpdateDTO
 if TYPE_CHECKING:
     from fastrest.models.database_model import TDatabaseModel
     from fastrest.models.entity import TEntity
@@ -49,7 +51,7 @@ class ModelAssembler(Generic[TEntity,TDatabaseModel,TCreateDTO,TReadDTO],metacla
     @abstractmethod
     def to_read_dto(self,model: TDatabaseModel) -> TReadDTO:
         pass
-
+    
     def to_read_dto_from_entity(self, entity: TEntity) -> TReadDTO:
         data =  {}
         for field_name,field_info in self.read_entity_class.model_fields.items():

@@ -1,7 +1,15 @@
 from enum import StrEnum
 from dataclasses import dataclass
 from dataclasses import field as dfield
-from typing import Union,Optional,List,Any
+from typing import Union,Optional,List,Any,Protocol,TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from fastrest.query.visitor.ast_visitor import ASTVisitor 
+
+
+
+Scalar = Union[int, float, str, bool]
+Value = Optional[Union[Scalar, List[Scalar]]]
 
 class SortOrder(StrEnum):
     ASC = "ASC"
@@ -26,7 +34,7 @@ class Operation(StrEnum):
     IS_NOT_NULL = "IS_NOT_NULL"
 
 @dataclass(frozen=True)
-class TransformerNode:
+class TransformerNode(Protocol):
     """Base class for all AST nodes"""
     type: NodeType = dfield(init=False)
 
@@ -34,12 +42,15 @@ class TransformerNode:
 class ComparisonNode(TransformerNode):
     field : str
     op: Operation
-    value: Optional[Union[int, str, float, List[Any]]] = None
+    value: Value = None
     type: NodeType = dfield(init=False, default=NodeType.COMPARISON)
 
     def __post_init__(self):
         if self.op == Operation.IN and not isinstance(self.value, list):
             raise TypeError("IN operation requires a list as value")
+
+        if self.op in (Operation.IS_NULL, Operation.IS_NOT_NULL) and self.value is not None:
+            raise TypeError(f"{self.op} must not have a value")
 
 @dataclass(frozen=True)
 class BinaryNode(TransformerNode):

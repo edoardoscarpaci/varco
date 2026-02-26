@@ -46,15 +46,10 @@ class Repository(Generic[TEntity,TDatabaseModel,TCreateDTO,TReadDTO,TUpdateDTO],
     """
     entity_class : Type[TEntity]
     database_model_class : Type[TDatabaseModel]
-    #To remove maybe
-    create_entity_class : Type[TCreateDTO]
-    read_entity_class : Type[TReadDTO]
-    update_entity_class : Type[TUpdateDTO]
 
     def __init__(self,*args,model_assembler : Optional[ModelAssembler[TEntity,TDatabaseModel,TCreateDTO,TReadDTO]] = None,**kwargs):
         self.model_assembler = model_assembler or ModelAssemblerRegistry.instance().get(key=self.entity_class)
 
-    
     async def initialize(self,*args,**kwargs):
         """
         Optional async initialization hook.
