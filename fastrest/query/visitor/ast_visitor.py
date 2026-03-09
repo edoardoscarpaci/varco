@@ -25,42 +25,44 @@ class ASTVisitor(ABC):
 
     # Abstract visit methods to be implemented by subclasses
     @abstractmethod
-    def _visit_comparison(self, node: ComparisonNode, args, **kwargs) -> Any:
+    def _visit_comparison(
+        self, node: ComparisonNode, args: Any = None, **kwargs
+    ) -> Any:
         """Handle a comparison node. Implement in subclasses."""
         pass
 
     @abstractmethod
-    def _visit_and(self, node: AndNode, args, **kwargs) -> Any:
+    def _visit_and(self, node: AndNode, args: Any = None, **kwargs) -> Any:
         """Handle an AND node. Implement in subclasses."""
         pass
 
     @abstractmethod
-    def _visit_or(self, node: OrNode, args, **kwargs) -> Any:
+    def _visit_or(self, node: OrNode, args: Any = None, **kwargs) -> Any:
         """Handle an OR node. Implement in subclasses."""
         pass
 
     @abstractmethod
-    def _visit_not(self, node: NotNode, args, **kwargs) -> Any:
+    def _visit_not(self, node: NotNode, args: Any = None, **kwargs) -> Any:
         """Handle a NOT node. Implement in subclasses."""
         pass
 
     # Public visit methods with validation
-    def visit_comparison(self, node: ComparisonNode, args, **kwargs) -> Any:
+    def visit_comparison(self, node: ComparisonNode, args: Any = None, **kwargs) -> Any:
         """Public entry to visit a comparison node with validation."""
         self._validate_comparison_node(node)
         return self._visit_comparison(node, args, **kwargs)
 
-    def visit_and(self, node: AndNode, args, **kwargs) -> Any:
+    def visit_and(self, node: AndNode, args: Any = None, **kwargs) -> Any:
         """Public entry to visit an AND node with validation."""
         self._validate_and_node(node)
         return self._visit_and(node, args, **kwargs)
 
-    def visit_or(self, node: OrNode, args, **kwargs) -> Any:
+    def visit_or(self, node: OrNode, args: Any = None, **kwargs) -> Any:
         """Public entry to visit an OR node with validation."""
         self._validate_or_node(node)
         return self._visit_or(node, args, **kwargs)
 
-    def visit_not(self, node: NotNode, args, **kwargs) -> Any:
+    def visit_not(self, node: NotNode, args: Any = None, **kwargs) -> Any:
         """Public entry to visit a NOT node with validation."""
         self._validate_not_node(node)
         return self._visit_not(node, args, **kwargs)

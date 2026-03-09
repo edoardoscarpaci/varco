@@ -28,5 +28,5 @@ class SingletonMeta(type):
         with SingletonMeta._lock:
             if cls not in SingletonMeta._instances:
                 # Use type.__call__ to avoid super() metaclass typing issues
-                SingletonMeta._instances[cls] = type.__call__(*args, **kwargs)
+                SingletonMeta._instances[cls] = type.__call__(cls, *args, **kwargs)
         return SingletonMeta._instances[cls]

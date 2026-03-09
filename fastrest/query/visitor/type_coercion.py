@@ -1,13 +1,3 @@
-from __future__ import annotations
-import json
-from typing import Any, Callable, Optional, Type, Dict, Iterable
-from fastrest.query.type import ComparisonNode, AndNode, OrNode, NotNode, Operation
-from fastrest.query.visitor.ast_visitor import ASTVisitor
-from dataclasses import dataclass, field
-from sqlalchemy.orm import DeclarativeBase
-from fastrest.exception.query import CoercionError
-from datetime import datetime
-
 """Type coercion utilities and registry for AST-based query processing.
 
 This module provides per-field and per-type coercion helpers used to
@@ -16,6 +6,19 @@ types expected by SQLAlchemy models. It also exposes a registry that
 collects coercers for model fields and a visitor that applies coercion
 to AST comparison nodes.
 """
+
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Iterable, Optional, Type
+
+from sqlalchemy.orm import DeclarativeBase
+
+from fastrest.exception.query import CoercionError
+from fastrest.query.type import AndNode, ComparisonNode, NotNode, Operation, OrNode
+from fastrest.query.visitor.ast_visitor import ASTVisitor
 
 
 @dataclass(frozen=True)
@@ -46,7 +49,7 @@ def coerce_boolean(value: Any) -> bool:
         raise CoercionError(f"Failed to coerce value {value} to boolean") from exc
 
 
-def coerce_datetime(value: Any):
+def coerce_datetime(value: Any) -> datetime:
     """Coerce a value to `datetime`.
 
     Accepts ISO-formatted strings or `datetime` objects. Raises
@@ -191,7 +194,7 @@ class TypeCoercionRegistry:
     def get_default_from_sqlalchemy_model(
         cls,
         model: DeclarativeBase,
-        field_coercions: Dict[str, Callable[[Any], Any]] = {},
+        field_coercions: Optional[Dict[str, Callable[[Any], Any]]] = None,
     ) -> TypeCoercionRegistry:
         """Create a registry by inspecting a SQLAlchemy model.
 
@@ -199,6 +202,7 @@ class TypeCoercionRegistry:
         use any `field_coercions` passed explicitly, and finally fall back to
         per-type defaults.
         """
+        field_coercions = field_coercions or {}
         registry = cls()
         for column in model.__table__.columns:
             field_name = column.name
@@ -240,7 +244,9 @@ class ASTTypeCoercion(ASTVisitor):
         """
         self.registry = registry or TypeCoercionRegistry()
 
-    def _visit_comparison(self, node: ComparisonNode, args, **kwargs) -> Any:
+    def _visit_comparison(
+        self, node: ComparisonNode, args: Any = None, **kwargs
+    ) -> Any:
         """Visit a comparison node and coerce its value(s) where applicable.
 
         Returns a new `ComparisonNode` with coerced value(s).
@@ -254,19 +260,19 @@ class ASTTypeCoercion(ASTVisitor):
             coerced = self._coerce_value(field_info, node.value)
         return ComparisonNode(node.field, node.op, coerced)
 
-    def _visit_and(self, node: AndNode, args, **kwargs) -> Any:
+    def _visit_and(self, node: AndNode, args: Any = None, **kwargs) -> Any:
         """Visit an AND node and return a new `AndNode` with coerced children."""
         left = self.visit(node.left)
         right = self.visit(node.right)
         return AndNode(left, right)
 
-    def _visit_or(self, node: OrNode, args, **kwargs) -> Any:
+    def _visit_or(self, node: OrNode, args: Any = None, **kwargs) -> Any:
         """Visit an OR node and return a new `OrNode` with coerced children."""
         left = self.visit(node.left)
         right = self.visit(node.right)
         return OrNode(left, right)
 
-    def _visit_not(self, node: NotNode, args, **kwargs) -> Any:
+    def _visit_not(self, node: NotNode, args: Any = None, **kwargs) -> Any:
         """Visit a NOT node and return a new `NotNode` with the coerced child."""
         child = self.visit(node.child)
         return NotNode(child)

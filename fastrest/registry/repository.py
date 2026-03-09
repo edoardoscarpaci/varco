@@ -7,21 +7,21 @@ if TYPE_CHECKING:
     from fastrest.repository.base_repository import Repository
     from fastrest.models.database_model import TDatabaseModel
     from fastrest.models.entity import TEntity
-    from fastrest.models.dto import TCreateDTO, TReadDTO
+    from fastrest.models.dto import TCreateDTO, TReadDTO, TUpdateDTO
 
 
 class RepositoryRegistry(
-    Registry[Repository[TEntity, TDatabaseModel, TCreateDTO, TReadDTO]]
+    Registry[Repository[TEntity, TDatabaseModel, TCreateDTO, TReadDTO, TUpdateDTO]]
 ):
-    """Registry for ``ModelAssembler`` instances.
+    """Registry for ``Repository`` instances.
 
     This is a typed wrapper around :class:`~fastrest.registry.registry.Registry`
-    specialized for ``ModelAssembler`` objects. The registry is implemented as
-    a singleton (via ``SingletonMeta``) so a single global store of assemblers
+    specialized for ``Repository`` objects. The registry is implemented as
+    a singleton (via ``SingletonMeta``) so a single global store of repositories
     is available to the application.
 
-    Use ``register(key, assembler)`` to add an assembler and ``get(key)`` to
-    retrieve it by the entity type the assembler handles.
+    Use ``register(key, repository)`` to add a repository and ``get(key)`` to
+    retrieve it by the entity type the repository handles.
     """
 
     pass

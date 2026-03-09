@@ -4,7 +4,7 @@ from fastrest.registry.model_assembler import ModelAssemblerRegistry
 from fastrest.models.entity import Entity
 
 
-def import_submodules(package_name: str):
+def import_submodules(package_name: str) -> None:
     package = importlib.import_module(package_name)
     for _, module_name, _ in pkgutil.walk_packages(
         package.__path__, package.__name__ + "."
@@ -12,7 +12,7 @@ def import_submodules(package_name: str):
         importlib.import_module(module_name)
 
 
-def validate_registry():
+def validate_registry() -> None:
     registry = ModelAssemblerRegistry()
     missing = [
         entity.__name__
@@ -23,5 +23,5 @@ def validate_registry():
         raise RuntimeError(f"Missing ModelAssembler for: {', '.join(missing)}")
 
 
-def init_registry():
+def init_registry() -> None:
     pass

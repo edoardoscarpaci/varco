@@ -1,9 +1,10 @@
-from abc import abstractmethod, ABCMeta
-from typing import TYPE_CHECKING, Generic, Type
+import inspect
 import warnings
+from abc import ABCMeta, abstractmethod
+from typing import TYPE_CHECKING, Generic, Type
+
 from fastrest.exception.model_assembler import FieldNotFoundInEntity
 from fastrest.exception.registry import RegistrationFailedWarning
-import inspect
 
 if TYPE_CHECKING:
     from fastrest.models.database_model import TDatabaseModel
@@ -12,7 +13,7 @@ if TYPE_CHECKING:
 
 
 class AutoRegisterModelAssemblerMeta(ABCMeta):
-    def __new__(cls, name, bases, attrs):
+    def __new__(cls, name: str, bases: tuple, attrs: dict) -> type:
         from fastrest.registry.model_assembler import ModelAssemblerRegistry
 
         new_cls = super().__new__(cls, name, bases, attrs)

@@ -25,7 +25,7 @@ class AutoRegisterRepositoryMeta(ABCMeta):
     Metaclass to automatically register repository instances for their entity classes.
     """
 
-    def __new__(cls, name, bases, attrs):
+    def __new__(cls, name: str, bases: tuple, attrs: dict) -> type:
         from fastrest.registry.repository import RepositoryRegistry
 
         new_cls = super().__new__(cls, name, bases, attrs)

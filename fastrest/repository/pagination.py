@@ -1,6 +1,6 @@
 from typing import List, Optional
 from dataclasses import dataclass, field
-from query.type import SortField
+from fastrest.query.type import SortField
 
 
 @dataclass(frozen=True)

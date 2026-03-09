@@ -37,7 +37,7 @@ class SQLAlchemyQueryApplicator(QueryApplicator):
 
     def apply_pagination(
         self, query: Query, limit: Optional[int], offset: Optional[int], *args, **kwargs
-    ):
+    ) -> Query:
         """Apply limit and offset to the query object"""
         if limit is not None:
             query = query.limit(limit)
@@ -47,7 +47,7 @@ class SQLAlchemyQueryApplicator(QueryApplicator):
 
     def apply_sort(
         self, query: Query, sort_fields: List[SortField] = list(), *args, **kwargs
-    ):
+    ) -> Query:
         for sort in sort_fields:
             field_name = sort.field
             order = sort.order.value.lower()
@@ -56,6 +56,7 @@ class SQLAlchemyQueryApplicator(QueryApplicator):
 
             col = self._resolve_column(field_name)
             query = query.order_by(desc(col) if order == "desc" else asc(col))
+        return query
 
     # Helper function
     def _resolve_column(self, field_path: str) -> MappedColumn:

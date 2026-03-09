@@ -4,10 +4,12 @@ from fastrest.query.visitor.ast_visitor import ASTVisitor
 
 
 class ASTQueryOptimizer(ASTVisitor):
-    def _visit_comparison(self, node: ComparisonNode, args, **kwargs) -> Any:
+    def _visit_comparison(
+        self, node: ComparisonNode, args: Any = None, **kwargs
+    ) -> Any:
         return node
 
-    def _visit_and(self, node: AndNode, args, **kwargs) -> Any:
+    def _visit_and(self, node: AndNode, args: Any = None, **kwargs) -> Any:
         left = self.visit(node.left)
         right = self.visit(node.right)
 
@@ -15,10 +17,10 @@ class ASTQueryOptimizer(ASTVisitor):
             return AndNode(left.left, AndNode(left.right, right))
         return node
 
-    def _visit_or(self, node: OrNode, args, **kwargs) -> Any:
+    def _visit_or(self, node: OrNode, args: Any = None, **kwargs) -> Any:
         return OrNode(self.visit(node.left), self.visit(node.right))
 
-    def _visit_not(self, node: NotNode, args, **kwargs) -> Any:
+    def _visit_not(self, node: NotNode, args: Any = None, **kwargs) -> Any:
         child = self.visit(node.child)
         if isinstance(child, NotNode):
             return child.child
