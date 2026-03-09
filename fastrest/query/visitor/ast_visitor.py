@@ -6,8 +6,15 @@ base class provides validation wrappers and a `visit` dispatcher.
 
 from abc import ABC, abstractmethod
 from typing import Any
-from fastrest.query.type import ComparisonNode,AndNode,OrNode,NotNode,TransformerNode
+from fastrest.query.type import (
+    ComparisonNode,
+    AndNode,
+    OrNode,
+    NotNode,
+    TransformerNode,
+)
 from fastrest.exception.query import WrongNodeVisited
+
 
 class ASTVisitor(ABC):
     """Base class for AST visitors.
@@ -17,46 +24,46 @@ class ASTVisitor(ABC):
     """
 
     # Abstract visit methods to be implemented by subclasses
-    @abstractmethod 
-    def _visit_comparison(self,node: ComparisonNode,args,**kwargs) -> Any:
+    @abstractmethod
+    def _visit_comparison(self, node: ComparisonNode, args, **kwargs) -> Any:
         """Handle a comparison node. Implement in subclasses."""
         pass
-    
+
     @abstractmethod
-    def _visit_and(self, node :AndNode,args,**kwargs)-> Any:
+    def _visit_and(self, node: AndNode, args, **kwargs) -> Any:
         """Handle an AND node. Implement in subclasses."""
         pass
-    
+
     @abstractmethod
-    def _visit_or(self,node : OrNode,args,**kwargs)-> Any:
+    def _visit_or(self, node: OrNode, args, **kwargs) -> Any:
         """Handle an OR node. Implement in subclasses."""
         pass
 
-    @abstractmethod 
-    def _visit_not(self,node : NotNode,args,**kwargs)-> Any:
+    @abstractmethod
+    def _visit_not(self, node: NotNode, args, **kwargs) -> Any:
         """Handle a NOT node. Implement in subclasses."""
         pass
-    
+
     # Public visit methods with validation
-    def visit_comparison(self,node: ComparisonNode,args,**kwargs) -> Any:
+    def visit_comparison(self, node: ComparisonNode, args, **kwargs) -> Any:
         """Public entry to visit a comparison node with validation."""
         self._validate_comparison_node(node)
-        return self._visit_comparison(node,args,**kwargs)
-    
-    def visit_and(self, node :AndNode,args,**kwargs)-> Any:
+        return self._visit_comparison(node, args, **kwargs)
+
+    def visit_and(self, node: AndNode, args, **kwargs) -> Any:
         """Public entry to visit an AND node with validation."""
         self._validate_and_node(node)
-        return self._visit_and(node,args,**kwargs)
-    
-    def visit_or(self,node : OrNode,args,**kwargs)-> Any:
+        return self._visit_and(node, args, **kwargs)
+
+    def visit_or(self, node: OrNode, args, **kwargs) -> Any:
         """Public entry to visit an OR node with validation."""
         self._validate_or_node(node)
-        return self._visit_or(node,args,**kwargs)
-        
-    def visit_not(self,node : NotNode,args,**kwargs)-> Any:
+        return self._visit_or(node, args, **kwargs)
+
+    def visit_not(self, node: NotNode, args, **kwargs) -> Any:
         """Public entry to visit a NOT node with validation."""
         self._validate_not_node(node)
-        return self._visit_not(node,args,**kwargs)
+        return self._visit_not(node, args, **kwargs)
 
     def visit(self, node: TransformerNode):
         """Generic dispatch: call `visit_<node_type>` if available or fallback."""
@@ -64,24 +71,27 @@ class ASTVisitor(ABC):
         visitor = getattr(self, method_name, self.generic_visit)
         return visitor(node)
 
-    def generic_visit(self, node : TransformerNode):
+    def generic_visit(self, node: TransformerNode):
         """Default visitor when no specific handler exists; raises by default."""
         raise NotImplementedError(f"No visitor for {node.type}")
 
-    # Helper validation functions    
-    def _validate_comparison_node(self,node: ComparisonNode):
+    # Helper validation functions
+    def _validate_comparison_node(self, node: ComparisonNode):
         self.__validate_node_type(node, ComparisonNode)
-    
-    def _validate_and_node(self,node: AndNode):
+
+    def _validate_and_node(self, node: AndNode):
         self.__validate_node_type(node, AndNode)
-    
-    def _validate_or_node(self,node: OrNode):
+
+    def _validate_or_node(self, node: OrNode):
         self.__validate_node_type(node, OrNode)
-    
-    def _validate_not_node(self,node: NotNode):
+
+    def _validate_not_node(self, node: NotNode):
         self.__validate_node_type(node, NotNode)
 
-    def __validate_node_type(self, node: TransformerNode, expected_cls: type[TransformerNode]):
+    def __validate_node_type(
+        self, node: TransformerNode, expected_cls: type[TransformerNode]
+    ):
         if not isinstance(node, expected_cls):
-            raise WrongNodeVisited(received_node_cls=type(node), expected_node_cls=expected_cls)
-
+            raise WrongNodeVisited(
+                received_node_cls=type(node), expected_node_cls=expected_cls
+            )

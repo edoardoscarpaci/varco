@@ -4,6 +4,7 @@ from threading import RLock
 
 T = TypeVar("T")  # instance type
 
+
 class SingletonMeta(type):
     _instances: Dict[Type[Any], Any] = {}
     _lock = RLock()
@@ -12,14 +13,14 @@ class SingletonMeta(type):
         raise TypeError(
             f"{cls.__name__} is a singleton. Use `{cls.__name__}.instance()`"
         )
-    
+
     # Only enable if the normal construcotr is needed
-    #def __call__(cls: Type[_T], *args, **kwargs) -> _T:
+    # def __call__(cls: Type[_T], *args, **kwargs) -> _T:
     #    with SingletonMeta._lock:
     #        if cls not in SingletonMeta._instances:
     #            SingletonMeta._instances[cls] = super().__call__(*args, **kwargs)
     #    return SingletonMeta._instances[cls]
-    
+
     def _clear_instance(cls, target_cls: type) -> None:
         cls._instances.pop(target_cls, None)
 

@@ -1,4 +1,13 @@
 from __future__ import annotations
+import json
+from typing import Any, Callable, Optional, Type, Dict, Iterable
+from fastrest.query.type import ComparisonNode, AndNode, OrNode, NotNode, Operation
+from fastrest.query.visitor.ast_visitor import ASTVisitor
+from dataclasses import dataclass, field
+from sqlalchemy.orm import DeclarativeBase
+from fastrest.exception.query import CoercionError
+from datetime import datetime
+
 """Type coercion utilities and registry for AST-based query processing.
 
 This module provides per-field and per-type coercion helpers used to
@@ -8,20 +17,11 @@ collects coercers for model fields and a visitor that applies coercion
 to AST comparison nodes.
 """
 
-from typing import Any,Callable, Optional,Type,Dict,Iterable
-import json
-from fastrest.query.type import ComparisonNode,AndNode,OrNode,NotNode,TransformerNode,Operation
-from fastrest.query.visitor.ast_visitor import ASTVisitor
-from copy import copy
-from dataclasses import dataclass,field
-from sqlalchemy.orm import DeclarativeBase
-from fastrest.exception.query import CoercionError
-from datetime import datetime
 
 @dataclass(frozen=True)
 class TypeCoercionFieldInfo:
     python_type: Type
-    coercer : Callable[[Any],Any]
+    coercer: Callable[[Any], Any]
     """Holds the python type and coercer callable for a model field.
 
     Attributes:
@@ -45,6 +45,7 @@ def coerce_boolean(value: Any) -> bool:
     except Exception as exc:
         raise CoercionError(f"Failed to coerce value {value} to boolean") from exc
 
+
 def coerce_datetime(value: Any):
     """Coerce a value to `datetime`.
 
@@ -60,19 +61,22 @@ def coerce_datetime(value: Any):
             raise CoercionError(f"Failed to coerce value {value} to datetime") from exc
     raise CoercionError(f"Cannot coerce value {value} to datetime")
 
+
 def coerce_float(value: Any) -> float:
     """Coerce a value to `float`. Raises `CoercionError` on failure."""
     try:
         return float(value)
     except Exception as exc:
         raise CoercionError(f"Failed to coerce value {value} to float") from exc
-    
+
+
 def coerce_int(value: Any) -> int:
     """Coerce a value to `int`. Raises `CoercionError` on failure."""
     try:
         return int(value)
     except Exception as exc:
         raise CoercionError(f"Failed to coerce value {value} to int") from exc
+
 
 def coerce_list(value: Any) -> list:
     """Coerce various inputs into a Python list.
@@ -112,9 +116,12 @@ def coerce_list(value: Any) -> list:
         # Split on commas but be tolerant to single values
         if "," in inner:
             parts = [p.strip() for p in inner.split(",")]
+
             # strip surrounding quotes from each part
             def strip_quotes(x: str) -> str:
-                if (x.startswith('\"') and x.endswith('\"')) or (x.startswith("'") and x.endswith("'")):
+                if (x.startswith('"') and x.endswith('"')) or (
+                    x.startswith("'") and x.endswith("'")
+                ):
                     return x[1:-1]
                 return x
 
@@ -132,21 +139,24 @@ def coerce_list(value: Any) -> list:
 
     raise CoercionError(f"Cannot coerce value {value} to list")
 
+
 def boolean_field_info():
     """Convenience helper returning a `TypeCoercionFieldInfo` for booleans."""
     return TypeCoercionFieldInfo(bool, coerce_boolean)
 
 
-default_field_coercions : Dict[Type,Callable] = {
-    bool : coerce_boolean,
-    datetime : coerce_datetime,
-    int : coerce_int,
-    float : coerce_float,
+default_field_coercions: Dict[Type, Callable] = {
+    bool: coerce_boolean,
+    datetime: coerce_datetime,
+    int: coerce_int,
+    float: coerce_float,
 }
+
 
 def register_default_coercer(python_type: Type, coercer: Callable[[Any], Any]) -> None:
     """Register or override a default coercer for a given Python type."""
     default_field_coercions[python_type] = coercer
+
 
 @dataclass
 class TypeCoercionRegistry:
@@ -159,7 +169,9 @@ class TypeCoercionRegistry:
     field-specific coercers.
     """
 
-    def register_field(self, field_name: str, python_type: Type, coercer: Callable[[Any], Any]):
+    def register_field(
+        self, field_name: str, python_type: Type, coercer: Callable[[Any], Any]
+    ):
         """Register a coercer for `field_name`.
 
         Args:
@@ -167,14 +179,20 @@ class TypeCoercionRegistry:
             python_type: the target Python type for the field.
             coercer: callable that coerces raw input to `python_type`.
         """
-        self.fields_info[field_name] = TypeCoercionFieldInfo(python_type=python_type, coercer=coercer)
+        self.fields_info[field_name] = TypeCoercionFieldInfo(
+            python_type=python_type, coercer=coercer
+        )
 
     def get(self, field_name: str) -> TypeCoercionFieldInfo | None:
         """Return the `TypeCoercionFieldInfo` for `field_name`, or `None`."""
         return self.fields_info.get(field_name)
-    
+
     @classmethod
-    def get_default_from_sqlalchemy_model(cls, model: DeclarativeBase, field_coercions: Dict[str, Callable[[Any], Any]] = {}) -> TypeCoercionRegistry:
+    def get_default_from_sqlalchemy_model(
+        cls,
+        model: DeclarativeBase,
+        field_coercions: Dict[str, Callable[[Any], Any]] = {},
+    ) -> TypeCoercionRegistry:
         """Create a registry by inspecting a SQLAlchemy model.
 
         It will prefer a coercer defined in `Column.info['coercer']`, then
@@ -184,15 +202,21 @@ class TypeCoercionRegistry:
         registry = cls()
         for column in model.__table__.columns:
             field_name = column.name
-            python_type = column.type.python_type            
+            python_type = column.type.python_type
             # Prefer a coercer set on the Column.info when present
             coercer = None
             try:
-                coercer = column.info.get("coercer") if hasattr(column, "info") else None
+                coercer = (
+                    column.info.get("coercer") if hasattr(column, "info") else None
+                )
             except Exception:
                 coercer = None
 
-            coercer = coercer or field_coercions.get(field_name) or default_field_coercions.get(python_type)
+            coercer = (
+                coercer
+                or field_coercions.get(field_name)
+                or default_field_coercions.get(python_type)
+            )
             if coercer is not None:
                 registry.register_field(field_name, python_type, coercer)
 
@@ -206,14 +230,17 @@ class ASTTypeCoercion(ASTVisitor):
     `TypeCoercionRegistry` to coerce values (including element-wise coercion
     for `IN` operations).
     """
-    def __init__(self, registry: Optional[TypeCoercionRegistry] = None,*args,**kwargs):
+
+    def __init__(
+        self, registry: Optional[TypeCoercionRegistry] = None, *args, **kwargs
+    ):
         """Initialize with an optional `TypeCoercionRegistry`.
 
         If no registry is provided a new, empty registry is created.
         """
         self.registry = registry or TypeCoercionRegistry()
 
-    def _visit_comparison(self,node: ComparisonNode,args,**kwargs) -> Any:
+    def _visit_comparison(self, node: ComparisonNode, args, **kwargs) -> Any:
         """Visit a comparison node and coerce its value(s) where applicable.
 
         Returns a new `ComparisonNode` with coerced value(s).
@@ -222,31 +249,33 @@ class ASTTypeCoercion(ASTVisitor):
         if not field_info or node.value is None:
             return node
         if node.op == Operation.IN or isinstance(node.value, list):
-            coerced = [self._coerce_value(field_info,v) for v in node.value]
+            coerced = [self._coerce_value(field_info, v) for v in node.value]
         else:
             coerced = self._coerce_value(field_info, node.value)
         return ComparisonNode(node.field, node.op, coerced)
 
-    def _visit_and(self, node :AndNode, args,**kwargs)-> Any:
+    def _visit_and(self, node: AndNode, args, **kwargs) -> Any:
         """Visit an AND node and return a new `AndNode` with coerced children."""
         left = self.visit(node.left)
         right = self.visit(node.right)
         return AndNode(left, right)
-    
-    def _visit_or(self,node : OrNode,args,**kwargs)-> Any:
+
+    def _visit_or(self, node: OrNode, args, **kwargs) -> Any:
         """Visit an OR node and return a new `OrNode` with coerced children."""
         left = self.visit(node.left)
         right = self.visit(node.right)
         return OrNode(left, right)
-        
-    def _visit_not(self,node : NotNode,args,**kwargs)-> Any:
+
+    def _visit_not(self, node: NotNode, args, **kwargs) -> Any:
         """Visit a NOT node and return a new `NotNode` with the coerced child."""
         child = self.visit(node.child)
         return NotNode(child)
-    
-    def _coerce_value(self,field_info: TypeCoercionFieldInfo, value: Any) -> Any:
+
+    def _coerce_value(self, field_info: TypeCoercionFieldInfo, value: Any) -> Any:
         """Apply the field's coercer to `value` and wrap errors in `CoercionError`."""
         try:
             return field_info.coercer(value)
         except Exception as exc:
-            raise CoercionError(f"Failed to coerce value {value} for type {field_info.python_type}") from exc
+            raise CoercionError(
+                f"Failed to coerce value {value} for type {field_info.python_type}"
+            ) from exc

@@ -1,6 +1,15 @@
 from dataclasses import dataclass
 from typing import Optional, Any
-from fastrest.query.type import ComparisonNode,AndNode,OrNode,Operation,TransformerNode,NodeType,NotNode
+from fastrest.query.type import (
+    ComparisonNode,
+    AndNode,
+    OrNode,
+    Operation,
+    TransformerNode,
+    NodeType,
+    NotNode,
+)
+
 
 @dataclass(frozen=True)
 class QueryBuilder:
@@ -73,7 +82,7 @@ class QueryBuilder:
     # ---------- BUILD ----------
     def build(self) -> Optional[TransformerNode]:
         return self.node
-    
+
     @staticmethod
     def field(field: str, op: Operation, value=None):
         return QueryBuilder(ComparisonNode(field, op, value))

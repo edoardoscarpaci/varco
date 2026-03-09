@@ -7,10 +7,10 @@ expressions, plus enums for operations and sort order.
 from enum import StrEnum
 from dataclasses import dataclass
 from dataclasses import field as dfield
-from typing import Union,Optional,List,Any,Protocol,TYPE_CHECKING
+from typing import Union, Optional, List, Protocol, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from fastrest.query.visitor.ast_visitor import ASTVisitor 
+    pass
 
 
 Scalar = Union[int, float, str, bool]
@@ -19,12 +19,14 @@ Value = Optional[Union[Scalar, List[Scalar]]]
 
 class SortOrder(StrEnum):
     """Sort order enum used for sorting directives."""
+
     ASC = "ASC"
     DESC = "DESC"
 
 
 class NodeType(StrEnum):
     """Type of AST node."""
+
     COMPARISON = "COMPARISON"
     AND = "AND"
     OR = "OR"
@@ -33,6 +35,7 @@ class NodeType(StrEnum):
 
 class Operation(StrEnum):
     """Comparison operations supported by the query AST."""
+
     EQUAL = "="
     NOT_EQUAL = "!="
     GREATER_THAN = ">"
@@ -48,6 +51,7 @@ class Operation(StrEnum):
 @dataclass(frozen=True)
 class TransformerNode(Protocol):
     """Protocol base for AST nodes; all nodes expose a `type` attribute."""
+
     type: NodeType = dfield(init=False)
 
 
@@ -60,7 +64,8 @@ class ComparisonNode(TransformerNode):
         op: The comparison `Operation`.
         value: The comparison value (or list for `IN`).
     """
-    field : str
+
+    field: str
     op: Operation
     value: Value = None
     type: NodeType = dfield(init=False, default=NodeType.COMPARISON)
@@ -69,14 +74,18 @@ class ComparisonNode(TransformerNode):
         if self.op == Operation.IN and not isinstance(self.value, list):
             raise TypeError("IN operation requires a list as value")
 
-        if self.op in (Operation.IS_NULL, Operation.IS_NOT_NULL) and self.value is not None:
+        if (
+            self.op in (Operation.IS_NULL, Operation.IS_NOT_NULL)
+            and self.value is not None
+        ):
             raise TypeError(f"{self.op} must not have a value")
 
 
 @dataclass(frozen=True)
 class BinaryNode(TransformerNode):
     """Base for binary boolean nodes (AND/OR)."""
-    left : TransformerNode
+
+    left: TransformerNode
     right: TransformerNode
 
 
@@ -97,7 +106,8 @@ class NotNode(TransformerNode):
 
 
 @dataclass(frozen=True)
-class SortField():
+class SortField:
     """Describes a single field sort directive."""
-    field : str
-    order : SortOrder
+
+    field: str
+    order: SortOrder

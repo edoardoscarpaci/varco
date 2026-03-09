@@ -10,7 +10,9 @@ if TYPE_CHECKING:
     from fastrest.models.dto import TCreateDTO, TReadDTO
 
 
-class ModelAssemblerRegistry(Registry[ModelAssembler[TEntity, TDatabaseModel, TCreateDTO, TReadDTO]]):
+class ModelAssemblerRegistry(
+    Registry[ModelAssembler[TEntity, TDatabaseModel, TCreateDTO, TReadDTO]]
+):
     """Registry for ``ModelAssembler`` instances.
 
     This is a typed wrapper around :class:`~fastrest.registry.registry.Registry`
@@ -21,4 +23,5 @@ class ModelAssemblerRegistry(Registry[ModelAssembler[TEntity, TDatabaseModel, TC
     Use ``register(key, assembler)`` to add an assembler and ``get(key)`` to
     retrieve it by the entity type the assembler handles.
     """
+
     pass
