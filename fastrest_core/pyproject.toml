@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "fastrest_core"
+version = "0.1.0"
+description = ""
+authors = [
+    "edoardo.scarpaci <edoardo.scarpaci@gmail.com>"
+]
+readme = "README.md"
+packages = [{include = "fastrest_core"}]
+
+[tool.poetry.dependencies]
+python = ">=3.12"
+pydantic = ">=2.12.5,<3.0.0"
+providify = ">=0.0.1"
+
+[tool.poetry.group.dev.dependencies]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

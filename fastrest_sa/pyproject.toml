@@ -1,0 +1,22 @@
+[build-system]
+requires      = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name        = "fastrest-sa"
+version     = "0.1.0"
+description = "SQLAlchemy async backend for fastrest"
+readme      = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastrest-core>=0.1.0",
+    "sqlalchemy[asyncio]>=2.0",
+]
+
+[project.optional-dependencies]
+postgresql = ["asyncpg"]
+sqlite     = ["aiosqlite"]
+dev        = ["pytest", "pytest-asyncio", "aiosqlite"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["fastrest_sa"]
