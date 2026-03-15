@@ -22,17 +22,40 @@ Quick start::
                 limit=10,
             )
         )
+
+providify DI integration::
+
+    from fastrest_beanie import BeanieModule, BeanieSettings, bind_repositories
+    from providify import DIContainer, Provider
+
+    container = DIContainer()
+
+    @Provider(singleton=True)
+    def settings() -> BeanieSettings:
+        return BeanieSettings(motor_client=client, db_name="mydb", entity_classes=(User,))
+
+    container.provide(settings)
+    container.install(BeanieModule)
+    bind_repositories(container, User)
+
+    repo = await container.aget(AsyncRepository[User])
 """
 
+from fastrest_beanie.di import BeanieModule, BeanieSettings, bind_repositories
 from fastrest_beanie.factory import BeanieDocRegistry, BeanieModelFactory
 from fastrest_beanie.provider import BeanieRepositoryProvider
 from fastrest_beanie.repository import AsyncBeanieRepository
 from fastrest_beanie.uow import BeanieUnitOfWork
 
 __all__ = [
+    # Core backend classes
     "BeanieModelFactory",
     "BeanieDocRegistry",
     "AsyncBeanieRepository",
     "BeanieUnitOfWork",
     "BeanieRepositoryProvider",
+    # DI integration
+    "BeanieSettings",
+    "BeanieModule",
+    "bind_repositories",
 ]

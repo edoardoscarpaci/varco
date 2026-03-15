@@ -15,7 +15,7 @@ repos:
     hooks:
       - id: pytest-core
         name: pytest (fastrest_core)
-        entry: bash -c 'cd fastrest_core && poetry lock && poetry sync && poetry run pytest tests --tb=short -q'
+        entry: bash -c 'cd fastrest_core && poetry lock && poetry sync && poetry run python -m pytest tests --tb=short -q'
         language: system
         pass_filenames: false
         always_run: true
@@ -24,7 +24,7 @@ repos:
     hooks:
       - id: pytest-beanie
         name: pytest (fastrest_beanie)
-        entry: bash -c 'cd fastrest_beanie && poetry lock && poetry sync && poetry run pytest tests --tb=short -q'
+        entry: bash -c 'cd fastrest_beanie && poetry lock && poetry sync && poetry run python -m pytest tests --tb=short -q'
         language: system
         pass_filenames: false
         always_run: true
@@ -33,7 +33,7 @@ repos:
     hooks:
       - id: pytest-sa
         name: pytest (fastrest_sa)
-        entry: bash -c 'cd fastrest_sa && poetry lock && poetry sync && poetry run pytest tests --tb=short -q'
+        entry: bash -c 'cd fastrest_sa && poetry lock && poetry sync && poetry run python -m pytest tests --tb=short -q'
         language: system
         pass_filenames: false
         always_run: true

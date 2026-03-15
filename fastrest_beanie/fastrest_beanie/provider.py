@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any, TypeVar
 
+from fastrest_beanie.factory import BeanieDocRegistry, BeanieModelFactory
 from fastrest_core.model import DomainModel
 from fastrest_core.providers import RepositoryProvider
 from fastrest_core.repository import AsyncRepository
@@ -52,8 +53,6 @@ class BeanieRepositoryProvider(RepositoryProvider):
         *,
         transactional: bool = False,
     ) -> None:
-        from fastrest_beanie.factory import BeanieModelFactory
-
         self._client = motor_client
         self._db_name = db_name
         self._transactional = transactional
@@ -73,7 +72,6 @@ class BeanieRepositoryProvider(RepositoryProvider):
         ``autodiscover()`` calls.  Idempotent — safe to call multiple times.
         """
         from beanie import init_beanie
-        from fastrest_beanie.factory import BeanieDocRegistry
 
         db = self._client[self._db_name]
         await init_beanie(
@@ -117,4 +115,4 @@ class BeanieRepositoryProvider(RepositoryProvider):
 
 def _repo_attr(cls: type) -> str:
     """``User`` → ``'users'``, ``UserRole`` → ``'userroles'``."""
-    return cls.__name__.lower() + "s"
+    return cls.__name__.lstrip("_").lower() + "s"

@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, TypeVar
 
+from fastrest_sa.factory import SAModelFactory
 from fastrest_core.model import DomainModel
 from fastrest_core.providers import RepositoryProvider
 from fastrest_core.repository import AsyncRepository
@@ -60,8 +61,6 @@ class SQLAlchemyRepositoryProvider(RepositoryProvider):
         base: Any,
         session_factory: Callable,
     ) -> None:
-        from fastrest_sa.factory import SAModelFactory
-
         self._base = base
         self._session_factory = session_factory
         self._factory = SAModelFactory(base=base)
@@ -113,4 +112,4 @@ class SQLAlchemyRepositoryProvider(RepositoryProvider):
 
 def _repo_attr(cls: type) -> str:
     """``User`` → ``'users'``, ``UserRole`` → ``'userroles'``."""
-    return cls.__name__.lower() + "s"
+    return cls.__name__.lstrip("_").lower() + "s"

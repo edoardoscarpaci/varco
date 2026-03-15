@@ -14,7 +14,7 @@ Async safety:   ✅ All methods are ``async def``.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from fastrest_core.model import DomainModel
 
@@ -53,6 +53,11 @@ class AsyncRepository(ABC, Generic[D, PK]):
         - ``find_by_query(QueryParams())`` is equivalent to ``find_all()``.
         - ``count(QueryParams())`` returns the total row count.
     """
+
+    def __class_getitem__(cls, params: Any) -> Any:
+        if not isinstance(params, tuple):
+            params = (params, Any)
+        return super().__class_getitem__(params)
 
     # ── Basic CRUD ─────────────────────────────────────────────────────────────
 
