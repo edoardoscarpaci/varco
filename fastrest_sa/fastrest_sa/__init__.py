@@ -32,19 +32,21 @@ Sub-package layout
     ├── provider.py   — SQLAlchemyRepositoryProvider
     ├── repository.py — AsyncSQLAlchemyRepository (CRUD + find_by_query + count)
     ├── uow.py        — SQLAlchemyUnitOfWork
-    └── models.py     — BaseDatabaseModel, IndexedDatabaseModel, AuthorizedModel
+    └── models.py     — BaseDatabaseModel
 """
 
 from __future__ import annotations
 
 from fastrest_sa.factory import SAModelFactory, SAModelRegistry
-from fastrest_sa.models import AuthorizedModel, BaseDatabaseModel, IndexedDatabaseModel
+from fastrest_sa.models import BaseDatabaseModel
 from fastrest_sa.provider import SQLAlchemyRepositoryProvider
 from fastrest_sa.repository import AsyncSQLAlchemyRepository
+from fastrest_sa.schema_guard import SchemaGuard, SchemaDrift, SchemaDriftReport
 from fastrest_sa.uow import SQLAlchemyUnitOfWork
 
 # SA-specific applicator is in fastrest_core (no session; pure SA expressions)
 from fastrest_core.query.applicator.sqlalchemy import SQLAlchemyQueryApplicator
+from fastrest_sa.type_coercion import registry_from_sa_model
 
 __all__ = [
     # ── Factory + registry ─────────────────────────────────────────────────────
@@ -57,8 +59,12 @@ __all__ = [
     "SQLAlchemyRepositoryProvider",
     # ── Base models ───────────────────────────────────────────────────────────
     "BaseDatabaseModel",
-    "IndexedDatabaseModel",
-    "AuthorizedModel",
     # ── Query applicator ──────────────────────────────────────────────────────
     "SQLAlchemyQueryApplicator",
+    # ── Schema guard ──────────────────────────────────────────────────────────
+    "SchemaGuard",
+    "SchemaDrift",
+    "SchemaDriftReport",
+    # ── Type coercion ─────────────────────────────────────────────────────────
+    "registry_from_sa_model",
 ]

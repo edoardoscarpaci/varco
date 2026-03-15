@@ -31,7 +31,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TypeVar
-from uuid import uuid4
 
 from sqlalchemy import DateTime, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -74,57 +73,6 @@ class BaseDatabaseModel(DeclarativeBase):
     # Integer version counter — starts at 1, caller increments on save
     model_version: Mapped[int] = mapped_column(default=1)
 
-
-class IndexedDatabaseModel(BaseDatabaseModel):
-    """
-    Abstract SA model that adds a UUID-string ``id`` primary key column.
-
-    Attributes:
-        id: String-encoded UUID4 generated Python-side before INSERT.
-
-    Thread safety:  ✅ Mapped class is immutable after definition.
-    Async safety:   ✅ No I/O.
-
-    Edge cases:
-        - ``id`` is generated in Python (``default_factory=lambda: str(uuid4())``),
-          not in the database, so it is available before the flush.
-    """
-
-    __abstract__ = True
-
-    id: Mapped[str] = mapped_column(
-        # Python-side UUID4 generation — available before flush
-        primary_key=True,
-        default_factory=lambda: str(uuid4()),
-    )
-
-
-class AuthorizedModel(IndexedDatabaseModel):
-    """
-    Abstract SA model for resources that carry an authorisation context.
-
-    Useful for multi-tenant tables where every row is scoped to a tenant,
-    user, or organisation identifier.
-
-    Attributes:
-        auth_context: Opaque string identifying the authorisation scope
-                      (e.g. tenant ID, user ID, JWT subject).
-
-    Thread safety:  ✅ Mapped class is immutable after definition.
-    Async safety:   ✅ No I/O.
-
-    Edge cases:
-        - ``auth_context`` is a plain non-nullable string — validation and
-          enforcement are left to the application layer.
-    """
-
-    __abstract__ = True
-
-    # Non-nullable: every authorized resource must have an auth context
-    auth_context: Mapped[str] = mapped_column(nullable=False)
-
-
-# ── TypeVar ────────────────────────────────────────────────────────────────────
 
 # Bound TypeVar used by generic repository / factory signatures.
 TDatabaseModel = TypeVar("TDatabaseModel", bound=BaseDatabaseModel)

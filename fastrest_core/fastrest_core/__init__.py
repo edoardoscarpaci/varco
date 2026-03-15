@@ -48,8 +48,15 @@ Sub-package layout
 from __future__ import annotations
 
 # ── Domain layer ───────────────────────────────────────────────────────────────
+from fastrest_core.exception.repository import StaleEntityError
 from fastrest_core.mapper import AbstractMapper
-from fastrest_core.model import DomainModel, cast_raw
+from fastrest_core.migrator import DomainMigrator, MigrationError
+from fastrest_core.model import (
+    AuditedDomainModel,
+    DomainModel,
+    VersionedDomainModel,
+    cast_raw,
+)
 from fastrest_core.providers import RepositoryProvider
 from fastrest_core.registry import DomainModelRegistry, register
 from fastrest_core.repository import AsyncRepository
@@ -75,7 +82,13 @@ from fastrest_core.query.type import Operation, SortField, SortOrder
 __all__ = [
     # ── Domain base ────────────────────────────────────────────────────────────
     "DomainModel",
+    "AuditedDomainModel",
+    "VersionedDomainModel",
     "cast_raw",
+    # ── Migration ──────────────────────────────────────────────────────────────
+    "DomainMigrator",
+    "MigrationError",
+    "StaleEntityError",
     # ── Abstraction layer ──────────────────────────────────────────────────────
     "AbstractMapper",
     "AsyncRepository",

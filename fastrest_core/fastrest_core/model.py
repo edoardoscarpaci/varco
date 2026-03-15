@@ -29,6 +29,7 @@ Usage::
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, TypeVar
 
 OT = TypeVar("OT")  # ORM type — only used in cast_raw
@@ -176,3 +177,89 @@ def cast_raw(entity: DomainModel, orm_type: type[OT]) -> OT:
             "Check that the correct backend is active."
         )
     return raw  # type: ignore[return-value]
+
+
+# ── Audited base ───────────────────────────────────────────────────────────────
+
+
+@dataclass
+class AuditedDomainModel(DomainModel):
+    """
+    ``DomainModel`` extension that adds audit timestamps.
+
+    Fields
+    ------
+    created_at
+        Set once by the mapper's ``to_orm`` (INSERT path) to
+        ``datetime.now(UTC)``.  Never overwritten on updates.
+    updated_at
+        Set by ``to_orm`` on INSERT and refreshed by ``sync_to_orm`` on
+        every UPDATE.
+
+    Both fields have ``init=False`` — the mapper manages them exclusively
+    via ``object.__setattr__``.  They are ``None`` on a freshly constructed
+    entity and populated after the first repository operation.
+
+    ``compare=False`` — equality is based on business fields only.
+    """
+
+    created_at: datetime | None = field(
+        default=None, init=False, repr=True, compare=False
+    )
+    updated_at: datetime | None = field(
+        default=None, init=False, repr=True, compare=False
+    )
+
+
+# ── Versioned base ─────────────────────────────────────────────────────────────
+
+
+@dataclass
+class VersionedDomainModel(AuditedDomainModel):
+    """
+    ``AuditedDomainModel`` extension that adds schema versioning and
+    optimistic locking.
+
+    Fields
+    ------
+    definition_version
+        Schema version of the stored data.  Set to
+        ``migrator.current_version()`` on INSERT; read back on SELECT and
+        used by the mapper to trigger the migration chain when stale.
+        Defaults to ``1`` (no migrations run yet).
+
+    row_version
+        Optimistic lock counter.  Set to ``1`` on INSERT; incremented by the
+        mapper on every UPDATE.  ``sync_to_orm`` raises
+        ``StaleEntityError`` when the stored value does not match the domain
+        object's value, signalling a concurrent modification.
+        Defaults to ``0`` (not yet persisted).
+
+    Both fields have ``init=False`` and ``compare=False``.
+
+    Registering a migrator
+    ----------------------
+    Attach a ``DomainMigrator`` subclass to ``Meta.migrator``::
+
+        from fastrest_core.migrator import DomainMigrator
+
+        def add_slug(data: dict) -> dict:
+            data["slug"] = data["name"].lower().replace(" ", "-")
+            return data
+
+        class ProductMigrator(DomainMigrator):
+            steps = [add_slug]
+
+        @register
+        @dataclass
+        class Product(VersionedDomainModel):
+            name: str
+            slug: str
+
+            class Meta:
+                table    = "products"
+                migrator = ProductMigrator
+    """
+
+    definition_version: int = field(default=1, init=False, repr=False, compare=False)
+    row_version: int = field(default=0, init=False, repr=False, compare=False)

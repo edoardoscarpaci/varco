@@ -20,8 +20,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Iterable
 
-from sqlalchemy.orm import DeclarativeBase
-
 from fastrest_core.exception.query import CoercionError
 from fastrest_core.query.type import AndNode, ComparisonNode, NotNode, Operation, OrNode
 from fastrest_core.query.visitor.ast_visitor import ASTVisitor
@@ -266,8 +264,8 @@ class TypeCoercionRegistry:
     """
     Registry mapping model field names to ``TypeCoercionFieldInfo``.
 
-    Populate via ``get_default_from_sqlalchemy_model`` for automatic
-    reflection, or ``register_field`` for manual overrides.
+    Populate via ``register_field`` for manual field registration, or use
+    ``fastrest_sa.registry_from_sa_model`` for automatic SA model reflection.
 
     Thread safety:  ⚠️ ``register_field`` mutates the registry — call at
                     startup before serving requests.
@@ -313,61 +311,6 @@ class TypeCoercionRegistry:
             Registered info, or ``None`` if the field has no coercer.
         """
         return self.fields_info.get(field_name)
-
-    @classmethod
-    def get_default_from_sqlalchemy_model(
-        cls,
-        model: type[DeclarativeBase],
-        field_coercions: dict[str, Callable[[Any], Any]] | None = None,
-    ) -> TypeCoercionRegistry:
-        """
-        Create a registry by introspecting a SQLAlchemy declarative model.
-
-        Coercer resolution order per column:
-        1. ``Column.info['coercer']`` — explicit per-column override.
-        2. ``field_coercions[field_name]`` — caller-provided overrides.
-        3. ``default_field_coercions[python_type]`` — module-level defaults.
-
-        Args:
-            model:           SQLAlchemy declarative model class.
-            field_coercions: Optional ``{field_name: coercer}`` overrides.
-
-        Returns:
-            Populated ``TypeCoercionRegistry``.
-
-        Edge cases:
-            - Columns with no matching coercer are silently skipped.
-            - ``column.type.python_type`` may raise ``NotImplementedError``
-              for exotic SA types — those columns are skipped.
-        """
-        field_coercions = field_coercions or {}
-        registry = cls()
-
-        for column in model.__table__.columns:
-            field_name = column.name
-            try:
-                python_type = column.type.python_type
-            except NotImplementedError:
-                # Some SA types (e.g. NullType) don't implement python_type
-                continue
-
-            # Priority 1: explicit coercer stored on the Column.info dict
-            coercer: Callable[[Any], Any] | None = None
-            try:
-                if hasattr(column, "info"):
-                    coercer = column.info.get("coercer")
-            except Exception:
-                coercer = None
-
-            coercer = (
-                coercer
-                or field_coercions.get(field_name)
-                or default_field_coercions.get(python_type)
-            )
-            if coercer is not None:
-                registry.register_field(field_name, python_type, coercer)
-
-        return registry
 
 
 # ── Coercion visitor ───────────────────────────────────────────────────────────

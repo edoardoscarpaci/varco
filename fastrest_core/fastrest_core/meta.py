@@ -429,6 +429,8 @@ class ParsedMeta:
     constraints: list[UniqueConstraint | CheckConstraint]
     # Post-build customisation hook
     customize: Any  # Callable[[type], None] | None
+    # DomainMigrator subclass (the class itself, not an instance) | None
+    migrator: Any
 
     @property
     def is_composite_pk(self) -> bool:
@@ -534,6 +536,11 @@ class MetaReader:
         # the generated ORM class so the user can add relationships, events, etc.
         customize = getattr(meta_cls, "customize", None)
 
+        # ── 6. Optional data migrator ─────────────────────────────────────────
+        # Meta.migrator must be a DomainMigrator subclass (the class itself,
+        # not an instance). Only meaningful for VersionedDomainModel subclasses.
+        migrator = getattr(meta_cls, "migrator", None)
+
         return ParsedMeta(
             table=table,
             pk_type=pk_type,
@@ -543,6 +550,7 @@ class MetaReader:
             foreign_keys=foreign_keys,
             constraints=constraints,
             customize=customize,
+            migrator=migrator,
         )
 
     # ── Single PK extraction ──────────────────────────────────────────────────

@@ -86,11 +86,20 @@ def _sql_like_to_regex(pattern: str) -> str:
         _sql_like_to_regex("_lice")   → ".lice"
         _sql_like_to_regex("100%")    → "100.*"
     """
-    # Escape all regex metacharacters except % and _ first
-    escaped = re.escape(pattern)
-    # re.escape converts % → r'\%' and _ → r'\_'; restore our wildcards
-    regex = escaped.replace(r"\%", ".*").replace(r"\_", ".")
-    return regex
+    # Process character-by-character: % and _ are SQL wildcards; everything
+    # else is a literal that must be regex-escaped.
+    # NOTE: re.escape() (Python ≥3.7) does NOT escape % or _ because they
+    # are not regex metacharacters — a prior approach using re.escape then
+    # str.replace was therefore broken.
+    result: list[str] = []
+    for ch in pattern:
+        if ch == "%":
+            result.append(".*")  # SQL % = any sequence of chars
+        elif ch == "_":
+            result.append(".")  # SQL _ = exactly one char
+        else:
+            result.append(re.escape(ch))  # escape regex metacharacters
+    return "".join(result)
 
 
 class BeanieQueryCompiler(ASTVisitor):

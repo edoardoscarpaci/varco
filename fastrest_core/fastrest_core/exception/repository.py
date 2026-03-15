@@ -69,6 +69,39 @@ class FieldNotFound(RepositoryException):
         )
 
 
+class StaleEntityError(RepositoryException):
+    """
+    Raised when an optimistic lock conflict is detected during an UPDATE.
+
+    The entity was modified by another process between when it was loaded
+    and when the current ``save()`` was called.  The caller should reload
+    the entity and retry (or surface a 409 Conflict to the client).
+
+    Attributes:
+        entity_cls:       Domain class involved in the conflict.
+        expected_version: The ``row_version`` the caller held at load time.
+        actual_version:   The ``row_version`` currently stored in the DB.
+    """
+
+    def __init__(
+        self,
+        entity_cls: type,
+        expected_version: int,
+        actual_version: int,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        self.entity_cls = entity_cls
+        self.expected_version = expected_version
+        self.actual_version = actual_version
+        super().__init__(
+            f"Stale {entity_cls.__name__}: expected row_version={expected_version}, "
+            f"found {actual_version}. Reload the entity and retry.",
+            *args,
+            **kwargs,
+        )
+
+
 class EntityNotFound(RepositoryException):
     """
     Raised when a required entity is not found during a lookup.

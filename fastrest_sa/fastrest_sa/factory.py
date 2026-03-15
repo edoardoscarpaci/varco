@@ -38,6 +38,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     Integer,
+    JSON,
     LargeBinary,
     String,
     Text,
@@ -67,6 +68,8 @@ _SA_TYPE_MAP: dict[type, Any] = {
     date: lambda _: Date(),
     UUID: lambda _: PG_UUID(as_uuid=True),
     bytes: lambda _: LargeBinary(),
+    dict: lambda _: JSON(),
+    list: lambda _: JSON(),
 }
 
 
@@ -111,8 +114,9 @@ class _SAAutoMapper(AbstractMapper[D, Any]):
         domain_cls: type[D],
         orm_cls: type,
         pk_orm_attrs: list[str],
+        migrator: Any = None,
     ) -> None:
-        super().__init__(domain_cls, orm_cls)
+        super().__init__(domain_cls, orm_cls, migrator=migrator)
         self._pk_attrs = pk_orm_attrs
 
     @cached_property
@@ -246,7 +250,10 @@ class SAModelFactory:
             meta.customize(orm_cls)
 
         mapper = _SAAutoMapper(
-            domain_cls=domain_cls, orm_cls=orm_cls, pk_orm_attrs=pk_attrs
+            domain_cls=domain_cls,
+            orm_cls=orm_cls,
+            pk_orm_attrs=pk_attrs,
+            migrator=meta.migrator,
         )
         self._cache[domain_cls] = (orm_cls, mapper)
         SAModelRegistry._register(domain_cls, orm_cls)

@@ -10,13 +10,30 @@ repos:
     rev: 24.3.0
     hooks:
       - id: black
-  # When tests are implemented
-  #- repo: local
-  #  hooks:
-  #    - id: pytest
-  #      name: pytest
-  #      entry: poetry run pytest tests/
-  #      args: [--tb=short, -q]
-  #      language: system
-  #      pass_filenames: false  # Don't pass staged filenames to pytest
-  #      always_run: true       # Run even if no Python files changed
+  
+  - repo: local
+    hooks:
+      - id: pytest-core
+        name: pytest (fastrest_core)
+        entry: bash -c 'cd fastrest_core && poetry lock && poetry sync && poetry run pytest tests --tb=short -q'
+        language: system
+        pass_filenames: false
+        always_run: true
+
+  - repo: local
+    hooks:
+      - id: pytest-beanie
+        name: pytest (fastrest_beanie)
+        entry: bash -c 'cd fastrest_beanie && poetry lock && poetry sync && poetry run pytest tests --tb=short -q'
+        language: system
+        pass_filenames: false
+        always_run: true
+
+  - repo: local
+    hooks:
+      - id: pytest-sa
+        name: pytest (fastrest_sa)
+        entry: bash -c 'cd fastrest_sa && poetry lock && poetry sync && poetry run pytest tests --tb=short -q'
+        language: system
+        pass_filenames: false
+        always_run: true

@@ -26,7 +26,7 @@ from __future__ import annotations
 import dataclasses
 import typing
 import warnings
-from typing import Any, Optional, TypeVar
+from typing import Any, ClassVar, Optional, TypeVar
 
 from beanie import Document, Indexed
 from pydantic import Field as PydanticField
@@ -63,8 +63,9 @@ class _BeanieAutoMapper(AbstractMapper[D, Any]):
         domain_cls: type[D],
         orm_cls: type,
         pk_orm_attrs: list[str],
+        migrator: Any = None,
     ) -> None:
-        super().__init__(domain_cls, orm_cls)
+        super().__init__(domain_cls, orm_cls, migrator=migrator)
         self._pk_attrs = pk_orm_attrs
 
     @property
@@ -147,7 +148,17 @@ class BeanieModelFactory:
         settings_cls = self._build_settings(meta)
 
         doc_attrs: dict[str, Any] = {
-            "__annotations__": annotations,
+            # Pydantic v2 requires __module__ in the namespace when a model
+            # class is created dynamically via type() — without it, Pydantic's
+            # _model_construction.inspect_namespace raises KeyError: '__module__'.
+            "__module__": domain_cls.__module__,
+            # Pydantic v2 treats every unannotated attribute as a field and
+            # raises PydanticUserError for non-annotated attributes.  Beanie's
+            # inner Settings class must be declared ClassVar so Pydantic skips
+            # field inference for it.  This only matters when the class is
+            # constructed dynamically via type() — in normal class bodies Python
+            # detects inner classes implicitly.
+            "__annotations__": {**annotations, "Settings": ClassVar[type]},
             "Settings": settings_cls,
             **field_defaults,
         }
@@ -159,7 +170,10 @@ class BeanieModelFactory:
 
         pk_attrs = meta.composite_pk_fields if meta.is_composite_pk else ["id"]
         mapper = _BeanieAutoMapper(
-            domain_cls=domain_cls, orm_cls=doc_cls, pk_orm_attrs=pk_attrs
+            domain_cls=domain_cls,
+            orm_cls=doc_cls,
+            pk_orm_attrs=pk_attrs,
+            migrator=meta.migrator,
         )
         self._cache[domain_cls] = (doc_cls, mapper)
         BeanieDocRegistry._register(domain_cls, doc_cls)
