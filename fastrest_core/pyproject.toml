@@ -9,7 +9,7 @@ packages    = [{include = "fastrest_core"}]
 [tool.poetry.dependencies]
 python   = ">=3.12"
 pydantic = ">=2.12.5,<3.0.0"
-providify = ">=0.0.1"
+providify = ">=0.1.3"
 # lark is used by QueryParser — runtime dependency, not dev-only
 lark     = ">=1.1"
 

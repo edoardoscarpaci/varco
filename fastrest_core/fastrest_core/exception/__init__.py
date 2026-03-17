@@ -1,7 +1,7 @@
 """
 fastrest_core.exception
 ========================
-Exception hierarchy for the fastrest_core domain and query layers.
+Exception hierarchy for the fastrest_core domain, query, and service layers.
 
     QueryException      — base for all query-system errors
     ├── OperationNotFound
@@ -12,7 +12,14 @@ Exception hierarchy for the fastrest_core domain and query layers.
     RepositoryException — base for all repository errors
     ├── RepositoryClassCreationFailed
     ├── FieldNotFound
-    └── EntityNotFound
+    ├── EntityNotFound
+    └── StaleEntityError
+
+    ServiceException    — base for all service-layer errors
+    ├── ServiceNotFoundError      → HTTP 404
+    ├── ServiceAuthorizationError → HTTP 403
+    ├── ServiceConflictError      → HTTP 409
+    └── ServiceValidationError    → HTTP 422
 """
 
 from fastrest_core.exception.query import (
@@ -27,6 +34,14 @@ from fastrest_core.exception.repository import (
     FieldNotFound,
     RepositoryClassCreationFailed,
     RepositoryException,
+    StaleEntityError,
+)
+from fastrest_core.exception.service import (
+    ServiceAuthorizationError,
+    ServiceConflictError,
+    ServiceException,
+    ServiceNotFoundError,
+    ServiceValidationError,
 )
 
 __all__ = [
@@ -41,4 +56,11 @@ __all__ = [
     "RepositoryClassCreationFailed",
     "FieldNotFound",
     "EntityNotFound",
+    "StaleEntityError",
+    # Service exceptions
+    "ServiceException",
+    "ServiceNotFoundError",
+    "ServiceAuthorizationError",
+    "ServiceConflictError",
+    "ServiceValidationError",
 ]

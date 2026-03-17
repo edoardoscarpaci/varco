@@ -1,6 +1,6 @@
 # fastrest
 
-A modular Python framework for building expressive, backend-agnostic query APIs on top of SQLAlchemy and MongoDB (Beanie/Motor). It provides a clean domain model layer, a fluent query builder with AST-based filtering, automatic ORM class generation, and a pluggable type coercion system.
+A modular Python framework for building expressive, backend-agnostic REST APIs on top of SQLAlchemy and MongoDB (Beanie/Motor). It provides a clean domain model layer, a generic service layer with built-in authorization, a fluent query builder with AST-based filtering, automatic ORM class generation, and a pluggable type coercion system.
 
 ---
 
@@ -8,7 +8,7 @@ A modular Python framework for building expressive, backend-agnostic query APIs 
 
 | Package | Description |
 |---|---|
-| `fastrest_core` | Backend-agnostic domain model, query AST, builder, parser, DTOs |
+| `fastrest_core` | Backend-agnostic domain model, service layer, authorization, assembler, query AST, builder, parser, DTOs |
 | `fastrest_sa` | SQLAlchemy async backend (ORM generation, repository, schema guard) |
 | `fastrest_beanie` | Beanie (Motor/MongoDB) async backend |
 
@@ -20,6 +20,18 @@ A modular Python framework for building expressive, backend-agnostic query APIs 
 - [Metadata & Constraints](#metadata--constraints)
 - [Repository & Unit of Work](#repository--unit-of-work)
 - [DTOs](#dtos)
+- [DTO Assembler](#dto-assembler)
+- [Service Layer](#service-layer)
+  - [IUoWProvider](#iuowprovider)
+  - [AsyncService](#asyncservice)
+  - [Authorization order](#authorization-order)
+  - [DI wiring](#di-wiring)
+- [Authorization](#authorization)
+  - [Action](#action)
+  - [ResourceGrant](#resourcegrant)
+  - [AuthContext](#authcontext)
+  - [AbstractAuthorizer](#abstractauthorizer)
+  - [BaseAuthorizer](#baseauthorizer)
 - [Query System](#query-system)
   - [QueryBuilder](#querybuilder)
   - [QueryParams](#queryparams)
@@ -206,6 +218,304 @@ patch = TagUpdate(tags=["python"], op=UpdateOperation.EXTEND)  # append
 patch = TagUpdate(tags=["old"],    op=UpdateOperation.REMOVE)  # remove
 patch = TagUpdate(tags=["new"],    op=UpdateOperation.REPLACE) # overwrite (default)
 ```
+
+---
+
+## DTO Assembler
+
+`AbstractDTOAssembler[D, C, R, U]` is the only layer responsible for translating between domain entities and DTOs. It keeps mapping logic out of the service and makes it independently testable and swappable.
+
+```python
+from fastrest_core.assembler import AbstractDTOAssembler
+from dataclasses import replace
+
+class PostAssembler(AbstractDTOAssembler[Post, CreatePostDTO, PostReadDTO, UpdatePostDTO]):
+
+    def to_domain(self, dto: CreatePostDTO) -> Post:
+        # Return an unpersisted entity — repo.save() assigns pk and timestamps.
+        # Do NOT set pk, created_at, updated_at here.
+        return Post(title=dto.title, body=dto.body, is_published=False)
+
+    def to_read_dto(self, entity: Post) -> PostReadDTO:
+        # entity is always persisted here (pk is never None)
+        return PostReadDTO(
+            id=str(entity.pk),
+            title=entity.title,
+            body=entity.body,
+            created_at=entity.created_at,
+            updated_at=entity.updated_at,
+        )
+
+    def apply_update(self, entity: Post, dto: UpdatePostDTO) -> Post:
+        # Use dataclasses.replace — copies _raw_orm so repo treats it as UPDATE
+        # None in dto means "no change" — preserve the existing value
+        return replace(
+            entity,
+            title=dto.title if dto.title is not None else entity.title,
+            body=dto.body   if dto.body  is not None else entity.body,
+        )
+```
+
+| Method | Called for | Must return |
+|---|---|---|
+| `to_domain(dto)` | `create()` | New unpersisted entity (`pk=None`) |
+| `to_read_dto(entity)` | `get()`, `list()`, `create()`, `update()` | Populated `ReadDTO` |
+| `apply_update(entity, dto)` | `update()` | New entity (via `dataclasses.replace`) — never mutate in place |
+
+---
+
+## Service Layer
+
+The service layer is the **only** layer that enforces authorization, orchestrates transactions, and raises typed `ServiceException` subclasses.
+
+```
+HTTP adapter
+    ↓  AuthContext (from JWT)
+AsyncService
+    ↓  authorization (AbstractAuthorizer)
+    ↓  UoW + repository
+    ↓  DTO assembly (AbstractDTOAssembler)
+HTTP adapter  ←  ReadDTO
+```
+
+### IUoWProvider
+
+Minimal interface for anything that can produce a fresh `AsyncUnitOfWork`. `RepositoryProvider` already satisfies it — just bind it in the DI container:
+
+```python
+from fastrest_core.service import IUoWProvider
+
+@Provider(singleton=True)
+def uow_provider(repo_provider: SQLAlchemyRepositoryProvider) -> IUoWProvider:
+    # RepositoryProvider.make_uow() already satisfies the interface
+    return repo_provider
+```
+
+### AsyncService
+
+Subclass `AsyncService[D, PK, C, R, U]` and implement a single method:
+
+```python
+from fastrest_core.service import AsyncService, IUoWProvider
+from fastrest_core.assembler import AbstractDTOAssembler
+from fastrest_core.auth import AbstractAuthorizer
+from providify import Inject, Singleton
+from uuid import UUID
+
+@Singleton
+class PostService(AsyncService[Post, UUID, CreatePostDTO, PostReadDTO, UpdatePostDTO]):
+
+    def __init__(
+        self,
+        uow_provider: Inject[IUoWProvider],
+        authorizer:   Inject[AbstractAuthorizer],
+        assembler:    Inject[AbstractDTOAssembler[Post, CreatePostDTO, PostReadDTO, UpdatePostDTO]],
+    ) -> None:
+        super().__init__(uow_provider=uow_provider, authorizer=authorizer, assembler=assembler)
+
+    def _get_repo(self, uow):
+        # Return the repository for Post from the open UoW
+        return uow.posts  # type: ignore[attr-defined]
+```
+
+All five CRUD methods are provided by the base class:
+
+```python
+# All methods take an AuthContext — built from the decoded JWT in the HTTP adapter
+ctx = AuthContext(user_id="usr_123", grants=(...))
+
+post_dto  = await svc.create(CreatePostDTO(title="Hello"), ctx)   # → PostReadDTO
+post_dto  = await svc.get("post-1", ctx)                          # → PostReadDTO
+posts     = await svc.list(QueryParams(), ctx)                     # → list[PostReadDTO]
+post_dto  = await svc.update("post-1", UpdatePostDTO(title="Hi"), ctx)  # → PostReadDTO
+await svc.delete("post-1", ctx)                                   # → None
+```
+
+### Authorization order
+
+The order in which auth is checked vs. the DB is opened is intentional and security-relevant:
+
+| Operation | Order |
+|---|---|
+| `create`, `list` | **Auth first**, then open DB — denied callers never touch the database |
+| `get`, `update`, `delete` | **Fetch first**, then auth — the authorizer can inspect entity fields (e.g. ownership); a missing entity always raises `ServiceNotFoundError` regardless of auth |
+
+> The fetch-first pattern for `get`/`update`/`delete` prevents an **existence oracle**: if auth ran first, a 403 would reveal that the entity exists even when the caller has no permission to see it.
+
+### DI wiring
+
+With providify, wire the assembler and service with `@Singleton` on the classes:
+
+```python
+from providify import Singleton, DIContainer
+
+@Singleton
+class PostAssembler(AbstractDTOAssembler[Post, CreatePostDTO, PostReadDTO, UpdatePostDTO]):
+    ...  # implement the three methods
+
+@Singleton
+class PostService(AsyncService[Post, UUID, CreatePostDTO, PostReadDTO, UpdatePostDTO]):
+    def __init__(
+        self,
+        uow_provider: Inject[IUoWProvider],
+        authorizer:   Inject[AbstractAuthorizer],
+        assembler:    Inject[AbstractDTOAssembler[Post, CreatePostDTO, PostReadDTO, UpdatePostDTO]],
+    ) -> None:
+        super().__init__(uow_provider=uow_provider, authorizer=authorizer, assembler=assembler)
+
+    def _get_repo(self, uow): return uow.posts
+
+container = DIContainer()
+container.register(PostAssembler)   # binds under AbstractDTOAssembler[Post, ...]
+container.register(PostService)     # auto-wired via Inject[...] annotations
+```
+
+---
+
+## Authorization
+
+Authorization primitives live in `fastrest_core.auth` and `fastrest_core.base_authorizer`.
+
+### Action
+
+`Action` is a `StrEnum` — every value is also a plain `str` at runtime, so JWT round-trips are transparent:
+
+```python
+from fastrest_core.auth import Action
+
+Action.CREATE  # "create"
+Action.READ    # "read"
+Action.UPDATE  # "update"
+Action.DELETE  # "delete"
+Action.LIST    # "list"
+
+Action.READ == "read"  # True — StrEnum compares equal to its string value
+```
+
+### ResourceGrant
+
+Immutable value object pairing a resource key with an allowed set of actions:
+
+```python
+from fastrest_core.auth import ResourceGrant, Action
+
+# Type-level grant — applies to every instance of the resource
+ResourceGrant("posts", frozenset({Action.LIST, Action.CREATE, Action.READ}))
+
+# Instance-level grant — applies to one specific entity only
+ResourceGrant("posts:abc123", frozenset({Action.UPDATE, Action.DELETE}))
+
+# Wildcard — grants everything on every resource (admin)
+ResourceGrant("*", frozenset(Action))
+```
+
+Resource key conventions:
+- **Type-level**: lowercase table name (e.g. `"posts"`, `"users"`) — matches `Meta.table`
+- **Instance-level**: `"{table}:{pk}"` (e.g. `"posts:abc123"`)
+- **Wildcard**: `"*"`
+
+### AuthContext
+
+Immutable identity + permission snapshot, built once per request from the decoded JWT:
+
+```python
+from fastrest_core.auth import AuthContext, ResourceGrant, Action
+
+ctx = AuthContext(
+    user_id="usr_123",
+    roles=frozenset({"editor"}),
+    grants=(
+        ResourceGrant("posts",        frozenset({Action.LIST, Action.READ})),
+        ResourceGrant("posts:abc123", frozenset({Action.UPDATE, Action.DELETE})),
+    ),
+)
+
+ctx.is_anonymous()              # False
+ctx.has_role("editor")          # True
+ctx.can(Action.READ,   "posts") # True  — type-level grant
+ctx.can(Action.UPDATE, "posts") # False — no type-level UPDATE grant
+ctx.can(Action.UPDATE, "posts:abc123")  # True  — instance-level grant
+ctx.grants_for("posts")         # frozenset({Action.LIST, Action.READ})
+```
+
+An anonymous (unauthenticated) caller:
+
+```python
+ctx = AuthContext()          # user_id=None, no grants
+ctx.is_anonymous()           # True
+ctx.can(Action.READ, "posts") # False
+```
+
+### AbstractAuthorizer
+
+Implement one class that handles all entity types. The service injects it as `Inject[AbstractAuthorizer]`:
+
+```python
+from fastrest_core.auth import AbstractAuthorizer, Action, AuthContext, Resource
+from fastrest_core.exception.service import ServiceAuthorizationError
+
+class AppAuthorizer(AbstractAuthorizer):
+
+    async def authorize(self, ctx: AuthContext, action: Action, resource: Resource) -> None:
+        # Derive the resource key using Meta.table (or lowercase class name)
+        meta = getattr(resource.entity_type, "Meta", None)
+        table = getattr(meta, "table", resource.entity_type.__name__.lower())
+
+        # Instance-level check (more specific)
+        if not resource.is_collection:
+            if ctx.can(action, f"{table}:{resource.entity.pk}"):
+                return
+
+        # Type-level check
+        if ctx.can(action, table):
+            return
+
+        raise ServiceAuthorizationError(str(action), resource.entity_type)
+```
+
+For entity-specific rules, dispatch on `resource.entity_type`:
+
+```python
+class AppAuthorizer(AbstractAuthorizer):
+    async def authorize(self, ctx, action, resource):
+        if resource.entity_type is Post:
+            await _check_post(ctx, action, resource)
+        elif resource.entity_type is User:
+            await _check_user(ctx, action, resource)
+        else:
+            raise ServiceAuthorizationError(str(action), resource.entity_type)
+```
+
+### BaseAuthorizer
+
+`BaseAuthorizer` is a permissive fallback — it allows every operation unconditionally. It is registered at priority `-(2**31)` so any application-specific authorizer at the default priority (0) automatically shadows it:
+
+```python
+from fastrest_core.base_authorizer import BaseAuthorizer
+from providify import Singleton
+
+# No setup needed — BaseAuthorizer is registered automatically via scan:
+container.scan("fastrest_core.base_authorizer")
+
+# Your own authorizer at default priority 0 shadows it:
+@Singleton
+class AppAuthorizer(AbstractAuthorizer):
+    async def authorize(self, ctx, action, resource): ...
+
+container.register(AppAuthorizer)  # takes priority over BaseAuthorizer
+```
+
+Use `BaseAuthorizer` for:
+- Prototypes and internal tools with no access-control requirements
+- Integration tests focused on business logic, not permissions
+- Early development before authorization rules are defined
+
+> For production, add a startup guard to prevent accidentally shipping a permissive app:
+> ```python
+> from fastrest_core.base_authorizer import BaseAuthorizer
+> assert not isinstance(container.get(AbstractAuthorizer), BaseAuthorizer), \
+>     "No real authorizer registered — refusing to start in production"
+> ```
 
 ---
 
@@ -520,6 +830,47 @@ user_repo = await container.aget(AsyncRepository[User])
 ---
 
 ## Exception Hierarchy
+
+### Service exceptions (`fastrest_core.exception.service`)
+
+All service exceptions inherit from `ServiceException` — HTTP adapters catch the whole family with one clause and dispatch on subtype:
+
+```python
+from fastrest_core.exception.service import (
+    ServiceException,
+    ServiceNotFoundError,
+    ServiceAuthorizationError,
+    ServiceConflictError,
+    ServiceValidationError,
+)
+
+try:
+    result = await svc.get(pk, ctx)
+except ServiceNotFoundError as e:
+    # e.entity_id (str), e.entity_cls — map to HTTP 404
+    ...
+except ServiceAuthorizationError as e:
+    # e.operation, e.entity_cls, e.reason (internal, never surface to client) — HTTP 403
+    ...
+except ServiceConflictError as e:
+    # e.detail — HTTP 409
+    ...
+except ServiceValidationError as e:
+    # e.detail, e.field (optional) — HTTP 422
+    ...
+```
+
+| Exception | HTTP | When raised |
+|---|---|---|
+| `ServiceException` | — | Base class for all service exceptions |
+| `ServiceNotFoundError` | 404 | Entity with the requested pk does not exist |
+| `ServiceAuthorizationError` | 403 | Caller lacks permission for the operation |
+| `ServiceConflictError` | 409 | Business-rule or uniqueness constraint violated |
+| `ServiceValidationError` | 422 | DTO passes Pydantic but fails a domain invariant |
+
+> `ServiceNotFoundError` is raised **before** the authorization check on `get`/`update`/`delete` — a missing entity always returns 404 regardless of the caller's identity, preventing an existence oracle.
+
+> `ServiceAuthorizationError.reason` is stored on the exception but intentionally excluded from `str(exc)` — log it server-side at DEBUG level, never surface it to API clients.
 
 ### Query exceptions (`fastrest_core.exception.query`)
 
