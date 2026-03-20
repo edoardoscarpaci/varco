@@ -6,7 +6,8 @@ Backend-agnostic domain model and query layer.
 All stable public symbols are importable directly from ``fastrest_core``::
 
     # Domain
-    from fastrest_core import DomainModel, cast_raw, register
+    from fastrest_core import DomainModel, AuditedDomainModel, cast_raw, register
+    from fastrest_core import TenantDomainModel, TenantAuditedDomainModel
     from fastrest_core import AbstractMapper, AsyncRepository, AsyncUnitOfWork
     from fastrest_core import DomainModelRegistry, RepositoryProvider
 
@@ -54,6 +55,10 @@ from fastrest_core.migrator import DomainMigrator, MigrationError
 from fastrest_core.model import (
     AuditedDomainModel,
     DomainModel,
+    TenantAuditedDomainModel,
+    TenantDomainModel,
+    TenantMixin,
+    TenantVersionedDomainModel,
     VersionedDomainModel,
     cast_raw,
 )
@@ -79,11 +84,23 @@ from fastrest_core.query.params import QueryParams
 from fastrest_core.query.parser import QueryParser
 from fastrest_core.query.type import Operation, SortField, SortOrder
 
+# ── Multi-tenancy ───────────────────────────────────────────────────────────────
+from fastrest_core.tenant import (
+    TenantAwareService,
+    TenantUoWProvider,
+    current_tenant,
+    tenant_context,
+)
+
 __all__ = [
     # ── Domain base ────────────────────────────────────────────────────────────
     "DomainModel",
     "AuditedDomainModel",
     "VersionedDomainModel",
+    "TenantMixin",
+    "TenantDomainModel",
+    "TenantAuditedDomainModel",
+    "TenantVersionedDomainModel",
     "cast_raw",
     # ── Migration ──────────────────────────────────────────────────────────────
     "DomainMigrator",
@@ -113,4 +130,9 @@ __all__ = [
     "SortField",
     "SortOrder",
     "Operation",
+    # ── Multi-tenancy ───────────────────────────────────────────────────────────
+    "TenantAwareService",
+    "TenantUoWProvider",
+    "current_tenant",
+    "tenant_context",
 ]

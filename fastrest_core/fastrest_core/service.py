@@ -502,7 +502,15 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
             for base in getattr(type(self), "__orig_bases__", ()):
                 args = typing.get_args(base)
                 origin = typing.get_origin(base)
-                if origin is AsyncService and args:
+                # Use issubclass so subclasses of AsyncService (e.g. TenantAwareService)
+                # are also matched — direct `is AsyncService` check would fail when
+                # the concrete service extends an intermediate abstract service.
+                if (
+                    origin is not None
+                    and isinstance(origin, type)
+                    and issubclass(origin, AsyncService)
+                    and args
+                ):
                     # First type arg is D — the DomainModel subclass
                     type(self)._cached_entity_type = args[0]  # type: ignore[attr-defined]
                     break

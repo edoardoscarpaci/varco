@@ -30,7 +30,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, TypeVar
+from typing import Annotated, Any, TypeVar
+
+from fastrest_core.meta import FieldHint
 
 OT = TypeVar("OT")  # ORM type — only used in cast_raw
 
@@ -263,3 +265,212 @@ class VersionedDomainModel(AuditedDomainModel):
 
     definition_version: int = field(default=1, init=False, repr=False, compare=False)
     row_version: int = field(default=0, init=False, repr=False, compare=False)
+
+
+# ── Tenant-aware bases ─────────────────────────────────────────────────────────
+
+
+@dataclass
+class TenantMixin:
+    """
+    Single-field dataclass mixin that contributes ``tenant_id`` to any
+    domain model hierarchy without repeating the field declaration.
+
+    Designed to be combined with ``DomainModel``, ``AuditedDomainModel``,
+    or ``VersionedDomainModel`` via multiple inheritance::
+
+        class TenantDomainModel(TenantMixin, DomainModel): ...
+        class TenantAuditedDomainModel(TenantMixin, AuditedDomainModel): ...
+        class TenantVersionedDomainModel(TenantMixin, VersionedDomainModel): ...
+
+    Fields
+    ------
+    tenant_id
+        Tenant discriminator.  Defaults to ``""`` so that subclass
+        constructors work without requiring a tenant-ID argument — the
+        ``TenantAwareService.create()`` stamps the real value from
+        ``ctx.metadata["tenant_id"]`` via ``dataclasses.replace`` before
+        the entity is persisted.
+
+        The ``FieldHint(index=True, nullable=False)`` annotation tells
+        both the SA and Beanie backends to:
+        - Create a secondary index — every list/get/update/delete query
+          filters by this column, so an index is essential at scale.
+        - Disallow NULL / missing values — a row without a tenant is a
+          data-integrity violation.
+
+    ``init=True`` is intentional: ``dataclasses.replace(entity, tenant_id=tid)``
+    requires the field to be an init parameter.  Contrast with ``created_at``
+    / ``updated_at`` on ``AuditedDomainModel`` which are mapper-managed and
+    therefore ``init=False``.
+
+    ``compare=True`` (the dataclass default) — two entities with the same
+    business fields but different tenant IDs are genuinely distinct rows
+    and must not compare equal.
+
+    DESIGN: ``default=""`` instead of ``default=None``
+        ✅ ``tenant_id: str`` is non-nullable — ``None`` would violate
+           both the type annotation and the DB constraint.
+        ✅ ``TenantAwareService.create()`` always overwrites the empty
+           string immediately after assembly; it is never persisted.
+        ❌ An empty string can slip through if the service layer is
+           bypassed (e.g. direct repository access).  This is acceptable
+           — direct repo access is an explicit escape hatch that bypasses
+           all guards by design.
+
+    DESIGN: mixin as a separate ``@dataclass``, not a plain class
+        Python's dataclass machinery collects fields by walking the MRO
+        from most-base to most-derived.  Marking the mixin with
+        ``@dataclass`` registers ``tenant_id`` so the decorator on each
+        combined class (e.g. ``TenantDomainModel``) picks it up
+        automatically.
+
+        Alternative considered: inherit directly (e.g.
+        ``TenantAuditedDomainModel(AuditedDomainModel)`` with a
+        repeated field) — rejected because it duplicates the field
+        declaration once per base and makes future changes error-prone.
+
+    DESIGN: ``TenantMixin`` listed FIRST in the MRO
+        ``class TenantXxx(TenantMixin, BaseXxx)`` places TenantMixin
+        between the concrete class and the base in the MRO.  Python
+        collects dataclass fields base-first, so ``tenant_id`` is
+        appended after all base fields.  This guarantees:
+        - ``pk`` / ``_raw_orm`` from ``DomainModel`` come first (both
+          ``init=False`` — not in ``__init__``)
+        - ``created_at`` / ``updated_at`` from ``AuditedDomainModel``
+          next (``init=False``)
+        - ``definition_version`` / ``row_version`` from
+          ``VersionedDomainModel`` next (``init=False``)
+        - ``tenant_id`` last — the only ``init=True`` field; a trailing
+          default argument never causes an ordering TypeError.
+
+    Thread safety:  ❌ No shared state — thread safety depends on the
+                    concrete subclass (inherits DomainModel contract).
+    Async safety:   ✅ Safe to pass across await boundaries once built.
+
+    Edge cases:
+        - ``tenant_id = ""`` after construction — overwritten by
+          ``TenantAwareService.create()`` before the first ``save()``.
+        - ``dataclasses.replace(entity, tenant_id=tid)`` works because
+          ``init=True``.
+        - Services that override ``_tenant_field`` do NOT need these
+          bases — they can declare the field themselves with any name.
+        - Do NOT call ``super().__init__()`` from combined-class
+          ``__init__`` — the generated ``__init__`` handles all fields.
+    """
+
+    # Indexed non-nullable discriminator column.
+    # FieldHint(index=True) → SA creates Index("ix_<table>_tenant_id", col)
+    #                        → Beanie registers a secondary index on the field.
+    # default="" — never persisted as-is; TenantAwareService.create() stamps
+    # the real value from ctx.metadata["tenant_id"] before save().
+    tenant_id: Annotated[str, FieldHint(index=True, nullable=False)] = field(
+        default="", init=True, repr=True, compare=True
+    )
+
+
+@dataclass
+class TenantDomainModel(TenantMixin, DomainModel):
+    """
+    ``DomainModel`` + ``TenantMixin``.
+
+    Row-level multi-tenancy for entities that do not need audit timestamps.
+    For the full ``tenant_id`` contract see ``TenantMixin``.
+
+    Inheritance chain::
+
+        DomainModel  (pk, _raw_orm)
+        TenantMixin  (tenant_id)
+        └── TenantDomainModel
+
+    Usage::
+
+        @register
+        @dataclass
+        class Widget(TenantDomainModel):
+            pk: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
+            name: str
+
+            class Meta:
+                table = "widgets"
+
+    Thread safety:  ❌ Inherits DomainModel — mutate from one task only.
+    Async safety:   ✅ Safe to pass across await boundaries once built.
+    """
+
+
+@dataclass
+class TenantAuditedDomainModel(TenantMixin, AuditedDomainModel):
+    """
+    ``AuditedDomainModel`` + ``TenantMixin``.
+
+    Row-level multi-tenancy with ``created_at`` / ``updated_at`` audit
+    timestamps.  This is the recommended base for most tenant-scoped
+    entities.  For the full ``tenant_id`` contract see ``TenantMixin``.
+
+    Inheritance chain::
+
+        DomainModel        (pk, _raw_orm)
+        AuditedDomainModel (created_at, updated_at)
+        TenantMixin        (tenant_id)
+        └── TenantAuditedDomainModel
+
+    Usage::
+
+        @register
+        @dataclass
+        class Post(TenantAuditedDomainModel):
+            pk: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
+            title: str
+
+            class Meta:
+                table = "posts"
+
+    Thread safety:  ❌ Inherits DomainModel — mutate from one task only.
+    Async safety:   ✅ Safe to pass across await boundaries once built.
+    """
+
+
+@dataclass
+class TenantVersionedDomainModel(TenantMixin, VersionedDomainModel):
+    """
+    ``VersionedDomainModel`` + ``TenantMixin``.
+
+    Row-level multi-tenancy with audit timestamps **and** optimistic
+    locking / schema versioning.  Use this base when entities must
+    survive concurrent updates without silent overwrites and may need
+    forward migrations.  For the full ``tenant_id`` contract see
+    ``TenantMixin``; for the versioning contract see
+    ``VersionedDomainModel``.
+
+    Inheritance chain::
+
+        DomainModel           (pk, _raw_orm)
+        AuditedDomainModel    (created_at, updated_at)
+        VersionedDomainModel  (definition_version, row_version)
+        TenantMixin           (tenant_id)
+        └── TenantVersionedDomainModel
+
+    Usage::
+
+        @register
+        @dataclass
+        class Document(TenantVersionedDomainModel):
+            pk: Annotated[UUID, PrimaryKey(PKStrategy.UUID_AUTO)] = pk_field()
+            body: str
+
+            class Meta:
+                table    = "documents"
+                migrator = DocumentMigrator  # optional
+
+    Thread safety:  ❌ Inherits DomainModel — mutate from one task only.
+    Async safety:   ✅ Safe to pass across await boundaries once built.
+
+    Edge cases:
+        - ``row_version`` starts at ``0`` (not persisted) and is set to
+          ``1`` on first INSERT by the mapper — same as
+          ``VersionedDomainModel``.
+        - ``tenant_id`` is stamped by ``TenantAwareService.create()``
+          before the first save; ``row_version`` is stamped by the
+          mapper after — the two are independent and do not interact.
+    """
