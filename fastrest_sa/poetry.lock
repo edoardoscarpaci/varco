@@ -294,7 +294,7 @@ develop = true
 [package.dependencies]
 cryptography = ">=41.0"
 lark = ">=1.1"
-providify = ">=0.1.4a1"
+providify = ">=0.1.4a3"
 pydantic = ">=2.12.5,<3.0.0"
 PyJWT = ">=2.8,<3.0"
 
@@ -430,14 +430,14 @@ testing = ["coverage", "pytest", "pytest-benchmark"]
 
 [[package]]
 name = "providify"
-version = "0.1.4a1"
+version = "0.1.4a3"
 description = "A Python dependency injection container inspired by Jakarta CDI and Spring. Supports sync and async resolution, multiple scopes, lifecycle hooks, and configuration modules."
 optional = false
 python-versions = ">=3.12"
 groups = ["main"]
 files = [
-    {file = "providify-0.1.4a1-py3-none-any.whl", hash = "sha256:0abc771a748ccee4b4d126a41c86397b1446536f642e17ba60713b7869f6a97f"},
-    {file = "providify-0.1.4a1.tar.gz", hash = "sha256:9c193df239379e611fc29aa1a172304f6e25f0066d804b476d6365fbcbcb8d23"},
+    {file = "providify-0.1.4a3-py3-none-any.whl", hash = "sha256:c95900cc0e904e91e18b3ca56fc4bcc15d990faa31f333ff70fedfdcb1019a48"},
+    {file = "providify-0.1.4a3.tar.gz", hash = "sha256:71f17acf612111cf457a719f0bd86f48ab80923a505ae169194dc213345017a5"},
 ]
 
 [[package]]

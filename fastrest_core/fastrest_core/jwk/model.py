@@ -216,6 +216,72 @@ class JsonWebKey:
 
     # ── Serialization ─────────────────────────────────────────────────────────
 
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> JsonWebKey:
+        """
+        Construct a ``JsonWebKey`` from a raw RFC 7517 JWK dict.
+
+        Inverse of ``to_dict()``.  Used when parsing remote JWKS responses
+        or deserializing stored JWK JSON.  Unknown fields are silently ignored
+        so the parser remains forward-compatible with future JWK extensions.
+
+        Args:
+            raw: A ``dict`` as returned by ``json.loads()`` on a single JWK
+                 object.  Must contain at least ``"kty"``.
+
+        Returns:
+            A ``JsonWebKey`` with all recognised fields populated.  Fields
+            absent from ``raw`` default to ``None``.
+
+        Raises:
+            KeyError:  ``"kty"`` is missing — not a valid JWK object.
+
+        Edge cases:
+            - ``key_ops`` arrives as ``list`` in JSON; converted to ``tuple``
+              for hashability.  ``None`` when the field is absent.
+            - Extra fields not part of RFC 7517 are silently dropped —
+              forward compatibility for future JWK extensions.
+            - Private fields (``d``, ``p``, etc.) are populated when present
+              in ``raw`` — caller is responsible for not passing private JWKs
+              to public endpoints.
+
+        Example::
+
+            with urllib.request.urlopen(jwks_url) as resp:
+                data = json.loads(resp.read())
+            keys = [JsonWebKey.from_dict(k) for k in data["keys"]]
+        """
+        # key_ops is a JSON array — must be tuple for frozen dataclass hashability.
+        # All other fields map 1:1 by name; absent fields default to None naturally.
+        raw_key_ops = raw.get("key_ops")
+        key_ops: tuple[str, ...] | None = (
+            tuple(raw_key_ops) if raw_key_ops is not None else None
+        )
+
+        return cls(
+            kty=raw["kty"],  # required — raises KeyError when missing
+            kid=raw.get("kid"),
+            use=raw.get("use"),
+            alg=raw.get("alg"),
+            key_ops=key_ops,
+            # RSA public
+            n=raw.get("n"),
+            e=raw.get("e"),
+            # RSA/EC private — populated only when present in raw
+            d=raw.get("d"),
+            p=raw.get("p"),
+            q=raw.get("q"),
+            dp=raw.get("dp"),
+            dq=raw.get("dq"),
+            qi=raw.get("qi"),
+            # EC
+            crv=raw.get("crv"),
+            x=raw.get("x"),
+            y=raw.get("y"),
+            # oct
+            k=raw.get("k"),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """
         Serialize to a RFC 7517 JSON-serializable dict.

@@ -108,6 +108,20 @@ from fastrest_core.jwk import (
     JwkBuilder,
 )
 
+# ── Authority layer ─────────────────────────────────────────────────────────────
+from fastrest_core.authority import (
+    AuthorizationConfig,
+    AuthorityError,
+    AuthoritySource,
+    IssuerNotFoundError,
+    JwtAuthority,
+    KeyLoadError,
+    MultiKeyAuthority,
+    TrustedIssuerEntry,
+    TrustedIssuerRegistry,
+    UnknownKidError,
+)
+
 __all__ = [
     # ── Domain base ────────────────────────────────────────────────────────────
     "DomainModel",
@@ -161,4 +175,15 @@ __all__ = [
     "JsonWebKey",
     "JsonWebKeySet",
     "JwkBuilder",
+    # ── Authority layer ─────────────────────────────────────────────────────────
+    "JwtAuthority",
+    "MultiKeyAuthority",
+    "TrustedIssuerRegistry",
+    "TrustedIssuerEntry",
+    "AuthoritySource",
+    "AuthorizationConfig",
+    "AuthorityError",
+    "UnknownKidError",
+    "IssuerNotFoundError",
+    "KeyLoadError",
 ]

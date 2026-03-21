@@ -255,14 +255,14 @@ testing = ["coverage", "pytest", "pytest-benchmark"]
 
 [[package]]
 name = "providify"
-version = "0.1.4a1"
+version = "0.1.4a3"
 description = "A Python dependency injection container inspired by Jakarta CDI and Spring. Supports sync and async resolution, multiple scopes, lifecycle hooks, and configuration modules."
 optional = false
 python-versions = ">=3.12"
 groups = ["main"]
 files = [
-    {file = "providify-0.1.4a1-py3-none-any.whl", hash = "sha256:0abc771a748ccee4b4d126a41c86397b1446536f642e17ba60713b7869f6a97f"},
-    {file = "providify-0.1.4a1.tar.gz", hash = "sha256:9c193df239379e611fc29aa1a172304f6e25f0066d804b476d6365fbcbcb8d23"},
+    {file = "providify-0.1.4a3-py3-none-any.whl", hash = "sha256:c95900cc0e904e91e18b3ca56fc4bcc15d990faa31f333ff70fedfdcb1019a48"},
+    {file = "providify-0.1.4a3.tar.gz", hash = "sha256:71f17acf612111cf457a719f0bd86f48ab80923a505ae169194dc213345017a5"},
 ]
 
 [[package]]
@@ -540,4 +540,4 @@ typing-extensions = ">=4.12.0"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "b26cf458d06f314f768452d29588fceda76f3edc463646a3aeccb6431a2210d5"
+content-hash = "12e946a3ba09e8c1561ad56f0942083bde19c3d57b965f0407a305fcc5640c8f"
