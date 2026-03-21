@@ -129,7 +129,7 @@ from fastrest_core.model import DomainModel
 from fastrest_core.providers import RepositoryProvider
 from fastrest_core.query.builder import QueryBuilder
 from fastrest_core.query.params import QueryParams
-from fastrest_core.service import AsyncService, IUoWProvider
+from fastrest_core.service.base import AsyncService, IUoWProvider
 
 D = TypeVar("D", bound=DomainModel)
 PK = TypeVar("PK")

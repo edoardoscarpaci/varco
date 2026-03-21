@@ -28,7 +28,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from fastrest_core.providers import RepositoryProvider
-from fastrest_core.tenant import TenantUoWProvider, tenant_context
+from fastrest_core.service.tenant import TenantUoWProvider, tenant_context
 from fastrest_beanie.provider import BeanieRepositoryProvider
 
 

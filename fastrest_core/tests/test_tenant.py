@@ -47,7 +47,7 @@ import pytest
 
 from fastrest_core.assembler import AbstractDTOAssembler
 from fastrest_core.auth import AbstractAuthorizer, Action, AuthContext, Resource
-from fastrest_core.base_authorizer import BaseAuthorizer
+from fastrest_core.auth.authorizer import BaseAuthorizer
 from fastrest_core.dto import CreateDTO, ReadDTO, UpdateDTO
 from fastrest_core.exception.service import (
     ServiceAuthorizationError,
@@ -59,7 +59,7 @@ from fastrest_core.providers import RepositoryProvider
 from fastrest_core.query.params import QueryParams
 from fastrest_core.repository import AsyncRepository
 from fastrest_core.service import IUoWProvider
-from fastrest_core.tenant import (
+from fastrest_core.service.tenant import (
     TenantAwareService,
     TenantUoWProvider,
     current_tenant,
@@ -168,7 +168,7 @@ class TenantPostAssembler(
             Fully populated TenantPostReadDTO including tenant_id.
         """
         return TenantPostReadDTO(
-            id=str(entity.pk),
+            pk=entity.pk,
             title=entity.title,
             tenant_id=entity.tenant_id,
             created_at=entity.created_at or _SENTINEL_TS,

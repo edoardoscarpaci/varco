@@ -335,6 +335,63 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
             entities = await self._get_repo(uow).find_by_query(params)
             return [self._assembler.to_read_dto(e) for e in entities]
 
+    async def count(self, params: QueryParams, ctx: AuthContext) -> int:
+        """
+        Count entities matching ``params`` without fetching their data.
+
+        Designed to be called alongside ``list()`` when the caller needs to
+        build a paginated response.  Call both concurrently with
+        ``asyncio.gather`` so they share the same authorization check cost
+        while running their DB queries in parallel::
+
+            results, total = await asyncio.gather(
+                service.list(params, ctx),
+                service.count(params, ctx),
+            )
+            return paged_response(results, total_count=total, params=params, raw_query=raw_query)
+
+        Authorization uses the same ``Action.LIST`` grant as ``list()`` —
+        a caller that cannot list entities also cannot count them.  Auth is
+        checked before opening the UoW for the same reason as in ``list()``.
+
+        Args:
+            params: ``QueryParams`` with filter and pagination.  The ``limit``
+                    and ``offset`` fields are ignored for counting — the count
+                    reflects ALL matching rows, not just the current page.
+            ctx:    Caller's identity and grants.
+
+        Returns:
+            Total number of entities matching ``params.node``.  Returns ``0``
+            when nothing matches; never raises for empty result sets.
+
+        Raises:
+            ServiceAuthorizationError: Caller is not allowed to list / count.
+
+        Edge cases:
+            - ``QueryParams()`` (all defaults) counts every entity in the
+              table — can be expensive on large tables without a filter.
+            - ``params.limit`` and ``params.offset`` have no effect on the
+              returned count — the count is always the full matching set.
+            - Concurrent inserts between the ``count()`` and ``list()`` calls
+              may cause the count to drift from the actual result size.  This
+              is a known TOCTOU issue inherent to offset-based pagination.
+              Use a single transaction (override this method) for strict
+              consistency if required.
+
+        Thread safety:  ⚠️ Service is a singleton; each call opens its own UoW.
+        Async safety:   ✅ ``async def`` — safe to ``asyncio.gather`` with
+                            ``list()``.
+        """
+        # Authorize before opening the UoW — same gate as list()
+        await self._authorizer.authorize(
+            ctx,
+            Action.LIST,
+            Resource(entity_type=self._entity_type()),
+        )
+
+        async with self._uow_provider.make_uow() as uow:
+            return await self._get_repo(uow).count(params)
+
     async def create(self, dto: C, ctx: AuthContext) -> R:
         """
         Create a new entity from ``dto`` and return its ``ReadDTO``.

@@ -29,6 +29,8 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TypeVar
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -81,11 +83,31 @@ class ReadDTO(BaseModel):
     """
     Base class for GET response bodies.
 
-    Includes the standard ``id``, ``created_at``, and ``updated_at`` fields
+    Includes the standard ``pk``, ``created_at``, and ``updated_at`` fields
     that every persisted entity exposes.
 
+    ``pk`` is typed ``Any`` here because the concrete type varies per entity:
+    ``UUID`` (UUID_AUTO), ``int`` (INT_AUTO), ``str`` (STR_ASSIGNED), or a
+    tuple for composite PKs.  ``generate_dtos()`` overrides this field with
+    the exact type declared on the domain class so the generated DTO is
+    fully type-correct.  Hand-written subclasses may redeclare ``pk`` with
+    a more specific type if desired.
+
+    DESIGN: ``pk: Any`` in the base rather than keeping ``id: str``
+        ✅ The field name matches the domain model's ``pk`` — no conceptual
+           mismatch between what the assembler reads (``entity.pk``) and
+           what the DTO exposes (was ``id``).
+        ✅ No str() coercion needed in the assembler — ``pk=entity.pk``
+           preserves the original type (UUID stays UUID, int stays int).
+        ✅ ``generate_dtos()`` overrides ``pk: Any`` with the real domain
+           type (UUID, int, str) so generated DTOs are fully typed.
+        ❌ Hand-written subclasses that previously used ``id=str(entity.pk)``
+           must be updated to ``pk=entity.pk``.  ⚠️ Breaking change for
+           existing code; update all assembler ``to_read_dto`` calls.
+
     Attributes:
-        id:         String-encoded primary key of the entity.
+        pk:         Primary key of the entity.  Type matches the domain
+                    model's ``pk`` annotation (UUID, int, str, etc.).
         updated_at: ISO-8601 timestamp of the most recent update.
         created_at: ISO-8601 timestamp of initial creation.
 
@@ -99,7 +121,10 @@ class ReadDTO(BaseModel):
             email: str
     """
 
-    id: str = Field(..., description="String-encoded primary key of the entity.")
+    # Any here — generate_dtos() overrides with the real type (UUID, int, str…)
+    # for generated DTOs.  Hand-written subclasses can redeclare pk with any
+    # concrete type; Pydantic's field override mechanism handles both cases.
+    pk: Any = Field(..., description="Primary key of the entity.")
     updated_at: datetime = Field(..., description="ISO-8601 timestamp of last update.")
     created_at: datetime = Field(..., description="ISO-8601 timestamp of creation.")
 

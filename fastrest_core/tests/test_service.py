@@ -51,7 +51,7 @@ from providify import DIContainer, Inject, Singleton
 
 from fastrest_core.assembler import AbstractDTOAssembler
 from fastrest_core.auth import AbstractAuthorizer, Action, AuthContext, Resource
-from fastrest_core.base_authorizer import BaseAuthorizer
+from fastrest_core.auth.authorizer import BaseAuthorizer
 from fastrest_core.dto import CreateDTO, ReadDTO, UpdateDTO
 from fastrest_core.exception.service import (
     ServiceAuthorizationError,
@@ -179,7 +179,7 @@ class PostAssembler(
             Fully populated ``PostReadDTO``.
         """
         return PostReadDTO(
-            id=str(entity.pk),
+            pk=entity.pk,
             title=entity.title,
             # Fallback to sentinel — saves us from None checks in every test
             created_at=entity.created_at or _SENTINEL_TS,
@@ -641,7 +641,7 @@ class TestAsyncServiceGet:
         # Happy path: entity exists, auth passes → ReadDTO returned.
         result = await svc.get("post-1", ctx)
         assert isinstance(result, PostReadDTO)
-        assert result.id == "post-1"
+        assert result.pk == "post-1"
         assert result.title == "original title"
 
     async def test_raises_not_found_when_missing(
@@ -698,7 +698,7 @@ class TestAsyncServiceList:
         result = await svc.list(QueryParams(), ctx)
         assert len(result) == 1
         assert isinstance(result[0], PostReadDTO)
-        assert result[0].id == "post-1"
+        assert result[0].pk == "post-1"
 
     async def test_returns_empty_list_when_no_data(
         self, svc: ConcretePostService, ctx: AuthContext
@@ -755,7 +755,7 @@ class TestAsyncServiceCreate:
         assert isinstance(result, PostReadDTO)
         assert result.title == "new post"
         # pk must be set (the repo assigns one on INSERT)
-        assert result.id is not None and result.id != ""
+        assert result.pk is not None and result.pk != ""
 
     async def test_entity_is_persisted_after_create(
         self,
@@ -818,7 +818,7 @@ class TestAsyncServiceUpdate:
 
         assert isinstance(result, PostReadDTO)
         assert result.title == "updated title"
-        assert result.id == "post-1"
+        assert result.pk == "post-1"
 
     async def test_update_persists_change(
         self,
@@ -962,7 +962,7 @@ class TestAsyncServiceDI:
 
         # BaseAuthorizer carries @Singleton(priority=-(2**31)) — scanned
         # from its module so it auto-registers as AbstractAuthorizer.
-        container.scan("fastrest_core.base_authorizer")
+        container.scan("fastrest_core.auth.authorizer")
 
         # FakeUoWProvider is @Singleton — registers as IUoWProvider.
         container.register(FakeUoWProvider)
@@ -1022,6 +1022,6 @@ class TestAsyncServiceDI:
         assert read_dto.title == "di-test post"
 
         # Retrieve the created post — confirms UoW and repo are wired correctly
-        fetched = await svc.get(read_dto.id, ctx)
+        fetched = await svc.get(read_dto.pk, ctx)
         assert fetched.title == "di-test post"
-        assert fetched.id == read_dto.id
+        assert fetched.pk == read_dto.pk

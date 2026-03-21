@@ -37,7 +37,7 @@ from fastrest_core.meta import FieldHint
 OT = TypeVar("OT")  # ORM type — only used in cast_raw
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DomainModel:
     """
     Base class for all domain entities.
@@ -184,7 +184,7 @@ def cast_raw(entity: DomainModel, orm_type: type[OT]) -> OT:
 # ── Audited base ───────────────────────────────────────────────────────────────
 
 
-@dataclass
+@dataclass(kw_only=True)
 class AuditedDomainModel(DomainModel):
     """
     ``DomainModel`` extension that adds audit timestamps.
@@ -216,7 +216,7 @@ class AuditedDomainModel(DomainModel):
 # ── Versioned base ─────────────────────────────────────────────────────────────
 
 
-@dataclass
+@dataclass(kw_only=True)
 class VersionedDomainModel(AuditedDomainModel):
     """
     ``AuditedDomainModel`` extension that adds schema versioning and
@@ -270,7 +270,7 @@ class VersionedDomainModel(AuditedDomainModel):
 # ── Tenant-aware bases ─────────────────────────────────────────────────────────
 
 
-@dataclass
+@dataclass(kw_only=True)
 class TenantMixin:
     """
     Single-field dataclass mixin that contributes ``tenant_id`` to any
@@ -369,7 +369,7 @@ class TenantMixin:
     )
 
 
-@dataclass
+@dataclass(kw_only=True)
 class TenantDomainModel(TenantMixin, DomainModel):
     """
     ``DomainModel`` + ``TenantMixin``.
@@ -399,7 +399,7 @@ class TenantDomainModel(TenantMixin, DomainModel):
     """
 
 
-@dataclass
+@dataclass(kw_only=True)
 class TenantAuditedDomainModel(TenantMixin, AuditedDomainModel):
     """
     ``AuditedDomainModel`` + ``TenantMixin``.
@@ -431,7 +431,7 @@ class TenantAuditedDomainModel(TenantMixin, AuditedDomainModel):
     """
 
 
-@dataclass
+@dataclass(kw_only=True)
 class TenantVersionedDomainModel(TenantMixin, VersionedDomainModel):
     """
     ``VersionedDomainModel`` + ``TenantMixin``.

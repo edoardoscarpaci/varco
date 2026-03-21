@@ -34,7 +34,7 @@ from fastrest_core.auth import (
     Resource,
     ResourceGrant,
 )
-from fastrest_core.base_authorizer import BaseAuthorizer, _FALLBACK_PRIORITY
+from fastrest_core.auth.authorizer import BaseAuthorizer, _FALLBACK_PRIORITY
 from fastrest_core.meta import PKStrategy, PrimaryKey, pk_field
 from fastrest_core.model import DomainModel
 
@@ -78,7 +78,7 @@ def fresh_container() -> DIContainer:
     # Scan the module so the @Singleton(priority=_FALLBACK_PRIORITY) metadata
     # is registered — this is the path we actually want to test.
     container = DIContainer()
-    container.scan("fastrest_core.base_authorizer")
+    container.scan("fastrest_core.auth.authorizer")
     return container
 
 
@@ -278,7 +278,7 @@ class TestBaseAuthorizerDI:
 
         container = DIContainer()
         # Scan base authorizer (priority = -(2**31)) — always registered first.
-        container.scan("fastrest_core.base_authorizer")
+        container.scan("fastrest_core.auth.authorizer")
         # Manually register the higher-priority custom authorizer.
         # Default @Singleton priority is 0, which beats -(2**31).
         container.bind(AbstractAuthorizer, AppAuthorizer)
@@ -294,7 +294,7 @@ class TestBaseAuthorizerDI:
         # Explicitly verify the fallback path: a container with ONLY the
         # base_authorizer module scanned must resolve to BaseAuthorizer.
         container = DIContainer()
-        container.scan("fastrest_core.base_authorizer")
+        container.scan("fastrest_core.auth.authorizer")
         resolved = container.get(AbstractAuthorizer)
         assert isinstance(resolved, BaseAuthorizer)
 

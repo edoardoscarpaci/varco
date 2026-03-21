@@ -54,7 +54,7 @@ from typing import Final
 
 from providify import Singleton
 
-from fastrest_core.auth import AbstractAuthorizer, Action, AuthContext, Resource
+from fastrest_core.auth.base import AbstractAuthorizer, Action, AuthContext, Resource
 
 # Lowest sensible priority — equivalent to a 32-bit signed integer minimum.
 # Leaves the full range -1 … -2_147_483_647 free for intermediate-priority

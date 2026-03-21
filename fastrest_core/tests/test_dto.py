@@ -74,12 +74,12 @@ def test_read_dto_requires_id_and_timestamps():
         username: str
 
     dto = _ReadUser(
-        id="123",
+        pk="123",
         username="alice",
         created_at=_NOW,
         updated_at=_NOW,
     )
-    assert dto.id == "123"
+    assert dto.pk == "123"
     assert dto.username == "alice"
     assert dto.created_at == _NOW
     assert dto.updated_at == _NOW
@@ -98,7 +98,7 @@ def test_read_dto_missing_created_at_raises():
         pass
 
     with pytest.raises(ValidationError):
-        _ReadUser(id="1", updated_at=_NOW)  # type: ignore[call-arg]
+        _ReadUser(pk="1", updated_at=_NOW)  # type: ignore[call-arg]
 
 
 def test_read_dto_accepts_string_datetime():
@@ -108,7 +108,7 @@ def test_read_dto_accepts_string_datetime():
         pass
 
     dto = _ReadItem(
-        id="42",
+        pk="42",
         created_at="2024-01-01T00:00:00Z",
         updated_at="2024-06-01T12:00:00Z",
     )

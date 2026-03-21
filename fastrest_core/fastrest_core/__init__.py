@@ -77,6 +77,13 @@ from fastrest_core.dto import (
     UpdateDTO,
     UpdateOperation,
 )
+from fastrest_core.dto.factory import DTOSet, generate_dtos
+from fastrest_core.dto.pagination import (
+    PageCursor,
+    PagedReadDTO,
+    SortCursorField,
+    paged_response,
+)
 
 # ── Query system ───────────────────────────────────────────────────────────────
 from fastrest_core.query.builder import QueryBuilder
@@ -85,7 +92,7 @@ from fastrest_core.query.parser import QueryParser
 from fastrest_core.query.type import Operation, SortField, SortOrder
 
 # ── Multi-tenancy ───────────────────────────────────────────────────────────────
-from fastrest_core.tenant import (
+from fastrest_core.service.tenant import (
     TenantAwareService,
     TenantUoWProvider,
     current_tenant,
@@ -153,6 +160,13 @@ __all__ = [
     "TCreateDTO",
     "TReadDTO",
     "TUpdateDTO",
+    "DTOSet",
+    "generate_dtos",
+    # ── Pagination ──────────────────────────────────────────────────────────────
+    "SortCursorField",
+    "PageCursor",
+    "PagedReadDTO",
+    "paged_response",
     # ── Query system ───────────────────────────────────────────────────────────
     "QueryBuilder",
     "QueryParams",

@@ -21,9 +21,14 @@ Usage::
 
 from __future__ import annotations
 
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from .model import DomainModel
+
+if TYPE_CHECKING:
+    # Imported only for type checking — avoids a circular import at runtime
+    # because dto_factory imports from meta which imports from model.
+    from fastrest_core.dto.factory import DTOSet
 
 D = TypeVar("D", bound=DomainModel)
 
@@ -161,4 +166,23 @@ def register(domain_cls: type[D]) -> type[D]:
             "Make sure @register is placed above @dataclass."
         )
     DomainModelRegistry.add(domain_cls)
+
+    # ── Auto-DTO generation ───────────────────────────────────────────────────
+    # If the inner Meta class declares ``auto_dto = True``, generate the three
+    # DTO classes immediately and attach them as ``domain_cls.DTOs``.
+    #
+    # DESIGN: lazy import of ``generate_dtos`` inside the function
+    #   ✅ Avoids a circular import: dto_factory → meta → model → registry
+    #   ✅ The import cost is paid only for classes that opt in
+    #   ❌ Slightly less visible than a top-level import — see dto_factory.py
+    #      for the full ``generate_dtos`` documentation.
+    meta_cls = getattr(domain_cls, "Meta", None)
+    if getattr(meta_cls, "auto_dto", False):
+        from fastrest_core.dto.factory import generate_dtos  # noqa: PLC0415
+
+        dtos: DTOSet = generate_dtos(domain_cls)
+        # Stamp the DTOSet onto the class so callers can reach it via
+        # ``MyModel.DTOs.create`` / ``.read`` / ``.update``.
+        domain_cls.DTOs = dtos  # type: ignore[attr-defined]
+
     return domain_cls
