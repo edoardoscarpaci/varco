@@ -15,7 +15,7 @@ motor         = ">=3.3"
 # Explicit direct dependency for fastrest_beanie.di — providify is already
 # a transitive dep via fastrest-core but listing it here makes the di module's
 # imports explicit and protects against future fastrest-core decoupling.
-providify     = ">=0.1.4a0"
+providify     = ">=0.1.4a1"
 
 [tool.poetry.group.dev.dependencies]
 pytest         = ">=8.0"

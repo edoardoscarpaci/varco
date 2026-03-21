@@ -92,6 +92,22 @@ from fastrest_core.tenant import (
     tenant_context,
 )
 
+# ── JWT layer ──────────────────────────────────────────────────────────────────
+from fastrest_core.jwt import (
+    SYSTEM_ISSUER,
+    JsonWebToken,
+    JwtBuilder,
+    JwtParser,
+    JwtUtil,
+)
+
+# ── JWK layer ──────────────────────────────────────────────────────────────────
+from fastrest_core.jwk import (
+    JsonWebKey,
+    JsonWebKeySet,
+    JwkBuilder,
+)
+
 __all__ = [
     # ── Domain base ────────────────────────────────────────────────────────────
     "DomainModel",
@@ -135,4 +151,14 @@ __all__ = [
     "TenantUoWProvider",
     "current_tenant",
     "tenant_context",
+    # ── JWT layer ───────────────────────────────────────────────────────────────
+    "SYSTEM_ISSUER",
+    "JsonWebToken",
+    "JwtBuilder",
+    "JwtParser",
+    "JwtUtil",
+    # ── JWK layer ───────────────────────────────────────────────────────────────
+    "JsonWebKey",
+    "JsonWebKeySet",
+    "JwkBuilder",
 ]
