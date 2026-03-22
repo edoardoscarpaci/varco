@@ -1,4 +1,4 @@
-# fastrest
+# varco
 
 A modular Python framework for building expressive, backend-agnostic REST APIs on top of SQLAlchemy and MongoDB (Beanie/Motor). It provides a clean domain model layer, a generic service layer with built-in authorization, a fluent query builder with AST-based filtering, automatic ORM class generation, and a pluggable type coercion system.
 
@@ -8,9 +8,9 @@ A modular Python framework for building expressive, backend-agnostic REST APIs o
 
 | Package | Description |
 |---|---|
-| `fastrest_core` | Backend-agnostic domain model, service layer, authorization, assembler, query AST, builder, parser, DTOs |
-| `fastrest_sa` | SQLAlchemy async backend (ORM generation, repository, schema guard, Alembic helpers) |
-| `fastrest_beanie` | Beanie (Motor/MongoDB) async backend |
+| `varco_core` | Backend-agnostic domain model, service layer, authorization, assembler, query AST, builder, parser, DTOs |
+| `varco_sa` | SQLAlchemy async backend (ORM generation, repository, schema guard, Alembic helpers) |
+| `varco_beanie` | Beanie (Motor/MongoDB) async backend |
 
 ---
 
@@ -61,7 +61,7 @@ A modular Python framework for building expressive, backend-agnostic REST APIs o
 All domain entities inherit from one of three base classes:
 
 ```python
-from fastrest_core import DomainModel, AuditedDomainModel, VersionedDomainModel
+from varco_core import DomainModel, AuditedDomainModel, VersionedDomainModel
 ```
 
 | Class | Extra fields |
@@ -73,8 +73,8 @@ from fastrest_core import DomainModel, AuditedDomainModel, VersionedDomainModel
 ```python
 from __future__ import annotations
 from typing import Annotated
-from fastrest_core import AuditedDomainModel
-from fastrest_core.meta import FieldHint, PrimaryKey, PKStrategy, pk_field
+from varco_core import AuditedDomainModel
+from varco_core.meta import FieldHint, PrimaryKey, PKStrategy, pk_field
 
 class User(AuditedDomainModel):
     pk: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
@@ -88,7 +88,7 @@ class User(AuditedDomainModel):
 Inherit from one of the soft-delete bases to get a `deleted_at: datetime | None` field:
 
 ```python
-from fastrest_core import SoftDeleteDomainModel, SoftDeleteAuditedDomainModel
+from varco_core import SoftDeleteDomainModel, SoftDeleteAuditedDomainModel
 
 # Simple — pk + deleted_at
 class ArchivedPost(SoftDeleteDomainModel):
@@ -105,7 +105,7 @@ class Post(SoftDeleteAuditedDomainModel):
 Or mix in `SoftDeleteMixin` yourself onto any existing hierarchy:
 
 ```python
-from fastrest_core import SoftDeleteMixin, VersionedDomainModel
+from varco_core import SoftDeleteMixin, VersionedDomainModel
 
 class Document(SoftDeleteMixin, VersionedDomainModel):
     pk: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
@@ -117,7 +117,7 @@ The `SoftDeleteService` mixin (see [below](#softdeleteservice)) automatically ex
 ### Multi-tenancy models
 
 ```python
-from fastrest_core import TenantDomainModel, TenantAuditedDomainModel
+from varco_core import TenantDomainModel, TenantAuditedDomainModel
 
 class Post(TenantAuditedDomainModel):
     pk: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
@@ -128,7 +128,7 @@ class Post(TenantAuditedDomainModel):
 Or add `TenantMixin` to any base:
 
 ```python
-from fastrest_core import TenantMixin, SoftDeleteAuditedDomainModel
+from varco_core import TenantMixin, SoftDeleteAuditedDomainModel
 
 class Post(TenantMixin, SoftDeleteAuditedDomainModel):
     pk: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
@@ -139,7 +139,7 @@ class Post(TenantMixin, SoftDeleteAuditedDomainModel):
 ### Schema versioning & migration
 
 ```python
-from fastrest_core import DomainMigrator
+from varco_core import DomainMigrator
 
 class UserMigrator(DomainMigrator):
     steps = [
@@ -153,7 +153,7 @@ class UserMigrator(DomainMigrator):
 ## Metadata & Constraints
 
 ```python
-from fastrest_core.meta import (
+from varco_core.meta import (
     FieldHint, PrimaryKey, PKStrategy, ForeignKey,
     UniqueConstraint, CheckConstraint, pk_field,
 )
@@ -182,7 +182,7 @@ class Post(AuditedDomainModel):
 ### Table-level constraints
 
 ```python
-from fastrest_core.meta import UniqueConstraint, CheckConstraint
+from varco_core.meta import UniqueConstraint, CheckConstraint
 
 class Subscription(AuditedDomainModel):
     __constraints__ = [
@@ -201,7 +201,7 @@ class Subscription(AuditedDomainModel):
 ## Repository & Unit of Work
 
 ```python
-from fastrest_core import AsyncRepository, AsyncUnitOfWork
+from varco_core import AsyncRepository, AsyncUnitOfWork
 ```
 
 ### `AsyncRepository[D, PK]` interface
@@ -222,7 +222,7 @@ async for entity in repo.stream_by_query(params):  # AsyncIterator[D]
 ### Custom repository
 
 ```python
-from fastrest_core import AsyncRepository
+from varco_core import AsyncRepository
 
 class UserRepository(AsyncRepository[User, int]):
     async def find_active(self) -> list[User]:
@@ -258,7 +258,7 @@ async with provider.make_uow() as uow:
 Pydantic-based request/response contracts:
 
 ```python
-from fastrest_core import CreateDTO, ReadDTO, UpdateDTO, UpdateOperation
+from varco_core import CreateDTO, ReadDTO, UpdateDTO, UpdateOperation
 ```
 
 ```python
@@ -294,7 +294,7 @@ patch = TagUpdate(tags=["new"],    op=UpdateOperation.REPLACE) # overwrite (defa
 `AbstractDTOAssembler[D, C, R, U]` is the only layer responsible for translating between domain entities and DTOs:
 
 ```python
-from fastrest_core.assembler import AbstractDTOAssembler
+from varco_core.assembler import AbstractDTOAssembler
 from dataclasses import replace
 
 class PostAssembler(AbstractDTOAssembler[Post, CreatePostDTO, PostReadDTO, UpdatePostDTO]):
@@ -322,7 +322,7 @@ class PostAssembler(AbstractDTOAssembler[Post, CreatePostDTO, PostReadDTO, Updat
 The shorthand `Assembler` alias saves typing in service `__init__` signatures:
 
 ```python
-from fastrest_core import Assembler   # TypeAlias for AbstractDTOAssembler
+from varco_core import Assembler   # TypeAlias for AbstractDTOAssembler
 
 def __init__(self, assembler: Inject[Assembler[Post, CreatePostDTO, PostReadDTO, UpdatePostDTO]]):
     ...
@@ -352,9 +352,9 @@ Every hook calls `super()` at the end — this chains through Python's MRO so mu
 Enforces row-level tenant isolation via the four hooks. No CRUD methods are overridden:
 
 ```python
-from fastrest_core import TenantAwareService, IUoWProvider
-from fastrest_core.assembler import AbstractDTOAssembler
-from fastrest_core.auth import AbstractAuthorizer
+from varco_core import TenantAwareService, IUoWProvider
+from varco_core.assembler import AbstractDTOAssembler
+from varco_core.auth import AbstractAuthorizer
 from providify import Inject, Singleton
 
 @Singleton
@@ -392,7 +392,7 @@ class PostService(TenantAwareService[Post, ...]):
 Replaces physical deletion with a `deleted_at` timestamp and excludes soft-deleted records from all queries:
 
 ```python
-from fastrest_core import SoftDeleteService
+from varco_core import SoftDeleteService
 
 @Singleton
 class PostService(
@@ -506,7 +506,7 @@ The UoW (and DB cursor) stays open for the entire iteration. Wrap in `contextlib
 Use `ServiceProtocol` to type-hint HTTP handlers or adapters without coupling to `AsyncService`:
 
 ```python
-from fastrest_core import ServiceProtocol
+from varco_core import ServiceProtocol
 
 async def list_handler(
     service: ServiceProtocol[Post, int, CreatePostDTO, PostReadDTO, UpdatePostDTO],
@@ -564,7 +564,7 @@ container.register(PostService)
 `Action` is a `StrEnum` — every value is also a plain `str` at runtime:
 
 ```python
-from fastrest_core.auth import Action
+from varco_core.auth import Action
 
 Action.CREATE  # "create"
 Action.READ    # "read"
@@ -578,7 +578,7 @@ Action.READ == "read"  # True
 ### ResourceGrant
 
 ```python
-from fastrest_core.auth import ResourceGrant, Action
+from varco_core.auth import ResourceGrant, Action
 
 ResourceGrant("posts",        frozenset({Action.LIST, Action.CREATE, Action.READ}))
 ResourceGrant("posts:abc123", frozenset({Action.UPDATE, Action.DELETE}))
@@ -588,7 +588,7 @@ ResourceGrant("*",            frozenset(Action))   # wildcard — admin
 ### AuthContext
 
 ```python
-from fastrest_core.auth import AuthContext, ResourceGrant, Action
+from varco_core.auth import AuthContext, ResourceGrant, Action
 
 ctx = AuthContext(
     user_id="usr_123",
@@ -618,8 +618,8 @@ ctx.can(Action.READ, "posts") # False
 ### AbstractAuthorizer
 
 ```python
-from fastrest_core.auth import AbstractAuthorizer, Action, AuthContext, Resource
-from fastrest_core.exception.service import ServiceAuthorizationError
+from varco_core.auth import AbstractAuthorizer, Action, AuthContext, Resource
+from varco_core.exception.service import ServiceAuthorizationError
 
 class AppAuthorizer(AbstractAuthorizer):
     async def authorize(self, ctx: AuthContext, action: Action, resource: Resource) -> None:
@@ -645,7 +645,7 @@ Three ready-to-use `AbstractAuthorizer` implementations for common patterns:
 Checks `ctx.can(action, resource_key)`. The resource key is derived as `"posts"` (collection) or `"posts:42"` (instance) by default — override `_resource_key()` to customise:
 
 ```python
-from fastrest_core import GrantBasedAuthorizer
+from varco_core import GrantBasedAuthorizer
 
 @Singleton
 class AppAuthorizer(GrantBasedAuthorizer):
@@ -661,7 +661,7 @@ class AppAuthorizer(GrantBasedAuthorizer):
 Grants collection ops (LIST, CREATE) to everyone; instance ops (GET, UPDATE, DELETE) only when `entity.<owner_field> == ctx.user_id`:
 
 ```python
-from fastrest_core import OwnershipAuthorizer
+from varco_core import OwnershipAuthorizer
 
 @Singleton
 class AppAuthorizer(OwnershipAuthorizer):
@@ -678,8 +678,8 @@ class AppAuthorizer(OwnershipAuthorizer):
 Grants actions based on `ctx.roles` and a static permission table:
 
 ```python
-from fastrest_core import RoleBasedAuthorizer
-from fastrest_core.auth import Action
+from varco_core import RoleBasedAuthorizer
+from varco_core.auth import Action
 
 @Singleton
 class AppAuthorizer(RoleBasedAuthorizer):
@@ -695,10 +695,10 @@ class AppAuthorizer(RoleBasedAuthorizer):
 Permissive fallback — allows every operation. Registered at the lowest priority so any application authorizer automatically takes precedence:
 
 ```python
-from fastrest_core.base_authorizer import BaseAuthorizer
+from varco_core.base_authorizer import BaseAuthorizer
 
 # Development / testing only — never ship this to production without shadowing it
-container.scan("fastrest_core.base_authorizer")
+container.scan("varco_core.base_authorizer")
 
 # Production guard
 assert not isinstance(container.get(AbstractAuthorizer), BaseAuthorizer), \
@@ -712,7 +712,7 @@ assert not isinstance(container.get(AbstractAuthorizer), BaseAuthorizer), \
 `FastrestErrorCodes` is a Python `Enum` where each member's `.value` is a frozen `ErrorCode` dataclass. Stable code strings (e.g. `"FASTREST_001"`) serve as i18n translation catalog keys:
 
 ```python
-from fastrest_core import FastrestErrorCodes, ErrorCode
+from varco_core import FastrestErrorCodes, ErrorCode
 
 FastrestErrorCodes.NOT_FOUND.code           # "FASTREST_001"
 FastrestErrorCodes.NOT_FOUND.http_status    # 404
@@ -734,8 +734,8 @@ list(FastrestErrorCodes)  # all built-in codes — iterable because it's an Enum
 ```python
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from fastrest_core.exception.service import ServiceException
-from fastrest_core.exception.http import error_message_for
+from varco_core.exception.service import ServiceException
+from varco_core.exception.http import error_message_for
 
 app = FastAPI()
 
@@ -765,8 +765,8 @@ async def service_error_handler(request: Request, exc: ServiceException):
 Register app-specific codes at startup. They take precedence over built-in codes:
 
 ```python
-from fastrest_core import ErrorCode, register_error_code
-from fastrest_core.exception.service import ServiceException
+from varco_core import ErrorCode, register_error_code
+from varco_core.exception.service import ServiceException
 
 class QuotaExceededError(ServiceException): ...
 
@@ -783,7 +783,7 @@ register_error_code(
 Attach a correlation ID to every log record in the current async task:
 
 ```python
-from fastrest_core import (
+from varco_core import (
     generate_correlation_id,   # → str (UUID4)
     current_correlation_id,    # → str | None
     correlation_context,       # async context manager
@@ -816,8 +816,8 @@ The correlation ID is stored in a `ContextVar` — each asyncio task gets its ow
 `TenantUoWProvider` routes `make_uow()` to a per-tenant backend (separate DB or schema):
 
 ```python
-from fastrest_core import TenantUoWProvider, tenant_context, current_tenant
-from fastrest_sa import SQLAlchemyRepositoryProvider
+from varco_core import TenantUoWProvider, tenant_context, current_tenant
+from varco_sa import SQLAlchemyRepositoryProvider
 
 provider = TenantUoWProvider({
     "acme":   SQLAlchemyRepositoryProvider(engine_acme, sessions_acme),
@@ -855,7 +855,7 @@ current_tenant()                    # "acme" (inside a tenant_context block)
 Fluent, immutable builder — every method returns a new instance:
 
 ```python
-from fastrest_core import QueryBuilder, QueryParams, SortField, SortOrder
+from varco_core import QueryBuilder, QueryParams, SortField, SortOrder
 
 # Simple equality filter
 params = QueryParams(node=QueryBuilder().eq("active", True).build(), limit=10)
@@ -906,7 +906,7 @@ params = QueryParams(
 ### QueryParser
 
 ```python
-from fastrest_core import QueryParser
+from varco_core import QueryParser
 
 parser = QueryParser()
 node = parser.parse('status = "active" AND age >= 18')
@@ -918,7 +918,7 @@ Grammar supports: `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `IN`, `IS NULL`, `IS 
 ### Type Coercion
 
 ```python
-from fastrest_core.query.visitor.type_coercion import (
+from varco_core.query.visitor.type_coercion import (
     coerce_int, coerce_float, coerce_boolean, coerce_datetime, coerce_list,
     TypeCoercionRegistry, ASTTypeCoercion, register_default_coercer,
 )
@@ -942,7 +942,7 @@ coerced_ast = ASTTypeCoercion(registry).visit(parsed_ast)
 ### Installation
 
 ```
-pip install fastrest-sa
+pip install varco-sa
 ```
 
 ### Bootstrap (one-liner setup)
@@ -952,7 +952,7 @@ pip install fastrest-sa
 ```python
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
-from fastrest_sa import SAConfig, SAFastrestApp
+from varco_sa import SAConfig, SAFastrestApp
 
 class Base(DeclarativeBase): pass
 
@@ -971,7 +971,7 @@ uow_provider = app.uow_provider            # inject this into services
 Manual setup (if you need more control):
 
 ```python
-from fastrest_sa import SQLAlchemyRepositoryProvider
+from varco_sa import SQLAlchemyRepositoryProvider
 
 provider = SQLAlchemyRepositoryProvider(engine=engine, session_factory=session_factory)
 provider.register(User, Post, Subscription)
@@ -984,11 +984,11 @@ async with provider.make_uow() as uow:
 
 ### Alembic helpers
 
-Use fastrest-generated metadata in your Alembic `env.py` without duplicating table definitions:
+Use varco-generated metadata in your Alembic `env.py` without duplicating table definitions:
 
 ```python
 # alembic/env.py
-from fastrest_sa import get_target_metadata
+from varco_sa import get_target_metadata
 from myapp.models import User, Post, Subscription
 
 target_metadata = get_target_metadata(User, Post, Subscription)
@@ -997,7 +997,7 @@ target_metadata = get_target_metadata(User, Post, Subscription)
 Preview the DDL before running a migration:
 
 ```python
-from fastrest_sa import print_create_ddl
+from varco_sa import print_create_ddl
 
 ddl = print_create_ddl(User, Post, dialect="postgresql")
 print(ddl)
@@ -1013,7 +1013,7 @@ print(ddl)
 Detect drift between the generated ORM metadata and the actual live database:
 
 ```python
-from fastrest_sa import SchemaGuard
+from varco_sa import SchemaGuard
 
 guard = SchemaGuard(engine, provider.metadata)
 report = await guard.check()
@@ -1044,14 +1044,14 @@ async with provider.make_uow() as uow:
 ### Installation
 
 ```
-pip install fastrest-beanie
+pip install varco-beanie
 ```
 
 ### Bootstrap (Beanie)
 
 ```python
 from motor.motor_asyncio import AsyncIOMotorClient
-from fastrest_beanie import BeanieConfig, BeanieFastrestApp
+from varco_beanie import BeanieConfig, BeanieFastrestApp
 
 client = AsyncIOMotorClient("mongodb://localhost:27017")
 
@@ -1068,7 +1068,7 @@ uow_provider = app.uow_provider     # inject into services
 Manual setup:
 
 ```python
-from fastrest_beanie import BeanieRepositoryProvider
+from varco_beanie import BeanieRepositoryProvider
 
 provider = BeanieRepositoryProvider(motor_client=client, db_name="mydb")
 provider.register(User, Post)
@@ -1099,7 +1099,7 @@ async with provider.make_uow() as uow:
 ### DI integration (Providify)
 
 ```python
-from fastrest_beanie import BeanieModule, BeanieSettings, bind_repositories
+from varco_beanie import BeanieModule, BeanieSettings, bind_repositories
 from providify import DIContainer, Provider
 
 container = DIContainer()
@@ -1122,7 +1122,7 @@ user_repo = await container.aget(AsyncRepository[User])
 ### Service exceptions
 
 ```python
-from fastrest_core.exception.service import (
+from varco_core.exception.service import (
     ServiceException,
     ServiceNotFoundError,
     ServiceAuthorizationError,
@@ -1173,7 +1173,7 @@ except ServiceValidationError:
 python -m pytest
 
 # One package at a time
-python -m pytest fastrest_core/
-python -m pytest fastrest_sa/
-python -m pytest fastrest_beanie/
+python -m pytest varco_core/
+python -m pytest varco_sa/
+python -m pytest varco_beanie/
 ```

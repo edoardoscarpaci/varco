@@ -1,0 +1,30 @@
+[tool.poetry]
+name        = "varco-core"
+version     = "0.1.0"
+description = "Core domain abstractions for varco (models, mapper, meta, query)"
+authors     = ["edoardo.scarpaci <edoardo.scarpaci@gmail.com>"]
+readme      = "README.md"
+packages    = [{include = "varco_core"}]
+
+[tool.poetry.dependencies]
+python   = ">=3.12"
+pydantic = ">=2.12.5,<3.0.0"
+providify = ">=0.1.4a3"
+# lark is used by QueryParser — runtime dependency, not dev-only
+lark     = ">=1.1"
+# PyJWT is used by varco_core.jwt for encoding/decoding JWT tokens
+PyJWT         = ">=2.8,<3.0"
+# cryptography is used by varco_core.jwk for RSA/EC key operations
+cryptography  = ">=41.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest       = ">=8.0"
+pytest-asyncio = ">=0.24"
+
+[build-system]
+requires      = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths    = ["tests"]
