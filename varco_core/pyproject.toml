@@ -1,10 +1,27 @@
 [tool.poetry]
-name        = "varco-core"
-version     = "0.1.0"
-description = "Core domain abstractions for varco (models, mapper, meta, query)"
-authors     = ["edoardo.scarpaci <edoardo.scarpaci@gmail.com>"]
-readme      = "README.md"
-packages    = [{include = "varco_core"}]
+name          = "varco-core"
+version       = "0.0.2"
+description   = "Backend-agnostic domain model, service layer, authorization, query AST and DTOs for varco"
+authors       = ["edoardo.scarpaci <edoardo.scarpaci@gmail.com>"]
+readme        = "README.md"
+license       = "Apache-2.0"
+homepage      = "https://github.com/edoardoscarpaci/varco"
+repository    = "https://github.com/edoardoscarpaci/varco"
+documentation = "https://github.com/edoardoscarpaci/varco#readme"
+keywords      = ["fastapi", "domain-model", "service-layer", "async", "rest-api", "orm-agnostic", "query-builder", "jwt", "authorization"]
+classifiers   = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: Database",
+    "Framework :: FastAPI",
+    "Typing :: Typed",
+]
+packages      = [{include = "varco_core"}]
 
 [tool.poetry.dependencies]
 python   = ">=3.12"

@@ -740,8 +740,8 @@ typing-extensions = ">=4.12.0"
 
 [[package]]
 name = "varco-core"
-version = "0.1.0"
-description = "Core domain abstractions for varco (models, mapper, meta, query)"
+version = "0.0.2"
+description = "Backend-agnostic domain model, service layer, authorization, query AST and DTOs for varco"
 optional = false
 python-versions = ">=3.12"
 groups = ["main"]
