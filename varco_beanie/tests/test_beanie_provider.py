@@ -63,7 +63,7 @@ def _make_provider(
     Returns:
         A BeanieRepositoryProvider ready for unit testing.
     """
-    mock_motor_client = MagicMock()
+    mock_mongo_client = MagicMock()
 
     with patch("varco_beanie.provider.BeanieModelFactory") as mock_factory_cls:
         mock_factory = MagicMock()
@@ -73,7 +73,7 @@ def _make_provider(
         mock_factory_cls.return_value = mock_factory
 
         provider = BeanieRepositoryProvider(
-            motor_client=mock_motor_client,
+            mongo_client=mock_mongo_client,
             db_name="testdb",
             transactional=transactional,
         )
@@ -186,7 +186,7 @@ def test_make_uow_passes_transactional_flag() -> None:
 
 
 async def test_init_calls_beanie_init_beanie() -> None:
-    """init() calls beanie.init_beanie() with the Motor DB and all documents."""
+    """init() calls beanie.init_beanie() with the pymongo DB and all documents."""
     doc_cls = MagicMock()
     provider = _make_provider(factory_build_return=(doc_cls, MagicMock()))
     provider.register(_User)
@@ -201,7 +201,7 @@ async def test_init_calls_beanie_init_beanie() -> None:
     mock_init.assert_called_once()
 
 
-async def test_init_passes_motor_db_to_beanie() -> None:
+async def test_init_passes_pymongo_db_to_beanie() -> None:
     """init() passes the correct Motor database object to init_beanie()."""
     provider = _make_provider(factory_build_return=(MagicMock(), MagicMock()))
 
@@ -212,7 +212,7 @@ async def test_init_passes_motor_db_to_beanie() -> None:
         mock_registry.all_documents.return_value = []
         await provider.init()
 
-    # The Motor client is subscripted with the db_name — verify the db arg was passed
+    # The pymongo client is subscripted with the db_name — verify the db arg was passed
     _, kwargs = mock_init.call_args
     assert "database" in kwargs
 

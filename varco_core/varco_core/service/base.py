@@ -128,16 +128,23 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Generic, TypeVar
 
-from providify import Inject
+from providify import Inject, InjectMeta
 
 from varco_core.assembler import AbstractDTOAssembler
 from varco_core.auth import AbstractAuthorizer, Action, AuthContext, Resource
 from varco_core.dto import CreateDTO, ReadDTO, UpdateDTO
 from varco_core.dto.pagination import PagedReadDTO, paged_response
+from varco_core.event.domain import (
+    EntityCreatedEvent,
+    EntityDeletedEvent,
+    EntityUpdatedEvent,
+)
+from varco_core.event.producer import AbstractEventProducer, NoopEventProducer
 from varco_core.exception.service import ServiceNotFoundError
 from varco_core.model import DomainModel
+from varco_core.tracing import current_correlation_id
 from varco_core.uow import AsyncUnitOfWork
 
 if TYPE_CHECKING:
@@ -246,6 +253,11 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
         # Concrete subclasses must override __init__ with explicit concrete
         # types so the DI container sees the fully resolved generic alias.
         assembler: Inject[AbstractDTOAssembler[D, C, R, U]],
+        # Optional — defaults to NoopEventProducer so services work without
+        # any event infrastructure wired.  Concrete subclasses that want
+        # events must add this parameter with InjectMeta(optional=True) so
+        # the DI container supplies BusEventProducer when a bus is registered.
+        producer: Annotated[AbstractEventProducer, InjectMeta(optional=True)] = None,
     ) -> None:
         """
         Args:
@@ -256,18 +268,27 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
             assembler:    Injected ``AbstractDTOAssembler[D, C, R, U]``.
                           Translates DTOs ↔ domain entities for this service's
                           entity type.
+            producer:     Optional ``AbstractEventProducer``.  When ``None``
+                          (default), a ``NoopEventProducer`` is used so no
+                          events are emitted.  Inject ``BusEventProducer``
+                          to enable event publishing.
 
         Edge cases:
             - ``uow_provider`` is stored (not called) — each public method
               calls ``make_uow()`` to get a fresh session.
-            - All three injected objects must be stateless — they are shared
+            - All injected objects must be stateless — they are shared
               across concurrent requests.
+            - ``producer`` defaults to ``NoopEventProducer`` — services
+              never need a ``if self._producer is not None`` guard.
         """
         # Stored as references — make_uow() is called per-operation so each
         # request gets its own isolated DB session.
         self._uow_provider = uow_provider
         self._authorizer = authorizer
         self._assembler = assembler
+        # Fall back to NoopEventProducer so _produce() calls are always safe
+        # even when no bus is configured — Null Object pattern avoids guards.
+        self._producer: AbstractEventProducer = producer or NoopEventProducer()
 
     # ── Composable extension hooks ────────────────────────────────────────────
     # Override these in mixin subclasses to inject cross-cutting behaviour
@@ -773,7 +794,21 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
             # so the JWT identity is the authoritative source — not the DTO.
             entity = self._prepare_for_create(entity, ctx)
             saved = await self._get_repo(uow).save(entity)
-            return self._assembler.to_read_dto(saved)
+            # Capture the ReadDTO inside the UoW — assembler.to_read_dto is a
+            # pure transform but saved.pk is only valid while the session exists.
+            read_dto = self._assembler.to_read_dto(saved)
+
+        # ← UoW committed here.  Publish AFTER commit so consumers never
+        # observe an event for a transaction that was rolled back.
+        await self._publish_domain_event(
+            EntityCreatedEvent(
+                entity_type=self._entity_type().__name__,
+                pk=saved.pk,
+                correlation_id=current_correlation_id(),
+                payload=read_dto.model_dump(),
+            )
+        )
+        return read_dto
 
     async def update(self, pk: PK, dto: U, ctx: AuthContext) -> R:
         """
@@ -824,7 +859,19 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
 
             updated = self._assembler.apply_update(entity, dto)
             saved = await self._get_repo(uow).save(updated)
-            return self._assembler.to_read_dto(saved)
+            # Capture ReadDTO inside the UoW — same rationale as create().
+            read_dto = self._assembler.to_read_dto(saved)
+
+        # ← UoW committed here.  Publish after commit — see create() rationale.
+        await self._publish_domain_event(
+            EntityUpdatedEvent(
+                entity_type=self._entity_type().__name__,
+                pk=saved.pk,
+                correlation_id=current_correlation_id(),
+                payload=read_dto.model_dump(),
+            )
+        )
+        return read_dto
 
     async def delete(self, pk: PK, ctx: AuthContext) -> None:
         """
@@ -868,7 +915,19 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
                 Resource(entity_type=self._entity_type(), entity=entity),
             )
 
+            # Capture pk before the entity is removed — it may be invalidated
+            # by the UoW teardown depending on the ORM backend.
+            deleted_pk = entity.pk
             await self._get_repo(uow).delete(entity)
+
+        # ← UoW committed here.  Publish after commit — see create() rationale.
+        await self._publish_domain_event(
+            EntityDeletedEvent(
+                entity_type=self._entity_type().__name__,
+                pk=deleted_pk,
+                correlation_id=current_correlation_id(),
+            )
+        )
 
     # ── Abstract method — implement in concrete subclass ──────────────────────
 
@@ -892,6 +951,46 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
         """
 
     # ── Internal helpers ──────────────────────────────────────────────────────
+
+    async def _publish_domain_event(
+        self,
+        event: EntityCreatedEvent | EntityUpdatedEvent | EntityDeletedEvent,
+    ) -> None:
+        """
+        Publish a domain lifecycle event via the injected producer.
+
+        The channel is derived from the entity class name (lowercase) so
+        consumers can subscribe by entity type independently of operation::
+
+            @listen(EntityCreatedEvent, channel="post")  # only post creates
+            @listen(EntityEvent, channel="post")          # all post events
+            @listen(EntityCreatedEvent, channel="*")      # all creates
+
+        Args:
+            event: The domain event to publish.
+
+        Edge cases:
+            - When ``NoopEventProducer`` is injected (default), this is a
+              cheap no-op — no overhead on services without a bus configured.
+            - Any exception from the producer propagates to the caller.  If
+              event delivery must not affect the HTTP response, wrap the
+              call site or configure ``ErrorPolicy.FIRE_FORGET``.
+        """
+        # Channel = entity class name lowercased — e.g. "post", "user", "order".
+        # Gives consumers a stable routing key independent of the operation type.
+        await self._producer._produce(event, channel=self._entity_channel())
+
+    def _entity_channel(self) -> str:
+        """
+        Return the default event channel for this service's entity type.
+
+        Derived from the entity class name, lowercased.  For example, a
+        service managing ``Post`` entities publishes to channel ``"post"``.
+
+        Returns:
+            Lowercased entity class name, e.g. ``"post"``, ``"user"``.
+        """
+        return self._entity_type().__name__.lower()
 
     def _entity_type(self) -> type[D]:
         """

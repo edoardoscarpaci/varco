@@ -3,19 +3,26 @@ repos:
     rev: v0.4.1
     hooks:
       - id: ruff
-        args: [--fix]  # Auto-fix what it can
+        args: [--fix]
 
-  # Optional: also auto-format with black
   - repo: https://github.com/psf/black
     rev: 24.3.0
     hooks:
       - id: black
-  
+
+  # ── Per-package test suites ─────────────────────────────────────────────────
+  # Each hook runs uv run --package <name> pytest from the repo root so all
+  # packages share the single workspace .venv.
+  #
+  # Integration tests (real Kafka / Redis / MongoDB via testcontainers) are
+  # excluded here — they require Docker and are slow.  Run them explicitly:
+  #   uv run pytest -m integration
+
   - repo: local
     hooks:
       - id: pytest-core
         name: pytest (varco_core)
-        entry: bash -c 'cd varco_core && poetry lock && poetry sync && poetry run python -m pytest tests --tb=short -q'
+        entry: uv run --package varco-core pytest varco_core/tests --tb=short -q
         language: system
         pass_filenames: false
         always_run: true
@@ -24,7 +31,7 @@ repos:
     hooks:
       - id: pytest-beanie
         name: pytest (varco_beanie)
-        entry: bash -c 'cd varco_beanie && poetry lock && poetry sync && poetry run python -m pytest tests --tb=short -q'
+        entry: uv run --package varco-beanie pytest varco_beanie/tests --tb=short -q
         language: system
         pass_filenames: false
         always_run: true
@@ -33,7 +40,25 @@ repos:
     hooks:
       - id: pytest-sa
         name: pytest (varco_sa)
-        entry: bash -c 'cd varco_sa && poetry lock && poetry sync && poetry run python -m pytest tests --tb=short -q'
+        entry: uv run --package varco-sa pytest varco_sa/tests --tb=short -q
+        language: system
+        pass_filenames: false
+        always_run: true
+
+  - repo: local
+    hooks:
+      - id: pytest-kafka
+        name: pytest (varco_kafka)
+        entry: uv run --package varco-kafka pytest varco_kafka/tests --tb=short -q
+        language: system
+        pass_filenames: false
+        always_run: true
+
+  - repo: local
+    hooks:
+      - id: pytest-redis
+        name: pytest (varco_redis)
+        entry: uv run --package varco-redis pytest varco_redis/tests --tb=short -q
         language: system
         pass_filenames: false
         always_run: true

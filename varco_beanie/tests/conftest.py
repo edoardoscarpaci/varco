@@ -28,32 +28,55 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def bypass_beanie_collection_check(monkeypatch: pytest.MonkeyPatch) -> None:
+def bypass_beanie_collection_check(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
-    Patch Document.get_pymongo_collection so unit tests don't need MongoDB.
+    Patch the Document collection accessor so unit tests don't need MongoDB.
 
-    Beanie's Document.__init__ calls get_pymongo_collection() which raises
-    CollectionWasNotInitialized if init_beanie() was never called.  Patching
-    it to return a MagicMock lets Documents be instantiated in unit tests
-    without a real database connection.
+    Beanie's Document.__init__ calls a collection accessor classmethod which
+    raises CollectionWasNotInitialized if init_beanie() was never called.
+    Patching it to return a MagicMock lets Documents be instantiated in unit
+    tests without a real database connection.
+
+    The method name varies by beanie version:
+        - beanie 2.x:       get_pymongo_collection  (motor dropped)
+        - beanie 1.27–1.30: get_motor_collection
+    This fixture tries both names so it works across versions without pinning.
 
     Args:
+        request:     pytest's request fixture — used to detect integration
+                     markers so the bypass is skipped for those tests.
         monkeypatch: pytest's monkeypatch fixture — automatically scoped to
                      the current test function, so the patch is reversed after
                      each test.
 
     Edge cases:
-        - Tests that check pymongo collection behaviour will need a real
-          MongoDB instead of relying on this fixture.
+        - Tests marked with ``@pytest.mark.integration`` skip this bypass
+          because they use a real MongoDB container and call init_beanie().
+        - If neither accessor method exists, the bypass is silently skipped —
+          the test will fail naturally if a collection operation is triggered.
     """
+    # Integration tests use a real MongoDB — do not apply the mock bypass,
+    # otherwise init_beanie() would never be reached and CRUD ops would fail.
+    if request.node.get_closest_marker("integration"):
+        return
+
     from beanie.odm.documents import (
         Document,
     )  # local import — avoid top-level beanie init
 
-    # get_pymongo_collection is a classmethod — wrap with classmethod() so
-    # Python's descriptor protocol routes it correctly when called via instance.
-    monkeypatch.setattr(
-        Document,
-        "get_pymongo_collection",
-        classmethod(lambda cls: MagicMock()),
-    )
+    # The collection accessor classmethod was renamed across beanie versions:
+    #   - beanie 2.x:      get_pymongo_collection  (motor dropped; native pymongo)
+    #   - beanie 1.27–1.30: get_motor_collection
+    # Try both names so this bypass works across major versions without
+    # pinning to a specific beanie release.
+    for _method_name in ("get_pymongo_collection", "get_motor_collection"):
+        if hasattr(Document, _method_name):
+            monkeypatch.setattr(
+                Document,
+                _method_name,
+                classmethod(lambda cls: MagicMock()),
+            )
+            break

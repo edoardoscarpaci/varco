@@ -1,14 +1,14 @@
 """
 varco_beanie.di
 ===================
-providify DI integration for the Beanie (Motor / MongoDB) backend.
+providify DI integration for the Beanie (pymongo / MongoDB) backend.
 
 Wires ``BeanieRepositoryProvider``, ``BeanieQueryCompiler``, and per-entity
 ``AsyncRepository[D]`` bindings into a ``DIContainer`` with a minimal setup API.
 
 Typical usage::
 
-    from motor.motor_asyncio import AsyncIOMotorClient
+    from pymongo import AsyncMongoClient
     from providify import DIContainer, Provider
 
     from varco_beanie.di import BeanieModule, BeanieSettings, bind_repositories
@@ -20,7 +20,7 @@ Typical usage::
     @Provider(singleton=True)
     def beanie_settings() -> BeanieSettings:
         return BeanieSettings(
-            motor_client=AsyncIOMotorClient("mongodb://localhost:27017"),
+            mongo_client=AsyncMongoClient("mongodb://localhost:27017"),
             db_name="myapp",
             entity_classes=(User, Post),
         )
@@ -46,7 +46,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import AsyncMongoClient
 
 from providify import Configuration, Provider
 from varco_core.model import DomainModel
@@ -76,13 +76,13 @@ class BeanieSettings:
       ✅ All config grouped in one place — easy to swap for tests
       ✅ Frozen dataclass is hashable — can be used as a dict key if needed
       ✅ Keeps BeanieModule.__init__ to a single parameter (DI-friendly)
-      ❌ One extra level of indirection vs passing motor_client directly
+      ❌ One extra level of indirection vs passing mongo_client directly
 
     Thread safety:  ✅ Immutable after construction.
     Async safety:   ✅ No async state.
 
     Args:
-        motor_client:   A connected ``AsyncIOMotorClient`` instance.
+        mongo_client:   A connected ``AsyncMongoClient`` instance (pymongo>=4.11).
         db_name:        MongoDB database name.
         entity_classes: Domain model classes to register at module init time.
                         Can also be registered later via
@@ -97,7 +97,7 @@ class BeanieSettings:
           when the first transaction begins, not at construction time.
     """
 
-    motor_client: AsyncIOMotorClient
+    mongo_client: AsyncMongoClient
     db_name: str
     entity_classes: tuple[type[DomainModel], ...] = field(default_factory=tuple)
     transactional: bool = False
@@ -150,7 +150,7 @@ class BeanieModule:
         Create, configure, and initialise the ``BeanieRepositoryProvider``.
 
         Calls ``await provider.init()`` so Beanie's document models are
-        registered with Motor before any repository operation runs.
+        registered with pymongo before any repository operation runs.
 
         Returns:
             A fully initialised ``BeanieRepositoryProvider`` cast to the
@@ -159,7 +159,7 @@ class BeanieModule:
 
         Raises:
             Any exception raised by ``beanie.init_beanie()`` propagates
-            directly (e.g. connection refused from Motor).
+            directly (e.g. connection refused from pymongo driver).
 
         Edge cases:
             - If ``entity_classes`` is empty in settings, callers must call
@@ -168,7 +168,7 @@ class BeanieModule:
             - ``init()`` is idempotent — safe to call more than once.
         """
         provider = BeanieRepositoryProvider(
-            motor_client=self._settings.motor_client,
+            mongo_client=self._settings.mongo_client,
             db_name=self._settings.db_name,
             transactional=self._settings.transactional,
         )

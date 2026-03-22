@@ -1,16 +1,17 @@
 """
 varco_beanie
 ================
-Beanie (Motor / MongoDB) async backend for varco.
+Beanie (pymongo / MongoDB) async backend for varco.
 
 Quick start::
 
+    from pymongo import AsyncMongoClient
     from varco_beanie import BeanieRepositoryProvider, BeanieDocRegistry
     from varco_core.query.builder import QueryBuilder
     from varco_core.query.params import QueryParams
     from varco_core.query.type import SortField, SortOrder
 
-    provider = BeanieRepositoryProvider(motor_client=client, db_name="mydb")
+    provider = BeanieRepositoryProvider(mongo_client=AsyncMongoClient(...), db_name="mydb")
     provider.register(User, Post)
     await provider.init()
 
@@ -25,6 +26,7 @@ Quick start::
 
 providify DI integration::
 
+    from pymongo import AsyncMongoClient
     from varco_beanie import BeanieModule, BeanieSettings, bind_repositories
     from providify import DIContainer, Provider
 
@@ -32,7 +34,7 @@ providify DI integration::
 
     @Provider(singleton=True)
     def settings() -> BeanieSettings:
-        return BeanieSettings(motor_client=client, db_name="mydb", entity_classes=(User,))
+        return BeanieSettings(mongo_client=AsyncMongoClient(...), db_name="mydb", entity_classes=(User,))
 
     container.provide(settings)
     container.install(BeanieModule)

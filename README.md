@@ -8,9 +8,11 @@ A modular Python framework for building expressive, backend-agnostic REST APIs o
 
 | Package | Description |
 |---|---|
-| `varco_core` | Backend-agnostic domain model, service layer, authorization, assembler, query AST, builder, parser, DTOs |
+| `varco_core` | Backend-agnostic domain model, service layer, authorization, assembler, query AST, builder, parser, DTOs, event system |
 | `varco_sa` | SQLAlchemy async backend (ORM generation, repository, schema guard, Alembic helpers) |
 | `varco_beanie` | Beanie (Motor/MongoDB) async backend |
+| `varco_kafka` | Apache Kafka event bus backend (`KafkaEventBus` via aiokafka) |
+| `varco_redis` | Redis Pub/Sub event bus backend (`RedisEventBus` via redis.asyncio) |
 
 ---
 
@@ -46,6 +48,19 @@ A modular Python framework for building expressive, backend-agnostic REST APIs o
 - [Correlation ID / Tracing](#correlation-id--tracing)
 - [Multi-tenancy (DB-level)](#multi-tenancy-db-level)
 - [Query System](#query-system)
+- [Event System](#event-system)
+  - [Event base class](#event-base-class)
+  - [AbstractEventBus](#abstracteventbus)
+  - [InMemoryEventBus](#inmemoryeventbus)
+  - [Producer — AbstractEventProducer](#producer--abstracteventproducer)
+  - [Consumer — EventConsumer + @listen](#consumer--eventconsumer--listen)
+  - [Priority](#priority)
+  - [ErrorPolicy and DispatchMode](#errorpolicy-and-dispatchmode)
+  - [Middleware](#event-middleware)
+  - [Domain events](#domain-events)
+  - [JsonEventSerializer](#jsoneventserializer)
+  - [Kafka backend (varco_kafka)](#kafka-backend-varco_kafka)
+  - [Redis backend (varco_redis)](#redis-backend-varco_redis)
 - [SQLAlchemy Backend](#sqlalchemy-backend)
   - [Bootstrap (one-liner setup)](#bootstrap-one-liner-setup)
   - [Alembic helpers](#alembic-helpers)
@@ -934,6 +949,378 @@ registry.register("age", int, coerce_int)
 registry.register("created_at", datetime, coerce_datetime)
 coerced_ast = ASTTypeCoercion(registry).visit(parsed_ast)
 ```
+
+---
+
+## Event System
+
+varco includes a general-purpose async event system.  `varco_core` provides
+the in-process `InMemoryEventBus`; `varco_kafka` and `varco_redis` provide
+distributed backends.
+
+### Layer map
+
+```
+User code (services, handlers)
+  ↓ depends on
+AbstractEventProducer  /  EventConsumer + @listen
+  ↓ delegates to
+AbstractEventBus
+  ↓ implemented by
+InMemoryEventBus   (varco_core)
+KafkaEventBus      (varco_kafka)
+RedisEventBus      (varco_redis)
+```
+
+---
+
+### Event base class
+
+All events inherit from `Event` — a Pydantic frozen model.  Auto-generated
+`event_id` (UUID4) and `timestamp` (UTC) are injected at construction time.
+
+Declare an optional `__event_type__` class variable for stable serialization
+across deployments (otherwise the class name is used):
+
+```python
+from varco_core.event import Event
+
+class OrderPlacedEvent(Event):
+    __event_type__ = "order.placed"   # stable cross-process identifier
+    order_id: str
+    total: float
+```
+
+Every `Event` subclass is automatically registered in `Event._registry`
+(via `__init_subclass__`) — no manual registration required.
+
+---
+
+### AbstractEventBus
+
+The low-level interface.  User code should **not** depend on it directly —
+use `AbstractEventProducer` for publishing and `EventConsumer` for consuming.
+
+```python
+class AbstractEventBus(ABC):
+    @abstractmethod
+    async def publish(self, event: Event, *, channel: str = "default") -> asyncio.Task | None: ...
+
+    @abstractmethod
+    def subscribe(
+        self,
+        event_type: type[Event] | str,
+        handler: Callable,
+        *,
+        channel: str = "*",
+        filter: Callable | None = None,
+        priority: int = 0,
+    ) -> Subscription: ...
+```
+
+**Subscription dispatch rules** — a handler is called when ALL match:
+
+1. `event_type` — `isinstance` check (supports inheritance) or `__event_type__` string.
+2. `channel` — subscriber's channel is `"*"` (wildcard) or equals the publish channel.
+3. `filter` — the optional predicate returns `True`.
+
+---
+
+### InMemoryEventBus
+
+Full-featured in-process bus.  Suitable for dev, test, and single-process apps.
+
+```python
+from varco_core.event import InMemoryEventBus, DispatchMode, ErrorPolicy
+
+# Test mode — callers block until all handlers complete
+bus = InMemoryEventBus()
+
+# Production mode — publish() returns immediately; handlers run in background
+bus = InMemoryEventBus(dispatch_mode=DispatchMode.BACKGROUND)
+
+# Middleware + custom error policy
+bus = InMemoryEventBus(
+    error_policy=ErrorPolicy.FIRE_FORGET,
+    middleware=[LoggingMiddleware()],
+)
+```
+
+**Test utilities:**
+
+```python
+# emitted records every (event, channel) pair for assertion
+event, channel = bus.emitted[0]
+bus.clear_emitted()
+
+# drain() waits for all background tasks (BACKGROUND mode only)
+await bus.drain()
+```
+
+**NoopEventBus** — discards all events silently.  Useful in tests that don't
+care about events and don't want to configure a real bus:
+
+```python
+from varco_core.event import NoopEventBus
+bus = NoopEventBus()
+```
+
+---
+
+### Producer — AbstractEventProducer
+
+Services inject `AbstractEventProducer` and call `_produce()`.  The bus is
+a complete implementation detail — services never touch it directly.
+
+```python
+from varco_core.event import AbstractEventProducer, BusEventProducer, NoopEventProducer
+
+# Production — wraps a real bus
+producer = BusEventProducer(bus)
+await producer._produce(OrderPlacedEvent(...), channel="orders")
+await producer._produce_many([(e1, "orders"), (e2, "payments")])
+
+# Null Object — silently discards (default in AsyncService when no producer is injected)
+producer = NoopEventProducer()
+```
+
+`AsyncService` accepts an optional producer via DI:
+
+```python
+from varco_core import AsyncService
+from varco_core.event import BusEventProducer
+
+class OrderService(AsyncService[...]):
+    def __init__(self, ..., producer: Annotated[AbstractEventProducer, InjectMeta(optional=True)] = None):
+        super().__init__(..., producer=producer)
+```
+
+Domain events (`EntityCreatedEvent`, `EntityUpdatedEvent`, `EntityDeletedEvent`)
+are published **automatically** by `AsyncService` after each mutating operation
+commits — no additional code required.
+
+---
+
+### Consumer — EventConsumer + @listen
+
+`EventConsumer` is a base class (or mixin).  Decorate methods with `@listen`
+and call `register_to(bus)` to subscribe:
+
+```python
+from varco_core.event import EventConsumer, listen
+
+class NotificationConsumer(EventConsumer):
+    @listen(OrderPlacedEvent, channel="orders")
+    async def on_order_placed(self, event: OrderPlacedEvent) -> None:
+        await self._send_email(event)
+
+    @listen(OrderPlacedEvent, filter=lambda e: e.total > 1000, channel="orders")
+    async def on_large_order(self, event: OrderPlacedEvent) -> None:
+        await self._alert_team(event)
+
+consumer = NotificationConsumer()
+consumer.register_to(bus)
+# or: bus.register_consumer(consumer)
+```
+
+**Stacking** — same method, multiple channels:
+
+```python
+@listen(OrderPlacedEvent, channel="orders")
+@listen(OrderPlacedEvent, channel="audit")
+async def on_placed(self, event: OrderPlacedEvent) -> None: ...
+```
+
+**Multiple event types** — one handler, multiple types:
+
+```python
+@listen(OrderPlacedEvent, OrderUpdatedEvent)
+async def on_any_order(self, event: Event) -> None: ...
+```
+
+---
+
+### Priority
+
+Higher `priority` values run first.  Equal priorities run in subscription
+order (FIFO):
+
+```python
+bus.subscribe(OrderPlacedEvent, handler_a, priority=10)   # runs first
+bus.subscribe(OrderPlacedEvent, handler_b, priority=0)    # runs second
+
+# Same with @listen
+@listen(OrderPlacedEvent, priority=10)
+async def high_priority_handler(self, event): ...
+```
+
+---
+
+### ErrorPolicy and DispatchMode
+
+| `ErrorPolicy` | Behaviour |
+|---|---|
+| `COLLECT_ALL` (default) | All handlers run; errors collected and re-raised as `ExceptionGroup` |
+| `FAIL_FAST` | First error stops dispatch immediately |
+| `FIRE_FORGET` | Errors logged at WARNING, never propagated |
+
+| `DispatchMode` | Behaviour |
+|---|---|
+| `SYNC` (default) | `publish()` blocks until all handlers complete; returns `None` |
+| `BACKGROUND` | `publish()` returns `asyncio.Task` immediately; handlers run in background |
+
+```python
+# BACKGROUND — caller can optionally await the returned task
+task = await bus.publish(event, channel="orders")
+if task:
+    await task   # optional: wait for all handlers to finish
+```
+
+---
+
+### Event Middleware
+
+ASGI-style middleware wraps the full dispatch pipeline:
+
+```python
+from varco_core.event import EventMiddleware
+
+class LoggingMiddleware(EventMiddleware):
+    async def __call__(self, event, channel, next):
+        logger.info("→ %s on %s", type(event).__name__, channel)
+        await next(event, channel)
+        logger.info("✓ %s dispatched", type(event).__name__)
+
+bus = InMemoryEventBus(middleware=[LoggingMiddleware()])
+```
+
+Middleware can also modify the event/channel or suppress dispatch (by not calling `next`).
+
+---
+
+### Domain events
+
+`AsyncService` automatically emits entity lifecycle events after each
+mutating operation.  Channel is derived from the entity class name
+(lowercase): `Post` → `"post"`, `Order` → `"order"`.
+
+```python
+from varco_core.event import EntityEvent, EntityCreatedEvent, EntityUpdatedEvent, EntityDeletedEvent
+
+# Subscribe to all Post events
+bus.subscribe(EntityEvent, handler, channel="post")
+
+# Subscribe to all creates across all entities
+bus.subscribe(EntityCreatedEvent, handler)
+
+# Subscribe to Post creates only
+bus.subscribe(EntityCreatedEvent, handler, channel="post")
+```
+
+`EntityCreatedEvent` and `EntityUpdatedEvent` carry a `payload` dict — the
+serialized ReadDTO at the time of the operation.  `EntityDeletedEvent` carries
+only the `pk` (the entity no longer exists).
+
+All entity events carry an optional `correlation_id` threaded from the active
+`correlation_context()` automatically.
+
+---
+
+### JsonEventSerializer
+
+Serialize any `Event` subclass to/from UTF-8 JSON bytes.  Used internally by
+`KafkaEventBus` and `RedisEventBus`:
+
+```python
+from varco_core.event import JsonEventSerializer
+
+data = JsonEventSerializer.serialize(event)
+# → b'{"__event_type__": "order.placed", "event_id": "...", ...}'
+
+restored = JsonEventSerializer.deserialize(data)
+assert isinstance(restored, OrderPlacedEvent)
+```
+
+Deserialization looks up the event class in `Event._registry` — populated
+automatically when the event module is imported.
+
+---
+
+### Kafka backend (varco_kafka)
+
+```bash
+pip install varco-kafka
+```
+
+```python
+from varco_kafka import KafkaEventBus, KafkaConfig
+from varco_core.event import BusEventProducer, EventConsumer, listen
+
+config = KafkaConfig(
+    bootstrap_servers="localhost:9092",
+    group_id="my-service",
+    topic_prefix="prod.",          # optional — "prod.orders", "prod.payments"
+    auto_offset_reset="latest",
+)
+
+async with KafkaEventBus(config) as bus:
+    # Publisher
+    producer = BusEventProducer(bus)
+    await producer._produce(OrderPlacedEvent(order_id="1"), channel="orders")
+
+    # Consumer
+    class OrderConsumer(EventConsumer):
+        @listen(OrderPlacedEvent, channel="orders")
+        async def on_placed(self, event: OrderPlacedEvent) -> None:
+            ...
+
+    OrderConsumer().register_to(bus)
+```
+
+`KafkaEventBus.publish()` always returns `None` — Kafka delivery is inherently
+asynchronous (broker-side).  The consumer loop runs as a background task
+and dispatches received messages to local handlers using the same priority /
+filter logic as `InMemoryEventBus`.
+
+**Topic naming:** channel `"orders"` → topic `"prod.orders"` (with prefix `"prod."`).
+
+---
+
+### Redis backend (varco_redis)
+
+```bash
+pip install varco-redis
+```
+
+```python
+from varco_redis import RedisEventBus, RedisConfig
+from varco_core.event import BusEventProducer, EventConsumer, listen
+
+config = RedisConfig(
+    url="redis://localhost:6379/0",
+    channel_prefix="prod:",         # optional — "prod:orders", "prod:payments"
+)
+
+async with RedisEventBus(config) as bus:
+    # Publisher
+    producer = BusEventProducer(bus)
+    await producer._produce(OrderPlacedEvent(order_id="1"), channel="orders")
+
+    # Consumer
+    class OrderConsumer(EventConsumer):
+        @listen(OrderPlacedEvent, channel="orders")
+        async def on_placed(self, event: OrderPlacedEvent) -> None:
+            ...
+
+    OrderConsumer().register_to(bus)
+```
+
+`RedisEventBus` uses Redis Pub/Sub — **at-most-once** delivery.  Messages
+published while no subscribers are connected are silently dropped.
+
+Wildcard subscriptions (`channel="*"`) use `PSUBSCRIBE "*"` under the hood,
+so a single CHANNEL_ALL handler receives events from all channels on that Redis instance.
+Use `channel_prefix` to scope channels to your service.
 
 ---
 

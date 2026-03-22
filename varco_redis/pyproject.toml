@@ -1,0 +1,58 @@
+[project]
+name          = "varco-redis"
+version       = "0.0.1"
+description   = "Redis Pub/Sub event bus backend for varco — RedisEventBus built on redis.asyncio"
+authors       = [{ name = "edoardo.scarpaci", email = "edoardo.scarpaci@gmail.com" }]
+readme        = "README.md"
+license       = { text = "Apache-2.0" }
+requires-python = ">=3.12"
+keywords      = ["fastapi", "redis", "pubsub", "async", "event-bus", "domain-events", "varco"]
+classifiers   = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Networking",
+    "Typing :: Typed",
+]
+dependencies = [
+    # Workspace sibling — resolved from the monorepo via [tool.uv.sources] below.
+    "varco-core",
+    # redis>=7 ships asyncio support built-in; no [asyncio] extra needed.
+    "redis>=5.0",
+    # providify is used directly for @Singleton / @PreDestroy on RedisEventBus
+    # and for @Configuration / @Provider in varco_redis.di.
+    "providify>=0.1.4a3",
+]
+
+[tool.uv.sources]
+# Resolve varco-core from the workspace instead of PyPI so editable
+# changes are immediately visible without a reinstall.
+varco-core = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    # testcontainers[redis] spins up a real Redis instance via Docker for
+    # integration tests.  Marked with @pytest.mark.integration and skipped
+    # by default — run with: pytest -m integration
+    "testcontainers[redis]>=4.0",
+]
+
+[build-system]
+requires      = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["varco_redis"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths    = ["tests"]
+markers      = [
+    "integration: real Redis instance required (disabled by default — use -m integration)",
+]

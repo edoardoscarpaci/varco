@@ -56,7 +56,7 @@ class _Post(DomainModel):
 
 def test_beanie_settings_is_frozen() -> None:
     """BeanieSettings is immutable — assigning a field after construction raises."""
-    settings = BeanieSettings(motor_client=MagicMock(), db_name="test")
+    settings = BeanieSettings(mongo_client=MagicMock(), db_name="test")
 
     with pytest.raises((AttributeError, TypeError)):
         settings.db_name = "other"  # type: ignore[misc]
@@ -64,13 +64,13 @@ def test_beanie_settings_is_frozen() -> None:
 
 def test_beanie_settings_default_entity_classes_is_empty_tuple() -> None:
     """entity_classes defaults to an empty tuple — no domain classes pre-registered."""
-    settings = BeanieSettings(motor_client=MagicMock(), db_name="test")
+    settings = BeanieSettings(mongo_client=MagicMock(), db_name="test")
     assert settings.entity_classes == ()
 
 
 def test_beanie_settings_default_transactional_is_false() -> None:
     """transactional defaults to False — most deployments use standalone MongoDB."""
-    settings = BeanieSettings(motor_client=MagicMock(), db_name="test")
+    settings = BeanieSettings(mongo_client=MagicMock(), db_name="test")
     assert settings.transactional is False
 
 
@@ -78,13 +78,13 @@ def test_beanie_settings_stores_provided_values() -> None:
     """All provided values are stored as attributes."""
     client = MagicMock()
     settings = BeanieSettings(
-        motor_client=client,
+        mongo_client=client,
         db_name="mydb",
         entity_classes=(_User,),
         transactional=True,
     )
 
-    assert settings.motor_client is client
+    assert settings.mongo_client is client
     assert settings.db_name == "mydb"
     assert settings.entity_classes == (_User,)
     assert settings.transactional is True
@@ -96,7 +96,7 @@ def test_beanie_settings_stores_provided_values() -> None:
 async def test_beanie_module_repository_provider_returns_repository_provider() -> None:
     """repository_provider() returns an object typed as RepositoryProvider."""
     mock_client = MagicMock()
-    settings = BeanieSettings(motor_client=mock_client, db_name="testdb")
+    settings = BeanieSettings(mongo_client=mock_client, db_name="testdb")
     module = BeanieModule(settings=settings)
 
     with (
@@ -120,7 +120,7 @@ async def test_beanie_module_repository_provider_returns_repository_provider() -
 async def test_beanie_module_repository_provider_calls_init() -> None:
     """repository_provider() awaits provider.init() to initialise Beanie."""
     mock_client = MagicMock()
-    settings = BeanieSettings(motor_client=mock_client, db_name="testdb")
+    settings = BeanieSettings(mongo_client=mock_client, db_name="testdb")
     module = BeanieModule(settings=settings)
 
     with patch("varco_beanie.di.BeanieRepositoryProvider") as mock_cls:
@@ -141,7 +141,7 @@ async def test_beanie_module_repository_provider_registers_entity_classes() -> N
     """
     mock_client = MagicMock()
     settings = BeanieSettings(
-        motor_client=mock_client,
+        mongo_client=mock_client,
         db_name="testdb",
         entity_classes=(_User, _Post),
     )
@@ -167,7 +167,7 @@ async def test_beanie_module_repository_provider_skips_register_when_no_entities
     Edge case: user may register entities manually after provider creation.
     """
     mock_client = MagicMock()
-    settings = BeanieSettings(motor_client=mock_client, db_name="testdb")
+    settings = BeanieSettings(mongo_client=mock_client, db_name="testdb")
     module = BeanieModule(settings=settings)
 
     with patch("varco_beanie.di.BeanieRepositoryProvider") as mock_cls:
@@ -186,7 +186,7 @@ async def test_beanie_module_repository_provider_skips_register_when_no_entities
 
 def test_beanie_module_query_compiler_returns_beanie_query_compiler() -> None:
     """query_compiler() returns a BeanieQueryCompiler instance."""
-    settings = BeanieSettings(motor_client=MagicMock(), db_name="testdb")
+    settings = BeanieSettings(mongo_client=MagicMock(), db_name="testdb")
     module = BeanieModule(settings=settings)
 
     result = module.query_compiler()

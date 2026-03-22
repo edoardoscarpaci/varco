@@ -1,12 +1,12 @@
 """
 varco_beanie.bootstrap
 ==========================
-One-stop bootstrap for Beanie (Motor / MongoDB) + varco applications.
+One-stop bootstrap for Beanie (pymongo / MongoDB) + varco applications.
 
 ``BeanieConfig``
     Frozen value object describing everything needed to create a working
-    ``BeanieRepositoryProvider``: Motor client, database name, entity classes,
-    and whether to use MongoDB transactions.
+    ``BeanieRepositoryProvider``: pymongo async client, database name, entity
+    classes, and whether to use MongoDB transactions.
 
 ``BeanieFastrestApp``
     Thin coordinator that wires ``BeanieConfig`` into the provider, exposes
@@ -15,12 +15,12 @@ One-stop bootstrap for Beanie (Motor / MongoDB) + varco applications.
 
 Minimal usage::
 
-    from motor.motor_asyncio import AsyncIOMotorClient
+    from pymongo import AsyncMongoClient
     from varco_beanie.bootstrap import BeanieConfig, BeanieFastrestApp
     from myapp.domain import Post, User
 
     config = BeanieConfig(
-        motor_client=AsyncIOMotorClient("mongodb://localhost:27017"),
+        mongo_client=AsyncMongoClient("mongodb://localhost:27017"),
         db_name="myapp",
         entity_classes=(User, Post),
     )
@@ -63,7 +63,7 @@ class BeanieConfig:
     Immutable configuration for a Beanie-backed varco application.
 
     Attributes:
-        motor_client:  Connected ``AsyncIOMotorClient`` instance.
+        mongo_client:  Connected ``AsyncMongoClient`` instance (pymongo>=4.11).
         db_name:       MongoDB database name (e.g. ``"myapp"``).
         entity_classes: Domain model classes to register.  Each class is passed
                         to ``BeanieModelFactory.build()`` which generates a
@@ -76,7 +76,7 @@ class BeanieConfig:
     Async safety:   ✅ Pure configuration value object; no I/O.
 
     Edge cases:
-        - ``motor_client`` must already be connected — no connection check is
+        - ``mongo_client`` must already be connected — no connection check is
           performed at config construction time.
         - Passing an empty ``entity_classes`` tuple is valid but results in
           no repositories being available through the UoW.
@@ -86,18 +86,20 @@ class BeanieConfig:
 
     Example::
 
-        from motor.motor_asyncio import AsyncIOMotorClient
+        from pymongo import AsyncMongoClient
 
         BeanieConfig(
-            motor_client=AsyncIOMotorClient("mongodb://localhost:27017"),
+            mongo_client=AsyncMongoClient("mongodb://localhost:27017"),
             db_name="myapp",
             entity_classes=(User, Post, Comment),
             transactional=False,
         )
     """
 
-    # Connected Motor client — the source of database operations
-    motor_client: Any  # AsyncIOMotorClient; Any avoids hard motor dep at type-check
+    # Connected pymongo async client — the source of database operations
+    mongo_client: (
+        Any  # AsyncMongoClient; Any avoids hard pymongo submodule dep at type-check
+    )
 
     # MongoDB database name
     db_name: str
@@ -164,7 +166,7 @@ class BeanieFastrestApp:
               entity class synchronously — O(n) at startup.
         """
         self._provider = BeanieRepositoryProvider(
-            motor_client=config.motor_client,
+            mongo_client=config.mongo_client,
             db_name=config.db_name,
             transactional=config.transactional,
         )
@@ -200,8 +202,8 @@ class BeanieFastrestApp:
         Edge cases:
             - Index creation is performed by Beanie during this call — it may
               be slow on large existing collections.
-            - If the Motor client cannot reach the database, this will raise
-              a connection error from the Motor driver.
+            - If the pymongo client cannot reach the database, this will raise
+              a connection error from the pymongo driver.
         """
         # Delegate to the provider — it knows all registered Document classes
         # and calls beanie.init_beanie() with the correct arguments.

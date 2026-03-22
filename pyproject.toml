@@ -1,0 +1,16 @@
+# Root workspace coordinator — not a package itself.
+# Run `uv sync` from this directory to install all workspace members.
+#
+# DESIGN: uv workspace over individual per-package virtual envs
+#   ✅ Single lock file (uv.lock) covers all packages — reproducible builds.
+#   ✅ Workspace members share a virtual env — no path-dep reinstall overhead.
+#   ✅ `uv run pytest` in any sub-directory uses the shared env.
+#   ❌ All packages must be compatible with the same Python version range.
+[tool.uv.workspace]
+members = [
+    "varco_core",
+    "varco_kafka",
+    "varco_redis",
+    "varco_beanie",
+    "varco_sa",
+]

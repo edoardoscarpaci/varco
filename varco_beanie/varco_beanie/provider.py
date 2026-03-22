@@ -22,11 +22,11 @@ class BeanieRepositoryProvider(RepositoryProvider):
 
     Usage::
 
-        from motor.motor_asyncio import AsyncIOMotorClient
+        from pymongo import AsyncMongoClient
         from varco_beanie.provider import BeanieRepositoryProvider
 
-        client   = AsyncIOMotorClient("mongodb://localhost:27017")
-        provider = BeanieRepositoryProvider(motor_client=client, db_name="myapp")
+        client   = AsyncMongoClient("mongodb://localhost:27017")
+        provider = BeanieRepositoryProvider(mongo_client=client, db_name="myapp")
         provider.register(User, Post)   # ← or autodiscover("myapp.models")
 
         await provider.init()           # calls init_beanie() at startup
@@ -35,7 +35,7 @@ class BeanieRepositoryProvider(RepositoryProvider):
             user = await uow.users.save(User(name="Edo", email="..."))
 
     Args:
-        motor_client:  Connected ``AsyncIOMotorClient``.
+        mongo_client:  Connected ``AsyncMongoClient`` (pymongo>=4.11).
         db_name:       MongoDB database name.
         transactional: Use MongoDB transactions (replica set required).
 
@@ -48,12 +48,12 @@ class BeanieRepositoryProvider(RepositoryProvider):
 
     def __init__(
         self,
-        motor_client: Any,
+        mongo_client: Any,
         db_name: str,
         *,
         transactional: bool = False,
     ) -> None:
-        self._client = motor_client
+        self._client = mongo_client
         self._db_name = db_name
         self._transactional = transactional
         self._factory = BeanieModelFactory()
@@ -97,7 +97,7 @@ class BeanieRepositoryProvider(RepositoryProvider):
             for cls, (_, mapper) in self._built.items()
         }
         return BeanieUnitOfWork(
-            motor_client=self._client,
+            mongo_client=self._client,
             repo_factories=repo_factories,
             transactional=self._transactional,
         )

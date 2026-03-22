@@ -108,6 +108,28 @@ from varco_core.service.soft_delete import SoftDeleteService
 # ── Service type aliases and protocols ──────────────────────────────────────────
 from varco_core.service.types import Assembler, ServiceProtocol
 
+# ── Event system ────────────────────────────────────────────────────────────────
+from varco_core.event import (
+    CHANNEL_ALL,
+    CHANNEL_DEFAULT,
+    AbstractEventBus,
+    AbstractEventProducer,
+    BusEventProducer,
+    EntityCreatedEvent,
+    EntityDeletedEvent,
+    EntityEvent,
+    EntityUpdatedEvent,
+    ErrorPolicy,
+    Event,
+    EventConsumer,
+    EventMiddleware,
+    InMemoryEventBus,
+    JsonEventSerializer,
+    NoopEventProducer,
+    Subscription,
+    listen,
+)
+
 # ── Tracing / correlation ID ────────────────────────────────────────────────────
 from varco_core.tracing import (
     CorrelationIdFilter,
@@ -222,6 +244,25 @@ __all__ = [
     # ── Service type aliases ────────────────────────────────────────────────────
     "Assembler",
     "ServiceProtocol",
+    # ── Event system ─────────────────────────────────────────────────────────────
+    "CHANNEL_ALL",
+    "CHANNEL_DEFAULT",
+    "AbstractEventBus",
+    "AbstractEventProducer",
+    "BusEventProducer",
+    "EntityCreatedEvent",
+    "EntityDeletedEvent",
+    "EntityEvent",
+    "EntityUpdatedEvent",
+    "ErrorPolicy",
+    "Event",
+    "EventConsumer",
+    "EventMiddleware",
+    "InMemoryEventBus",
+    "JsonEventSerializer",
+    "NoopEventProducer",
+    "Subscription",
+    "listen",
     # ── Tracing ─────────────────────────────────────────────────────────────────
     "CorrelationIdFilter",
     "correlation_context",

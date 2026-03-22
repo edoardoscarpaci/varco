@@ -1,7 +1,7 @@
 """
 Tests for BeanieUnitOfWork.
 
-Motor client and session are mocked — no MongoDB required.
+pymongo async client and session are mocked — no MongoDB required.
 
 Coverage:
 - _begin:  creates session, wires repo attributes, starts transaction (opt-in)
@@ -26,9 +26,9 @@ from varco_beanie.uow import BeanieUnitOfWork
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
-def _make_motor_client(session: MagicMock | None = None) -> MagicMock:
+def _make_mongo_client(session: MagicMock | None = None) -> MagicMock:
     """
-    Build a mock AsyncIOMotorClient.
+    Build a mock AsyncMongoClient.
 
     start_session() is an AsyncMock returning the given (or a fresh) session.
 
@@ -36,7 +36,7 @@ def _make_motor_client(session: MagicMock | None = None) -> MagicMock:
         session: The session object to return from start_session().
 
     Returns:
-        A mock Motor client ready for injection into BeanieUnitOfWork.
+        A mock pymongo async client ready for injection into BeanieUnitOfWork.
     """
     client = MagicMock()
     mock_session = session or MagicMock()
@@ -51,7 +51,7 @@ def _make_uow(
     session: MagicMock | None = None,
 ) -> tuple[BeanieUnitOfWork, MagicMock]:
     """
-    Build a BeanieUnitOfWork with mocked Motor client.
+    Build a BeanieUnitOfWork with mocked pymongo async client.
 
     Returns:
         (uow, mock_session) — the session is the one returned by start_session().
@@ -61,9 +61,9 @@ def _make_uow(
     mock_session.abort_transaction = AsyncMock()
     mock_session.end_session = AsyncMock()
 
-    client = _make_motor_client(session=mock_session)
+    client = _make_mongo_client(session=mock_session)
     uow = BeanieUnitOfWork(
-        motor_client=client,
+        mongo_client=client,
         repo_factories=repo_factories or {},
         transactional=transactional,
     )
@@ -73,10 +73,10 @@ def _make_uow(
 # ── _begin ────────────────────────────────────────────────────────────────────
 
 
-async def test_begin_creates_motor_session() -> None:
-    """_begin() calls motor_client.start_session() to open a new session."""
-    client = _make_motor_client()
-    uow = BeanieUnitOfWork(motor_client=client, repo_factories={})
+async def test_begin_creates_mongo_session() -> None:
+    """_begin() calls mongo_client.start_session() to open a new session."""
+    client = _make_mongo_client()
+    uow = BeanieUnitOfWork(mongo_client=client, repo_factories={})
     await uow._begin()
 
     client.start_session.assert_called_once()
@@ -122,8 +122,8 @@ async def test_begin_idempotent_if_session_already_open() -> None:
     Edge case: calling _begin() twice should not open a second session.
     The condition `if self._session is None` prevents double-open.
     """
-    client = _make_motor_client()
-    uow = BeanieUnitOfWork(motor_client=client, repo_factories={})
+    client = _make_mongo_client()
+    uow = BeanieUnitOfWork(mongo_client=client, repo_factories={})
     await uow._begin()
     await uow._begin()
 
