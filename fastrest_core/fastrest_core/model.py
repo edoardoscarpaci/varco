@@ -474,3 +474,135 @@ class TenantVersionedDomainModel(TenantMixin, VersionedDomainModel):
           before the first save; ``row_version`` is stamped by the
           mapper after — the two are independent and do not interact.
     """
+
+
+# ── Soft-delete bases ──────────────────────────────────────────────────────────
+
+
+@dataclass(kw_only=True)
+class SoftDeleteMixin:
+    """
+    Single-field dataclass mixin that adds a ``deleted_at`` timestamp to any
+    domain model, enabling soft deletion (logical delete) instead of
+    physical row removal.
+
+    Designed to be combined with ``DomainModel``, ``AuditedDomainModel``, or
+    ``VersionedDomainModel`` via multiple inheritance::
+
+        class SoftDeleteDomainModel(SoftDeleteMixin, DomainModel): ...
+        class SoftDeleteAuditedDomainModel(SoftDeleteMixin, AuditedDomainModel): ...
+
+    Fields
+    ------
+    deleted_at
+        ``None`` when the entity is active.  Set to a UTC datetime by
+        ``SoftDeleteService.delete()`` to mark the entity as deleted.
+        ``SoftDeleteService.restore()`` clears this field.
+
+        Stored and indexed in the database — queries can filter on
+        ``IS NULL`` (active only) or ``IS NOT NULL`` (deleted only).
+
+    ``init=True`` is intentional: ``dataclasses.replace(entity, deleted_at=dt)``
+    requires the field to be an ``__init__`` parameter.  Contrast with
+    ``created_at`` / ``updated_at`` on ``AuditedDomainModel`` which are
+    mapper-managed and therefore ``init=False``.
+
+    ``compare=False`` — two entities with the same business fields but
+    different deletion timestamps are still the same logical record.
+
+    DESIGN: ``init=True`` over mapper-managed (``init=False``)
+        ✅ ``dataclasses.replace(entity, deleted_at=now())`` works without
+           ``object.__setattr__`` gymnastics.
+        ✅ Service layer can stamp the field without importing mapper internals.
+        ❌ Callers can accidentally pass ``deleted_at`` in the constructor —
+           ``SoftDeleteService.create()`` ignores any caller-supplied value
+           because ``_prepare_for_create`` always resets it to ``None``.
+
+    DESIGN: mixin as a separate ``@dataclass`` (same pattern as ``TenantMixin``)
+        Python's dataclass machinery collects fields by walking the MRO.
+        Marking the mixin with ``@dataclass`` registers ``deleted_at`` so the
+        decorator on each combined class picks it up automatically.
+
+    Thread safety:  ❌ No shared state — thread safety depends on the concrete
+                    subclass (inherits DomainModel contract).
+    Async safety:   ✅ Safe to pass across ``await`` boundaries once built.
+
+    Edge cases:
+        - ``deleted_at = None`` after construction — never persisted as-is
+          by ``SoftDeleteService.create()`` (hook resets it).
+        - ``dataclasses.replace(entity, deleted_at=dt)`` works because
+          ``init=True``.
+        - Direct repository access bypasses all service-layer guards —
+          this is an explicit escape hatch by design.
+        - Add a database index on ``deleted_at`` for performance on large tables:
+          ``deleted_at: Annotated[datetime | None, FieldHint(index=True)]``
+    """
+
+    # ``init=True`` — required for dataclasses.replace() to set the field.
+    # ``default=None`` — entity starts as active; SoftDeleteService.delete()
+    # stamps the real timestamp.
+    deleted_at: datetime | None = field(
+        default=None, init=True, repr=True, compare=False
+    )
+
+
+@dataclass(kw_only=True)
+class SoftDeleteDomainModel(SoftDeleteMixin, DomainModel):
+    """
+    ``DomainModel`` + ``SoftDeleteMixin``.
+
+    Soft-deletable entity without audit timestamps.  For the full
+    ``deleted_at`` contract see ``SoftDeleteMixin``.
+
+    Inheritance chain::
+
+        DomainModel     (pk, _raw_orm)
+        SoftDeleteMixin (deleted_at)
+        └── SoftDeleteDomainModel
+
+    Usage::
+
+        @register
+        @dataclass
+        class Widget(SoftDeleteDomainModel):
+            pk: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
+            name: str
+
+            class Meta:
+                table = "widgets"
+
+    Thread safety:  ❌ Inherits DomainModel — mutate from one task only.
+    Async safety:   ✅ Safe to pass across await boundaries once built.
+    """
+
+
+@dataclass(kw_only=True)
+class SoftDeleteAuditedDomainModel(SoftDeleteMixin, AuditedDomainModel):
+    """
+    ``AuditedDomainModel`` + ``SoftDeleteMixin``.
+
+    Soft-deletable entity with ``created_at`` / ``updated_at`` audit
+    timestamps.  This is the recommended base for most soft-deletable
+    entities.  For the full ``deleted_at`` contract see ``SoftDeleteMixin``.
+
+    Inheritance chain::
+
+        DomainModel        (pk, _raw_orm)
+        AuditedDomainModel (created_at, updated_at)
+        SoftDeleteMixin    (deleted_at)
+        └── SoftDeleteAuditedDomainModel
+
+    Usage::
+
+        @register
+        @dataclass
+        class Post(SoftDeleteAuditedDomainModel):
+            pk: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
+            title: str
+
+            class Meta:
+                table = "posts"
+
+    Thread safety:  ❌ Inherits DomainModel — mutate from one task only.
+    Async safety:   ✅ Safe to pass across await boundaries once built.
+    """

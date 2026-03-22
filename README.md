@@ -9,7 +9,7 @@ A modular Python framework for building expressive, backend-agnostic REST APIs o
 | Package | Description |
 |---|---|
 | `fastrest_core` | Backend-agnostic domain model, service layer, authorization, assembler, query AST, builder, parser, DTOs |
-| `fastrest_sa` | SQLAlchemy async backend (ORM generation, repository, schema guard) |
+| `fastrest_sa` | SQLAlchemy async backend (ORM generation, repository, schema guard, Alembic helpers) |
 | `fastrest_beanie` | Beanie (Motor/MongoDB) async backend |
 
 ---
@@ -17,13 +17,22 @@ A modular Python framework for building expressive, backend-agnostic REST APIs o
 ## Table of Contents
 
 - [Domain Model](#domain-model)
+  - [Soft Delete](#soft-delete)
+  - [Multi-tenancy models](#multi-tenancy-models)
+  - [Schema versioning](#schema-versioning--migration)
 - [Metadata & Constraints](#metadata--constraints)
 - [Repository & Unit of Work](#repository--unit-of-work)
+  - [exists() and stream()](#exists-and-stream)
 - [DTOs](#dtos)
 - [DTO Assembler](#dto-assembler)
 - [Service Layer](#service-layer)
-  - [IUoWProvider](#iuowprovider)
-  - [AsyncService](#asyncservice)
+  - [Composable mixins](#composable-mixins)
+  - [TenantAwareService](#tenantawareservice)
+  - [SoftDeleteService](#softdeleteservice)
+  - [Combining mixins](#combining-mixins)
+  - [paged_list()](#paged_list)
+  - [exists() and stream()](#exists-and-stream-1)
+  - [ServiceProtocol](#serviceprotocol)
   - [Authorization order](#authorization-order)
   - [DI wiring](#di-wiring)
 - [Authorization](#authorization)
@@ -31,18 +40,18 @@ A modular Python framework for building expressive, backend-agnostic REST APIs o
   - [ResourceGrant](#resourcegrant)
   - [AuthContext](#authcontext)
   - [AbstractAuthorizer](#abstractauthorizer)
+  - [Built-in authorizers](#built-in-authorizers)
   - [BaseAuthorizer](#baseauthorizer)
+- [Error codes & HTTP mapping](#error-codes--http-mapping)
+- [Correlation ID / Tracing](#correlation-id--tracing)
+- [Multi-tenancy (DB-level)](#multi-tenancy-db-level)
 - [Query System](#query-system)
-  - [QueryBuilder](#querybuilder)
-  - [QueryParams](#queryparams)
-  - [QueryParser](#queryparser)
-  - [Type Coercion](#type-coercion)
 - [SQLAlchemy Backend](#sqlalchemy-backend)
-  - [Provider setup](#provider-setup)
+  - [Bootstrap (one-liner setup)](#bootstrap-one-liner-setup)
+  - [Alembic helpers](#alembic-helpers)
   - [Schema Guard](#schema-guard)
 - [Beanie Backend](#beanie-backend)
-  - [Provider setup](#beanie-provider-setup)
-  - [DI integration](#di-integration-providify)
+  - [Bootstrap](#bootstrap-beanie)
 - [Exception Hierarchy](#exception-hierarchy)
 
 ---
@@ -57,9 +66,9 @@ from fastrest_core import DomainModel, AuditedDomainModel, VersionedDomainModel
 
 | Class | Extra fields |
 |---|---|
-| `DomainModel` | `id` only |
-| `AuditedDomainModel` | `id`, `created_at`, `updated_at` |
-| `VersionedDomainModel` | `id`, `created_at`, `updated_at`, `definition_version`, `row_version` |
+| `DomainModel` | `pk` only |
+| `AuditedDomainModel` | `pk`, `created_at`, `updated_at` |
+| `VersionedDomainModel` | `pk`, `created_at`, `updated_at`, `definition_version`, `row_version` |
 
 ```python
 from __future__ import annotations
@@ -68,27 +77,63 @@ from fastrest_core import AuditedDomainModel
 from fastrest_core.meta import FieldHint, PrimaryKey, PKStrategy, pk_field
 
 class User(AuditedDomainModel):
-    id: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
+    pk: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
     name: Annotated[str, FieldHint(max_length=100)]
     email: Annotated[str, FieldHint(unique=True, max_length=255)]
     active: bool = True
 ```
 
-### Accessing the underlying ORM object
+### Soft Delete
+
+Inherit from one of the soft-delete bases to get a `deleted_at: datetime | None` field:
 
 ```python
-# After saving through a repository the entity is "persisted"
-assert user.is_persisted()
+from fastrest_core import SoftDeleteDomainModel, SoftDeleteAuditedDomainModel
 
-# Access the raw SA / Beanie object (raises RuntimeError if not persisted)
-raw_orm = user.raw()
+# Simple — pk + deleted_at
+class ArchivedPost(SoftDeleteDomainModel):
+    pk: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
+    title: str
 
-# Type-safe cast
-from fastrest_core import cast_raw
-from fastrest_sa import SAModelRegistry
+# Audited — pk + created_at + updated_at + deleted_at
+class Post(SoftDeleteAuditedDomainModel):
+    pk: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
+    title: str
+    body: str
+```
 
-OrmUser = SAModelRegistry.get(User)
-orm_obj = cast_raw(user, OrmUser)
+Or mix in `SoftDeleteMixin` yourself onto any existing hierarchy:
+
+```python
+from fastrest_core import SoftDeleteMixin, VersionedDomainModel
+
+class Document(SoftDeleteMixin, VersionedDomainModel):
+    pk: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
+    content: str
+```
+
+The `SoftDeleteService` mixin (see [below](#softdeleteservice)) automatically excludes soft-deleted records from all queries and replaces physical deletion with a timestamp stamp.
+
+### Multi-tenancy models
+
+```python
+from fastrest_core import TenantDomainModel, TenantAuditedDomainModel
+
+class Post(TenantAuditedDomainModel):
+    pk: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
+    tenant_id: Annotated[str, FieldHint(index=True, nullable=False)]
+    title: str
+```
+
+Or add `TenantMixin` to any base:
+
+```python
+from fastrest_core import TenantMixin, SoftDeleteAuditedDomainModel
+
+class Post(TenantMixin, SoftDeleteAuditedDomainModel):
+    pk: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
+    tenant_id: Annotated[str, FieldHint(index=True)]
+    title: str
 ```
 
 ### Schema versioning & migration
@@ -98,8 +143,8 @@ from fastrest_core import DomainMigrator
 
 class UserMigrator(DomainMigrator):
     steps = [
-        lambda data: {**data, "active": True},           # v0 → v1
-        lambda data: {**data, "email": data["email"].lower()},  # v1 → v2
+        lambda data: {**data, "active": True},                       # v0 → v1
+        lambda data: {**data, "email": data["email"].lower()},       # v1 → v2
     ]
 ```
 
@@ -118,10 +163,10 @@ from fastrest_core.meta import (
 
 ```python
 class Post(AuditedDomainModel):
-    id: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
+    pk: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
     title: Annotated[str, FieldHint(max_length=200, nullable=False)]
     slug: Annotated[str, FieldHint(unique=True, index=True, max_length=200)]
-    author_id: Annotated[int, ForeignKey("users.id", on_delete="CASCADE")]
+    author_id: Annotated[int, ForeignKey("users.pk", on_delete="CASCADE")]
     views: int = 0
 ```
 
@@ -145,7 +190,7 @@ class Subscription(AuditedDomainModel):
         CheckConstraint("price >= 0", name="chk_price_positive"),
     ]
 
-    id: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
+    pk: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
     user_id: int
     plan_id: int
     price: float
@@ -163,12 +208,15 @@ from fastrest_core import AsyncRepository, AsyncUnitOfWork
 
 ```python
 # All methods are async
-await repo.find_by_id(pk)           # D | None
-await repo.find_all()               # list[D]
-await repo.save(entity)             # D  (INSERT or UPDATE)
+await repo.find_by_id(pk)            # D | None
+await repo.find_all()                # list[D]
+await repo.save(entity)              # D  (INSERT or UPDATE)
 await repo.delete(entity)
-await repo.find_by_query(params)    # list[D]
-await repo.count(params)            # int
+await repo.find_by_query(params)     # list[D]
+await repo.count(params)             # int
+await repo.exists(pk)                # bool  — lightweight, no ORM hydration
+async for entity in repo.stream_by_query(params):  # AsyncIterator[D]
+    process(entity)
 ```
 
 ### Custom repository
@@ -180,6 +228,27 @@ class UserRepository(AsyncRepository[User, int]):
     async def find_active(self) -> list[User]:
         params = QueryParams(node=QueryBuilder().eq("active", True).build())
         return await self.find_by_query(params)
+```
+
+### `exists()` and `stream()`
+
+`exists()` is a lightweight PK probe that avoids loading the full entity:
+
+```python
+async with provider.make_uow() as uow:
+    if await uow.posts.exists(post_id):
+        print("post exists in the backing store")
+```
+
+`stream_by_query()` yields entities one at a time — useful when result sets are too large to hold in memory:
+
+```python
+params = QueryParams(node=QueryBuilder().eq("active", True).build())
+
+async with provider.make_uow() as uow:
+    async for post in uow.posts.stream_by_query(params):
+        await send_email(post.author_email)
+        # Only one Post is in memory at a time — session stays open for the loop
 ```
 
 ---
@@ -213,7 +282,6 @@ class UserUpdate(UpdateDTO):
 class TagUpdate(UpdateDTO):
     tags: list[str] | None = None
 
-# op controls how the field is applied:
 patch = TagUpdate(tags=["python"], op=UpdateOperation.EXTEND)  # append
 patch = TagUpdate(tags=["old"],    op=UpdateOperation.REMOVE)  # remove
 patch = TagUpdate(tags=["new"],    op=UpdateOperation.REPLACE) # overwrite (default)
@@ -223,7 +291,7 @@ patch = TagUpdate(tags=["new"],    op=UpdateOperation.REPLACE) # overwrite (defa
 
 ## DTO Assembler
 
-`AbstractDTOAssembler[D, C, R, U]` is the only layer responsible for translating between domain entities and DTOs. It keeps mapping logic out of the service and makes it independently testable and swappable.
+`AbstractDTOAssembler[D, C, R, U]` is the only layer responsible for translating between domain entities and DTOs:
 
 ```python
 from fastrest_core.assembler import AbstractDTOAssembler
@@ -232,23 +300,18 @@ from dataclasses import replace
 class PostAssembler(AbstractDTOAssembler[Post, CreatePostDTO, PostReadDTO, UpdatePostDTO]):
 
     def to_domain(self, dto: CreatePostDTO) -> Post:
-        # Return an unpersisted entity — repo.save() assigns pk and timestamps.
-        # Do NOT set pk, created_at, updated_at here.
-        return Post(title=dto.title, body=dto.body, is_published=False)
+        return Post(title=dto.title, body=dto.body)
 
     def to_read_dto(self, entity: Post) -> PostReadDTO:
-        # entity is always persisted here (pk is never None)
         return PostReadDTO(
-            id=str(entity.pk),
+            id=entity.pk,
             title=entity.title,
             body=entity.body,
             created_at=entity.created_at,
-            updated_at=entity.updated_at,
         )
 
     def apply_update(self, entity: Post, dto: UpdatePostDTO) -> Post:
-        # Use dataclasses.replace — copies _raw_orm so repo treats it as UPDATE
-        # None in dto means "no change" — preserve the existing value
+        # dataclasses.replace — copies _raw_orm so repo treats it as UPDATE
         return replace(
             entity,
             title=dto.title if dto.title is not None else entity.title,
@@ -256,11 +319,14 @@ class PostAssembler(AbstractDTOAssembler[Post, CreatePostDTO, PostReadDTO, Updat
         )
 ```
 
-| Method | Called for | Must return |
-|---|---|---|
-| `to_domain(dto)` | `create()` | New unpersisted entity (`pk=None`) |
-| `to_read_dto(entity)` | `get()`, `list()`, `create()`, `update()` | Populated `ReadDTO` |
-| `apply_update(entity, dto)` | `update()` | New entity (via `dataclasses.replace`) — never mutate in place |
+The shorthand `Assembler` alias saves typing in service `__init__` signatures:
+
+```python
+from fastrest_core import Assembler   # TypeAlias for AbstractDTOAssembler
+
+def __init__(self, assembler: Inject[Assembler[Post, CreatePostDTO, PostReadDTO, UpdatePostDTO]]):
+    ...
+```
 
 ---
 
@@ -268,43 +334,33 @@ class PostAssembler(AbstractDTOAssembler[Post, CreatePostDTO, PostReadDTO, Updat
 
 The service layer is the **only** layer that enforces authorization, orchestrates transactions, and raises typed `ServiceException` subclasses.
 
-```
-HTTP adapter
-    ↓  AuthContext (from JWT)
-AsyncService
-    ↓  authorization (AbstractAuthorizer)
-    ↓  UoW + repository
-    ↓  DTO assembly (AbstractDTOAssembler)
-HTTP adapter  ←  ReadDTO
-```
+### Composable mixins
 
-### IUoWProvider
+`AsyncService` exposes four protected hook methods that mixins override to inject cross-cutting behaviour without duplicating CRUD logic:
 
-Minimal interface for anything that can produce a fresh `AsyncUnitOfWork`. `RepositoryProvider` already satisfies it — just bind it in the DI container:
+| Hook | When called | Purpose |
+|---|---|---|
+| `_pre_check(ctx)` | Before opening the UoW | Fast stateless gate (e.g. tenant ID present) |
+| `_scoped_params(params, ctx)` | Before `list` / `count` queries | Inject extra filter nodes |
+| `_check_entity(entity, ctx)` | After `find_by_id` in `get` / `update` / `delete` | Validate entity visibility |
+| `_prepare_for_create(entity, ctx)` | After `to_domain()` in `create` | Stamp cross-cutting fields |
 
-```python
-from fastrest_core.service import IUoWProvider
+Every hook calls `super()` at the end — this chains through Python's MRO so multiple mixins compose without any CRUD method duplication.
 
-@Provider(singleton=True)
-def uow_provider(repo_provider: SQLAlchemyRepositoryProvider) -> IUoWProvider:
-    # RepositoryProvider.make_uow() already satisfies the interface
-    return repo_provider
-```
+### TenantAwareService
 
-### AsyncService
-
-Subclass `AsyncService[D, PK, C, R, U]` and implement a single method:
+Enforces row-level tenant isolation via the four hooks. No CRUD methods are overridden:
 
 ```python
-from fastrest_core.service import AsyncService, IUoWProvider
+from fastrest_core import TenantAwareService, IUoWProvider
 from fastrest_core.assembler import AbstractDTOAssembler
 from fastrest_core.auth import AbstractAuthorizer
 from providify import Inject, Singleton
-from uuid import UUID
 
 @Singleton
-class PostService(AsyncService[Post, UUID, CreatePostDTO, PostReadDTO, UpdatePostDTO]):
-
+class PostService(
+    TenantAwareService[Post, int, CreatePostDTO, PostReadDTO, UpdatePostDTO]
+):
     def __init__(
         self,
         uow_provider: Inject[IUoWProvider],
@@ -313,48 +369,177 @@ class PostService(AsyncService[Post, UUID, CreatePostDTO, PostReadDTO, UpdatePos
     ) -> None:
         super().__init__(uow_provider=uow_provider, authorizer=authorizer, assembler=assembler)
 
-    def _get_repo(self, uow):
-        # Return the repository for Post from the open UoW
-        return uow.posts  # type: ignore[attr-defined]
+    def _get_repo(self, uow): return uow.posts
 ```
 
-All five CRUD methods are provided by the base class:
+What the hooks inject:
+
+- `_pre_check` — raises `ServiceAuthorizationError` if `ctx.metadata["tenant_id"]` is absent, before any DB access
+- `_scoped_params` — prepends `tenant_id = <tid>` to every query
+- `_check_entity` — raises `ServiceNotFoundError` (404, not 403) for cross-tenant entities
+- `_prepare_for_create` — stamps `tenant_id` from the JWT onto every new entity
+
+By default the field name is `"tenant_id"`. Override `_tenant_field` to use a different name:
 
 ```python
-# All methods take an AuthContext — built from the decoded JWT in the HTTP adapter
-ctx = AuthContext(user_id="usr_123", grants=(...))
-
-post_dto  = await svc.create(CreatePostDTO(title="Hello"), ctx)   # → PostReadDTO
-post_dto  = await svc.get("post-1", ctx)                          # → PostReadDTO
-posts     = await svc.list(QueryParams(), ctx)                     # → list[PostReadDTO]
-post_dto  = await svc.update("post-1", UpdatePostDTO(title="Hi"), ctx)  # → PostReadDTO
-await svc.delete("post-1", ctx)                                   # → None
+class PostService(TenantAwareService[Post, ...]):
+    _tenant_field = "org_id"   # uses Post.org_id instead of Post.tenant_id
+    def _get_repo(self, uow): return uow.posts
 ```
+
+### SoftDeleteService
+
+Replaces physical deletion with a `deleted_at` timestamp and excludes soft-deleted records from all queries:
+
+```python
+from fastrest_core import SoftDeleteService
+
+@Singleton
+class PostService(
+    SoftDeleteService[Post, int, CreatePostDTO, PostReadDTO, UpdatePostDTO]
+):
+    def __init__(self, uow_provider, authorizer, assembler): ...
+    def _get_repo(self, uow): return uow.posts
+```
+
+Extra methods beyond the standard CRUD:
+
+```python
+# Physical delete is gone — this stamps deleted_at = now() instead
+await svc.delete(post_id, ctx)
+
+# Restore a soft-deleted entity — clears deleted_at
+restored = await svc.restore(post_id, ctx)
+```
+
+What the hooks inject:
+
+- `_scoped_params` — prepends `deleted_at IS NULL` to every `list` / `count` query
+- `_check_entity` — raises `ServiceNotFoundError` if the entity has `deleted_at` set
+- `_prepare_for_create` — resets `deleted_at = None` on new entities
+
+### Combining mixins
+
+Both mixins use cooperative `super()` calls, so they compose automatically via Python's MRO. Put `TenantAwareService` first so the tenant check runs before the soft-delete check:
+
+```python
+@Singleton
+class PostService(
+    TenantAwareService[Post, int, CreatePostDTO, PostReadDTO, UpdatePostDTO],
+    SoftDeleteService[Post, int, CreatePostDTO, PostReadDTO, UpdatePostDTO],
+    AsyncService[Post, int, CreatePostDTO, PostReadDTO, UpdatePostDTO],
+):
+    def __init__(self, uow_provider, authorizer, assembler): ...
+    def _get_repo(self, uow): return uow.posts
+```
+
+MRO: `PostService → TenantAwareService → SoftDeleteService → AsyncService`
+
+Hook execution on a `list()` call:
+
+```
+_scoped_params:
+  TenantAwareService  → injects "tenant_id = acme"
+  SoftDeleteService   → injects "deleted_at IS NULL"
+  AsyncService        → returns (base no-op)
+
+Final filter: tenant_id = 'acme' AND deleted_at IS NULL AND <caller's filter>
+```
+
+If you need this combination in many services, define a shared abstract base once:
+
+```python
+class TenantSoftDeleteService(
+    TenantAwareService[D, PK, C, R, U],
+    SoftDeleteService[D, PK, C, R, U],
+    AsyncService[D, PK, C, R, U],
+    ABC,
+    Generic[D, PK, C, R, U],
+):
+    """Pre-composed tenant-aware + soft-delete base."""
+```
+
+### `paged_list()`
+
+Returns a pagination envelope by running `list()` and `count()` concurrently:
+
+```python
+page = await svc.paged_list(
+    QueryParams(limit=20, offset=0),
+    ctx,
+    raw_query=request.query_params.get("q"),
+)
+# page.items       → list[PostReadDTO] for the current page
+# page.total_count → int  (full matching set — ignores limit/offset)
+# page.next        → PageCursor | None (None on the last page)
+```
+
+`TenantAwareService` and `SoftDeleteService` both compose with `paged_list()` automatically — `list()` and `count()` already call `_scoped_params()` so filters are applied in both sub-calls.
+
+### `exists()` and `stream()`
+
+`exists()` is a lightweight PK check without fetching entity data:
+
+```python
+# Returns True/False — same Action.READ auth as get()
+if await svc.exists(post_id, ctx):
+    print("post is visible in the backing store")
+```
+
+Note: `exists()` does **not** apply `_check_entity` hooks (soft-delete, tenant boundary). It reports raw backing-store presence. Use `get()` and catch `ServiceNotFoundError` if you need service-layer visibility semantics.
+
+`stream()` is the service-layer counterpart of `stream_by_query()` — same authorization and `_scoped_params` as `list()`, but yields one `ReadDTO` at a time:
+
+```python
+from contextlib import aclosing
+
+# Iterate over potentially millions of rows without loading them all into memory
+async with aclosing(svc.stream(QueryParams(), ctx)) as it:
+    async for post_dto in it:
+        await publish_to_queue(post_dto)
+```
+
+The UoW (and DB cursor) stays open for the entire iteration. Wrap in `contextlib.aclosing()` when early exit is possible — it guarantees `aclose()` is called and the session is released cleanly.
+
+### ServiceProtocol
+
+Use `ServiceProtocol` to type-hint HTTP handlers or adapters without coupling to `AsyncService`:
+
+```python
+from fastrest_core import ServiceProtocol
+
+async def list_handler(
+    service: ServiceProtocol[Post, int, CreatePostDTO, PostReadDTO, UpdatePostDTO],
+    params: QueryParams,
+    ctx: AuthContext,
+) -> list[PostReadDTO]:
+    return await service.list(params, ctx)
+```
+
+`ServiceProtocol` declares all public methods: `get`, `list`, `count`, `paged_list`, `create`, `update`, `delete`, `exists`, `stream`.
 
 ### Authorization order
 
-The order in which auth is checked vs. the DB is opened is intentional and security-relevant:
-
 | Operation | Order |
 |---|---|
-| `create`, `list` | **Auth first**, then open DB — denied callers never touch the database |
-| `get`, `update`, `delete` | **Fetch first**, then auth — the authorizer can inspect entity fields (e.g. ownership); a missing entity always raises `ServiceNotFoundError` regardless of auth |
+| `create`, `list`, `count`, `paged_list` | Auth first → then open DB |
+| `get`, `update`, `delete` | Fetch first → then auth (so ownership checks can inspect the entity) |
+| `exists` | Auth first (collection-level READ) → then DB |
+| `stream` | Auth first (collection-level LIST) → then stream |
 
-> The fetch-first pattern for `get`/`update`/`delete` prevents an **existence oracle**: if auth ran first, a 403 would reveal that the entity exists even when the caller has no permission to see it.
+> The fetch-first pattern for `get`/`update`/`delete` prevents an **existence oracle**: a 403 would reveal the entity exists even when the caller lacks permission. A missing entity always returns 404 regardless of auth.
 
 ### DI wiring
-
-With providify, wire the assembler and service with `@Singleton` on the classes:
 
 ```python
 from providify import Singleton, DIContainer
 
 @Singleton
 class PostAssembler(AbstractDTOAssembler[Post, CreatePostDTO, PostReadDTO, UpdatePostDTO]):
-    ...  # implement the three methods
+    ...
 
 @Singleton
-class PostService(AsyncService[Post, UUID, CreatePostDTO, PostReadDTO, UpdatePostDTO]):
+class PostService(AsyncService[Post, int, CreatePostDTO, PostReadDTO, UpdatePostDTO]):
     def __init__(
         self,
         uow_provider: Inject[IUoWProvider],
@@ -366,19 +551,17 @@ class PostService(AsyncService[Post, UUID, CreatePostDTO, PostReadDTO, UpdatePos
     def _get_repo(self, uow): return uow.posts
 
 container = DIContainer()
-container.register(PostAssembler)   # binds under AbstractDTOAssembler[Post, ...]
-container.register(PostService)     # auto-wired via Inject[...] annotations
+container.register(PostAssembler)
+container.register(PostService)
 ```
 
 ---
 
 ## Authorization
 
-Authorization primitives live in `fastrest_core.auth` and `fastrest_core.base_authorizer`.
-
 ### Action
 
-`Action` is a `StrEnum` — every value is also a plain `str` at runtime, so JWT round-trips are transparent:
+`Action` is a `StrEnum` — every value is also a plain `str` at runtime:
 
 ```python
 from fastrest_core.auth import Action
@@ -389,34 +572,20 @@ Action.UPDATE  # "update"
 Action.DELETE  # "delete"
 Action.LIST    # "list"
 
-Action.READ == "read"  # True — StrEnum compares equal to its string value
+Action.READ == "read"  # True
 ```
 
 ### ResourceGrant
 
-Immutable value object pairing a resource key with an allowed set of actions:
-
 ```python
 from fastrest_core.auth import ResourceGrant, Action
 
-# Type-level grant — applies to every instance of the resource
-ResourceGrant("posts", frozenset({Action.LIST, Action.CREATE, Action.READ}))
-
-# Instance-level grant — applies to one specific entity only
+ResourceGrant("posts",        frozenset({Action.LIST, Action.CREATE, Action.READ}))
 ResourceGrant("posts:abc123", frozenset({Action.UPDATE, Action.DELETE}))
-
-# Wildcard — grants everything on every resource (admin)
-ResourceGrant("*", frozenset(Action))
+ResourceGrant("*",            frozenset(Action))   # wildcard — admin
 ```
 
-Resource key conventions:
-- **Type-level**: lowercase table name (e.g. `"posts"`, `"users"`) — matches `Meta.table`
-- **Instance-level**: `"{table}:{pk}"` (e.g. `"posts:abc123"`)
-- **Wildcard**: `"*"`
-
 ### AuthContext
-
-Immutable identity + permission snapshot, built once per request from the decoded JWT:
 
 ```python
 from fastrest_core.auth import AuthContext, ResourceGrant, Action
@@ -428,94 +597,254 @@ ctx = AuthContext(
         ResourceGrant("posts",        frozenset({Action.LIST, Action.READ})),
         ResourceGrant("posts:abc123", frozenset({Action.UPDATE, Action.DELETE})),
     ),
+    metadata={"tenant_id": "acme"},   # arbitrary bag — used by TenantAwareService
 )
 
-ctx.is_anonymous()              # False
-ctx.has_role("editor")          # True
-ctx.can(Action.READ,   "posts") # True  — type-level grant
-ctx.can(Action.UPDATE, "posts") # False — no type-level UPDATE grant
-ctx.can(Action.UPDATE, "posts:abc123")  # True  — instance-level grant
-ctx.grants_for("posts")         # frozenset({Action.LIST, Action.READ})
+ctx.is_anonymous()                    # False
+ctx.has_role("editor")                # True
+ctx.can(Action.READ,   "posts")       # True  — type-level grant
+ctx.can(Action.UPDATE, "posts")       # False — no type-level UPDATE
+ctx.can(Action.UPDATE, "posts:abc123") # True  — instance-level grant
 ```
 
-An anonymous (unauthenticated) caller:
+Anonymous (unauthenticated) caller:
 
 ```python
-ctx = AuthContext()          # user_id=None, no grants
-ctx.is_anonymous()           # True
+ctx = AuthContext()           # user_id=None, no grants
+ctx.is_anonymous()            # True
 ctx.can(Action.READ, "posts") # False
 ```
 
 ### AbstractAuthorizer
-
-Implement one class that handles all entity types. The service injects it as `Inject[AbstractAuthorizer]`:
 
 ```python
 from fastrest_core.auth import AbstractAuthorizer, Action, AuthContext, Resource
 from fastrest_core.exception.service import ServiceAuthorizationError
 
 class AppAuthorizer(AbstractAuthorizer):
-
     async def authorize(self, ctx: AuthContext, action: Action, resource: Resource) -> None:
-        # Derive the resource key using Meta.table (or lowercase class name)
         meta = getattr(resource.entity_type, "Meta", None)
         table = getattr(meta, "table", resource.entity_type.__name__.lower())
 
-        # Instance-level check (more specific)
         if not resource.is_collection:
             if ctx.can(action, f"{table}:{resource.entity.pk}"):
                 return
 
-        # Type-level check
         if ctx.can(action, table):
             return
 
         raise ServiceAuthorizationError(str(action), resource.entity_type)
 ```
 
-For entity-specific rules, dispatch on `resource.entity_type`:
+### Built-in authorizers
+
+Three ready-to-use `AbstractAuthorizer` implementations for common patterns:
+
+#### `GrantBasedAuthorizer`
+
+Checks `ctx.can(action, resource_key)`. The resource key is derived as `"posts"` (collection) or `"posts:42"` (instance) by default — override `_resource_key()` to customise:
 
 ```python
-class AppAuthorizer(AbstractAuthorizer):
-    async def authorize(self, ctx, action, resource):
-        if resource.entity_type is Post:
-            await _check_post(ctx, action, resource)
-        elif resource.entity_type is User:
-            await _check_user(ctx, action, resource)
-        else:
-            raise ServiceAuthorizationError(str(action), resource.entity_type)
+from fastrest_core import GrantBasedAuthorizer
+
+@Singleton
+class AppAuthorizer(GrantBasedAuthorizer):
+    def _resource_key(self, entity_type, entity=None) -> str:
+        table = entity_type.__name__.lower() + "s"
+        if entity is not None:
+            return f"{table}:{entity.pk}"
+        return table
+```
+
+#### `OwnershipAuthorizer`
+
+Grants collection ops (LIST, CREATE) to everyone; instance ops (GET, UPDATE, DELETE) only when `entity.<owner_field> == ctx.user_id`:
+
+```python
+from fastrest_core import OwnershipAuthorizer
+
+@Singleton
+class AppAuthorizer(OwnershipAuthorizer):
+    _owner_field = "author_id"   # default is "owner_id"
+
+    # Override to customise collection-level behaviour (default: allow all)
+    async def _check_collection(self, ctx, action, resource):
+        if action == Action.CREATE and ctx.is_anonymous():
+            raise ServiceAuthorizationError("create", resource.entity_type)
+```
+
+#### `RoleBasedAuthorizer`
+
+Grants actions based on `ctx.roles` and a static permission table:
+
+```python
+from fastrest_core import RoleBasedAuthorizer
+from fastrest_core.auth import Action
+
+@Singleton
+class AppAuthorizer(RoleBasedAuthorizer):
+    role_permissions = {
+        "admin":  frozenset(Action),                                      # all actions
+        "editor": frozenset({Action.READ, Action.LIST, Action.UPDATE}),
+        "viewer": frozenset({Action.READ, Action.LIST}),
+    }
 ```
 
 ### BaseAuthorizer
 
-`BaseAuthorizer` is a permissive fallback — it allows every operation unconditionally. It is registered at priority `-(2**31)` so any application-specific authorizer at the default priority (0) automatically shadows it:
+Permissive fallback — allows every operation. Registered at the lowest priority so any application authorizer automatically takes precedence:
 
 ```python
 from fastrest_core.base_authorizer import BaseAuthorizer
-from providify import Singleton
 
-# No setup needed — BaseAuthorizer is registered automatically via scan:
+# Development / testing only — never ship this to production without shadowing it
 container.scan("fastrest_core.base_authorizer")
 
-# Your own authorizer at default priority 0 shadows it:
-@Singleton
-class AppAuthorizer(AbstractAuthorizer):
-    async def authorize(self, ctx, action, resource): ...
-
-container.register(AppAuthorizer)  # takes priority over BaseAuthorizer
+# Production guard
+assert not isinstance(container.get(AbstractAuthorizer), BaseAuthorizer), \
+    "No real authorizer registered — refusing to start"
 ```
 
-Use `BaseAuthorizer` for:
-- Prototypes and internal tools with no access-control requirements
-- Integration tests focused on business logic, not permissions
-- Early development before authorization rules are defined
+---
 
-> For production, add a startup guard to prevent accidentally shipping a permissive app:
-> ```python
-> from fastrest_core.base_authorizer import BaseAuthorizer
-> assert not isinstance(container.get(AbstractAuthorizer), BaseAuthorizer), \
->     "No real authorizer registered — refusing to start in production"
-> ```
+## Error codes & HTTP mapping
+
+`FastrestErrorCodes` is a Python `Enum` where each member's `.value` is a frozen `ErrorCode` dataclass. Stable code strings (e.g. `"FASTREST_001"`) serve as i18n translation catalog keys:
+
+```python
+from fastrest_core import FastrestErrorCodes, ErrorCode
+
+FastrestErrorCodes.NOT_FOUND.code           # "FASTREST_001"
+FastrestErrorCodes.NOT_FOUND.http_status    # 404
+FastrestErrorCodes.NOT_FOUND.default_message  # "The requested resource was not found."
+
+list(FastrestErrorCodes)  # all built-in codes — iterable because it's an Enum
+```
+
+| Member | Code | HTTP |
+|---|---|---|
+| `NOT_FOUND` | `FASTREST_001` | 404 |
+| `UNAUTHORIZED` | `FASTREST_002` | 403 |
+| `CONFLICT` | `FASTREST_003` | 409 |
+| `VALIDATION_ERROR` | `FASTREST_004` | 422 |
+| `INTERNAL_ERROR` | `FASTREST_500` | 500 |
+
+### FastAPI exception handler
+
+```python
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastrest_core.exception.service import ServiceException
+from fastrest_core.exception.http import error_message_for
+
+app = FastAPI()
+
+@app.exception_handler(ServiceException)
+async def service_error_handler(request: Request, exc: ServiceException):
+    msg = error_message_for(exc)
+    # msg.model_dump() → {"code": "FASTREST_001", "http_status": 404,
+    #                      "message": "The requested resource was not found.",
+    #                      "detail": "Post with pk=42 not found."}
+    return JSONResponse(status_code=msg.http_status, content=msg.model_dump())
+```
+
+### i18n support
+
+Pass a `translator` callable that receives the stable code string and returns the localised message:
+
+```python
+@app.exception_handler(ServiceException)
+async def service_error_handler(request: Request, exc: ServiceException):
+    msg = error_message_for(exc, translator=request.state.translate)
+    # request.state.translate("FASTREST_001") → "Kaynak bulunamadı."  (Turkish)
+    return JSONResponse(status_code=msg.http_status, content=msg.model_dump())
+```
+
+### Custom application error codes
+
+Register app-specific codes at startup. They take precedence over built-in codes:
+
+```python
+from fastrest_core import ErrorCode, register_error_code
+from fastrest_core.exception.service import ServiceException
+
+class QuotaExceededError(ServiceException): ...
+
+register_error_code(
+    QuotaExceededError,
+    ErrorCode("APP_001", 429, "Request quota exceeded."),
+)
+```
+
+---
+
+## Correlation ID / Tracing
+
+Attach a correlation ID to every log record in the current async task:
+
+```python
+from fastrest_core import (
+    generate_correlation_id,   # → str (UUID4)
+    current_correlation_id,    # → str | None
+    correlation_context,       # async context manager
+    CorrelationIdFilter,       # logging.Filter
+)
+import logging
+
+# Wire the filter once at startup — stamps record.correlation_id on every log line
+logging.getLogger().addFilter(CorrelationIdFilter())
+
+# In the HTTP middleware — activate a fresh ID per request
+@app.middleware("http")
+async def correlation_middleware(request: Request, call_next):
+    cid = request.headers.get("X-Correlation-ID") or generate_correlation_id()
+    async with correlation_context(cid):
+        response = await call_next(request)
+    response.headers["X-Correlation-ID"] = cid
+    return response
+
+# Anywhere in the service layer
+cid = current_correlation_id()   # "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+```
+
+The correlation ID is stored in a `ContextVar` — each asyncio task gets its own isolated copy. Tasks spawned inside `correlation_context()` inherit the ID automatically.
+
+---
+
+## Multi-tenancy (DB-level)
+
+`TenantUoWProvider` routes `make_uow()` to a per-tenant backend (separate DB or schema):
+
+```python
+from fastrest_core import TenantUoWProvider, tenant_context, current_tenant
+from fastrest_sa import SQLAlchemyRepositoryProvider
+
+provider = TenantUoWProvider({
+    "acme":   SQLAlchemyRepositoryProvider(engine_acme, sessions_acme),
+    "globex": SQLAlchemyRepositoryProvider(engine_globex, sessions_globex),
+})
+
+# In the HTTP adapter — activate the tenant once per request
+@app.middleware("http")
+async def tenant_middleware(request: Request, call_next):
+    tid = request.headers["X-Tenant-ID"]
+    with tenant_context(tid):
+        return await call_next(request)
+```
+
+Add tenants at runtime (no restart needed):
+
+```python
+new_provider = SQLAlchemyRepositoryProvider(new_engine, new_sessions)
+await new_provider.create_all()
+provider.register("new_tenant", new_provider)
+```
+
+```python
+provider.has_tenant("acme")         # True
+provider.registered_tenants()       # ["acme", "globex"]
+current_tenant()                    # "acme" (inside a tenant_context block)
+```
 
 ---
 
@@ -531,7 +860,7 @@ from fastrest_core import QueryBuilder, QueryParams, SortField, SortOrder
 # Simple equality filter
 params = QueryParams(node=QueryBuilder().eq("active", True).build(), limit=10)
 
-# Compound filter with sorting
+# Compound filter
 node = (
     QueryBuilder()
     .eq("active", True)
@@ -540,34 +869,18 @@ node = (
     .build()
 )
 
-# OR logic
-adult_or_admin = (
-    QueryBuilder()
-    .gte("age", 18)
-    .or_(QueryBuilder().eq("role", "admin"))
-    .build()
-)
-
-# NOT
-not_banned = QueryBuilder().eq("banned", True).not_().build()
-
-# IN
-status_filter = QueryBuilder().in_("status", ["active", "trial"]).build()
-
-# NULL checks
-unverified = QueryBuilder().is_null("verified_at").build()
+# OR / NOT / IN / NULL
+adult_or_admin = QueryBuilder().gte("age", 18).or_(QueryBuilder().eq("role", "admin")).build()
+not_banned     = QueryBuilder().eq("banned", True).not_().build()
+status_filter  = QueryBuilder().in_("status", ["active", "trial"]).build()
+unverified     = QueryBuilder().is_null("verified_at").build()
 ```
-
-#### All builder methods
 
 | Method | SQL equivalent |
 |---|---|
 | `.eq(field, value)` | `field = value` |
 | `.ne(field, value)` | `field != value` |
-| `.gt(field, value)` | `field > value` |
-| `.gte(field, value)` | `field >= value` |
-| `.lt(field, value)` | `field < value` |
-| `.lte(field, value)` | `field <= value` |
+| `.gt / .gte / .lt / .lte` | `> / >= / < / <=` |
 | `.like(field, pattern)` | `field LIKE pattern` |
 | `.in_(field, values)` | `field IN (values)` |
 | `.is_null(field)` | `field IS NULL` |
@@ -578,11 +891,7 @@ unverified = QueryBuilder().is_null("verified_at").build()
 
 ### QueryParams
 
-Immutable value object bundling filter, sort, and pagination:
-
 ```python
-from fastrest_core import QueryParams, SortField, SortOrder
-
 params = QueryParams(
     node=QueryBuilder().eq("published", True).build(),
     sort=[
@@ -596,14 +905,10 @@ params = QueryParams(
 
 ### QueryParser
 
-Parse query strings into AST nodes (useful for URL query parameters):
-
 ```python
 from fastrest_core import QueryParser
 
 parser = QueryParser()
-
-# Parse a filter expression from a string
 node = parser.parse('status = "active" AND age >= 18')
 params = QueryParams(node=node, limit=50)
 ```
@@ -612,75 +917,23 @@ Grammar supports: `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `IN`, `IS NULL`, `IS 
 
 ### Type Coercion
 
-The coercion system normalises string values from query parameters into the correct Python types before they reach the database.
-
-#### Individual coercers
-
 ```python
 from fastrest_core.query.visitor.type_coercion import (
     coerce_int, coerce_float, coerce_boolean, coerce_datetime, coerce_list,
+    TypeCoercionRegistry, ASTTypeCoercion, register_default_coercer,
 )
 
-coerce_int("42")           # → 42
-coerce_boolean("yes")      # → True
-coerce_datetime("2024-01-15T10:30:00Z")  # → datetime(...)
+coerce_int("42")                        # 42
+coerce_boolean("yes")                   # True
+coerce_datetime("2024-01-15T10:30:00Z") # datetime(...)
+coerce_list('["a","b"]')                # ['a', 'b']
+coerce_list('a,b,c')                    # ['a', 'b', 'c']
 
-# coerce_list handles many formats
-coerce_list('["a","b"]')   # JSON array  → ['a', 'b']
-coerce_list('[a,b]')       # bracketed   → ['a', 'b']
-coerce_list('a,b,c')       # CSV         → ['a', 'b', 'c']
-coerce_list('single')      # single val  → ['single']
-coerce_list(['x', 'y'])    # passthrough → ['x', 'y']
-```
-
-#### Registry & visitor
-
-```python
-from fastrest_core.query.visitor.type_coercion import (
-    TypeCoercionRegistry, ASTTypeCoercion, register_default_coercer, coerce_datetime,
-)
-from datetime import datetime
-
-# Register a global default for a Python type
-register_default_coercer(datetime, coerce_datetime)
-
-# Build a registry manually
 registry = TypeCoercionRegistry()
 registry.register("age", int, coerce_int)
 registry.register("created_at", datetime, coerce_datetime)
-
-# Walk an AST and coerce all comparison values
-coercer = ASTTypeCoercion(registry)
-coerced_ast = coercer.visit(parsed_ast)
+coerced_ast = ASTTypeCoercion(registry).visit(parsed_ast)
 ```
-
-#### Column-level coercers (SQLAlchemy)
-
-Colocate coercion logic with the model via `Column.info`:
-
-```python
-from sqlalchemy import Column, String, DateTime
-from fastrest_core.query.visitor.type_coercion import coerce_datetime
-
-class MyModel(Base):
-    __tablename__ = "my_table"
-    id = Column(Integer, primary_key=True)
-    created_at = Column(DateTime, info={"coercer": coerce_datetime})
-    tags = Column(String, info={"coercer": lambda s: s.split(",")})
-```
-
-Build a registry from a model (respects `Column.info['coercer']`):
-
-```python
-from fastrest_sa import registry_from_sa_model
-
-registry = registry_from_sa_model(MyModel, field_coercions={
-    "special_field": lambda x: custom_coerce(x),
-})
-coercer = ASTTypeCoercion(registry)
-```
-
-**Resolution order:** `Column.info['coercer']` → `field_coercions[name]` → global type default.
 
 ---
 
@@ -692,69 +945,72 @@ coercer = ASTTypeCoercion(registry)
 pip install fastrest-sa
 ```
 
-### Provider setup
+### Bootstrap (one-liner setup)
 
-The recommended entry point. It auto-generates ORM classes from your domain models at runtime:
+`SAFastrestApp` wires engine, ORM generation, and UoW provider in one place:
 
 ```python
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from fastrest_sa import SQLAlchemyRepositoryProvider
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import DeclarativeBase
+from fastrest_sa import SAConfig, SAFastrestApp
+
+class Base(DeclarativeBase): pass
 
 engine = create_async_engine("postgresql+asyncpg://user:pass@localhost/mydb")
-session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+app = SAFastrestApp(SAConfig(
+    engine=engine,
+    base=Base,
+    entity_classes=(User, Post, Subscription),
+))
+
+await app.create_all()                     # CREATE TABLE IF NOT EXISTS ...
+uow_provider = app.uow_provider            # inject this into services
+```
+
+Manual setup (if you need more control):
+
+```python
+from fastrest_sa import SQLAlchemyRepositoryProvider
 
 provider = SQLAlchemyRepositoryProvider(engine=engine, session_factory=session_factory)
 provider.register(User, Post, Subscription)
-
-# Create all tables
 await provider.create_all()
 
-# Use the UoW
 async with provider.make_uow() as uow:
-    # Save a new entity
     user = await uow.users.save(User(name="Alice", email="alice@example.com"))
-
-    # Query with filters, sorting, pagination
-    from fastrest_core import QueryBuilder, QueryParams, SortField, SortOrder
-
-    params = QueryParams(
-        node=QueryBuilder().eq("active", True).gte("age", 18).build(),
-        sort=[SortField("created_at", SortOrder.DESC)],
-        limit=20,
-    )
-    active_users = await uow.users.find_by_query(params)
-    total = await uow.users.count(params)
-
-    # Update
-    user.name = "Alice Smith"
-    user = await uow.users.save(user)
-
-    # Delete
-    await uow.users.delete(user)
+    posts = await uow.posts.find_by_query(QueryParams(limit=20))
 ```
 
-### Optimistic locking
+### Alembic helpers
 
-Use `VersionedDomainModel` to get automatic optimistic concurrency control:
+Use fastrest-generated metadata in your Alembic `env.py` without duplicating table definitions:
 
 ```python
-class Document(VersionedDomainModel):
-    id: Annotated[int, PrimaryKey(PKStrategy.INT_AUTO)] = pk_field()
-    content: str
+# alembic/env.py
+from fastrest_sa import get_target_metadata
+from myapp.models import User, Post, Subscription
 
-# If two callers load the same document and both try to save, the second raises:
-from fastrest_core import StaleEntityError
+target_metadata = get_target_metadata(User, Post, Subscription)
+```
 
-try:
-    await uow.documents.save(stale_document)
-except StaleEntityError:
-    # Reload and retry
-    ...
+Preview the DDL before running a migration:
+
+```python
+from fastrest_sa import print_create_ddl
+
+ddl = print_create_ddl(User, Post, dialect="postgresql")
+print(ddl)
+# CREATE TABLE users (
+#     id SERIAL PRIMARY KEY,
+#     name VARCHAR(100) NOT NULL,
+#     ...
+# );
 ```
 
 ### Schema Guard
 
-Detect drift between the generated ORM metadata and the actual database schema:
+Detect drift between the generated ORM metadata and the actual live database:
 
 ```python
 from fastrest_sa import SchemaGuard
@@ -764,7 +1020,21 @@ report = await guard.check()
 
 if report.has_drift:
     for drift in report.drifts:
-        print(drift)
+        print(drift)   # "Column 'users.phone' missing from database"
+```
+
+### Repository interface (SQLAlchemy)
+
+```python
+async with provider.make_uow() as uow:
+    # Existence check — SELECT COUNT(*) via identity map cache
+    if await uow.posts.exists(post_id):
+        ...
+
+    # Stream with server-side cursor — constant memory regardless of size
+    params = QueryParams(node=QueryBuilder().eq("active", True).build())
+    async for post in uow.posts.stream_by_query(params):
+        await process(post)
 ```
 
 ---
@@ -777,30 +1047,53 @@ if report.has_drift:
 pip install fastrest-beanie
 ```
 
-### Beanie provider setup
+### Bootstrap (Beanie)
 
 ```python
 from motor.motor_asyncio import AsyncIOMotorClient
-from fastrest_beanie import BeanieRepositoryProvider
-from fastrest_core import QueryBuilder, QueryParams, SortField, SortOrder
+from fastrest_beanie import BeanieConfig, BeanieFastrestApp
 
 client = AsyncIOMotorClient("mongodb://localhost:27017")
+
+app = BeanieFastrestApp(BeanieConfig(
+    motor_client=client,
+    db_name="mydb",
+    entity_classes=(User, Post),
+))
+
+await app.init()                    # calls beanie.init_beanie() internally
+uow_provider = app.uow_provider     # inject into services
+```
+
+Manual setup:
+
+```python
+from fastrest_beanie import BeanieRepositoryProvider
 
 provider = BeanieRepositoryProvider(motor_client=client, db_name="mydb")
 provider.register(User, Post)
 await provider.init()
 
 async with provider.make_uow() as uow:
-    # Save
     user = await uow.users.save(User(name="Bob", email="bob@example.com"))
-
-    # Query
-    params = QueryParams(
+    recent = await uow.posts.find_by_query(QueryParams(
         node=QueryBuilder().eq("published", True).build(),
         sort=[SortField("created_at", SortOrder.DESC)],
         limit=10,
-    )
-    recent_posts = await uow.posts.find_by_query(params)
+    ))
+```
+
+### Repository interface (Beanie)
+
+```python
+async with provider.make_uow() as uow:
+    # Lightweight existence check — uses .count(), no document load
+    if await uow.posts.exists(post_id):
+        ...
+
+    # Stream — yields documents from the Motor cursor in internal batches
+    async for post in uow.posts.stream_by_query(QueryParams()):
+        await process(post)
 ```
 
 ### DI integration (Providify)
@@ -813,17 +1106,12 @@ container = DIContainer()
 
 @Provider(singleton=True)
 def settings() -> BeanieSettings:
-    return BeanieSettings(
-        motor_client=client,
-        db_name="mydb",
-        entity_classes=(User, Post),
-    )
+    return BeanieSettings(motor_client=client, db_name="mydb", entity_classes=(User, Post))
 
 container.provide(settings)
 container.install(BeanieModule)
 bind_repositories(container, User, Post)
 
-# Resolve the repository anywhere in the app
 user_repo = await container.aget(AsyncRepository[User])
 ```
 
@@ -831,9 +1119,7 @@ user_repo = await container.aget(AsyncRepository[User])
 
 ## Exception Hierarchy
 
-### Service exceptions (`fastrest_core.exception.service`)
-
-All service exceptions inherit from `ServiceException` — HTTP adapters catch the whole family with one clause and dispatch on subtype:
+### Service exceptions
 
 ```python
 from fastrest_core.exception.service import (
@@ -846,50 +1132,36 @@ from fastrest_core.exception.service import (
 
 try:
     result = await svc.get(pk, ctx)
-except ServiceNotFoundError as e:
-    # e.entity_id (str), e.entity_cls — map to HTTP 404
-    ...
-except ServiceAuthorizationError as e:
-    # e.operation, e.entity_cls, e.reason (internal, never surface to client) — HTTP 403
-    ...
-except ServiceConflictError as e:
-    # e.detail — HTTP 409
-    ...
-except ServiceValidationError as e:
-    # e.detail, e.field (optional) — HTTP 422
-    ...
+except ServiceNotFoundError:
+    ...  # HTTP 404
+except ServiceAuthorizationError:
+    ...  # HTTP 403
+except ServiceConflictError:
+    ...  # HTTP 409
+except ServiceValidationError:
+    ...  # HTTP 422
 ```
 
 | Exception | HTTP | When raised |
 |---|---|---|
-| `ServiceException` | — | Base class for all service exceptions |
-| `ServiceNotFoundError` | 404 | Entity with the requested pk does not exist |
-| `ServiceAuthorizationError` | 403 | Caller lacks permission for the operation |
-| `ServiceConflictError` | 409 | Business-rule or uniqueness constraint violated |
-| `ServiceValidationError` | 422 | DTO passes Pydantic but fails a domain invariant |
+| `ServiceNotFoundError` | 404 | Entity with requested pk does not exist |
+| `ServiceAuthorizationError` | 403 | Caller lacks permission |
+| `ServiceConflictError` | 409 | Uniqueness or business-rule violation |
+| `ServiceValidationError` | 422 | Domain invariant violated by DTO |
 
-> `ServiceNotFoundError` is raised **before** the authorization check on `get`/`update`/`delete` — a missing entity always returns 404 regardless of the caller's identity, preventing an existence oracle.
-
-> `ServiceAuthorizationError.reason` is stored on the exception but intentionally excluded from `str(exc)` — log it server-side at DEBUG level, never surface it to API clients.
-
-### Query exceptions (`fastrest_core.exception.query`)
+### Query exceptions
 
 | Exception | When raised |
 |---|---|
-| `QueryException` | Base class |
 | `OperationNotFound` | Unknown operator in a query string |
 | `OperationNotSupported` | Dotted path fields or unsupported op |
-| `WrongNodeVisited` | Visitor type mismatch |
 | `CoercionError` | Type coercion failure |
 
-### Repository exceptions (`fastrest_core.exception.repository`)
+### Repository exceptions
 
 | Exception | When raised |
 |---|---|
-| `RepositoryException` | Base class |
-| `RepositoryClassCreationFailed` | ORM class generation error |
 | `FieldNotFound` | Column not found during query compilation |
-| `EntityNotFound` | `find_by_id` returns nothing |
 | `StaleEntityError` | Optimistic lock violation on `VersionedDomainModel` |
 
 ---
@@ -897,10 +1169,10 @@ except ServiceValidationError as e:
 ## Running tests
 
 ```bash
-# All packages
+# All packages from the root
 python -m pytest
 
-# One package
+# One package at a time
 python -m pytest fastrest_core/
 python -m pytest fastrest_sa/
 python -m pytest fastrest_beanie/

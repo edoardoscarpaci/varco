@@ -13,7 +13,7 @@ Async safety:   ✅ All methods are ``async def``.
 
 from __future__ import annotations
 
-from typing import Any, Generic, TypeVar
+from typing import Any, AsyncIterator, Generic, TypeVar
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -230,6 +230,99 @@ class AsyncSQLAlchemyRepository(AsyncRepository[D, PK], Generic[D, PK]):
 
         result = await self._session.scalar(stmt)
         return result or 0
+
+    async def exists(self, pk: PK) -> bool:
+        """
+        Return ``True`` if a row with ``pk`` exists, using ``SELECT COUNT(*)``.
+
+        Does not load the ORM object — cheaper than ``find_by_id`` when only
+        existence (not data) is needed.
+
+        Args:
+            pk: Scalar PK or tuple for composite PKs.
+
+        Returns:
+            ``True`` if at least one row matches; ``False`` otherwise.
+
+        Thread safety:  ❌ ``AsyncSession`` is not thread-safe.
+        Async safety:   ✅ ``async def`` — awaitable.
+
+        Edge cases:
+            - Composite PKs: ``pk`` must be a tuple in the same field order
+              as ``mapper._pk_orm_attrs``.
+            - Uses ``session.get()`` internally — SA's identity map means a
+              previously-loaded entity is returned from cache, avoiding a
+              redundant DB round-trip.
+        """
+        # DESIGN: session.get() over a raw SELECT COUNT
+        # ✅ Leverages SA identity-map cache — if the entity is already in the
+        #    session, no DB round-trip is needed.
+        # ✅ Handles composite PKs natively (SA accepts a tuple).
+        # ❌ Loads the full ORM object into memory even for existence check.
+        #    For large objects on very hot paths, a raw SELECT 1 LIMIT 1 would
+        #    be more efficient — not worth the complexity here.
+        result = await self._session.get(self._mapper._orm_cls, pk)
+        return result is not None
+
+    async def stream_by_query(  # type: ignore[override]
+        self,
+        params: QueryParams,
+    ) -> AsyncIterator[D]:
+        """
+        Yield entities one at a time using SQLAlchemy's ``stream_scalars``.
+
+        Opens a server-side cursor (or equivalent) so the full result set is
+        never loaded into memory.  The session must stay open for the entire
+        iteration — the ``AsyncSession`` is held for the duration via the
+        caller's UoW context.
+
+        Args:
+            params: ``QueryParams`` with filter, sort, and pagination.
+
+        Returns:
+            ``AsyncIterator[D]`` that yields domain entities one at a time.
+
+        Raises:
+            fastrest_core.exception.query.OperationNotSupported:
+                AST contains a dotted relationship path.
+            fastrest_core.exception.repository.FieldNotFound:
+                AST or sort references a field that doesn't exist on the model.
+
+        Thread safety:  ❌ ``AsyncSession`` is not thread-safe — one session
+                           per request; do not share across concurrent tasks.
+        Async safety:   ✅ Async generator — safe to iterate with ``async for``.
+
+        Edge cases:
+            - The caller must fully consume the iterator or call ``aclose()``
+              to release the underlying DB cursor.
+            - ``params.limit`` caps total yielded items, same as ``find_by_query``.
+        """
+        # Build the same statement as find_by_query — filter, sort, paginate
+        stmt = select(self._mapper._orm_cls)
+
+        if params.node is not None:
+            compiler = SQLAlchemyQueryCompiler(model=self._mapper._orm_cls)
+            stmt = stmt.where(compiler.visit(params.node))
+
+        for sort_field in params.sort:
+            col = self._resolve_column(sort_field.field)
+            stmt = stmt.order_by(
+                desc(col) if sort_field.order == SortOrder.DESC else asc(col)
+            )
+
+        if params.limit is not None:
+            stmt = stmt.limit(params.limit)
+        if params.offset is not None:
+            stmt = stmt.offset(params.offset)
+
+        # DESIGN: stream_scalars over scalars().all()
+        # ✅ Server-side cursor — rows fetched incrementally, not all at once.
+        # ✅ Constant memory regardless of result-set size.
+        # ❌ The session cursor stays open until the async for loop completes
+        #    or aclose() is called — callers must not abandon the iterator.
+        async with self._session.stream_scalars(stmt) as stream:
+            async for row in stream:
+                yield self._mapper.from_orm(row)
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 

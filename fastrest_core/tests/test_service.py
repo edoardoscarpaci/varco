@@ -328,6 +328,18 @@ class InMemoryPostRepository(AsyncRepository[Post, str]):
         """
         return len(self._store)
 
+    async def exists(self, pk: str) -> bool:
+        """Return True if pk is present in the store."""
+        return pk in self._store
+
+    async def stream_by_query(  # type: ignore[override]
+        self,
+        params: QueryParams,  # noqa: ARG002
+    ):
+        """Yield all stored entities — filtering ignored in tests."""
+        for entity in list(self._store.values()):
+            yield entity
+
 
 # ── In-memory Unit of Work ─────────────────────────────────────────────────────
 

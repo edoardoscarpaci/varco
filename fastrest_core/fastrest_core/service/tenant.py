@@ -112,14 +112,14 @@ Async safety:   ✅ Lock released before any ``await`` — event loop not blocke
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 from abc import ABC
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import replace
 from typing import Any, ClassVar, Generator, Generic, TypeVar
 
-from fastrest_core.auth import Action, AuthContext, Resource
+from fastrest_core.auth import AuthContext
 from fastrest_core.dto import CreateDTO, ReadDTO, UpdateDTO
 from fastrest_core.exception.service import (
     ServiceAuthorizationError,
@@ -353,23 +353,28 @@ class TenantUoWProvider(IUoWProvider):
 
 class TenantAwareService(AsyncService[D, PK, C, R, U], ABC, Generic[D, PK, C, R, U]):
     """
-    Abstract ``AsyncService`` that enforces row-level tenant isolation.
+    Abstract ``AsyncService`` mixin that enforces row-level tenant isolation.
 
-    Overrides all five CRUD operations to guarantee tenant safety:
+    Implements the three ``AsyncService`` composable hooks to inject
+    tenant scoping without duplicating CRUD method bodies:
 
-    - ``list``   — prepends ``tenant_id = <tid>`` to every query.
-    - ``get``    — raises ``ServiceNotFoundError`` for cross-tenant access.
-    - ``create`` — stamps ``tenant_id`` from ``ctx`` onto the entity after
-                   assembly via ``dataclasses.replace``.
-    - ``update`` — tenant check before applying the update.
-    - ``delete`` — tenant check before deletion.
+    - ``_scoped_params`` — prepends ``tenant_id = <tid>`` to every query.
+    - ``_check_entity``  — raises ``ServiceNotFoundError`` for cross-tenant access.
+    - ``_prepare_for_create`` — stamps ``tenant_id`` from ``ctx`` after assembly.
 
-    The assembler does **not** need to handle ``tenant_id`` — the service
-    stamps it unconditionally from the authenticated ``ctx``, making it
-    impossible for a DTO to carry a foreign tenant ID.
+    All five CRUD operations are tenant-safe via these hooks without
+    overriding a single CRUD method.  The assembler does **not** need to
+    handle ``tenant_id`` — ``_prepare_for_create`` stamps it from the
+    authenticated JWT, making it impossible for a DTO to carry a foreign
+    tenant ID.
 
     Cross-tenant access raises ``ServiceNotFoundError`` (404) rather than
     ``ServiceAuthorizationError`` (403) to prevent an existence oracle.
+
+    Composable with other mixins via Python's MRO::
+
+        # Tenant + soft-delete together — each hook chains via super()
+        class PostService(TenantAwareService, SoftDeleteService, AsyncService[...]): ...
 
     Subclass contract
     -----------------
@@ -412,6 +417,115 @@ class TenantAwareService(AsyncService[D, PK, C, R, U], ABC, Generic[D, PK, C, R,
 
     _tenant_field: ClassVar[str] = "tenant_id"
 
+    # ── Composable hooks ──────────────────────────────────────────────────────
+
+    def _scoped_params(self, params: QueryParams, ctx: AuthContext) -> QueryParams:
+        """
+        Prepend ``<_tenant_field> = <tid>`` to the query filter.
+
+        Chains via ``super()`` so other mixins in the MRO (e.g.
+        ``SoftDeleteService``) can also inject their own filters.
+
+        Args:
+            params: Incoming query parameters.
+            ctx:    Caller's identity — ``ctx.metadata["tenant_id"]`` required.
+
+        Returns:
+            New ``QueryParams`` with tenant filter prepended.
+
+        Raises:
+            ServiceAuthorizationError: ``tenant_id`` absent or empty in
+                ``ctx.metadata``.
+        """
+        tid = self._require_tenant(ctx)
+        # AND the tenant filter onto the caller's filter — QueryBuilder.and_()
+        # handles the ``params.node is None`` case without an explicit branch.
+        scoped_node = (
+            QueryBuilder()
+            .eq(self._tenant_field, tid)
+            .and_(QueryBuilder(params.node))
+            .build()
+        )
+        scoped = dataclasses.replace(params, node=scoped_node)
+        # Chain to super so additional mixins can also inject filters.
+        return super()._scoped_params(scoped, ctx)
+
+    def _check_entity(self, entity: D, ctx: AuthContext) -> None:
+        """
+        Raise ``ServiceNotFoundError`` when the entity belongs to a different tenant.
+
+        Uses 404 (not 403) to prevent an existence oracle — a 403 would
+        reveal that the entity exists in another tenant's data.
+
+        Args:
+            entity: Fetched domain entity.
+            ctx:    Caller's identity — ``ctx.metadata["tenant_id"]`` required.
+
+        Raises:
+            ServiceAuthorizationError: ``tenant_id`` absent in ``ctx.metadata``.
+            ServiceNotFoundError:      Entity's tenant field does not match.
+        """
+        tid = self._require_tenant(ctx)
+        self._assert_same_tenant(entity, tid, entity.pk)
+        # Chain to super so other mixins (e.g. SoftDeleteService) run too.
+        super()._check_entity(entity, ctx)
+
+    def _prepare_for_create(self, entity: D, ctx: AuthContext) -> D:
+        """
+        Stamp ``tenant_id`` from ``ctx`` onto the entity before save.
+
+        The assembler's ``to_domain()`` is intentionally unaware of tenancy —
+        this hook stamps it from the authenticated JWT so the DTO cannot
+        supply a foreign tenant ID.
+
+        Args:
+            entity: Freshly assembled, unsaved domain entity.
+            ctx:    Caller's identity — ``ctx.metadata["tenant_id"]`` required.
+
+        Returns:
+            New entity with ``_tenant_field`` set to the caller's tenant ID.
+
+        Raises:
+            ServiceAuthorizationError: ``tenant_id`` absent in ``ctx.metadata``.
+            TypeError:                 ``_tenant_field`` not declared with
+                ``init=True`` on the domain model — fix the declaration.
+        """
+        tid = self._require_tenant(ctx)
+        # dataclasses.replace preserves _raw_orm (None on new entities) and
+        # all other fields; only the named kwarg is changed.
+        # type: ignore[return-value] because dataclasses.replace returns D but
+        # mypy infers DomainModel for the **{field: val} unpacking pattern.
+        stamped: D = dataclasses.replace(entity, **{self._tenant_field: tid})  # type: ignore[assignment]
+        # Chain to super so additional mixins can stamp their own fields.
+        return super()._prepare_for_create(stamped, ctx)
+
+    def _pre_check(self, ctx: AuthContext) -> None:
+        """
+        Verify the tenant ID is present in ``ctx`` before any I/O.
+
+        Fires before ``make_uow()`` in every CRUD operation.  This ensures
+        that a missing tenant ID raises ``ServiceAuthorizationError`` without
+        opening a DB connection — important both for efficiency and for
+        deterministic test behaviour (UoW is never created on denied calls).
+
+        DESIGN: ``_pre_check`` over duplicating the call in each CRUD override
+            The 4th composable hook is the right place for "bail before I/O"
+            checks.  Overriding individual CRUD methods would re-introduce
+            the duplication the hook system was designed to eliminate.
+
+        Args:
+            ctx: Caller's identity — must carry ``tenant_id`` in ``metadata``.
+
+        Raises:
+            ServiceAuthorizationError: ``tenant_id`` is absent in
+                ``ctx.metadata`` — the call is denied before any DB access.
+        """
+        # Calling _require_tenant() here causes a fast fail before make_uow().
+        # The return value is intentionally discarded — we only want the check.
+        self._require_tenant(ctx)
+        # Chain to super so other mixins can also run their pre-checks.
+        super()._pre_check(ctx)
+
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _require_tenant(self, ctx: AuthContext) -> str:
@@ -452,192 +566,3 @@ class TenantAwareService(AsyncService[D, PK, C, R, U], ABC, Generic[D, PK, C, R,
         if entity_tid != tid:
             # Same error as "entity not found" — indistinguishable to the caller.
             raise ServiceNotFoundError(pk, type(entity))
-
-    # ── CRUD overrides ────────────────────────────────────────────────────────
-
-    async def list(self, params: QueryParams, ctx: AuthContext) -> list[R]:
-        """
-        Query entities for the caller's tenant.
-
-        Prepends ``<_tenant_field> = <tid>`` to ``params.node`` before
-        delegating to the parent.  The caller's filter is preserved and
-        AND-ed after the tenant condition.
-
-        Args:
-            params: Query parameters.  Tenant filter is prepended — not
-                    replaceable by the caller.
-            ctx:    Caller's identity.  ``ctx.metadata["tenant_id"]`` required.
-
-        Returns:
-            ``ReadDTO``\\s for the caller's tenant entities matching ``params``.
-
-        Raises:
-            ServiceAuthorizationError: Missing tenant ID or missing LIST grant.
-
-        Async safety: ✅ Reads immutable ``ctx.metadata``.
-        """
-        tid = self._require_tenant(ctx)
-
-        # AND the tenant filter onto the caller's filter.
-        # QueryBuilder.and_(other) is a no-op when other.node is None, which
-        # handles "no user filter" without an explicit branch.
-        scoped_node = (
-            QueryBuilder()
-            .eq(self._tenant_field, tid)
-            .and_(QueryBuilder(params.node))
-            .build()
-        )
-        scoped_params = QueryParams(
-            node=scoped_node,
-            sort=params.sort,
-            limit=params.limit,
-            offset=params.offset,
-        )
-        return await super().list(scoped_params, ctx)
-
-    async def create(self, dto: C, ctx: AuthContext) -> R:
-        """
-        Create a new entity and stamp ``tenant_id`` from ``ctx`` unconditionally.
-
-        The assembler's ``to_domain()`` runs first, then ``tenant_id`` is
-        applied via ``dataclasses.replace`` before the entity is saved.
-        This ensures the JWT identity is the authoritative source — not the
-        incoming DTO.
-
-        Args:
-            dto: ``CreateDTO`` payload.  Does not need a ``tenant_id`` field.
-            ctx: Caller's identity.  ``ctx.metadata["tenant_id"]`` required.
-
-        Returns:
-            The ``ReadDTO`` for the newly created entity.
-
-        Raises:
-            ServiceAuthorizationError: Missing tenant ID or missing CREATE grant.
-            ServiceConflictError:      Business rule or uniqueness violation.
-            ServiceValidationError:    Domain invariant violated by ``dto``.
-            TypeError:                 ``_tenant_field`` not present on the
-                domain model — fix the model declaration.
-
-        Async safety: ✅ Reads immutable ``ctx.metadata``.
-        """
-        tid = self._require_tenant(ctx)
-
-        # Authorize before opening the UoW — denied callers never touch the DB.
-        await self._authorizer.authorize(
-            ctx,
-            Action.CREATE,
-            Resource(entity_type=self._entity_type()),
-        )
-
-        async with self._uow_provider.make_uow() as uow:
-            entity = self._assembler.to_domain(dto)
-
-            # Stamp tenant_id from ctx — not from the DTO — so the JWT is the
-            # sole authority.  dataclasses.replace preserves _raw_orm (None on
-            # a new entity) so the repo INSERT path is unaffected.
-            stamped = replace(entity, **{self._tenant_field: tid})
-
-            saved = await self._get_repo(uow).save(stamped)
-            return self._assembler.to_read_dto(saved)
-
-    async def get(self, pk: PK, ctx: AuthContext) -> R:
-        """
-        Fetch a single entity, verifying it belongs to the caller's tenant.
-
-        Args:
-            pk:  Primary key of the entity.
-            ctx: Caller's identity.  ``ctx.metadata["tenant_id"]`` required.
-
-        Returns:
-            The ``ReadDTO`` for the entity.
-
-        Raises:
-            ServiceNotFoundError:      Entity not found **or** belongs to a
-                different tenant (indistinguishable — no existence oracle).
-            ServiceAuthorizationError: Missing tenant ID or missing READ grant.
-
-        Async safety: ✅ Reads immutable ``ctx.metadata``.
-        """
-        tid = self._require_tenant(ctx)
-        async with self._uow_provider.make_uow() as uow:
-            entity = await self._get_repo(uow).find_by_id(pk)
-            if entity is None:
-                raise ServiceNotFoundError(pk, self._entity_type())
-
-            # Tenant check before authorizer — both produce 404 here so there
-            # is no ordering difference security-wise, but checking before
-            # authorizer keeps the pattern consistent with "validate early".
-            self._assert_same_tenant(entity, tid, pk)
-
-            await self._authorizer.authorize(
-                ctx,
-                Action.READ,
-                Resource(entity_type=self._entity_type(), entity=entity),
-            )
-            return self._assembler.to_read_dto(entity)
-
-    async def update(self, pk: PK, dto: U, ctx: AuthContext) -> R:
-        """
-        Update an entity after verifying it belongs to the caller's tenant.
-
-        Args:
-            pk:  Primary key of the entity to update.
-            dto: ``UpdateDTO`` payload.
-            ctx: Caller's identity.  ``ctx.metadata["tenant_id"]`` required.
-
-        Returns:
-            The ``ReadDTO`` reflecting the entity's new state.
-
-        Raises:
-            ServiceNotFoundError:      Entity not found or belongs to another tenant.
-            ServiceAuthorizationError: Missing tenant ID or missing UPDATE grant.
-            ServiceConflictError:      Optimistic-lock or business rule violation.
-            ServiceValidationError:    Domain invariant violated by ``dto``.
-
-        Async safety: ✅ Reads immutable ``ctx.metadata``.
-        """
-        tid = self._require_tenant(ctx)
-        async with self._uow_provider.make_uow() as uow:
-            entity = await self._get_repo(uow).find_by_id(pk)
-            if entity is None:
-                raise ServiceNotFoundError(pk, self._entity_type())
-
-            self._assert_same_tenant(entity, tid, pk)
-
-            await self._authorizer.authorize(
-                ctx,
-                Action.UPDATE,
-                Resource(entity_type=self._entity_type(), entity=entity),
-            )
-            updated = self._assembler.apply_update(entity, dto)
-            saved = await self._get_repo(uow).save(updated)
-            return self._assembler.to_read_dto(saved)
-
-    async def delete(self, pk: PK, ctx: AuthContext) -> None:
-        """
-        Delete an entity after verifying it belongs to the caller's tenant.
-
-        Args:
-            pk:  Primary key of the entity to delete.
-            ctx: Caller's identity.  ``ctx.metadata["tenant_id"]`` required.
-
-        Raises:
-            ServiceNotFoundError:      Entity not found or belongs to another tenant.
-            ServiceAuthorizationError: Missing tenant ID or missing DELETE grant.
-
-        Async safety: ✅ Reads immutable ``ctx.metadata``.
-        """
-        tid = self._require_tenant(ctx)
-        async with self._uow_provider.make_uow() as uow:
-            entity = await self._get_repo(uow).find_by_id(pk)
-            if entity is None:
-                raise ServiceNotFoundError(pk, self._entity_type())
-
-            self._assert_same_tenant(entity, tid, pk)
-
-            await self._authorizer.authorize(
-                ctx,
-                Action.DELETE,
-                Resource(entity_type=self._entity_type(), entity=entity),
-            )
-            await self._get_repo(uow).delete(entity)

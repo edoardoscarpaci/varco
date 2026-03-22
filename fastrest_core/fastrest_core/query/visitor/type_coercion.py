@@ -22,7 +22,7 @@ from typing import Any, Callable, Iterable
 
 from fastrest_core.exception.query import CoercionError
 from fastrest_core.query.type import AndNode, ComparisonNode, NotNode, Operation, OrNode
-from fastrest_core.query.visitor.ast_visitor import ASTVisitor
+from fastrest_core.query.visitor.walking import BinaryWalkingVisitor
 
 
 # ── Value-object holding a field's type + coercer ─────────────────────────────
@@ -316,7 +316,7 @@ class TypeCoercionRegistry:
 # ── Coercion visitor ───────────────────────────────────────────────────────────
 
 
-class ASTTypeCoercion(ASTVisitor):
+class ASTTypeCoercion(BinaryWalkingVisitor):
     """
     AST visitor that applies type coercion to comparison node values.
 
@@ -376,17 +376,21 @@ class ASTTypeCoercion(ASTVisitor):
 
         return ComparisonNode(node.field, node.op, coerced)
 
-    def _visit_and(self, node: AndNode, args: Any = None, **kwargs: Any) -> AndNode:
-        """Recurse into AND children and return a new ``AndNode``."""
-        return AndNode(self.visit(node.left), self.visit(node.right))
+    # ── BinaryWalkingVisitor combine hooks ────────────────────────────────────
+    # Type coercion reconstructs the same node types — the walk modifies
+    # ComparisonNode values in place; AND/OR/NOT nodes are rebuilt unchanged.
 
-    def _visit_or(self, node: OrNode, args: Any = None, **kwargs: Any) -> OrNode:
-        """Recurse into OR children and return a new ``OrNode``."""
-        return OrNode(self.visit(node.left), self.visit(node.right))
+    def _combine_and(self, left: AndNode, right: Any) -> AndNode:
+        """Rebuild an AND node from its (potentially coerced) children."""
+        return AndNode(left, right)
 
-    def _visit_not(self, node: NotNode, args: Any = None, **kwargs: Any) -> NotNode:
-        """Recurse into NOT child and return a new ``NotNode``."""
-        return NotNode(self.visit(node.child))
+    def _combine_or(self, left: OrNode, right: Any) -> OrNode:
+        """Rebuild an OR node from its (potentially coerced) children."""
+        return OrNode(left, right)
+
+    def _combine_not(self, inner: Any) -> NotNode:
+        """Rebuild a NOT node wrapping its (potentially coerced) child."""
+        return NotNode(inner)
 
     def _coerce_value(self, field_info: TypeCoercionFieldInfo, value: Any) -> Any:
         """

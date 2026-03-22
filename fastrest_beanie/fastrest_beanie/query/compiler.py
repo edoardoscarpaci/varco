@@ -56,13 +56,10 @@ from typing import Any
 
 from fastrest_core.exception.query import OperationNotSupported
 from fastrest_core.query.type import (
-    AndNode,
     ComparisonNode,
-    NotNode,
     Operation,
-    OrNode,
 )
-from fastrest_core.query.visitor.ast_visitor import ASTVisitor
+from fastrest_core.query.visitor.walking import BinaryWalkingVisitor
 
 
 def _sql_like_to_regex(pattern: str) -> str:
@@ -102,7 +99,7 @@ def _sql_like_to_regex(pattern: str) -> str:
     return "".join(result)
 
 
-class BeanieQueryCompiler(ASTVisitor):
+class BeanieQueryCompiler(BinaryWalkingVisitor):
     """
     AST visitor that compiles query nodes into MongoDB filter documents.
 
@@ -183,14 +180,13 @@ class BeanieQueryCompiler(ASTVisitor):
             f"Supported: {[o.value for o in Operation]}"
         )
 
-    def _visit_and(
-        self,
-        node: AndNode,
-        args: Any = None,
-        **kwargs: Any,
+    # ── BinaryWalkingVisitor combine hooks ────────────────────────────────────
+
+    def _combine_and(
+        self, left: dict[str, Any], right: dict[str, Any]
     ) -> dict[str, Any]:
         """
-        Compile AND to ``{"$and": [left, right]}``.
+        Combine two compiled sub-expressions with MongoDB ``$and``.
 
         DESIGN: always use ``$and`` (not merging dicts)
           ✅ Handles the case where ``left`` and ``right`` use the same field —
@@ -198,40 +194,32 @@ class BeanieQueryCompiler(ASTVisitor):
           ❌ Slightly more verbose output than merging for disjoint fields.
 
         Args:
-            node: AND node.
-            args: Unused.
+            left:  Compiled filter for the AND's left child.
+            right: Compiled filter for the AND's right child.
 
         Returns:
-            ``{"$and": [compiled_left, compiled_right]}``
+            ``{"$and": [left, right]}``
         """
-        return {"$and": [self.visit(node.left), self.visit(node.right)]}
+        return {"$and": [left, right]}
 
-    def _visit_or(
-        self,
-        node: OrNode,
-        args: Any = None,
-        **kwargs: Any,
+    def _combine_or(
+        self, left: dict[str, Any], right: dict[str, Any]
     ) -> dict[str, Any]:
         """
-        Compile OR to ``{"$or": [left, right]}``.
+        Combine two compiled sub-expressions with MongoDB ``$or``.
 
         Args:
-            node: OR node.
-            args: Unused.
+            left:  Compiled filter for the OR's left child.
+            right: Compiled filter for the OR's right child.
 
         Returns:
-            ``{"$or": [compiled_left, compiled_right]}``
+            ``{"$or": [left, right]}``
         """
-        return {"$or": [self.visit(node.left), self.visit(node.right)]}
+        return {"$or": [left, right]}
 
-    def _visit_not(
-        self,
-        node: NotNode,
-        args: Any = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
+    def _combine_not(self, inner: dict[str, Any]) -> dict[str, Any]:
         """
-        Compile NOT to ``{"$nor": [child]}``.
+        Negate a compiled sub-expression with MongoDB ``$nor``.
 
         DESIGN: ``$nor`` over ``$not``
           ``$not`` only applies to a single condition on a field
@@ -240,10 +228,9 @@ class BeanieQueryCompiler(ASTVisitor):
           semantics of ``NotNode`` which wraps arbitrary sub-trees.
 
         Args:
-            node: NOT node.
-            args: Unused.
+            inner: Compiled filter for the NOT's child.
 
         Returns:
-            ``{"$nor": [compiled_child]}``
+            ``{"$nor": [inner]}``
         """
-        return {"$nor": [self.visit(node.child)]}
+        return {"$nor": [inner]}

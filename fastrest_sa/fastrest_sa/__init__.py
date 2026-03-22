@@ -37,6 +37,8 @@ Sub-package layout
 
 from __future__ import annotations
 
+from fastrest_sa.alembic_helpers import get_target_metadata, print_create_ddl
+from fastrest_sa.bootstrap import SAConfig, SAFastrestApp
 from fastrest_sa.factory import SAModelFactory, SAModelRegistry
 from fastrest_sa.models import BaseDatabaseModel
 from fastrest_sa.provider import SQLAlchemyRepositoryProvider
@@ -67,4 +69,10 @@ __all__ = [
     "SchemaDriftReport",
     # ── Type coercion ─────────────────────────────────────────────────────────
     "registry_from_sa_model",
+    # ── Alembic helpers ───────────────────────────────────────────────────────
+    "get_target_metadata",
+    "print_create_ddl",
+    # ── Bootstrap ─────────────────────────────────────────────────────────────
+    "SAConfig",
+    "SAFastrestApp",
 ]

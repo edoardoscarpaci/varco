@@ -41,6 +41,7 @@ providify DI integration::
     repo = await container.aget(AsyncRepository[User])
 """
 
+from fastrest_beanie.bootstrap import BeanieConfig, BeanieFastrestApp
 from fastrest_beanie.di import BeanieModule, BeanieSettings, bind_repositories
 from fastrest_beanie.factory import BeanieDocRegistry, BeanieModelFactory
 from fastrest_beanie.provider import BeanieRepositoryProvider
@@ -58,4 +59,7 @@ __all__ = [
     "BeanieSettings",
     "BeanieModule",
     "bind_repositories",
+    # Bootstrap
+    "BeanieConfig",
+    "BeanieFastrestApp",
 ]

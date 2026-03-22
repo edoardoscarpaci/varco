@@ -55,6 +55,9 @@ from fastrest_core.migrator import DomainMigrator, MigrationError
 from fastrest_core.model import (
     AuditedDomainModel,
     DomainModel,
+    SoftDeleteAuditedDomainModel,
+    SoftDeleteDomainModel,
+    SoftDeleteMixin,
     TenantAuditedDomainModel,
     TenantDomainModel,
     TenantMixin,
@@ -99,6 +102,37 @@ from fastrest_core.service.tenant import (
     tenant_context,
 )
 
+# ── Soft delete ─────────────────────────────────────────────────────────────────
+from fastrest_core.service.soft_delete import SoftDeleteService
+
+# ── Service type aliases and protocols ──────────────────────────────────────────
+from fastrest_core.service.types import Assembler, ServiceProtocol
+
+# ── Tracing / correlation ID ────────────────────────────────────────────────────
+from fastrest_core.tracing import (
+    CorrelationIdFilter,
+    correlation_context,
+    current_correlation_id,
+    generate_correlation_id,
+)
+
+# ── Auth helpers ─────────────────────────────────────────────────────────────────
+from fastrest_core.auth.helpers import (
+    GrantBasedAuthorizer,
+    OwnershipAuthorizer,
+    RoleBasedAuthorizer,
+)
+
+# ── Error codes and HTTP error mapping ──────────────────────────────────────────
+from fastrest_core.exception.codes import ErrorCode, FastrestErrorCodes
+from fastrest_core.exception.http import (
+    AnyErrorCode,
+    ErrorMessage,
+    error_code_for,
+    error_message_for,
+    register_error_code,
+)
+
 # ── JWT layer ──────────────────────────────────────────────────────────────────
 from fastrest_core.jwt import (
     SYSTEM_ISSUER,
@@ -139,6 +173,10 @@ __all__ = [
     "TenantAuditedDomainModel",
     "TenantVersionedDomainModel",
     "cast_raw",
+    # ── Soft delete domain mixins ───────────────────────────────────────────────
+    "SoftDeleteMixin",
+    "SoftDeleteDomainModel",
+    "SoftDeleteAuditedDomainModel",
     # ── Migration ──────────────────────────────────────────────────────────────
     "DomainMigrator",
     "MigrationError",
@@ -179,6 +217,28 @@ __all__ = [
     "TenantUoWProvider",
     "current_tenant",
     "tenant_context",
+    # ── Soft delete service ─────────────────────────────────────────────────────
+    "SoftDeleteService",
+    # ── Service type aliases ────────────────────────────────────────────────────
+    "Assembler",
+    "ServiceProtocol",
+    # ── Tracing ─────────────────────────────────────────────────────────────────
+    "CorrelationIdFilter",
+    "correlation_context",
+    "current_correlation_id",
+    "generate_correlation_id",
+    # ── Auth helpers ─────────────────────────────────────────────────────────────
+    "GrantBasedAuthorizer",
+    "OwnershipAuthorizer",
+    "RoleBasedAuthorizer",
+    # ── Error codes and HTTP error mapping ───────────────────────────────────────
+    "AnyErrorCode",
+    "ErrorCode",
+    "FastrestErrorCodes",
+    "ErrorMessage",
+    "error_code_for",
+    "error_message_for",
+    "register_error_code",
     # ── JWT layer ───────────────────────────────────────────────────────────────
     "SYSTEM_ISSUER",
     "JsonWebToken",

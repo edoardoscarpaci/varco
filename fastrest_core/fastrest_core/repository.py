@@ -14,7 +14,7 @@ Async safety:   ✅ All methods are ``async def``.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, AsyncIterator, Generic, TypeVar
 
 from fastrest_core.model import DomainModel
 
@@ -156,4 +156,69 @@ class AsyncRepository(ABC, Generic[D, PK]):
             - ``count(None)`` → total row count (equivalent to ``SELECT COUNT(*)``.
             - Sort and pagination in ``params`` are intentionally ignored —
               they have no effect on a count.
+        """
+
+    @abstractmethod
+    async def exists(self, pk: PK) -> bool:
+        """
+        Return ``True`` if an entity with ``pk`` exists in the backing store.
+
+        Intended to be cheaper than ``find_by_id`` — implementations should
+        avoid loading the full ORM object when the backing store supports a
+        lightweight existence check (e.g. ``SELECT COUNT(*) WHERE pk = ?``).
+
+        Args:
+            pk: Primary key value.  For composite PKs pass a tuple.
+
+        Returns:
+            ``True`` if a record with that PK exists; ``False`` otherwise.
+
+        Edge cases:
+            - Soft-deleted records ARE counted as existing at this layer —
+              the service layer's ``_check_entity`` hook is responsible for
+              filtering soft-deleted entities from the caller's perspective.
+            - For composite PKs the caller must pass a tuple in the same
+              field order as the mapper's ``_pk_orm_attrs``.
+        """
+
+    @abstractmethod
+    def stream_by_query(self, params: QueryParams) -> AsyncIterator[D]:
+        """
+        Yield entities one at a time without loading all results into memory.
+
+        Implementations must be ``async def`` functions with ``yield`` (async
+        generators).  The abstract declaration uses a plain ``def`` returning
+        ``AsyncIterator[D]`` so the abstract method contract is satisfied by
+        any async generator — ``AsyncGenerator[D, None]`` is a subtype of
+        ``AsyncIterator[D]``.
+
+        DESIGN: plain ``def`` abstract over ``async def`` abstract
+            Declaring this as ``async def`` without ``yield`` would make it a
+            coroutine factory, not an async generator factory.  Subclasses
+            that implement it as ``async def`` with ``yield`` would have a
+            different call-site signature (iterator, not coroutine).  Keeping
+            the abstract method as a plain ``def`` avoids this mismatch.
+            ✅ Concrete classes implement as ``async def ... yield`` — correct.
+            ✅ Callers iterate with ``async for entity in repo.stream_by_query(p)``.
+            ❌ Mypy may warn about the async/sync override — suppress with
+               ``# type: ignore[override]`` on the concrete method.
+
+        Args:
+            params: ``QueryParams`` with filter, sort, and (optional) pagination.
+                    Pagination limits the total stream length — ``params.limit``
+                    is still respected.
+
+        Returns:
+            An ``AsyncIterator[D]`` that yields domain entities one at a time.
+
+        Edge cases:
+            - The backing session / cursor must remain open for the duration
+              of iteration.  The caller must fully iterate or call ``aclose()``
+              on the iterator to release the DB cursor.
+            - Abandoning the iterator without calling ``aclose()`` may leave a
+              DB cursor open until GC runs — prefer ``async for`` or
+              ``async with contextlib.aclosing(repo.stream_by_query(...)):``.
+            - Sort and pagination in ``params`` are honoured — this is not a
+              full-table stream by default; callers should set ``params.limit``
+              if they only want a bounded stream.
         """

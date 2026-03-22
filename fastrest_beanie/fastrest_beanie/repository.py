@@ -13,7 +13,7 @@ Async safety:   ✅ All methods are ``async def``.
 
 from __future__ import annotations
 
-from typing import Any, Generic, TypeVar
+from typing import Any, AsyncIterator, Generic, TypeVar
 
 from fastrest_core.mapper import AbstractMapper
 from fastrest_core.model import DomainModel
@@ -217,3 +217,87 @@ class AsyncBeanieRepository(AsyncRepository[D, PK], Generic[D, PK]):
 
         # find() with empty dict = no filter; .count() returns total matching
         return await self._mapper._orm_cls.find(mongo_filter).count()
+
+    async def exists(self, pk: PK) -> bool:
+        """
+        Return ``True`` if a document with ``pk`` exists, using Beanie's count.
+
+        Issues a lightweight ``count()`` instead of fetching the full document.
+
+        Args:
+            pk: Scalar PK or tuple for composite PKs.
+
+        Returns:
+            ``True`` if at least one document matches; ``False`` otherwise.
+
+        Thread safety:  ✅ Motor connections are thread-safe.
+        Async safety:   ✅ ``async def`` — awaitable.
+
+        Edge cases:
+            - Composite PKs: issues ``find_one`` with a filter dict built from
+              ``mapper._pk_orm_attrs``; for scalar PKs uses Beanie's ``find``
+              with the ``_id`` filter.
+        """
+        if isinstance(pk, tuple):
+            # Composite PK — build a {field: value, ...} filter dict.
+            # count() avoids loading the document body.
+            query = {attr: val for attr, val in zip(self._mapper._pk_orm_attrs, pk)}
+            count = await self._mapper._orm_cls.find(query).count()
+        else:
+            # Scalar PK — filter on _id (Beanie's primary key field)
+            count = await self._mapper._orm_cls.find({"_id": pk}).count()
+        return count > 0
+
+    async def stream_by_query(  # type: ignore[override]
+        self,
+        params: QueryParams,
+    ) -> AsyncIterator[D]:
+        """
+        Yield documents one at a time by iterating over a Beanie ``FindMany``.
+
+        Motor does not expose named server-side cursors in the same way as SQL
+        DBs, but async iteration over a ``FindMany`` object fetches documents
+        in batches from the MongoDB cursor, keeping memory usage bounded.
+
+        Args:
+            params: ``QueryParams`` with filter, sort, and pagination.
+
+        Returns:
+            ``AsyncIterator[D]`` that yields domain entities one at a time.
+
+        Thread safety:  ✅ Motor connections are thread-safe.
+        Async safety:   ✅ Async generator — safe to iterate with ``async for``.
+
+        Edge cases:
+            - Unlike the SQL streaming cursor, abandoning the iterator does not
+              leak a connection — Motor's cursor is automatically garbage-
+              collected by the driver.
+            - ``params.limit`` still caps the total number of yielded documents.
+        """
+        # Build the same FindMany query as find_by_query — reuses all filter,
+        # sort, and pagination logic, but yields instead of calling to_list()
+        mongo_filter: dict[str, Any] = {}
+        if params.node is not None:
+            mongo_filter = BeanieQueryCompiler().visit(params.node)
+
+        find_query = self._mapper._orm_cls.find(mongo_filter)
+
+        if params.sort:
+            sort_list = [
+                (sf.field, -1 if sf.order == SortOrder.DESC else 1)
+                for sf in params.sort
+            ]
+            find_query = find_query.sort(sort_list)
+
+        if params.offset is not None:
+            find_query = find_query.skip(params.offset)
+        if params.limit is not None:
+            find_query = find_query.limit(params.limit)
+
+        # DESIGN: async for over FindMany instead of to_list()
+        # ✅ Beanie/Motor fetches documents in internal batches — bounded memory.
+        # ✅ Caller controls back-pressure — can stop iterating at any point.
+        # ❌ FindMany does not expose explicit cursor control — cleanup is
+        #    handled by Motor's internal GC, not by aclose().
+        async for doc in find_query:
+            yield self._mapper.from_orm(doc)

@@ -21,16 +21,13 @@ from sqlalchemy.orm import DeclarativeBase, MappedColumn
 from fastrest_core.exception.query import OperationNotSupported
 from fastrest_core.exception.repository import FieldNotFound
 from fastrest_core.query.type import (
-    AndNode,
     ComparisonNode,
-    NotNode,
     Operation,
-    OrNode,
 )
-from fastrest_core.query.visitor.ast_visitor import ASTVisitor
+from fastrest_core.query.visitor.walking import BinaryWalkingVisitor
 
 
-class SQLAlchemyQueryCompiler(ASTVisitor):
+class SQLAlchemyQueryCompiler(BinaryWalkingVisitor):
     """
     AST visitor that compiles comparison and boolean nodes into SQLAlchemy
     filter expressions for a given mapped model class.
@@ -136,23 +133,23 @@ class SQLAlchemyQueryCompiler(ASTVisitor):
             f"Supported: {[o.value for o in Operation]}"
         )
 
-    def _visit_and(
-        self, node: AndNode, args: object = None, **kwargs: object
-    ) -> ColumnElement[bool]:
-        """Compile AND node by composing children with SQLAlchemy ``and_``."""
-        return and_(self.visit(node.left), self.visit(node.right))
+    # ── BinaryWalkingVisitor combine hooks ────────────────────────────────────
 
-    def _visit_or(
-        self, node: OrNode, args: object = None, **kwargs: object
+    def _combine_and(
+        self, left: ColumnElement[bool], right: ColumnElement[bool]
     ) -> ColumnElement[bool]:
-        """Compile OR node by composing children with SQLAlchemy ``or_``."""
-        return or_(self.visit(node.left), self.visit(node.right))
+        """Combine two compiled sub-expressions with SQLAlchemy ``and_``."""
+        return and_(left, right)
 
-    def _visit_not(
-        self, node: NotNode, args: object = None, **kwargs: object
+    def _combine_or(
+        self, left: ColumnElement[bool], right: ColumnElement[bool]
     ) -> ColumnElement[bool]:
-        """Compile NOT node by wrapping child with SQLAlchemy ``not_``."""
-        return not_(self.visit(node.child))
+        """Combine two compiled sub-expressions with SQLAlchemy ``or_``."""
+        return or_(left, right)
+
+    def _combine_not(self, inner: ColumnElement[bool]) -> ColumnElement[bool]:
+        """Negate a compiled sub-expression with SQLAlchemy ``not_``."""
+        return not_(inner)
 
     # ── allowed_fields helpers ─────────────────────────────────────────────────
 
