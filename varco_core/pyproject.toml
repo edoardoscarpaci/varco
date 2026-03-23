@@ -1,6 +1,6 @@
 [project]
 name          = "varco-core"
-version       = "0.0.2"
+version       = "0.0.4"
 description   = "Backend-agnostic domain model, service layer, authorization, query AST and DTOs for varco"
 authors       = [{ name = "edoardo.scarpaci", email = "edoardo.scarpaci@gmail.com" }]
 readme        = "README.md"
@@ -29,6 +29,11 @@ dependencies = [
     # cryptography is used by varco_core.jwk for RSA/EC key operations
     "cryptography>=41.0",
 ]
+
+[project.urls]
+Homepage   = "https://github.com/edoardoscarpaci/varco"
+Repository = "https://github.com/edoardoscarpaci/varco/tree/main/varco_core"
+Issues     = "https://github.com/edoardoscarpaci/varco/issues"
 
 [dependency-groups]
 dev = [

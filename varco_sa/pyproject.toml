@@ -1,6 +1,6 @@
 [project]
 name          = "varco-sa"
-version       = "0.0.1"
+version       = "0.0.2"
 description   = "SQLAlchemy async backend for varco — runtime ORM generation, repository, schema guard, and Alembic helpers"
 authors       = [{ name = "edoardo.scarpaci", email = "edoardo.scarpaci@gmail.com" }]
 readme        = "README.md"
@@ -23,6 +23,11 @@ dependencies = [
     "varco-core",
     "sqlalchemy[asyncio]>=2.0",
 ]
+
+[project.urls]
+Homepage   = "https://github.com/edoardoscarpaci/varco"
+Repository = "https://github.com/edoardoscarpaci/varco/tree/main/varco_sa"
+Issues     = "https://github.com/edoardoscarpaci/varco/issues"
 
 [tool.uv.sources]
 varco-core = { workspace = true }
