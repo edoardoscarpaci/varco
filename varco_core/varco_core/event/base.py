@@ -205,12 +205,15 @@ class ChannelConfig:
 
     Example::
 
+        from varco_kafka import KafkaChannelManager, KafkaChannelManagerSettings
+
         config = ChannelConfig(
             num_partitions=6,
             replication_factor=3,
             retention_ms=7 * 24 * 3600 * 1000,   # 7 days
         )
-        await bus.declare_channel("orders", config=config)
+        async with KafkaChannelManager(KafkaChannelManagerSettings()) as manager:
+            await manager.declare_channel("orders", config=config)
     """
 
     num_partitions: int = 1
@@ -520,6 +523,10 @@ class AbstractEventBus(ABC):
         - ``KafkaEventBus`` (``varco_kafka``) — async Kafka producer/consumer.
         - ``RedisEventBus`` (``varco_redis``) — async Redis Pub/Sub.
 
+    Channel management (topic creation, deletion) is intentionally NOT part
+    of this interface.  Use ``ChannelManager`` (``varco_core.event.channel``)
+    for admin-level operations that require elevated privileges.
+
     Subscription dispatch rules
     ---------------------------
     A handler is called when ALL of the following match:
@@ -612,140 +619,6 @@ class AbstractEventBus(ABC):
               coroutine functions at dispatch time.
             - Higher ``priority`` values run first.  Equal priorities run in
               subscription order (FIFO).
-        """
-
-    # ── Channel management ─────────────────────────────────────────────────────
-
-    async def declare_channel(
-        self,
-        channel: str,
-        config: ChannelConfig | None = None,
-    ) -> None:
-        """
-        Declare a channel, creating it on the backend if it does not exist.
-
-        The semantics depend on the backing bus:
-
-        - ``InMemoryEventBus`` — records the channel name and optional config
-          for introspection.  All implicit publish/subscribe channels are also
-          auto-recorded, so this is purely additive.
-        - ``KafkaEventBus`` — creates the Kafka topic if it does not already
-          exist, using ``config.num_partitions`` and ``config.replication_factor``.
-        - ``RedisEventBus`` — Redis Pub/Sub channels are ephemeral; this call
-          records the declared channel locally for ``channel_exists`` /
-          ``list_channels`` and is otherwise a no-op.
-
-        The default implementation is a no-op — suitable for buses that
-        create channels implicitly on first publish.
-
-        Args:
-            channel: Logical channel name (e.g. ``"orders"``).
-            config:  Optional ``ChannelConfig``.  ``None`` uses backend
-                     defaults (e.g. Kafka: 1 partition, replication factor 1).
-
-        Raises:
-            RuntimeError: (Kafka) If called before ``start()``.
-
-        Edge cases:
-            - Calling ``declare_channel`` on an already-existing channel is
-              idempotent — it does NOT modify an existing topic's config.
-              To change Kafka topic configuration, use the Kafka AdminClient
-              directly.
-            - ``config`` fields that are not supported by the backend are
-              silently ignored.
-        """
-
-    async def channel_exists(self, channel: str) -> bool:
-        """
-        Return ``True`` if the channel exists on this bus.
-
-        Semantics per backend:
-
-        - ``InMemoryEventBus`` — ``True`` if the channel has been declared
-          via ``declare_channel()`` OR has been used in at least one
-          ``publish()`` or ``subscribe()`` call.
-        - ``KafkaEventBus`` — ``True`` if the Kafka topic exists
-          (checked via AdminClient).
-        - ``RedisEventBus`` — ``True`` if the channel was declared via
-          ``declare_channel()`` OR has an active publisher right now
-          (checked via ``PUBSUB CHANNELS``).
-
-        The default implementation returns ``True`` — suitable for buses
-        that treat all channel names as implicitly valid.
-
-        Args:
-            channel: Logical channel name to check.
-
-        Returns:
-            ``True`` if the channel exists / is known to this bus.
-
-        Edge cases:
-            - On ``InMemoryEventBus`` a channel that has ONLY been subscribed
-              (never published to) IS considered to exist.
-            - On ``RedisEventBus`` a declared channel with no active publishers
-              is still considered to exist (it was explicitly declared).
-        """
-        return True
-
-    async def list_channels(self) -> list[str]:
-        """
-        Return all channels known to this bus.
-
-        Semantics per backend:
-
-        - ``InMemoryEventBus`` — all channels seen in ``publish()``,
-          ``subscribe()``, or ``declare_channel()`` calls.
-        - ``KafkaEventBus`` — all Kafka topics visible to the configured
-          consumer (optionally filtered by ``topic_prefix``).
-        - ``RedisEventBus`` — channels declared via ``declare_channel()`` plus
-          any channels currently active (``PUBSUB CHANNELS``).
-
-        The default implementation returns an empty list.
-
-        Returns:
-            Sorted list of logical channel names.
-
-        Edge cases:
-            - ``KafkaEventBus`` returns ALL topics the client can see — this
-              may include topics created by other services.  Use
-              ``KafkaConfig.topic_prefix`` to namespace your topics and filter
-              the result.
-            - On ``InMemoryEventBus``, channels from cancelled subscriptions
-              remain in the list — the channel itself still "exists".
-        """
-        return []
-
-    async def delete_channel(self, channel: str) -> None:
-        """
-        Delete a channel from the backend.
-
-        Semantics per backend:
-
-        - ``InMemoryEventBus`` — removes the channel from the known-channels
-          set and cancels all subscriptions on that channel.
-        - ``KafkaEventBus`` — deletes the Kafka topic via AdminClient.
-          **Irreversible.** All unread messages on the topic are lost.
-        - ``RedisEventBus`` — removes the channel from the local declaration
-          registry.  Redis Pub/Sub channels cannot be "deleted" at the broker
-          level — they cease to exist when no subscribers/publishers are active.
-
-        The default implementation is a no-op.
-
-        Args:
-            channel: Logical channel name to delete.
-
-        Raises:
-            RuntimeError: (Kafka) If called before ``start()``.
-
-        Edge cases:
-            - Deleting a channel that does not exist is silently ignored.
-            - On ``KafkaEventBus``, active consumers on the topic will receive
-              a ``TopicAuthorizationFailedException`` on the next poll after
-              the topic is deleted.
-            - On ``InMemoryEventBus``, handlers subscribed to the deleted
-              channel via ``CHANNEL_ALL`` (``"*"``) are NOT cancelled — they
-              would still receive events if you were to publish again with
-              the same channel name after re-creating it.
         """
 
     async def publish_many(

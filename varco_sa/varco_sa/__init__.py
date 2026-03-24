@@ -39,8 +39,15 @@ from __future__ import annotations
 
 from varco_sa.alembic_helpers import get_target_metadata, print_create_ddl
 from varco_sa.bootstrap import SAConfig, SAFastrestApp
+from varco_sa.di import SAModule, bind_repositories
 from varco_sa.factory import SAModelFactory, SAModelRegistry
 from varco_sa.models import BaseDatabaseModel
+from varco_sa.outbox import (
+    OutboxEntryModel,
+    SAOutboxRepository,
+    SARelayOutboxRepository,
+    outbox_metadata,
+)
 from varco_sa.provider import SQLAlchemyRepositoryProvider
 from varco_sa.repository import AsyncSQLAlchemyRepository
 from varco_sa.schema_guard import SchemaGuard, SchemaDrift, SchemaDriftReport
@@ -51,6 +58,9 @@ from varco_core.query.applicator.sqlalchemy import SQLAlchemyQueryApplicator
 from varco_sa.type_coercion import registry_from_sa_model
 
 __all__ = [
+    # ── DI integration ────────────────────────────────────────────────────────
+    "SAModule",
+    "bind_repositories",
     # ── Factory + registry ─────────────────────────────────────────────────────
     "SAModelFactory",
     "SAModelRegistry",
@@ -75,4 +85,9 @@ __all__ = [
     # ── Bootstrap ─────────────────────────────────────────────────────────────
     "SAConfig",
     "SAFastrestApp",
+    # ── Outbox pattern ────────────────────────────────────────────────────────
+    "OutboxEntryModel",
+    "outbox_metadata",
+    "SAOutboxRepository",
+    "SARelayOutboxRepository",
 ]

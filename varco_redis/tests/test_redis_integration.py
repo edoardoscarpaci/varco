@@ -68,11 +68,11 @@ async def bus(redis_container):
     """
     ``RedisEventBus`` connected to the testcontainers Redis instance.
     """
-    from varco_redis import RedisConfig, RedisEventBus  # noqa: PLC0415
+    from varco_redis import RedisEventBus, RedisEventBusSettings  # noqa: PLC0415
 
     host = redis_container.get_container_host_ip()
     port = redis_container.get_exposed_port(6379)
-    config = RedisConfig(url=f"redis://{host}:{port}/0")
+    config = RedisEventBusSettings(url=f"redis://{host}:{port}/0")
 
     async with RedisEventBus(config) as b:
         yield b

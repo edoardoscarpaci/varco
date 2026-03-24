@@ -36,7 +36,7 @@ from varco_core.event import (
     Subscription,
 )
 from varco_core.event.serializer import JsonEventSerializer
-from varco_kafka import KafkaConfig, KafkaEventBus
+from varco_kafka import KafkaEventBus, KafkaEventBusSettings
 
 
 # ── Test event types ────────────────────────────────────────────────────────────
@@ -85,34 +85,6 @@ class FakeProducer:
         self.sent.append((topic, value))
 
 
-class FakeAdmin:
-    """
-    Fake AIOKafkaAdminClient — records create/delete topic calls.
-
-    Attributes:
-        created_topics: Names of topics passed to ``create_topics()``.
-        deleted_topics: Names of topics passed to ``delete_topics()``.
-    """
-
-    def __init__(self, **kwargs: Any) -> None:
-        self.created_topics: list[str] = []
-        self.deleted_topics: list[str] = []
-        self._started = False
-
-    async def start(self) -> None:
-        self._started = True
-
-    async def close(self) -> None:
-        self._started = False
-
-    async def create_topics(self, new_topics: list[Any], **kwargs: Any) -> None:
-        for t in new_topics:
-            self.created_topics.append(t.name)
-
-    async def delete_topics(self, topics: list[str], **kwargs: Any) -> None:
-        self.deleted_topics.extend(topics)
-
-
 class FakeConsumer:
     """
     Fake AIOKafkaConsumer — yields pre-loaded messages on iteration.
@@ -130,7 +102,9 @@ class FakeConsumer:
     def queue(self, topic: str, event: Event) -> None:
         """Enqueue an event to be delivered on the next iteration."""
         self._messages.append(
-            FakeMessage(topic=topic, value=JsonEventSerializer.serialize(event))
+            # Instance method — JsonEventSerializer is stateless so a throwaway
+            # instance is fine here.
+            FakeMessage(topic=topic, value=JsonEventSerializer().serialize(event))
         )
 
     async def start(self) -> None:
@@ -166,57 +140,51 @@ def fake_consumer() -> FakeConsumer:
 
 
 @pytest.fixture
-def fake_admin() -> FakeAdmin:
-    return FakeAdmin()
-
-
-@pytest.fixture
-def config() -> KafkaConfig:
-    return KafkaConfig(bootstrap_servers="fake:9092", group_id="test-group")
+def config() -> KafkaEventBusSettings:
+    return KafkaEventBusSettings(bootstrap_servers="fake:9092", group_id="test-group")
 
 
 @pytest.fixture
 async def bus(
-    config: KafkaConfig,
+    config: KafkaEventBusSettings,
     fake_producer: FakeProducer,
     fake_consumer: FakeConsumer,
-    fake_admin: FakeAdmin,
 ) -> AsyncIterator[KafkaEventBus]:
     """
     ``KafkaEventBus`` with aiokafka fakes injected via monkeypatch.
 
-    Patches ``AIOKafkaProducer``, ``AIOKafkaConsumer``, and ``AIOKafkaAdminClient``
-    so no real Kafka connection is made.
+    Patches ``AIOKafkaProducer`` and ``AIOKafkaConsumer`` so no real Kafka
+    connection is made.  ``AIOKafkaAdminClient`` is no longer part of the bus
+    — it lives in ``KafkaChannelManager``.
     """
     with (
         patch("varco_kafka.bus.AIOKafkaProducer", return_value=fake_producer),
         patch("varco_kafka.bus.AIOKafkaConsumer", return_value=fake_consumer),
-        patch("varco_kafka.bus.AIOKafkaAdminClient", return_value=fake_admin),
     ):
         async with KafkaEventBus(config) as b:
             yield b
 
 
-# ── KafkaConfig ────────────────────────────────────────────────────────────────
+# ── KafkaEventBusSettings ──────────────────────────────────────────────────────
 
 
 class TestKafkaConfig:
     def test_defaults(self) -> None:
-        cfg = KafkaConfig()
+        cfg = KafkaEventBusSettings()
         assert cfg.bootstrap_servers == "localhost:9092"
         assert cfg.group_id == "varco-default"
-        assert cfg.topic_prefix == ""
+        assert cfg.channel_prefix == ""
 
     def test_topic_name_no_prefix(self) -> None:
-        cfg = KafkaConfig()
+        cfg = KafkaEventBusSettings()
         assert cfg.topic_name("orders") == "orders"
 
     def test_topic_name_with_prefix(self) -> None:
-        cfg = KafkaConfig(topic_prefix="prod.")
+        cfg = KafkaEventBusSettings(channel_prefix="prod.")
         assert cfg.topic_name("orders") == "prod.orders"
 
     def test_frozen(self) -> None:
-        cfg = KafkaConfig()
+        cfg = KafkaEventBusSettings()
         with pytest.raises(Exception):
             cfg.group_id = "other"  # type: ignore[misc]
 
@@ -232,15 +200,13 @@ class TestKafkaEventBusLifecycle:
 
     async def test_start_idempotent(
         self,
-        config: KafkaConfig,
+        config: KafkaEventBusSettings,
         fake_producer: FakeProducer,
         fake_consumer: FakeConsumer,
-        fake_admin: FakeAdmin,
     ) -> None:
         with (
             patch("varco_kafka.bus.AIOKafkaProducer", return_value=fake_producer),
             patch("varco_kafka.bus.AIOKafkaConsumer", return_value=fake_consumer),
-            patch("varco_kafka.bus.AIOKafkaAdminClient", return_value=fake_admin),
         ):
             bus = KafkaEventBus(config)
             await bus.start()
@@ -254,15 +220,13 @@ class TestKafkaEventBusLifecycle:
 
     async def test_context_manager_starts_and_stops(
         self,
-        config: KafkaConfig,
+        config: KafkaEventBusSettings,
         fake_producer: FakeProducer,
         fake_consumer: FakeConsumer,
-        fake_admin: FakeAdmin,
     ) -> None:
         with (
             patch("varco_kafka.bus.AIOKafkaProducer", return_value=fake_producer),
             patch("varco_kafka.bus.AIOKafkaConsumer", return_value=fake_consumer),
-            patch("varco_kafka.bus.AIOKafkaAdminClient", return_value=fake_admin),
         ):
             async with KafkaEventBus(config) as bus:
                 assert bus._started
@@ -306,13 +270,11 @@ class TestKafkaEventBusPublish:
         self,
         fake_producer: FakeProducer,
         fake_consumer: FakeConsumer,
-        fake_admin: FakeAdmin,
     ) -> None:
-        config = KafkaConfig(topic_prefix="prod.")
+        config = KafkaEventBusSettings(channel_prefix="prod.")
         with (
             patch("varco_kafka.bus.AIOKafkaProducer", return_value=fake_producer),
             patch("varco_kafka.bus.AIOKafkaConsumer", return_value=fake_consumer),
-            patch("varco_kafka.bus.AIOKafkaAdminClient", return_value=fake_admin),
         ):
             async with KafkaEventBus(config) as bus:
                 await bus.publish(OrderPlacedEvent(order_id="1"), channel="orders")
@@ -368,10 +330,9 @@ class TestKafkaEventBusSubscribe:
 class TestKafkaEventBusConsumerDispatch:
     async def test_consumer_dispatches_incoming_messages(
         self,
-        config: KafkaConfig,
+        config: KafkaEventBusSettings,
         fake_producer: FakeProducer,
         fake_consumer: FakeConsumer,
-        fake_admin: FakeAdmin,
     ) -> None:
         received: list[Event] = []
         event = OrderPlacedEvent(order_id="x")
@@ -383,7 +344,6 @@ class TestKafkaEventBusConsumerDispatch:
         with (
             patch("varco_kafka.bus.AIOKafkaProducer", return_value=fake_producer),
             patch("varco_kafka.bus.AIOKafkaConsumer", return_value=fake_consumer),
-            patch("varco_kafka.bus.AIOKafkaAdminClient", return_value=fake_admin),
         ):
             async with KafkaEventBus(config) as bus:
                 bus.subscribe(OrderPlacedEvent, handler, channel="orders")
@@ -398,9 +358,8 @@ class TestKafkaEventBusConsumerDispatch:
         self,
         fake_producer: FakeProducer,
         fake_consumer: FakeConsumer,
-        fake_admin: FakeAdmin,
     ) -> None:
-        config = KafkaConfig(topic_prefix="prod.")
+        config = KafkaEventBusSettings(channel_prefix="prod.")
         event = OrderPlacedEvent(order_id="1")
         # The message arrives on topic "prod.orders"
         fake_consumer.queue("prod.orders", event)
@@ -411,7 +370,6 @@ class TestKafkaEventBusConsumerDispatch:
         with (
             patch("varco_kafka.bus.AIOKafkaProducer", return_value=fake_producer),
             patch("varco_kafka.bus.AIOKafkaConsumer", return_value=fake_consumer),
-            patch("varco_kafka.bus.AIOKafkaAdminClient", return_value=fake_admin),
         ):
             async with KafkaEventBus(config) as bus:
                 # Subscribe to "orders" — should match after prefix stripping

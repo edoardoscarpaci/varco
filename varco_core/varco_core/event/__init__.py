@@ -10,6 +10,15 @@ All public symbols are importable directly from ``varco_core.event``::
     from varco_core.event import ErrorPolicy, Subscription, EventMiddleware
     from varco_core.event import CHANNEL_ALL, CHANNEL_DEFAULT
 
+    # Channel management (separate from the bus — admin credentials not needed by bus)
+    from varco_core.event import ChannelManager
+
+    # Configuration
+    from varco_core.event import EventBusSettings
+
+    # Serializer
+    from varco_core.event import EventSerializer, JsonEventSerializer
+
     # Producer side
     from varco_core.event import AbstractEventProducer
     from varco_core.event import BusEventProducer, NoopEventProducer
@@ -24,6 +33,13 @@ All public symbols are importable directly from ``varco_core.event``::
     from varco_core.event import EntityEvent
     from varco_core.event import EntityCreatedEvent, EntityUpdatedEvent, EntityDeletedEvent
 
+    # Dead Letter Queue
+    from varco_core.event import (
+        AbstractDeadLetterQueue,
+        DeadLetterEntry,
+        InMemoryDeadLetterQueue,
+    )
+
 Layer map::
 
     User code
@@ -35,6 +51,17 @@ Layer map::
     InMemoryEventBus  (this package)
     KafkaEventBus     (varco_kafka)
     RedisEventBus     (varco_redis)
+
+    ChannelManager (channel lifecycle — separate from bus)
+      ↓ implemented by
+    KafkaChannelManager  (varco_kafka)
+    RedisChannelManager  (varco_redis)
+
+    AbstractDeadLetterQueue (DLQ — per-handler failure routing)
+      ↓ implemented by
+    InMemoryDeadLetterQueue  (this package, for tests)
+    KafkaDLQ    (varco_kafka — publishes to a dedicated DLQ topic)
+    RedisDLQ    (varco_redis — publishes to a dedicated DLQ channel/stream)
 """
 
 from __future__ import annotations
@@ -50,6 +77,8 @@ from varco_core.event.base import (
     EventMiddleware,
     Subscription,
 )
+from varco_core.event.channel import ChannelManager
+from varco_core.event.config import EventBusSettings
 from varco_core.event.consumer import EventConsumer, listen
 from varco_core.event.domain import (
     EntityCreatedEvent,
@@ -58,11 +87,16 @@ from varco_core.event.domain import (
     EntityUpdatedEvent,
 )
 from varco_core.event.memory import InMemoryEventBus, NoopEventBus
-from varco_core.event.serializer import JsonEventSerializer
+from varco_core.event.serializer import EventSerializer, JsonEventSerializer
 from varco_core.event.producer import (
     AbstractEventProducer,
     BusEventProducer,
     NoopEventProducer,
+)
+from varco_core.event.dlq import (
+    AbstractDeadLetterQueue,
+    DeadLetterEntry,
+    InMemoryDeadLetterQueue,
 )
 
 __all__ = [
@@ -78,10 +112,15 @@ __all__ = [
     "Subscription",
     # ── Dispatch mode ───────────────────────────────────────────────────────
     "DispatchMode",
+    # ── Channel management ──────────────────────────────────────────────────
+    "ChannelManager",
+    # ── Configuration ───────────────────────────────────────────────────────
+    "EventBusSettings",
     # ── In-memory bus ───────────────────────────────────────────────────────
     "InMemoryEventBus",
     "NoopEventBus",
     # ── Serializer ──────────────────────────────────────────────────────────
+    "EventSerializer",
     "JsonEventSerializer",
     # ── Producer ────────────────────────────────────────────────────────────
     "AbstractEventProducer",
@@ -95,4 +134,8 @@ __all__ = [
     "EntityCreatedEvent",
     "EntityUpdatedEvent",
     "EntityDeletedEvent",
+    # ── Dead Letter Queue ────────────────────────────────────────────────────
+    "AbstractDeadLetterQueue",
+    "DeadLetterEntry",
+    "InMemoryDeadLetterQueue",
 ]

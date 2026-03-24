@@ -384,6 +384,47 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
         # Base: no stamping — return entity unchanged.
         return entity
 
+    def _validate_entity(self, entity: D, ctx: AuthContext) -> None:
+        """
+        Validate a domain entity's business invariants before it is persisted.
+
+        Called by:
+        - ``create``: *after* ``_prepare_for_create`` — the entity is fully
+          stamped with cross-cutting fields (``tenant_id``, ``owner_id``, etc.)
+          at this point, so validators can check invariants that depend on them.
+        - ``update``: *after* ``assembler.apply_update`` — the entity reflects
+          the updated state that will be written to the backing store.
+
+        **Why after _prepare_for_create?**
+            Stamping (tenant_id, owner_id) happens in ``_prepare_for_create``.
+            Running validation after stamping means validators see the complete
+            entity — e.g. "owner must belong to this tenant" can be checked here
+            without the validator needing direct access to ``ctx``.
+
+        **Chaining contract**: always end with
+        ``super()._validate_entity(entity, ctx)`` so multiple mixins in the MRO
+        each run their validation step.
+
+        Args:
+            entity: The fully-assembled (and stamped) domain entity.
+            ctx:    Caller's identity — available if a validator needs it,
+                    but validators should prefer inspecting ``entity`` directly.
+
+        Raises:
+            ServiceValidationError: A business invariant was violated.
+
+        Edge cases:
+            - ``entity._raw_orm`` is ``None`` during ``create`` — the entity
+              has not yet been persisted.  Validators must not call
+              ``entity.raw()`` (raises ``RuntimeError``).
+            - For ``update``, ``entity._raw_orm`` IS set — use
+              ``entity.is_persisted()`` to distinguish if needed.
+            - The base implementation is a no-op — all entities pass through
+              unless a mixin (e.g. ``ValidatorServiceMixin``) overrides it.
+        """
+        # Base: no validation — all entities pass through.
+        return
+
     def _pre_check(self, ctx: AuthContext) -> None:
         """
         Fast stateless check executed *before* the unit of work is opened.
@@ -793,6 +834,10 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
             # Stamp cross-cutting fields (tenant_id, owner_id, etc.) after auth
             # so the JWT identity is the authoritative source — not the DTO.
             entity = self._prepare_for_create(entity, ctx)
+            # Validate business invariants after stamping so validators see the
+            # fully-populated entity (including tenant_id, owner_id, etc.).
+            # Raises ServiceValidationError if any invariant is violated.
+            self._validate_entity(entity, ctx)
             saved = await self._get_repo(uow).save(entity)
             # Capture the ReadDTO inside the UoW — assembler.to_read_dto is a
             # pure transform but saved.pk is only valid while the session exists.
@@ -858,6 +903,10 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
             )
 
             updated = self._assembler.apply_update(entity, dto)
+            # Validate the updated entity's business invariants before saving.
+            # Runs after apply_update so validators see the new field values,
+            # not the pre-update state.
+            self._validate_entity(updated, ctx)
             saved = await self._get_repo(uow).save(updated)
             # Capture ReadDTO inside the UoW — same rationale as create().
             read_dto = self._assembler.to_read_dto(saved)

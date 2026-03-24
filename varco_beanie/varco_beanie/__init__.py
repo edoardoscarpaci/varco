@@ -46,6 +46,7 @@ providify DI integration::
 from varco_beanie.bootstrap import BeanieConfig, BeanieFastrestApp
 from varco_beanie.di import BeanieModule, BeanieSettings, bind_repositories
 from varco_beanie.factory import BeanieDocRegistry, BeanieModelFactory
+from varco_beanie.outbox import BeanieOutboxRepository, OutboxDocument
 from varco_beanie.provider import BeanieRepositoryProvider
 from varco_beanie.repository import AsyncBeanieRepository
 from varco_beanie.uow import BeanieUnitOfWork
@@ -64,4 +65,7 @@ __all__ = [
     # Bootstrap
     "BeanieConfig",
     "BeanieFastrestApp",
+    # ── Outbox pattern ────────────────────────────────────────────────────────
+    "OutboxDocument",
+    "BeanieOutboxRepository",
 ]

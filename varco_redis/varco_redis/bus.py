@@ -61,22 +61,21 @@ from typing import Any
 # redis package namespace directly.
 import redis.asyncio as aioredis
 
-from providify import PreDestroy, Singleton
+from providify import PreDestroy
 
 from varco_core.event.base import (
     CHANNEL_ALL,
     CHANNEL_DEFAULT,
     AbstractEventBus,
-    ChannelConfig,
     ErrorPolicy,
     Event,
     EventMiddleware,
     Subscription,
     _SubscriptionEntry,
 )
-from varco_core.event.serializer import JsonEventSerializer
+from varco_core.event.serializer import EventSerializer, JsonEventSerializer
 
-from varco_redis.config import RedisConfig
+from varco_redis.config import RedisEventBusSettings
 
 _logger = logging.getLogger(__name__)
 
@@ -85,7 +84,6 @@ _logger = logging.getLogger(__name__)
 _POLL_INTERVAL: float = 0.01  # 10 ms
 
 
-@Singleton
 class RedisEventBus(AbstractEventBus):
     """
     ``AbstractEventBus`` backed by Redis Pub/Sub via ``redis.asyncio``.
@@ -109,7 +107,7 @@ class RedisEventBus(AbstractEventBus):
 
     Example::
 
-        config = RedisConfig(url="redis://localhost:6379/0")
+        config = RedisEventBusSettings(url="redis://localhost:6379/0")
         async with RedisEventBus(config) as bus:
             bus.subscribe(OrderPlacedEvent, my_handler, channel="orders")
             await bus.publish(OrderPlacedEvent(order_id="1"), channel="orders")
@@ -119,20 +117,33 @@ class RedisEventBus(AbstractEventBus):
           Messages published while a subscriber is disconnected are lost.
         - ``subscribe(channel=CHANNEL_ALL)`` uses Redis pattern subscribe (``"*"``)
           — the handler receives events from ALL channels on this Redis instance.
-          Use a ``channel_prefix`` in ``RedisConfig`` to limit scope.
+          Use a ``channel_prefix`` in ``RedisEventBusSettings`` to limit scope.
         - Calling ``publish()`` before ``start()`` raises ``RuntimeError``.
     """
 
     def __init__(
         self,
-        config: RedisConfig | None = None,
+        config: RedisEventBusSettings | None = None,
         *,
         error_policy: ErrorPolicy = ErrorPolicy.COLLECT_ALL,
         middleware: list[EventMiddleware] | None = None,
+        serializer: EventSerializer | None = None,
     ) -> None:
-        self._config = config or RedisConfig()
+        """
+        Args:
+            config:       Redis settings.  Defaults to ``RedisEventBusSettings()``
+                          (localhost, reads from ``VARCO_REDIS_*`` env vars).
+            error_policy: Handler error policy.
+            middleware:   Ordered middleware list (index 0 is outermost).
+            serializer:   Pluggable event serializer.  Defaults to
+                          ``JsonEventSerializer()``.
+        """
+        self._config = config or RedisEventBusSettings()
         self._error_policy = error_policy
         self._middleware: list[EventMiddleware] = middleware or []
+
+        # Use provided serializer or fall back to JSON.
+        self._serializer: EventSerializer = serializer or JsonEventSerializer()
 
         self._subscriptions: list[_SubscriptionEntry] = []
 
@@ -141,17 +152,6 @@ class RedisEventBus(AbstractEventBus):
         self._subscribed_channels: set[str] = set()
         # True if a CHANNEL_ALL subscription was added — requires psubscribe("*")
         self._has_wildcard: bool = False
-
-        # Tracks logical channel names we know about — populated by
-        # declare_channel(), subscribe(), and publish() so that
-        # channel_exists() / list_channels() work without querying Redis.
-        # Keys are logical channel names; values are the declared ChannelConfig
-        # (or None when auto-populated by subscribe/publish).
-        #
-        # DESIGN: Redis Pub/Sub has no persistent channel registry — channels
-        # exist only while subscribers are connected.  Local tracking is the
-        # only reliable way to enumerate channels across calls.
-        self._declared_channels: dict[str, ChannelConfig | None] = {}
 
         self._redis: Any | None = None
         self._pubsub: Any | None = None
@@ -242,7 +242,7 @@ class RedisEventBus(AbstractEventBus):
         Args:
             event:   The event to publish.
             channel: Target channel.  Maps to a Redis channel via
-                     ``RedisConfig.channel_name(channel)``.
+                     ``RedisEventBusSettings.channel_name(channel)``.
 
         Returns:
             ``None`` — Redis Pub/Sub is always asynchronous (no local task).
@@ -257,12 +257,7 @@ class RedisEventBus(AbstractEventBus):
             )
 
         redis_channel = self._config.channel_name(channel)
-        value = JsonEventSerializer.serialize(event)
-
-        # Auto-record logical channel so list_channels() / channel_exists() work
-        # even for channels that were never explicitly declared.
-        self._declared_channels.setdefault(channel, None)
-
+        value = self._serializer.serialize(event)
         await self._redis.publish(redis_channel, value)
         _logger.debug(
             "Published %s to Redis channel %s", type(event).__name__, redis_channel
@@ -316,8 +311,6 @@ class RedisEventBus(AbstractEventBus):
                     # Already started — subscribe immediately
                     asyncio.ensure_future(self._pubsub.psubscribe("*"))
         else:
-            # Auto-record logical channel so channel_exists() / list_channels() work.
-            self._declared_channels.setdefault(channel, None)
             redis_channel = self._config.channel_name(channel)
             if redis_channel not in self._subscribed_channels:
                 self._subscribed_channels.add(redis_channel)
@@ -325,95 +318,6 @@ class RedisEventBus(AbstractEventBus):
                     asyncio.ensure_future(self._pubsub.subscribe(redis_channel))
 
         return Subscription(entry)
-
-    # ── Channel management ─────────────────────────────────────────────────────
-
-    async def declare_channel(
-        self, channel: str, config: ChannelConfig | None = None
-    ) -> None:
-        """
-        Register ``channel`` in the local channel registry.
-
-        Redis Pub/Sub has no persistent channel concept — channels exist only
-        while there are active subscribers.  This method records the channel
-        locally so that ``channel_exists()`` and ``list_channels()`` reflect it.
-
-        If ``config`` carries Redis-specific settings via ``ChannelConfig.extra``
-        (e.g. ``max_len`` for future Streams support), those are stored for
-        future use.
-
-        Args:
-            channel: Logical channel name (e.g. ``"orders"``).
-            config:  Optional channel configuration.  Stored locally; not
-                     applied to Redis itself (Pub/Sub channels have no config).
-
-        Edge cases:
-            - Safe to call before or after ``start()``.
-            - Calling with a new ``config`` on an already-declared channel
-              updates the stored config.
-        """
-        # Redis Pub/Sub has no server-side channel creation — just record locally.
-        if channel not in self._declared_channels or config is not None:
-            self._declared_channels[channel] = config
-        _logger.debug("Declared Redis channel %r (config=%r)", channel, config)
-
-    async def channel_exists(self, channel: str) -> bool:
-        """
-        Return ``True`` if this bus instance knows about ``channel``.
-
-        Channels are recorded when:
-        - ``declare_channel()`` is called explicitly.
-        - ``subscribe()`` is called with a specific channel.
-        - ``publish()`` sends an event to that channel.
-
-        Note: Redis Pub/Sub has no global channel registry — this only reflects
-        channels seen by THIS bus instance.
-
-        Args:
-            channel: Logical channel name to check.
-
-        Returns:
-            ``True`` if channel is in the local registry; ``False`` otherwise.
-        """
-        return channel in self._declared_channels
-
-    async def list_channels(self) -> list[str]:
-        """
-        Return a sorted list of all channel names known to this bus instance.
-
-        See ``channel_exists()`` for which channels are tracked.
-
-        Returns:
-            Sorted list of logical channel names.
-        """
-        return sorted(self._declared_channels.keys())
-
-    async def delete_channel(self, channel: str) -> None:
-        """
-        Remove ``channel`` from the local registry and cancel subscriptions.
-
-        Redis Pub/Sub channels disappear automatically when all subscribers
-        disconnect — this method simply reflects that by removing the local
-        record and cancelling any handlers for this channel.
-
-        Args:
-            channel: Logical channel name to delete.
-
-        Edge cases:
-            - If ``channel`` was never declared, the call is a silent no-op.
-            - Local subscriptions for this channel are cancelled immediately.
-            - Already-connected pubsub subscriptions are NOT unsubscribed from
-              Redis — the listener loop will receive any remaining messages
-              briefly before handlers stop firing (all entries are cancelled).
-        """
-        self._declared_channels.pop(channel, None)
-
-        # Cancel any local subscriptions so handlers no longer fire.
-        for entry in self._subscriptions:
-            if entry.channel == channel:
-                entry.cancelled = True
-
-        _logger.debug("Deleted Redis channel %r from local registry.", channel)
 
     # ── Listener loop ──────────────────────────────────────────────────────────
 
@@ -465,7 +369,7 @@ class RedisEventBus(AbstractEventBus):
                     continue
 
                 try:
-                    event = JsonEventSerializer.deserialize(message["data"])
+                    event = self._serializer.deserialize(message["data"])
                     # Recover logical channel by stripping the prefix
                     redis_channel: str = message["channel"]
                     if isinstance(redis_channel, bytes):

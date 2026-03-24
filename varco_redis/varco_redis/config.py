@@ -1,62 +1,115 @@
 """
 varco_redis.config
 ==================
-Configuration value objects for ``RedisEventBus``.
+Configuration for the Redis event bus and cache backends.
 
-``RedisConfig`` carries the minimal Redis connection settings.  All fields
-have sensible defaults so a local Redis instance can be used with no
-configuration::
+``RedisEventBusSettings`` is the configuration object for ``RedisEventBus``.
+It extends ``EventBusSettings`` so all Redis connection settings are read from
+environment variables automatically.
 
-    bus = RedisEventBus(RedisConfig())  # connects to redis://localhost:6379
+Environment variables (prefix ``VARCO_REDIS_``)
+-------------------------------------------------
+::
 
-DESIGN: dataclass over raw kwargs
-    ✅ Type-checked at construction.
-    ✅ Single import for all bus configuration.
-    ✅ Defaults cover the common local-dev case.
+    VARCO_REDIS_URL=redis://my-redis:6379/0
+    VARCO_REDIS_CHANNEL_PREFIX=prod:
+    VARCO_REDIS_SOCKET_TIMEOUT=5.0
 
-Thread safety:  ✅ Frozen dataclass — immutable after construction.
+Construction patterns::
+
+    # From env (production)
+    config = RedisEventBusSettings.from_env()
+
+    # Explicit (tests, DI override)
+    config = RedisEventBusSettings(url="redis://localhost:6379/0")
+
+    # From dict (DI wiring)
+    config = RedisEventBusSettings.from_dict({"url": os.environ["REDIS_URL"]})
+
+DESIGN: Pydantic BaseSettings over frozen dataclass
+    ✅ Env var reading is automatic — no ``os.environ`` boilerplate.
+    ✅ Validates types at load time — ``VARCO_REDIS_SOCKET_TIMEOUT=abc`` fails fast.
+    ✅ Immutable after construction — prevents accidental mutation.
+    ❌ ``redis_kwargs`` cannot be set from a plain env var (would need JSON string).
+       Use keyword arguments or ``from_dict()`` for complex extra kwargs.
+
+Thread safety:  ✅ Immutable after construction (frozen=True).
 Async safety:   ✅ No mutable state.
+
+📚 Docs
+- 🔍 https://redis-py.readthedocs.io/en/stable/connections.html
+  redis.asyncio connection options — url format, SSL, auth
+- 🔍 https://docs.pydantic.dev/latest/concepts/pydantic_settings/
+  Pydantic Settings — env_prefix, SettingsConfigDict
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from typing import Any
+
+from pydantic import Field
+from pydantic_settings import SettingsConfigDict
+
+from varco_core.event.config import EventBusSettings
 
 
-@dataclass(frozen=True)
-class RedisConfig:
+# ── RedisEventBusSettings ─────────────────────────────────────────────────────
+
+
+class RedisEventBusSettings(EventBusSettings):
     """
     Immutable configuration for ``RedisEventBus``.
 
+    All fields are read from environment variables with the ``VARCO_REDIS_``
+    prefix.  Every field has a sensible default so a local Redis instance
+    can be used with no configuration::
+
+        bus = RedisEventBus(RedisEventBusSettings())  # redis://localhost:6379/0
+
     Attributes:
-        url:             Redis connection URL.  Defaults to
-                         ``"redis://localhost:6379/0"``.
-        channel_prefix:  Optional prefix prepended to every Pub/Sub channel
-                         name.  Useful for namespace isolation across
-                         environments (e.g. ``"dev:"`` vs ``"prod:"``).
-        decode_responses: Whether redis.asyncio should return strings instead
-                          of bytes.  ``False`` (default) means raw bytes —
-                          required because ``JsonEventSerializer`` expects bytes.
-        socket_timeout:  Seconds to wait for a socket operation before timing
-                         out.  ``None`` (default) means no timeout.
-        redis_kwargs:    Extra keyword arguments forwarded to
+        url:             Redis connection URL.
+                         Env var: ``VARCO_REDIS_URL``.
+        channel_prefix:  Optional prefix for every Pub/Sub channel name.
+                         Env var: ``VARCO_REDIS_CHANNEL_PREFIX``.
+                         (Inherited from ``EventBusSettings``.)
+        decode_responses: Whether redis.asyncio returns strings instead of bytes.
+                          Must be ``False`` (default) — the bus uses
+                          ``JsonEventSerializer`` which expects raw bytes.
+                          Env var: ``VARCO_REDIS_DECODE_RESPONSES``.
+        socket_timeout:  Seconds before a socket operation times out.
+                         ``None`` (default) means no timeout.
+                         Env var: ``VARCO_REDIS_SOCKET_TIMEOUT``.
+        redis_kwargs:    Extra keyword arguments forwarded verbatim to
                          ``redis.asyncio.from_url()``.  Use for SSL, auth,
-                         connection pool settings, etc.
+                         connection pool settings.
+                         **Cannot be set from a plain env var** — use
+                         keyword args or ``from_dict()`` instead.
+
+    Thread safety:  ✅ Immutable — frozen=True.
+    Async safety:   ✅ No mutable state.
 
     Edge cases:
-        - ``decode_responses`` must be ``False`` — the bus uses
-          ``JsonEventSerializer`` which expects raw bytes, not strings.
-          Setting it to ``True`` will cause ``TypeError`` at deserialization.
-        - ``channel_prefix`` is NOT applied retroactively — changing it
-          leaves orphaned channels in Redis.
+        - ``decode_responses`` must remain ``False`` — setting it to ``True``
+          causes ``TypeError`` at deserialization time (str vs bytes).
+        - ``channel_prefix`` is NOT applied retroactively — orphaned channels
+          remain in Redis if the prefix is changed after first use.
     """
 
+    model_config = SettingsConfigDict(env_prefix="VARCO_REDIS_", frozen=True)
+
     url: str = "redis://localhost:6379/0"
-    channel_prefix: str = ""
+    """Redis connection URL.  Env var: ``VARCO_REDIS_URL``."""
+
     decode_responses: bool = False
+    """Must stay False — bus uses raw bytes for serialization."""
+
     socket_timeout: float | None = None
-    # Extra kwargs forwarded verbatim to redis.asyncio.from_url()
-    redis_kwargs: dict = field(default_factory=dict)
+    """Socket operation timeout in seconds.  None = no timeout."""
+
+    # Extra kwargs forwarded verbatim to redis.asyncio.from_url().
+    # Cannot be set from an env var — set via keyword args or from_dict().
+    redis_kwargs: dict[str, Any] = Field(default_factory=dict)
+    """Extra kwargs for ``redis.asyncio.from_url()``.  Not env-readable."""
 
     def channel_name(self, channel: str) -> str:
         """
@@ -75,3 +128,8 @@ class RedisConfig:
             - Redis channel names can be arbitrary strings — no validation here.
         """
         return f"{self.channel_prefix}{channel}"
+
+
+__all__ = [
+    "RedisEventBusSettings",
+]

@@ -28,6 +28,9 @@ dependencies = [
     # It is already a transitive dep via varco-core but listed here to make the
     # direct usage explicit and to protect against future varco-core decoupling.
     "providify>=0.1.4a3",
+    # pydantic-settings is used directly in varco_kafka.config for SettingsConfigDict.
+    # It is also a transitive dep via varco-core, but listed explicitly here.
+    "pydantic-settings>=2.0",
 ]
 
 [project.urls]

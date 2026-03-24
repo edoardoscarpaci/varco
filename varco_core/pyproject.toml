@@ -21,6 +21,10 @@ classifiers   = [
 ]
 dependencies = [
     "pydantic>=2.12.5,<3.0.0",
+    # pydantic-settings provides BaseSettings — used by VarcoSettings and all
+    # backend config classes (RedisEventBusSettings, KafkaEventBusSettings, etc.)
+    # to read configuration from environment variables automatically.
+    "pydantic-settings>=2.0",
     "providify>=0.1.4a3",
     # lark is used by QueryParser — runtime dependency, not dev-only
     "lark>=1.1",

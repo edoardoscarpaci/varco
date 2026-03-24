@@ -25,7 +25,7 @@ Architecture
 
 Topic naming
 ------------
-Each channel maps to one Kafka topic.  ``KafkaConfig.topic_name(channel)``
+Each channel maps to one Kafka topic.  ``KafkaEventBusSettings.topic_name(channel)``
 applies the optional ``topic_prefix``, e.g.::
 
     channel = "orders"  →  topic = "prod.orders"  (with prefix "prod.")
@@ -71,30 +71,26 @@ from typing import Any
 # unit tests can patch varco_kafka.bus.AIOKafkaProducer etc. without needing
 # to reach into the aiokafka namespace directly.
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
-from aiokafka.admin import AIOKafkaAdminClient, NewTopic
-from aiokafka.errors import TopicAlreadyExistsError
 
-from providify import PreDestroy, Singleton
+from providify import PreDestroy
 
 from varco_core.event.base import (
     CHANNEL_ALL,
     CHANNEL_DEFAULT,
     AbstractEventBus,
-    ChannelConfig,
     ErrorPolicy,
     Event,
     EventMiddleware,
     Subscription,
     _SubscriptionEntry,
 )
-from varco_core.event.serializer import JsonEventSerializer
+from varco_core.event.serializer import EventSerializer, JsonEventSerializer
 
-from varco_kafka.config import KafkaConfig
+from varco_kafka.config import KafkaEventBusSettings
 
 _logger = logging.getLogger(__name__)
 
 
-@Singleton
 class KafkaEventBus(AbstractEventBus):
     """
     ``AbstractEventBus`` backed by Apache Kafka via ``aiokafka``.
@@ -119,7 +115,7 @@ class KafkaEventBus(AbstractEventBus):
 
     Example::
 
-        config = KafkaConfig(bootstrap_servers="localhost:9092", group_id="svc-a")
+        config = KafkaEventBusSettings(bootstrap_servers="localhost:9092", group_id="svc-a")
         async with KafkaEventBus(config) as bus:
             bus.subscribe(OrderPlacedEvent, my_handler, channel="orders")
             await bus.publish(OrderPlacedEvent(order_id="1"), channel="orders")
@@ -136,20 +132,30 @@ class KafkaEventBus(AbstractEventBus):
 
     def __init__(
         self,
-        config: KafkaConfig | None = None,
+        config: KafkaEventBusSettings | None = None,
         *,
         error_policy: ErrorPolicy = ErrorPolicy.COLLECT_ALL,
         middleware: list[EventMiddleware] | None = None,
+        serializer: EventSerializer | None = None,
     ) -> None:
         """
         Args:
-            config:        Kafka config.  Defaults to ``KafkaConfig()`` (localhost).
-            error_policy:  Handler error policy.
-            middleware:    Ordered middleware list (index 0 is outermost).
+            config:       Kafka settings.  Defaults to ``KafkaEventBusSettings()``
+                          (localhost, reads from ``VARCO_KAFKA_*`` env vars).
+            error_policy: Handler error policy.
+            middleware:   Ordered middleware list (index 0 is outermost).
+            serializer:   Pluggable event serializer.  Defaults to
+                          ``JsonEventSerializer()``.  Swap in a custom
+                          ``Serializer[Event]`` for msgpack, protobuf, etc.
         """
-        self._config = config or KafkaConfig()
+        self._config = config or KafkaEventBusSettings()
         self._error_policy = error_policy
         self._middleware: list[EventMiddleware] = middleware or []
+
+        # Use the provided serializer or fall back to JSON.
+        # Stored as an instance so it is pluggable and stateful serializers
+        # (e.g. ones that cache TypeAdapters) work correctly.
+        self._serializer: EventSerializer = serializer or JsonEventSerializer()
 
         # Local subscription list — same model as InMemoryEventBus.
         # Handler dispatch happens in-process after a message arrives from Kafka.
@@ -159,23 +165,15 @@ class KafkaEventBus(AbstractEventBus):
         # Updated whenever subscribe() is called with a specific channel.
         self._subscribed_topics: set[str] = set()
 
-        # Tracks logical channel names we know about — populated by
-        # declare_channel(), subscribe(), and publish() so that
-        # channel_exists() / list_channels() work without querying Kafka.
-        # Keys are logical channel names; values are the declared ChannelConfig
-        # (or None when auto-populated by subscribe/publish).
-        self._declared_channels: dict[str, ChannelConfig | None] = {}
-
-        # Producer, consumer, and admin client are created in start() — not here,
+        # Producer and consumer are created in start() — not here,
         # because aiokafka objects must be created inside a running event loop.
+        # Channel management (admin client) is now handled by KafkaChannelManager.
         self._producer: Any | None = None
         self._consumer: Any | None = None
-        self._admin: Any | None = None
         self._consumer_task: asyncio.Task | None = None
         self._started = False
 
         # Pre-build middleware chain — same approach as InMemoryEventBus.
-        # Rebuilt in start() after subscriptions might have changed.
         self._chain: Callable[[Event, str], Coroutine[Any, Any, None]] = (
             self._build_chain()
         )
@@ -199,14 +197,6 @@ class KafkaEventBus(AbstractEventBus):
         """
         if self._started:
             return
-
-        # Admin client is used for topic management (create/delete/list).
-        # Kept open for the lifetime of the bus so channel management calls
-        # don't need to reconnect on every operation.
-        self._admin = AIOKafkaAdminClient(
-            bootstrap_servers=self._config.bootstrap_servers,
-        )
-        await self._admin.start()
 
         self._producer = AIOKafkaProducer(
             bootstrap_servers=self._config.bootstrap_servers,
@@ -268,9 +258,6 @@ class KafkaEventBus(AbstractEventBus):
         if self._producer is not None:
             await self._producer.stop()
 
-        if self._admin is not None:
-            await self._admin.close()
-
         self._started = False
         _logger.info("KafkaEventBus stopped.")
 
@@ -299,7 +286,7 @@ class KafkaEventBus(AbstractEventBus):
         Args:
             event:   The event to publish.
             channel: Target channel.  Maps to a Kafka topic via
-                     ``KafkaConfig.topic_name(channel)``.
+                     ``KafkaEventBusSettings.topic_name(channel)``.
 
         Returns:
             ``None`` — Kafka is always background; there is no local task.
@@ -320,12 +307,7 @@ class KafkaEventBus(AbstractEventBus):
             )
 
         topic = self._config.topic_name(channel)
-        value = JsonEventSerializer.serialize(event)
-
-        # Auto-record channel so list_channels() / channel_exists() work even
-        # for channels that were never explicitly declared.
-        self._declared_channels.setdefault(channel, None)
-
+        value = self._serializer.serialize(event)
         await self._producer.send_and_wait(topic, value=value)
         _logger.debug("Published %s to topic %s", type(event).__name__, topic)
         # Return None — Kafka delivery is always async (broker-side), no local Task.
@@ -377,8 +359,6 @@ class KafkaEventBus(AbstractEventBus):
         # CHANNEL_ALL ("*") is not a valid Kafka topic name — only register
         # concrete channel names.
         if channel != CHANNEL_ALL:
-            # Auto-record logical channel so channel_exists() / list_channels() work.
-            self._declared_channels.setdefault(channel, None)
             topic = self._config.topic_name(channel)
             if topic not in self._subscribed_topics:
                 self._subscribed_topics.add(topic)
@@ -390,124 +370,6 @@ class KafkaEventBus(AbstractEventBus):
                     )
 
         return Subscription(entry)
-
-    # ── Channel management ─────────────────────────────────────────────────────
-
-    async def declare_channel(
-        self, channel: str, config: ChannelConfig | None = None
-    ) -> None:
-        """
-        Create a Kafka topic for ``channel`` if it does not already exist.
-
-        The operation is idempotent — calling ``declare_channel()`` on a topic
-        that already exists in Kafka is a no-op.
-
-        Args:
-            channel: Logical channel name (e.g. ``"orders"``).  Mapped to a
-                     Kafka topic via ``KafkaConfig.topic_name(channel)``.
-            config:  Optional channel config controlling partition count,
-                     replication factor, and retention.  Defaults to
-                     ``ChannelConfig()`` (1 partition, RF=1, no retention limit).
-
-        Raises:
-            RuntimeError: If called before ``start()``.
-
-        Edge cases:
-            - If the topic already exists in Kafka, the call succeeds silently.
-            - ``config`` is stored locally even if the topic pre-existed —
-              subsequent ``channel_exists()`` / ``list_channels()`` calls will
-              see this channel.
-        """
-        if self._admin is None:
-            raise RuntimeError(
-                "KafkaEventBus.declare_channel() called before start(). "
-                "Call await bus.start() or use 'async with bus' first."
-            )
-        cfg = config or ChannelConfig()
-        topic = self._config.topic_name(channel)
-        new_topic = NewTopic(
-            name=topic,
-            num_partitions=cfg.num_partitions,
-            replication_factor=cfg.replication_factor,
-        )
-        try:
-            await self._admin.create_topics([new_topic])
-            _logger.info("Declared Kafka topic %r (channel=%r)", topic, channel)
-        except TopicAlreadyExistsError:
-            # Idempotent — topic already exists; treat as success.
-            _logger.debug("Topic %r already exists in Kafka — skipping create.", topic)
-
-        # Always update local registry so channel_exists() / list_channels() are
-        # consistent regardless of whether the topic was pre-existing.
-        if channel not in self._declared_channels or config is not None:
-            self._declared_channels[channel] = config
-
-    async def channel_exists(self, channel: str) -> bool:
-        """
-        Return ``True`` if this bus instance knows about ``channel``.
-
-        Channels are recorded when:
-        - ``declare_channel()`` is called explicitly.
-        - ``subscribe()`` is called with a specific channel.
-        - ``publish()`` sends an event to that channel.
-
-        Note: This does NOT query Kafka directly.  Channels created by other
-        services or other bus instances are not visible here unless this
-        instance has also interacted with them.
-
-        Args:
-            channel: Logical channel name to check.
-
-        Returns:
-            ``True`` if channel is in the local registry; ``False`` otherwise.
-        """
-        return channel in self._declared_channels
-
-    async def list_channels(self) -> list[str]:
-        """
-        Return a sorted list of all channel names known to this bus instance.
-
-        See ``channel_exists()`` for which channels are tracked.
-
-        Returns:
-            Sorted list of logical channel names.
-        """
-        return sorted(self._declared_channels.keys())
-
-    async def delete_channel(self, channel: str) -> None:
-        """
-        Delete the Kafka topic for ``channel`` and cancel local subscriptions.
-
-        Args:
-            channel: Logical channel name to delete.
-
-        Raises:
-            RuntimeError: If called before ``start()``.
-
-        Edge cases:
-            - If the topic does not exist in Kafka, aiokafka raises
-              ``UnknownTopicOrPartitionError`` — let it propagate to the caller.
-            - Local subscriptions for this channel are cancelled regardless of
-              whether the Kafka delete succeeds.
-        """
-        if self._admin is None:
-            raise RuntimeError(
-                "KafkaEventBus.delete_channel() called before start(). "
-                "Call await bus.start() or use 'async with bus' first."
-            )
-        topic = self._config.topic_name(channel)
-        await self._admin.delete_topics([topic])
-        _logger.info("Deleted Kafka topic %r (channel=%r)", topic, channel)
-
-        # Remove from local registry.
-        self._declared_channels.pop(channel, None)
-
-        # Cancel any local subscriptions targeting this channel so handlers
-        # no longer fire for messages that might arrive before the broker
-        # finishes propagating the deletion.
-        for entry in self._subscriptions:
-            if entry.channel == channel:
-                entry.cancelled = True
 
     # ── Consumer loop ──────────────────────────────────────────────────────────
 
@@ -532,9 +394,9 @@ class KafkaEventBus(AbstractEventBus):
         try:
             async for msg in self._consumer:
                 try:
-                    event = JsonEventSerializer.deserialize(msg.value)
+                    event = self._serializer.deserialize(msg.value)
                     # Topic name → channel: strip the prefix to recover the channel
-                    channel = msg.topic.removeprefix(self._config.topic_prefix)
+                    channel = msg.topic.removeprefix(self._config.channel_prefix)
                     await self._chain(event, channel)
                 except asyncio.CancelledError:
                     # Re-raise — CancelledError must propagate so the task ends.

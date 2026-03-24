@@ -26,6 +26,9 @@ dependencies = [
     # providify is used directly for @Singleton / @PreDestroy on RedisEventBus
     # and for @Configuration / @Provider in varco_redis.di.
     "providify>=0.1.4a3",
+    # pydantic-settings is used directly in varco_redis.config for SettingsConfigDict.
+    # It is also a transitive dep via varco-core, but listed explicitly here.
+    "pydantic-settings>=2.0",
 ]
 [project.urls]
 Homepage   = "https://github.com/edoardoscarpaci/varco"

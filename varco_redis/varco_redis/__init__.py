@@ -1,12 +1,16 @@
 """
 varco_redis
 ===========
-Redis Pub/Sub event bus backend for varco.
+Redis event bus backends (Pub/Sub and Streams) for varco.
 
 All public symbols are importable directly from ``varco_redis``::
 
-    from varco_redis import RedisEventBus, RedisConfig
-    from varco_redis import RedisBusModule   # Providify DI wiring
+    from varco_redis import RedisEventBus, RedisEventBusSettings
+    from varco_redis import RedisStreamEventBus              # at-least-once
+    from varco_redis import RedisChannelManager, RedisChannelManagerSettings
+    from varco_redis import RedisEventBusConfiguration        # Providify DI (Pub/Sub)
+    from varco_redis import RedisStreamConfiguration          # Providify DI (Streams)
+    from varco_redis import RedisChannelManagerConfiguration  # Providify DI
 
 Layer map::
 
@@ -14,16 +18,24 @@ Layer map::
         ↑ implemented by
     varco_redis.RedisEventBus   ← THIS PACKAGE
         ↑ configured by
-    varco_redis.RedisConfig
+    varco_redis.RedisEventBusSettings
         ↑ wired by (optional)
-    varco_redis.RedisBusModule  ← Providify @Configuration module
+    varco_redis.RedisEventBusConfiguration  ← Providify @Configuration
 
-Usage (standalone)::
+    varco_core.event.channel.ChannelManager
+        ↑ implemented by
+    varco_redis.RedisChannelManager
+        ↑ configured by
+    varco_redis.RedisChannelManagerSettings (alias for RedisEventBusSettings)
+        ↑ wired by (optional)
+    varco_redis.RedisChannelManagerConfiguration
 
-    from varco_redis import RedisEventBus, RedisConfig
+Usage (standalone bus)::
+
+    from varco_redis import RedisEventBus, RedisEventBusSettings
     from varco_core.event import BusEventProducer, listen, EventConsumer
 
-    config = RedisConfig(url="redis://localhost:6379/0")
+    config = RedisEventBusSettings(url="redis://localhost:6379/0")
 
     async with RedisEventBus(config) as bus:
         # producer side
@@ -42,11 +54,11 @@ Usage (standalone)::
 Usage (Providify DI)::
 
     from providify import DIContainer
-    from varco_redis import RedisBusModule
+    from varco_redis import RedisEventBusConfiguration
     from varco_core.event import AbstractEventBus
 
     container = DIContainer()
-    await container.ainstall(RedisBusModule)
+    await container.ainstall(RedisEventBusConfiguration)
 
     bus = await container.aget(AbstractEventBus)  # RedisEventBus singleton
 """
@@ -54,11 +66,35 @@ Usage (Providify DI)::
 from __future__ import annotations
 
 from varco_redis.bus import RedisEventBus
-from varco_redis.config import RedisConfig
-from varco_redis.di import RedisBusModule
+from varco_redis.cache import RedisCache, RedisCacheConfiguration, RedisCacheSettings
+from varco_redis.channel import RedisChannelManager, RedisChannelManagerSettings
+from varco_redis.config import RedisEventBusSettings
+from varco_redis.di import (
+    RedisChannelManagerConfiguration,
+    RedisEventBusConfiguration,
+    RedisStreamConfiguration,
+)
+from varco_redis.dlq import RedisDLQ, RedisDLQConfiguration
+from varco_redis.streams import RedisStreamEventBus
 
 __all__ = [
+    # ── Pub/Sub bus ────────────────────────────────────────────────────────────
     "RedisEventBus",
-    "RedisConfig",
-    "RedisBusModule",
+    "RedisEventBusSettings",
+    # ── Streams bus (at-least-once) ────────────────────────────────────────────
+    "RedisStreamEventBus",
+    # ── Channel management ─────────────────────────────────────────────────────
+    "RedisChannelManager",
+    "RedisChannelManagerSettings",
+    # ── Cache ──────────────────────────────────────────────────────────────────
+    "RedisCache",
+    "RedisCacheSettings",
+    "RedisCacheConfiguration",
+    # ── Dead Letter Queue ──────────────────────────────────────────────────────
+    "RedisDLQ",
+    "RedisDLQConfiguration",
+    # ── DI configurations ──────────────────────────────────────────────────────
+    "RedisEventBusConfiguration",
+    "RedisStreamConfiguration",
+    "RedisChannelManagerConfiguration",
 ]

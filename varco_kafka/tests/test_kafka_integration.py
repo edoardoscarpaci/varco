@@ -77,9 +77,9 @@ async def bus(kafka_container):
     """
     import uuid  # noqa: PLC0415
 
-    from varco_kafka import KafkaConfig, KafkaEventBus  # noqa: PLC0415
+    from varco_kafka import KafkaEventBus, KafkaEventBusSettings  # noqa: PLC0415
 
-    config = KafkaConfig(
+    config = KafkaEventBusSettings(
         bootstrap_servers=kafka_container.get_bootstrap_server(),
         # Unique group ID per test — avoids cross-test offset sharing.
         group_id=f"test-{uuid.uuid4().hex[:8]}",
@@ -90,11 +90,31 @@ async def bus(kafka_container):
         yield b
 
 
+@pytest.fixture
+async def channel_manager(kafka_container):
+    """
+    ``KafkaChannelManager`` connected to the testcontainers Kafka broker.
+
+    Used by integration tests that need to pre-create topics before subscribing.
+    Admin operations live here — not on the bus — so credentials stay separate.
+    """
+    from varco_kafka import (
+        KafkaChannelManager,
+        KafkaChannelManagerSettings,
+    )  # noqa: PLC0415
+
+    settings = KafkaChannelManagerSettings(
+        bootstrap_servers=kafka_container.get_bootstrap_server(),
+    )
+    async with KafkaChannelManager(settings) as m:
+        yield m
+
+
 # ── Integration tests ──────────────────────────────────────────────────────────
 
 
 class TestKafkaIntegration:
-    async def test_publish_and_consume(self, bus) -> None:
+    async def test_publish_and_consume(self, bus, channel_manager) -> None:
         """
         Publish an event and verify it arrives at a subscribed local handler.
 
@@ -103,6 +123,9 @@ class TestKafkaIntegration:
         consumer group coordinator formation, causing GroupCoordinatorNotAvailableError
         and missed messages.  ``auto_offset_reset="earliest"`` means the consumer
         will still receive messages published before it fully joined.
+
+        Topic management uses ``channel_manager`` (``KafkaChannelManager``) — a
+        separate fixture with admin credentials — so the bus stays credential-free.
         """
         received: list[Event] = []
         delivered = asyncio.Event()
@@ -113,7 +136,7 @@ class TestKafkaIntegration:
 
         # Pre-create the topic before subscribing so the consumer group
         # coordinator can form without racing against Kafka auto-create.
-        await bus.declare_channel("integration-orders")
+        await channel_manager.declare_channel("integration-orders")
         bus.subscribe(IntegrationOrderEvent, handler, channel="integration-orders")
 
         # Wait for the consumer group coordinator to accept this group.
@@ -133,7 +156,7 @@ class TestKafkaIntegration:
         assert received[0].order_id == "int-1"
         assert received[0].amount == 99.0
 
-    async def test_publish_multiple_events(self, bus) -> None:
+    async def test_publish_multiple_events(self, bus, channel_manager) -> None:
         """Publish three events and verify all three are consumed."""
         received: list[Event] = []
         count = asyncio.Event()
@@ -144,7 +167,7 @@ class TestKafkaIntegration:
                 count.set()
 
         # Pre-create topic — same rationale as test_publish_and_consume.
-        await bus.declare_channel("integration-multi")
+        await channel_manager.declare_channel("integration-multi")
         bus.subscribe(IntegrationOrderEvent, handler, channel="integration-multi")
         await asyncio.sleep(5.0)
 

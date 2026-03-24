@@ -1,12 +1,11 @@
 # varco-redis
 
-Redis Pub/Sub event bus backend for [varco](https://github.com/edoardoscarpaci/varco).
+Redis backend for [varco](https://github.com/edoardoscarpaci/varco).
 
-`RedisEventBus` implements `AbstractEventBus` from `varco_core` using
-[redis.asyncio](https://redis-py.readthedocs.io/en/stable/examples/asyncio_examples.html).
-Published events are serialized to JSON (via `JsonEventSerializer`) and sent to
-Redis Pub/Sub channels.  A background listener task polls those channels and
-dispatches messages to locally registered handlers.
+Provides two independent subsystems backed by Redis:
+
+- **`RedisEventBus`** — Pub/Sub event bus implementing `AbstractEventBus` from `varco_core`
+- **`RedisCache`** — async cache backend implementing `CacheBackend` from `varco_core`
 
 ---
 
@@ -20,10 +19,10 @@ uv add varco-redis
 
 ---
 
-## Quick start
+## Event bus quick start
 
 ```python
-from varco_redis import RedisEventBus, RedisConfig
+from varco_redis import RedisEventBus, RedisEventBusSettings
 from varco_core.event import BusEventProducer, EventConsumer, listen, Event
 
 # Define your events
@@ -33,10 +32,10 @@ class OrderPlacedEvent(Event):
     total: float
 
 # Configure the bus
-config = RedisConfig(url="redis://localhost:6379/0")
+settings = RedisEventBusSettings(url="redis://localhost:6379/0")
 
 async def main():
-    async with RedisEventBus(config) as bus:
+    async with RedisEventBus(settings) as bus:
         # --- Consumer side ---
         class OrderConsumer(EventConsumer):
             @listen(OrderPlacedEvent, channel="orders")
@@ -59,39 +58,39 @@ async def main():
 
 ---
 
-## Configuration
+## Event bus configuration
 
 ```python
-from varco_redis import RedisConfig
+from varco_redis import RedisEventBusSettings
 
-config = RedisConfig(
+settings = RedisEventBusSettings(
     url="redis://redis.internal:6379/0",   # Redis connection URL
     channel_prefix="prod:",               # optional — "orders" → "prod:orders"
     socket_timeout=5.0,                   # seconds, None = no timeout
 )
 ```
 
-| Field | Default | Description |
-|---|---|---|
-| `url` | `"redis://localhost:6379/0"` | Redis connection URL |
-| `channel_prefix` | `""` | Prepended to every channel name |
-| `decode_responses` | `False` | Must be `False` — bus expects raw bytes |
-| `socket_timeout` | `None` | Socket operation timeout in seconds |
-| `redis_kwargs` | `{}` | Extra kwargs for `redis.asyncio.from_url()` |
+| Field | Default | Env var | Description |
+|---|---|---|---|
+| `url` | `"redis://localhost:6379/0"` | `VARCO_REDIS_URL` | Redis connection URL |
+| `channel_prefix` | `""` | `VARCO_REDIS_CHANNEL_PREFIX` | Prepended to every channel name |
+| `decode_responses` | `False` | — | Must be `False` — bus expects raw bytes |
+| `socket_timeout` | `None` | `VARCO_REDIS_SOCKET_TIMEOUT` | Socket operation timeout in seconds |
+| `redis_kwargs` | `{}` | — | Extra kwargs for `redis.asyncio.from_url()` |
 
 ---
 
-## Lifecycle
+## Event bus lifecycle
 
 ```python
 # Explicit lifecycle
-bus = RedisEventBus(config)
+bus = RedisEventBus(settings)
 await bus.start()    # connects to Redis, starts listener task
 # ... use bus ...
 await bus.stop()     # cancels listener, closes connection
 
 # Context manager (recommended)
-async with RedisEventBus(config) as bus:
+async with RedisEventBus(settings) as bus:
     ...
 ```
 
@@ -106,8 +105,120 @@ to your service and avoid cross-service interference:
 
 ```python
 # All events with prefix "svc-a:" on this Redis
-config = RedisConfig(channel_prefix="svc-a:")
+settings = RedisEventBusSettings(channel_prefix="svc-a:")
 bus.subscribe(MyEvent, handler)  # receives from all "svc-a:*" channels
+```
+
+---
+
+## Cache quick start
+
+```python
+from varco_redis.cache import RedisCache, RedisCacheSettings
+
+cache_settings = RedisCacheSettings(
+    url="redis://localhost:6379/0",
+    key_prefix="myapp:",   # all keys stored as "myapp:<key>"
+    default_ttl=300,       # seconds; None = no expiry
+)
+
+async with RedisCache(cache_settings) as cache:
+    await cache.set("user:42", {"name": "Alice"})
+    user = await cache.get("user:42")    # returns dict or None
+    await cache.delete("user:42")
+    await cache.clear()                  # removes all "myapp:*" keys
+```
+
+---
+
+## Cache configuration
+
+```python
+from varco_redis.cache import RedisCacheSettings
+
+settings = RedisCacheSettings(
+    url="redis://localhost:6379/0",
+    key_prefix="prod:",
+    default_ttl=600,
+    socket_timeout=2.0,
+)
+```
+
+| Field | Default | Env var | Description |
+|---|---|---|---|
+| `url` | `"redis://localhost:6379/0"` | `VARCO_REDIS_CACHE_URL` | Redis connection URL |
+| `key_prefix` | `""` | `VARCO_REDIS_CACHE_KEY_PREFIX` | Prepended to every stored key |
+| `default_ttl` | `None` | `VARCO_REDIS_CACHE_DEFAULT_TTL` | Default TTL in seconds; `None` = no expiry |
+| `decode_responses` | `False` | — | Must be `False` — cache stores raw bytes |
+| `socket_timeout` | `None` | `VARCO_REDIS_CACHE_SOCKET_TIMEOUT` | Socket operation timeout in seconds |
+| `redis_kwargs` | `{}` | — | Extra kwargs for `redis.asyncio.from_url()` |
+
+---
+
+## Layered cache (L1 memory + L2 Redis)
+
+```python
+from varco_core.cache import InMemoryCache, LayeredCache, TTLStrategy
+from varco_redis.cache import RedisCache, RedisCacheSettings
+
+l1 = InMemoryCache(strategy=TTLStrategy(60))       # fast in-process layer
+l2 = RedisCache(RedisCacheSettings(key_prefix="app:"))  # shared Redis layer
+
+async with LayeredCache(l1, l2, promote_ttl=60) as cache:
+    await cache.set("product:1", product, ttl=300)
+    # First read: L1 miss → L2 hit → promote to L1
+    result = await cache.get("product:1")
+    # Second read: served from L1 (no network round-trip)
+```
+
+---
+
+## Cache + `CachedService` with cross-process invalidation
+
+```python
+from varco_core.cache import CachedService, LayeredCache, TTLStrategy, InMemoryCache
+from varco_redis.cache import RedisCache, RedisCacheSettings
+from varco_redis import RedisEventBus, RedisEventBusSettings
+
+bus_settings = RedisEventBusSettings(url="redis://localhost:6379/0")
+cache_settings = RedisCacheSettings(url="redis://localhost:6379/0", key_prefix="posts:")
+
+async with (
+    RedisEventBus(bus_settings) as bus,
+    LayeredCache(
+        InMemoryCache(strategy=TTLStrategy(60)),
+        RedisCache(cache_settings),
+        promote_ttl=60,
+    ) as cache,
+):
+    cached = CachedService(
+        post_service,
+        cache,
+        namespace="posts",
+        default_ttl=300,
+        bus=bus,                           # publish invalidation events
+        bus_channel="posts.invalidations", # other nodes subscribe here
+    )
+
+    post = await cached.get(42)           # cached
+    posts = await cached.list()           # cached
+    await cached.update(42, {"title": "New"})  # invalidates + publishes event
+```
+
+---
+
+## DI integration
+
+```python
+from providify import DIContainer
+from varco_core.cache import CacheBackend
+from varco_redis.cache import RedisCacheConfiguration
+
+container = DIContainer()
+await container.ainstall(RedisCacheConfiguration)
+
+cache = await container.aget(CacheBackend)  # RedisCache singleton
+await container.ashutdown()
 ```
 
 ---

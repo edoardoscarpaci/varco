@@ -1,90 +1,138 @@
 """
 varco_kafka.config
 ==================
-Configuration value objects for ``KafkaEventBus``.
+Configuration for the Kafka event bus backend.
 
-``KafkaConfig`` carries the minimal Kafka connection settings needed by the
-bus.  All fields have sensible defaults so a local Kafka broker can be used
-with no configuration::
+``KafkaEventBusSettings`` is the configuration object for ``KafkaEventBus``.
+It extends ``EventBusSettings`` so all Kafka connection settings are read from
+environment variables automatically.
 
-    bus = KafkaEventBus(KafkaConfig())  # connects to localhost:9092
+Environment variables (prefix ``VARCO_KAFKA_``)
+-------------------------------------------------
+::
 
-For production, override ``bootstrap_servers``, ``group_id``, and any
-security settings::
+    VARCO_KAFKA_BOOTSTRAP_SERVERS=kafka.internal:9092
+    VARCO_KAFKA_GROUP_ID=my-service
+    VARCO_KAFKA_TOPIC_PREFIX=prod.
 
-    config = KafkaConfig(
-        bootstrap_servers="kafka.internal:9092",
+Construction patterns::
+
+    # From env (production)
+    config = KafkaEventBusSettings.from_env()
+
+    # Explicit (tests, DI override)
+    config = KafkaEventBusSettings(
+        bootstrap_servers="localhost:9092",
         group_id="my-service",
-        topic_prefix="prod.",
     )
 
-DESIGN: dataclass over raw dict / kwargs
-    ✅ Type-checked at construction — no stringly-typed key lookups.
-    ✅ Single import for all bus configuration — IDE autocomplete works.
-    ✅ Defaults cover the common local-dev case.
-    ❌ Changing a field name is a breaking API change — justified because
-       configuration should be stable.
+    # From dict (DI wiring)
+    config = KafkaEventBusSettings.from_dict({
+        "bootstrap_servers": os.environ["KAFKA_BROKERS"],
+        "group_id": os.environ["SERVICE_NAME"],
+    })
 
-Thread safety:  ✅ Frozen dataclass — immutable after construction.
+DESIGN: Pydantic BaseSettings over frozen dataclass
+    ✅ Env var reading is automatic — no ``os.environ`` boilerplate.
+    ✅ Validates types at load time — invalid values fail at startup.
+    ✅ Immutable after construction — prevents accidental mutation.
+    ❌ ``producer_kwargs`` / ``consumer_kwargs`` cannot be set from plain
+       env vars (would need JSON string).  Use keyword args or ``from_dict()``.
+
+Thread safety:  ✅ Immutable after construction (frozen=True).
 Async safety:   ✅ No mutable state.
+
+📚 Docs
+- 🔍 https://aiokafka.readthedocs.io/en/stable/api.html
+  aiokafka — AIOKafkaProducer / AIOKafkaConsumer constructor options
+- 🔍 https://docs.pydantic.dev/latest/concepts/pydantic_settings/
+  Pydantic Settings — env_prefix, SettingsConfigDict
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from typing import Any
+
+from pydantic import Field
+from pydantic_settings import SettingsConfigDict
+
+from varco_core.event.config import EventBusSettings
 
 
-@dataclass(frozen=True)
-class KafkaConfig:
+# ── KafkaEventBusSettings ────────────────────────────────────────────────────
+
+
+class KafkaEventBusSettings(EventBusSettings):
     """
     Immutable configuration for ``KafkaEventBus``.
 
+    All fields are read from environment variables with the ``VARCO_KAFKA_``
+    prefix.  Every field has a sensible default so a local Kafka broker can
+    be used with no configuration::
+
+        bus = KafkaEventBus(KafkaEventBusSettings())  # connects to localhost:9092
+
     Attributes:
         bootstrap_servers:  Comma-separated Kafka broker addresses.
-                            Defaults to ``"localhost:9092"``.
-        group_id:           Kafka consumer group ID.  All instances sharing
-                            the same ``group_id`` form a consumer group —
-                            each message is delivered to exactly ONE instance.
-                            Use a unique ``group_id`` per service to avoid
-                            competing consumers.
-        topic_prefix:       Optional prefix prepended to every topic name.
-                            Useful for namespace isolation across environments
-                            (e.g. ``"dev."`` vs ``"prod."``).
+                            Env var: ``VARCO_KAFKA_BOOTSTRAP_SERVERS``.
+        group_id:           Consumer group ID.  All instances sharing the same
+                            ``group_id`` form a consumer group — each message is
+                            delivered to exactly ONE instance.
+                            Env var: ``VARCO_KAFKA_GROUP_ID``.
+        topic_prefix:       Prefix prepended to every topic name.
+                            Alias for ``channel_prefix`` (inherited) but exposed
+                            under the Kafka-idiomatic name via ``topic_name()``.
+                            Env var: ``VARCO_KAFKA_TOPIC_PREFIX``.
         auto_offset_reset:  Offset policy for new consumer groups.
-                            ``"earliest"`` — replay from the beginning of the
-                            topic.  ``"latest"`` — skip past messages already
-                            in the topic (default for production).
-        enable_auto_commit: Whether the consumer auto-commits offsets.
-                            ``True`` (default) means ``at-least-once`` delivery.
-                            Set to ``False`` for manual offset management.
-        producer_kwargs:    Extra keyword arguments forwarded to
-                            ``AIOKafkaProducer``.  Use for SSL config, SASL,
-                            compression, etc.
-        consumer_kwargs:    Extra keyword arguments forwarded to
-                            ``AIOKafkaConsumer``.  Same use cases as
-                            ``producer_kwargs``.
+                            ``"earliest"`` replays from the start; ``"latest"``
+                            (default) skips past messages already in the topic.
+                            Env var: ``VARCO_KAFKA_AUTO_OFFSET_RESET``.
+        enable_auto_commit: Auto-commit offsets after delivery.
+                            ``True`` (default) → at-least-once delivery.
+                            Env var: ``VARCO_KAFKA_ENABLE_AUTO_COMMIT``.
+        producer_kwargs:    Extra kwargs forwarded to ``AIOKafkaProducer``.
+                            **Not env-readable** — use kwargs or ``from_dict()``.
+        consumer_kwargs:    Extra kwargs forwarded to ``AIOKafkaConsumer``.
+                            **Not env-readable** — use kwargs or ``from_dict()``.
+
+    Thread safety:  ✅ Immutable — frozen=True.
+    Async safety:   ✅ No mutable state.
 
     Edge cases:
-        - ``topic_prefix`` is NOT applied retroactively — changing it after
-          messages have been produced leaves orphaned topics.
-        - ``group_id`` defaults to ``"varco-default"`` — override in
+        - ``topic_prefix`` (via ``channel_prefix``) is NOT applied retroactively.
+        - ``group_id`` defaults to ``"varco-default"`` — always override in
           production to avoid cross-service interference.
+        - Changing ``auto_offset_reset`` only affects NEW consumer groups —
+          existing groups with committed offsets are unaffected.
     """
 
+    model_config = SettingsConfigDict(env_prefix="VARCO_KAFKA_", frozen=True)
+
     bootstrap_servers: str = "localhost:9092"
+    """Comma-separated broker addresses.  Env var: ``VARCO_KAFKA_BOOTSTRAP_SERVERS``."""
+
     group_id: str = "varco-default"
-    topic_prefix: str = ""
+    """Consumer group ID.  Env var: ``VARCO_KAFKA_GROUP_ID``."""
+
     auto_offset_reset: str = "latest"
+    """New consumer group offset policy: ``"earliest"`` or ``"latest"``."""
+
     enable_auto_commit: bool = True
-    # Extra kwargs forwarded verbatim to aiokafka — use for SSL / SASL settings.
-    producer_kwargs: dict = field(default_factory=dict)
-    consumer_kwargs: dict = field(default_factory=dict)
+    """Auto-commit offsets.  True = at-least-once delivery."""
+
+    # Extra kwargs forwarded verbatim to aiokafka — use for SSL / SASL.
+    # Cannot be set from a plain env var — set via keyword args or from_dict().
+    producer_kwargs: dict[str, Any] = Field(default_factory=dict)
+    """Extra kwargs for ``AIOKafkaProducer``.  Not env-readable."""
+
+    consumer_kwargs: dict[str, Any] = Field(default_factory=dict)
+    """Extra kwargs for ``AIOKafkaConsumer``.  Not env-readable."""
 
     def topic_name(self, channel: str) -> str:
         """
-        Return the full Kafka topic name for a given event channel.
+        Return the full Kafka topic name for a logical event channel.
 
-        Prepends ``topic_prefix`` if set.
+        Prepends ``channel_prefix`` (the topic prefix) if set.
 
         Args:
             channel: The logical event channel name (e.g. ``"orders"``).
@@ -93,10 +141,15 @@ class KafkaConfig:
             The full Kafka topic name (e.g. ``"prod.orders"``).
 
         Edge cases:
-            - Empty ``topic_prefix`` → returns ``channel`` unchanged.
-            - ``channel`` itself must be a valid Kafka topic name (no spaces,
+            - Empty ``channel_prefix`` → returns ``channel`` unchanged.
+            - ``channel`` must be a valid Kafka topic name (no spaces,
               max 249 chars, allowed chars: letters, digits, dots, underscores,
-              hyphens).  This is NOT validated here — Kafka will reject invalid
-              names at produce time.
+              hyphens).  NOT validated here — Kafka rejects invalid names at
+              produce time.
         """
-        return f"{self.topic_prefix}{channel}"
+        return f"{self.channel_prefix}{channel}"
+
+
+__all__ = [
+    "KafkaEventBusSettings",
+]

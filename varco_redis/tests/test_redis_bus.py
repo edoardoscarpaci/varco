@@ -33,7 +33,7 @@ from varco_core.event import (
     Subscription,
 )
 from varco_core.event.serializer import JsonEventSerializer
-from varco_redis import RedisConfig, RedisEventBus
+from varco_redis import RedisEventBus, RedisEventBusSettings
 
 
 # ── Test event types ────────────────────────────────────────────────────────────
@@ -74,7 +74,9 @@ class FakePubSub:
             {
                 "type": "message",
                 "channel": channel.encode("utf-8"),
-                "data": JsonEventSerializer.serialize(event),
+                # Instance method — JsonEventSerializer is stateless so a
+                # throwaway instance is fine here.
+                "data": JsonEventSerializer().serialize(event),
             }
         )
 
@@ -128,13 +130,13 @@ def fake_redis() -> FakeRedis:
 
 
 @pytest.fixture
-def config() -> RedisConfig:
-    return RedisConfig(url="redis://fake:6379/0")
+def config() -> RedisEventBusSettings:
+    return RedisEventBusSettings(url="redis://fake:6379/0")
 
 
 @pytest.fixture
 async def bus(
-    config: RedisConfig, fake_redis: FakeRedis
+    config: RedisEventBusSettings, fake_redis: FakeRedis
 ) -> AsyncIterator[RedisEventBus]:
     """
     ``RedisEventBus`` with redis.asyncio fakes injected via monkeypatch.
@@ -147,26 +149,26 @@ async def bus(
             yield b
 
 
-# ── RedisConfig ────────────────────────────────────────────────────────────────
+# ── RedisEventBusSettings ────────────────────────────────────────────────────────────────
 
 
-class TestRedisConfig:
+class TestRedisEventBusSettings:
     def test_defaults(self) -> None:
-        cfg = RedisConfig()
+        cfg = RedisEventBusSettings()
         assert cfg.url == "redis://localhost:6379/0"
         assert cfg.channel_prefix == ""
         assert cfg.decode_responses is False
 
     def test_channel_name_no_prefix(self) -> None:
-        cfg = RedisConfig()
+        cfg = RedisEventBusSettings()
         assert cfg.channel_name("orders") == "orders"
 
     def test_channel_name_with_prefix(self) -> None:
-        cfg = RedisConfig(channel_prefix="prod:")
+        cfg = RedisEventBusSettings(channel_prefix="prod:")
         assert cfg.channel_name("orders") == "prod:orders"
 
     def test_frozen(self) -> None:
-        cfg = RedisConfig()
+        cfg = RedisEventBusSettings()
         with pytest.raises(Exception):
             cfg.url = "redis://other"  # type: ignore[misc]
 
@@ -182,7 +184,7 @@ class TestRedisEventBusLifecycle:
 
     async def test_start_idempotent(
         self,
-        config: RedisConfig,
+        config: RedisEventBusSettings,
         fake_redis: FakeRedis,
     ) -> None:
         with patch("varco_redis.bus.aioredis") as mock_aioredis:
@@ -199,7 +201,7 @@ class TestRedisEventBusLifecycle:
 
     async def test_context_manager(
         self,
-        config: RedisConfig,
+        config: RedisEventBusSettings,
         fake_redis: FakeRedis,
     ) -> None:
         with patch("varco_redis.bus.aioredis") as mock_aioredis:
@@ -246,7 +248,9 @@ class TestRedisEventBusPublish:
         self,
         fake_redis: FakeRedis,
     ) -> None:
-        config = RedisConfig(url="redis://fake:6379/0", channel_prefix="prod:")
+        config = RedisEventBusSettings(
+            url="redis://fake:6379/0", channel_prefix="prod:"
+        )
         with patch("varco_redis.bus.aioredis") as mock_aioredis:
             mock_aioredis.from_url.return_value = fake_redis
             async with RedisEventBus(config) as bus:
@@ -282,7 +286,7 @@ class TestRedisEventBusSubscribe:
 class TestRedisEventBusListenerDispatch:
     async def test_incoming_message_dispatched_to_handler(
         self,
-        config: RedisConfig,
+        config: RedisEventBusSettings,
         fake_redis: FakeRedis,
     ) -> None:
         received: list[Event] = []
@@ -314,7 +318,9 @@ class TestRedisEventBusListenerDispatch:
     ) -> None:
         received: list[Event] = []
         event = OrderPlacedEvent(order_id="prefix-test")
-        config = RedisConfig(url="redis://fake:6379/0", channel_prefix="prod:")
+        config = RedisEventBusSettings(
+            url="redis://fake:6379/0", channel_prefix="prod:"
+        )
 
         with patch("varco_redis.bus.aioredis") as mock_aioredis:
             mock_aioredis.from_url.return_value = fake_redis
@@ -325,7 +331,7 @@ class TestRedisEventBusListenerDispatch:
                     {
                         "type": "message",
                         "channel": b"prod:orders",
-                        "data": JsonEventSerializer.serialize(event),
+                        "data": JsonEventSerializer().serialize(event),
                     }
                 )
                 bus._pubsub = fake_pubsub

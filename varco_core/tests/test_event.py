@@ -920,21 +920,21 @@ class TestDomainEvents:
 class TestJsonEventSerializer:
     def test_serialize_produces_bytes(self) -> None:
         event = OrderPlacedEvent(order_id="1", total=99.0)
-        data = JsonEventSerializer.serialize(event)
+        data = JsonEventSerializer().serialize(event)
 
         assert isinstance(data, bytes)
 
     def test_type_key_injected(self) -> None:
         event = OrderPlacedEvent(order_id="1")
-        data = JsonEventSerializer.serialize(event)
+        data = JsonEventSerializer().serialize(event)
         raw = json.loads(data.decode("utf-8"))
 
         assert raw["__event_type__"] == "order.placed"
 
     def test_round_trip_preserves_fields(self) -> None:
         original = OrderPlacedEvent(order_id="abc", total=42.5)
-        data = JsonEventSerializer.serialize(original)
-        restored = JsonEventSerializer.deserialize(data)
+        data = JsonEventSerializer().serialize(original)
+        restored = JsonEventSerializer().deserialize(data)
 
         assert isinstance(restored, OrderPlacedEvent)
         assert restored.order_id == "abc"
@@ -943,8 +943,8 @@ class TestJsonEventSerializer:
 
     def test_deserialize_reconstructs_correct_subclass(self) -> None:
         event = OrderCancelledEvent(order_id="2", reason="out of stock")
-        data = JsonEventSerializer.serialize(event)
-        restored = JsonEventSerializer.deserialize(data)
+        data = JsonEventSerializer().serialize(event)
+        restored = JsonEventSerializer().deserialize(data)
 
         assert type(restored) is OrderCancelledEvent
 
@@ -952,13 +952,13 @@ class TestJsonEventSerializer:
         raw = json.dumps({"order_id": "1", "total": 0.0}).encode("utf-8")
 
         with pytest.raises(ValueError, match="__event_type__"):
-            JsonEventSerializer.deserialize(raw)
+            JsonEventSerializer().deserialize(raw)
 
     def test_deserialize_unknown_type_raises_key_error(self) -> None:
         raw = json.dumps({"__event_type__": "completely.unknown"}).encode("utf-8")
 
         with pytest.raises(KeyError, match="completely.unknown"):
-            JsonEventSerializer.deserialize(raw)
+            JsonEventSerializer().deserialize(raw)
 
     def test_entity_created_event_round_trip(self) -> None:
         original = EntityCreatedEvent(
@@ -967,8 +967,8 @@ class TestJsonEventSerializer:
             correlation_id="req-xyz",
             payload={"title": "Hello"},
         )
-        data = JsonEventSerializer.serialize(original)
-        restored = JsonEventSerializer.deserialize(data)
+        data = JsonEventSerializer().serialize(original)
+        restored = JsonEventSerializer().deserialize(data)
 
         assert isinstance(restored, EntityCreatedEvent)
         assert restored.entity_type == "Post"

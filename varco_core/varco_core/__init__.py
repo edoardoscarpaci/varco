@@ -108,26 +108,84 @@ from varco_core.service.soft_delete import SoftDeleteService
 # ── Service type aliases and protocols ──────────────────────────────────────────
 from varco_core.service.types import Assembler, ServiceProtocol
 
+# ── Validation layer ─────────────────────────────────────────────────────────────
+from varco_core.validation import (
+    VALID,
+    CompositeValidator,
+    DomainModelValidator,
+    ValidationError,
+    ValidationResult,
+    Validator,
+)
+from varco_core.service.validation import ValidatorServiceMixin
+
+# ── Settings base ───────────────────────────────────────────────────────────────
+from varco_core.config import VarcoSettings
+
+# ── Serialization ────────────────────────────────────────────────────────────────
+from varco_core.serialization import JsonSerializer, NoOpSerializer, Serializer
+
 # ── Event system ────────────────────────────────────────────────────────────────
 from varco_core.event import (
     CHANNEL_ALL,
     CHANNEL_DEFAULT,
+    AbstractDeadLetterQueue,
     AbstractEventBus,
     AbstractEventProducer,
     BusEventProducer,
+    ChannelManager,
+    DeadLetterEntry,
     EntityCreatedEvent,
     EntityDeletedEvent,
     EntityEvent,
     EntityUpdatedEvent,
     ErrorPolicy,
     Event,
+    EventBusSettings,
     EventConsumer,
     EventMiddleware,
+    EventSerializer,
+    InMemoryDeadLetterQueue,
     InMemoryEventBus,
     JsonEventSerializer,
     NoopEventProducer,
     Subscription,
     listen,
+)
+
+# ── Resilience patterns ──────────────────────────────────────────────────────────
+from varco_core.resilience import (
+    CallTimeoutError,
+    CircuitBreaker,
+    CircuitBreakerConfig,
+    CircuitOpenError,
+    CircuitState,
+    RetryExhaustedError,
+    RetryPolicy,
+    circuit_breaker,
+    retry,
+    timeout,
+)
+
+# ── Cache system ────────────────────────────────────────────────────────────────
+from varco_core.cache import (
+    AsyncCache,
+    CacheBackend,
+    CacheInvalidated,
+    CacheInvalidationConsumer,
+    CacheInvalidationEvent,
+    CacheServiceMixin,
+    CacheSettings,
+    CachedService,
+    CompositeStrategy,
+    ExplicitStrategy,
+    InMemoryCache,
+    InvalidationStrategy,
+    LayeredCache,
+    NoOpCache,
+    TTLStrategy,
+    TaggedStrategy,
+    cached,
 )
 
 # ── Tracing / correlation ID ────────────────────────────────────────────────────
@@ -244,25 +302,63 @@ __all__ = [
     # ── Service type aliases ────────────────────────────────────────────────────
     "Assembler",
     "ServiceProtocol",
+    # ── Validation layer ─────────────────────────────────────────────────────────
+    "VALID",
+    "CompositeValidator",
+    "DomainModelValidator",
+    "ValidationError",
+    "ValidationResult",
+    "Validator",
+    "ValidatorServiceMixin",
+    # ── Settings base ─────────────────────────────────────────────────────────────
+    "VarcoSettings",
+    # ── Serialization ────────────────────────────────────────────────────────────
+    "Serializer",
+    "JsonSerializer",
+    "NoOpSerializer",
     # ── Event system ─────────────────────────────────────────────────────────────
     "CHANNEL_ALL",
     "CHANNEL_DEFAULT",
+    "AbstractDeadLetterQueue",
     "AbstractEventBus",
     "AbstractEventProducer",
     "BusEventProducer",
+    "ChannelManager",
+    "DeadLetterEntry",
     "EntityCreatedEvent",
     "EntityDeletedEvent",
     "EntityEvent",
     "EntityUpdatedEvent",
     "ErrorPolicy",
     "Event",
+    "EventBusSettings",
     "EventConsumer",
     "EventMiddleware",
+    "EventSerializer",
+    "InMemoryDeadLetterQueue",
     "InMemoryEventBus",
     "JsonEventSerializer",
     "NoopEventProducer",
     "Subscription",
     "listen",
+    # ── Cache system ──────────────────────────────────────────────────────────────
+    "AsyncCache",
+    "CacheBackend",
+    "CacheSettings",
+    "NoOpCache",
+    "InMemoryCache",
+    "LayeredCache",
+    "InvalidationStrategy",
+    "TTLStrategy",
+    "ExplicitStrategy",
+    "TaggedStrategy",
+    "CompositeStrategy",
+    "CacheServiceMixin",
+    "CacheInvalidationConsumer",
+    "cached",
+    "CacheInvalidated",
+    "CacheInvalidationEvent",
+    "CachedService",
     # ── Tracing ─────────────────────────────────────────────────────────────────
     "CorrelationIdFilter",
     "correlation_context",
@@ -290,6 +386,17 @@ __all__ = [
     "JsonWebKey",
     "JsonWebKeySet",
     "JwkBuilder",
+    # ── Resilience patterns ──────────────────────────────────────────────────────
+    "CallTimeoutError",
+    "CircuitBreaker",
+    "CircuitBreakerConfig",
+    "CircuitOpenError",
+    "CircuitState",
+    "RetryExhaustedError",
+    "RetryPolicy",
+    "circuit_breaker",
+    "retry",
+    "timeout",
     # ── Authority layer ─────────────────────────────────────────────────────────
     "JwtAuthority",
     "MultiKeyAuthority",
