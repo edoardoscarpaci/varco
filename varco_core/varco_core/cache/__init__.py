@@ -92,6 +92,7 @@ from varco_core.cache.service import (
 )
 from varco_core.cache.invalidation import (
     CompositeStrategy,
+    EventDrivenStrategy,
     ExplicitStrategy,
     TaggedStrategy,
     TTLStrategy,
@@ -125,6 +126,7 @@ __all__ = [
     "ExplicitStrategy",
     "TaggedStrategy",
     "CompositeStrategy",
+    "EventDrivenStrategy",
     # ── Event-driven invalidation consumer ─────────────────────────────────────
     "CacheInvalidationConsumer",
 ]

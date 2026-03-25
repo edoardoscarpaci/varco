@@ -24,6 +24,9 @@ from varco_core.exception.service import ServiceValidationError
 from varco_core.model import DomainModel
 from varco_core.validation import (
     VALID,
+    AsyncCompositeValidator,
+    AsyncDomainModelValidator,
+    AsyncValidator,
     CompositeValidator,
     DomainModelValidator,
     ValidationError,
@@ -299,3 +302,151 @@ class TestDomainModelValidator:
     def test_satisfies_validator_protocol(self) -> None:
         v = self._make_validator()
         assert isinstance(v, Validator)
+
+
+# ── AsyncValidator Protocol ───────────────────────────────────────────────────
+
+
+class TestAsyncValidatorProtocol:
+    def test_class_with_async_validate_satisfies_protocol(self) -> None:
+        class MyValidator:
+            async def validate(self, value: Order) -> ValidationResult:
+                return ValidationResult.ok()
+
+        assert isinstance(MyValidator(), AsyncValidator)
+
+    def test_class_without_validate_does_not_satisfy(self) -> None:
+        class NotAValidator:
+            pass
+
+        assert not isinstance(NotAValidator(), AsyncValidator)
+
+    def test_runtime_checkable_only_checks_name_not_asyncness(self) -> None:
+        """
+        @runtime_checkable Protocols check method NAME only, not whether it is
+        async.  A sync validate() still passes isinstance() — this is a known
+        Python limitation.  Type checkers (mypy/pyright) catch the mismatch;
+        isinstance() does not.
+        """
+
+        class SyncOnly:
+            def validate(self, value: Order) -> ValidationResult:
+                return ValidationResult.ok()
+
+        # isinstance() sees the method name — passes at runtime.
+        # Static type checkers would flag this as an error.
+        assert isinstance(SyncOnly(), AsyncValidator)
+
+
+# ── AsyncCompositeValidator ────────────────────────────────────────────────────
+
+
+class TestAsyncCompositeValidator:
+    @staticmethod
+    def _make_passing() -> AsyncValidator[Order]:
+        class PassValidator:
+            async def validate(self, value: Order) -> ValidationResult:
+                return ValidationResult.ok()
+
+        return PassValidator()
+
+    @staticmethod
+    def _make_failing(msg: str, field: str | None = None) -> AsyncValidator[Order]:
+        class FailValidator:
+            async def validate(self, value: Order) -> ValidationResult:
+                return ValidationResult.error(msg, field=field)
+
+        return FailValidator()
+
+    async def test_empty_composite_returns_ok(self) -> None:
+        v = AsyncCompositeValidator[Order]()
+        result = await v.validate(Order())
+        assert result.is_valid
+
+    async def test_all_pass_returns_ok(self) -> None:
+        v = AsyncCompositeValidator(self._make_passing(), self._make_passing())
+        result = await v.validate(Order())
+        assert result.is_valid
+
+    async def test_one_fail_collects_error(self) -> None:
+        v = AsyncCompositeValidator(
+            self._make_passing(),
+            self._make_failing("bad quantity", field="quantity"),
+        )
+        result = await v.validate(Order())
+        assert not result.is_valid
+        assert len(result.errors) == 1
+        assert result.errors[0].message == "bad quantity"
+        assert result.errors[0].field == "quantity"
+
+    async def test_multiple_failures_all_collected(self) -> None:
+        """All child validators run — errors from both are collected."""
+        v = AsyncCompositeValidator(
+            self._make_failing("err-a", field="a"),
+            self._make_failing("err-b", field="b"),
+        )
+        result = await v.validate(Order())
+        assert len(result.errors) == 2
+        fields = {e.field for e in result.errors}
+        assert fields == {"a", "b"}
+
+    def test_repr(self) -> None:
+        v = AsyncCompositeValidator(self._make_passing())
+        assert "AsyncCompositeValidator" in repr(v)
+
+
+# ── AsyncDomainModelValidator ─────────────────────────────────────────────────
+
+
+class TestAsyncDomainModelValidator:
+    @staticmethod
+    def _make_validator() -> AsyncDomainModelValidator[Order]:
+        class AsyncOrderValidator(AsyncDomainModelValidator[Order]):
+            async def validate(self, value: Order) -> ValidationResult:
+                return (
+                    ValidationResult.error("always fails", field="qty")
+                    if value.quantity < 0
+                    else ValidationResult.ok()
+                )
+
+        return AsyncOrderValidator()
+
+    async def test_validate_passes_for_valid_entity(self) -> None:
+        v = self._make_validator()
+        result = await v.validate(Order(quantity=5))
+        assert result.is_valid
+
+    async def test_validate_fails_for_invalid_entity(self) -> None:
+        v = self._make_validator()
+        result = await v.validate(Order(quantity=-1))
+        assert not result.is_valid
+        assert result.errors[0].field == "qty"
+
+    def test_abstract_method_enforced(self) -> None:
+        with pytest.raises(TypeError):
+            AsyncDomainModelValidator()  # type: ignore[abstract]
+
+    def test_repr_contains_class_name(self) -> None:
+        v = self._make_validator()
+        assert "AsyncOrderValidator" in repr(v)
+
+    def test_satisfies_async_validator_protocol(self) -> None:
+        v = self._make_validator()
+        assert isinstance(v, AsyncValidator)
+
+    async def test_rule_helper_returns_error_on_true(self) -> None:
+        class V(AsyncDomainModelValidator[Order]):
+            async def validate(self, value: Order) -> ValidationResult:
+                return self._rule(True, "violated", field="qty")
+
+        result = await V().validate(Order())
+        assert not result.is_valid
+        assert result.errors[0].message == "violated"
+
+    async def test_rule_helper_returns_ok_on_false(self) -> None:
+        class V(AsyncDomainModelValidator[Order]):
+            async def validate(self, value: Order) -> ValidationResult:
+                return self._rule(False, "should not appear")
+
+        result = await V().validate(Order())
+        assert result.is_valid

@@ -44,7 +44,10 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from varco_core.cache.consumer import CacheInvalidationConsumer
 
 from varco_core.cache.base import InvalidationStrategy
 
@@ -450,9 +453,124 @@ class CompositeStrategy(InvalidationStrategy):
         return f"CompositeStrategy({children})"
 
 
+# ── EventDrivenStrategy ───────────────────────────────────────────────────────
+
+
+class EventDrivenStrategy(InvalidationStrategy):
+    """
+    Convenience façade that combines ``ExplicitStrategy`` with
+    ``CacheInvalidationConsumer`` behind a single object.
+
+    Exposes a ``consumer`` property that the caller must register to a bus::
+
+        strategy = EventDrivenStrategy(channel="cache-invalidations")
+        strategy.consumer.register_to(bus)   # caller wires the bus
+
+        async with InMemoryCache(strategy=strategy) as cache:
+            ...
+
+    The strategy itself has no bus dependency — ``start()`` and ``stop()``
+    are no-ops.  All bus interaction lives inside ``CacheInvalidationConsumer``
+    (the only class permitted to call ``bus.subscribe()`` directly).
+
+    Args:
+        channel: Channel to subscribe to for ``CacheInvalidated`` events.
+                 Defaults to ``"varco.cache.invalidations"`` which matches
+                 the default used by ``CachedService`` and
+                 ``CacheServiceMixin``.
+
+    DESIGN: consumer property over bus argument
+        ✅ No bus dependency in the strategy — no circular import risk between
+           ``cache.invalidation`` and ``event``.
+        ✅ The caller controls when and to which bus the consumer is registered.
+        ✅ Composable — the consumer can be registered to multiple buses or
+           replaced without touching the strategy instance.
+        ❌ Caller must remember to call ``strategy.consumer.register_to(bus)``
+           — mitigated by the docstring and type annotations.
+
+    DESIGN: ``EventDrivenStrategy`` over raw ``CacheInvalidationConsumer``
+        ✅ Single-object API for users who want the classic strategy pattern.
+        ✅ Hides the ``ExplicitStrategy`` wiring — callers see one object.
+        ❌ Thin wrapper — power users should prefer the two-object approach.
+
+    Thread safety:  ❌  Delegates to ``ExplicitStrategy`` — not thread-safe.
+    Async safety:   ✅  ``start()``/``stop()`` are no-ops (async def).
+
+    Edge cases:
+        - Calling ``consumer.register_to(bus)`` more than once creates
+          duplicate subscriptions — harmless but wasteful.  Avoid double
+          registration.
+        - The ``consumer`` property always returns the same instance, even
+          if called multiple times.
+    """
+
+    def __init__(self, *, channel: str = "varco.cache.invalidations") -> None:
+        """
+        Args:
+            channel: Bus channel to subscribe to for ``CacheInvalidated``
+                     events.  Must match the channel used by the producer
+                     (``CachedService`` / ``CacheServiceMixin``).
+        """
+        # Deferred import breaks the potential cycle:
+        #   invalidation → consumer → service → invalidation
+        from varco_core.cache.consumer import CacheInvalidationConsumer
+
+        self._explicit = ExplicitStrategy()
+        # Consumer holds a reference to the same ExplicitStrategy — mutations
+        # from the bus handler are immediately visible to should_invalidate().
+        self._consumer: CacheInvalidationConsumer = CacheInvalidationConsumer(
+            self._explicit, channel=channel
+        )
+
+    @property
+    def consumer(self) -> "CacheInvalidationConsumer":
+        """
+        The ``CacheInvalidationConsumer`` that drives this strategy.
+
+        Register it to a bus so the strategy receives ``CacheInvalidated``
+        events::
+
+            strategy.consumer.register_to(bus)
+
+        Returns:
+            The ``CacheInvalidationConsumer`` instance (always the same object).
+        """
+        return self._consumer
+
+    async def start(self) -> None:
+        """No-op — lifecycle is delegated to the cache backend."""
+
+    async def stop(self) -> None:
+        """No-op."""
+
+    def should_invalidate(self, key: Any, metadata: dict[str, Any]) -> bool:
+        """
+        Return ``True`` if ``key`` was explicitly invalidated via a bus event.
+
+        Delegates to the internal ``ExplicitStrategy``.
+
+        Args:
+            key:      Cache key to check.
+            metadata: Not used — explicit invalidation is key-based.
+
+        Returns:
+            ``True`` if the key was marked for eviction by an incoming
+            ``CacheInvalidated`` event.
+        """
+        return self._explicit.should_invalidate(key, metadata)
+
+    def __repr__(self) -> str:
+        return (
+            f"EventDrivenStrategy("
+            f"channel={self._consumer._channel!r}, "
+            f"explicit={self._explicit!r})"
+        )
+
+
 __all__ = [
     "TTLStrategy",
     "ExplicitStrategy",
     "TaggedStrategy",
     "CompositeStrategy",
+    "EventDrivenStrategy",
 ]

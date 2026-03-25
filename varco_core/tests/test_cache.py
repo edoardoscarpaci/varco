@@ -29,6 +29,7 @@ from varco_core.cache import (
     CacheInvalidationConsumer,
     CacheSettings,
     CompositeStrategy,
+    EventDrivenStrategy,
     ExplicitStrategy,
     InMemoryCache,
     LayeredCache,
@@ -495,6 +496,101 @@ class TestCacheInvalidationConsumer:
         await asyncio.sleep(0)
 
         assert strategy.should_invalidate("x:1", {})
+
+
+# ── EventDrivenStrategy ─────────────────────────────────────────────────────────
+
+
+class TestEventDrivenStrategy:
+    async def test_should_invalidate_returns_false_initially(self) -> None:
+        """Before any bus event, no key is marked for invalidation."""
+        strategy = EventDrivenStrategy()
+        assert strategy.should_invalidate("user:1", {}) is False
+
+    async def test_consumer_property_returns_same_instance(self) -> None:
+        """consumer property is stable — always the same CacheInvalidationConsumer."""
+        strategy = EventDrivenStrategy()
+        assert strategy.consumer is strategy.consumer
+
+    async def test_register_consumer_then_event_invalidates_key(self) -> None:
+        """
+        After registering the consumer to a bus, publishing a CacheInvalidated
+        event marks the key and the next cache.get() returns None.
+        """
+        bus = InMemoryEventBus()
+        strategy = EventDrivenStrategy(channel="cache-events")
+        strategy.consumer.register_to(bus)
+
+        async with InMemoryCache(strategy=strategy) as cache:
+            await cache.set("product:5", "Widget")
+
+            await bus.publish(
+                CacheInvalidated(
+                    keys=["product:5"], namespace="product", operation="update"
+                ),
+                channel="cache-events",
+            )
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+            assert await cache.get("product:5") is None
+
+    async def test_unregistered_consumer_does_not_invalidate(self) -> None:
+        """Without registering the consumer, events have no effect."""
+        bus = InMemoryEventBus()
+        strategy = EventDrivenStrategy(channel="cache-events")
+        # consumer NOT registered to bus
+
+        async with InMemoryCache(strategy=strategy) as cache:
+            await cache.set("order:1", "pending")
+
+            await bus.publish(
+                CacheInvalidated(
+                    keys=["order:1"], namespace="order", operation="delete"
+                ),
+                channel="cache-events",
+            )
+            await asyncio.sleep(0)
+
+            # Key should still be present
+            assert await cache.get("order:1") == "pending"
+
+    async def test_default_channel_matches_cached_service_default(self) -> None:
+        """
+        EventDrivenStrategy defaults to 'varco.cache.invalidations', the same
+        default used by CachedService and CacheServiceMixin — out-of-the-box
+        wiring works without any channel config.
+        """
+        bus = InMemoryEventBus()
+        strategy = EventDrivenStrategy()  # no explicit channel
+        strategy.consumer.register_to(bus)
+
+        async with InMemoryCache(strategy=strategy) as cache:
+            await cache.set("key", "value")
+
+            await bus.publish(
+                CacheInvalidated(keys=["key"], namespace="ns", operation="delete"),
+                channel="varco.cache.invalidations",
+            )
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+            assert await cache.get("key") is None
+
+    async def test_start_and_stop_are_noops(self) -> None:
+        """start() and stop() complete without error and change no observable state."""
+        strategy = EventDrivenStrategy()
+        await strategy.start()
+        assert strategy.should_invalidate("x", {}) is False
+        await strategy.stop()
+        assert strategy.should_invalidate("x", {}) is False
+
+    def test_repr(self) -> None:
+        """repr includes channel and explicit strategy info."""
+        strategy = EventDrivenStrategy(channel="my-channel")
+        r = repr(strategy)
+        assert "EventDrivenStrategy" in r
+        assert "my-channel" in r
 
 
 # ── LayeredCache ────────────────────────────────────────────────────────────────

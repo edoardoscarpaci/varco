@@ -7,7 +7,9 @@ No MongoDB connection required — the output is a plain Python dict.
 
 from __future__ import annotations
 
+import pytest
 
+from varco_core.exception.query import OperationNotSupported
 from varco_core.query.type import (
     AndNode,
     ComparisonNode,
@@ -176,3 +178,99 @@ def test_compile_dotted_field_path():
     """MongoDB supports dot notation natively — no OperationNotSupported raised."""
     result = _compile(_cmp("profile.city", Operation.EQUAL, "NYC"))
     assert result == {"profile.city": "NYC"}
+
+
+# ── Security: allowed_fields whitelist ─────────────────────────────────────────
+
+
+def _compiler_with_allowed(*fields: str) -> BeanieQueryCompiler:
+    return BeanieQueryCompiler(allowed_fields=set(fields))
+
+
+class TestAllowedFieldsWhitelist:
+    """BeanieQueryCompiler allowed_fields enforcement."""
+
+    def test_whitelisted_flat_field_passes(self):
+        compiler = _compiler_with_allowed("name", "age")
+        # Must not raise
+        compiler.visit(_cmp("name", Operation.EQUAL, "Alice"))
+
+    def test_non_whitelisted_flat_field_raises(self):
+        compiler = _compiler_with_allowed("name")
+        with pytest.raises(ValueError, match="allowed_fields"):
+            compiler.visit(_cmp("age", Operation.EQUAL, 18))
+
+    def test_whitelisted_dotted_field_passes(self):
+        compiler = _compiler_with_allowed("profile.city")
+        result = compiler.visit(_cmp("profile.city", Operation.EQUAL, "NYC"))
+        assert result == {"profile.city": "NYC"}
+
+    def test_non_whitelisted_dotted_field_raises(self):
+        compiler = _compiler_with_allowed("name")
+        with pytest.raises(ValueError, match="allowed_fields"):
+            compiler.visit(_cmp("profile.city", Operation.EQUAL, "NYC"))
+
+    def test_empty_allowed_fields_permits_all(self):
+        compiler = BeanieQueryCompiler(allowed_fields=set())
+        compiler.visit(_cmp("anything", Operation.EQUAL, "x"))  # must not raise
+
+
+# ── Security: traversal depth limit ────────────────────────────────────────────
+
+
+class TestTraversalDepthLimit:
+    """BeanieQueryCompiler max_traversal_depth guard."""
+
+    def test_path_within_depth_passes(self):
+        compiler = BeanieQueryCompiler(max_traversal_depth=2)
+        # depth = 2 hops: "a.b.c" → "a"→"b"→"c" = 2 dots = depth 2
+        compiler.visit(_cmp("a.b.c", Operation.EQUAL, "x"))
+
+    def test_path_exceeding_depth_raises(self):
+        compiler = BeanieQueryCompiler(max_traversal_depth=1)
+        # depth = 2 → exceeds limit of 1
+        with pytest.raises(OperationNotSupported, match="max_traversal_depth"):
+            compiler.visit(_cmp("a.b.c", Operation.EQUAL, "x"))
+
+    def test_flat_path_always_within_depth(self):
+        compiler = BeanieQueryCompiler(max_traversal_depth=0)
+        # depth = 0 (no dots) → never exceeds any limit
+        compiler.visit(_cmp("name", Operation.EQUAL, "Alice"))
+
+
+# ── Security: segment safety ───────────────────────────────────────────────────
+
+
+class TestSegmentSafety:
+    """BeanieQueryCompiler rejects field paths with unsafe segment characters."""
+
+    def test_sql_injection_in_segment_raises(self):
+        # Must use a dotted path so the segment-validation branch is reached.
+        # Flat paths with special chars are safe in MongoDB (no SQL injection
+        # surface) but we validate dotted paths to prevent operator injection
+        # via nested field names.
+        with pytest.raises(ValueError, match="unsafe characters"):
+            _compile(_cmp("profile.city; DROP--", Operation.EQUAL, "x"))
+
+    def test_empty_segment_from_double_dot_raises(self):
+        """Double dots produce an empty segment which fails the regex."""
+        with pytest.raises(ValueError, match="unsafe characters"):
+            _compile(_cmp("a..b", Operation.EQUAL, "x"))
+
+    def test_dollar_prefix_segment_in_dotted_path_raises(self):
+        """
+        MongoDB operator injections like ``$where`` embedded in a dotted path
+        (``"profile.$where"``) must be blocked by the segment regex.
+
+        Note: a bare ``$where`` flat field is an unusual MongoDB field name
+        but is not a query injection vector since it is used as a dict key,
+        not as an operator.  When using allowed_fields, flat ``$where`` is
+        blocked by the whitelist instead.
+        """
+        with pytest.raises(ValueError, match="unsafe characters"):
+            _compile(_cmp("profile.$where", Operation.EQUAL, "x"))
+
+    def test_valid_underscore_segment_passes(self):
+        """Underscores are valid in field names."""
+        result = _compile(_cmp("_private.field_name", Operation.EQUAL, "x"))
+        assert result == {"_private.field_name": "x"}

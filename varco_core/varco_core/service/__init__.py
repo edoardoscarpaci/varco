@@ -12,6 +12,7 @@ from varco_core.service.tenant import (
     current_tenant,
     tenant_context,
 )
+from varco_core.service.async_validation import AsyncValidatorServiceMixin
 from varco_core.service.validation import ValidatorServiceMixin
 
 __all__ = [
@@ -26,5 +27,7 @@ __all__ = [
     "TenantUoWProvider",
     "current_tenant",
     "tenant_context",
+    # ── Validator mixins ──────────────────────────────────────────────────────
     "ValidatorServiceMixin",
+    "AsyncValidatorServiceMixin",
 ]

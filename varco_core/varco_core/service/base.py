@@ -425,6 +425,40 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
         # Base: no validation — all entities pass through.
         return
 
+    async def _validate_entity_async(self, entity: D, ctx: AuthContext) -> None:
+        """
+        Async complement to ``_validate_entity`` for I/O-bound validation.
+
+        Called by ``create`` and ``update`` immediately after
+        ``_validate_entity`` while the unit of work is still open, so async
+        validators can safely issue DB queries on the same session.
+
+        The base implementation is a no-op.  Override via
+        ``AsyncValidatorServiceMixin`` (or a custom mixin) to add DB-aware
+        validation such as uniqueness checks.
+
+        **Chaining contract**: always end with
+        ``await super()._validate_entity_async(entity, ctx)`` so every mixin
+        in the MRO runs its async validation step.
+
+        Args:
+            entity: The fully-assembled (and stamped) domain entity.
+            ctx:    Caller's identity.
+
+        Raises:
+            ServiceValidationError: An async business invariant was violated.
+
+        Edge cases:
+            - ``entity._raw_orm`` is ``None`` during ``create`` — do not call
+              ``entity.raw()`` here.
+            - For ``update``, ``entity._raw_orm`` IS set.
+            - Async validators share the open UoW session — use read-only
+              queries here; writes belong in the service method itself.
+
+        Async safety:   ✅ Awaited inside the open UoW.
+        """
+        return
+
     def _pre_check(self, ctx: AuthContext) -> None:
         """
         Fast stateless check executed *before* the unit of work is opened.
@@ -838,6 +872,7 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
             # fully-populated entity (including tenant_id, owner_id, etc.).
             # Raises ServiceValidationError if any invariant is violated.
             self._validate_entity(entity, ctx)
+            await self._validate_entity_async(entity, ctx)
             saved = await self._get_repo(uow).save(entity)
             # Capture the ReadDTO inside the UoW — assembler.to_read_dto is a
             # pure transform but saved.pk is only valid while the session exists.
@@ -907,6 +942,7 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
             # Runs after apply_update so validators see the new field values,
             # not the pre-update state.
             self._validate_entity(updated, ctx)
+            await self._validate_entity_async(updated, ctx)
             saved = await self._get_repo(uow).save(updated)
             # Capture ReadDTO inside the UoW — same rationale as create().
             read_dto = self._assembler.to_read_dto(saved)

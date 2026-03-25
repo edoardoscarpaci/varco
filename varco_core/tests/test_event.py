@@ -71,6 +71,7 @@ from varco_core.event import (
     CHANNEL_ALL,
     AbstractEventProducer,
     BusEventProducer,
+    CorrelationMiddleware,
     DispatchMode,
     EntityCreatedEvent,
     EntityDeletedEvent,
@@ -82,8 +83,10 @@ from varco_core.event import (
     EventMiddleware,
     InMemoryEventBus,
     JsonEventSerializer,
+    LoggingMiddleware,
     NoopEventBus,
     NoopEventProducer,
+    RetryMiddleware,
     Subscription,
     listen,
 )
@@ -974,3 +977,211 @@ class TestJsonEventSerializer:
         assert restored.entity_type == "Post"
         assert restored.payload == {"title": "Hello"}
         assert restored.correlation_id == "req-xyz"
+
+
+# ── LoggingMiddleware ──────────────────────────────────────────────────────────
+
+
+class TestLoggingMiddleware:
+    async def test_passes_through_on_success(self) -> None:
+        """Dispatch succeeds and the handler is called."""
+        received: list[Event] = []
+
+        bus = InMemoryEventBus(middleware=[LoggingMiddleware()])
+        bus.subscribe(OrderEvent, lambda e: received.append(e))
+        await bus.publish(OrderEvent(order_id="1"), channel="orders")
+
+        assert len(received) == 1
+
+    async def test_re_raises_on_handler_failure(self) -> None:
+        """LoggingMiddleware does not swallow exceptions."""
+
+        async def bad_handler(event: Event) -> None:
+            raise ValueError("handler error")
+
+        bus = InMemoryEventBus(middleware=[LoggingMiddleware()])
+        bus.subscribe(OrderEvent, bad_handler)
+
+        with pytest.raises(ValueError, match="handler error"):
+            await bus.publish(OrderEvent(order_id="1"), channel="orders")
+
+    async def test_custom_logger_receives_message(self) -> None:
+        """LoggingMiddleware writes to the provided logger."""
+        import logging
+
+        records: list[logging.LogRecord] = []
+
+        class CapturingHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        custom_logger = logging.getLogger("test.logging_mw")
+        custom_logger.addHandler(CapturingHandler())
+        custom_logger.setLevel(logging.DEBUG)
+
+        bus = InMemoryEventBus(middleware=[LoggingMiddleware(logger=custom_logger)])
+        bus.subscribe(OrderEvent, lambda e: None)
+        await bus.publish(OrderEvent(order_id="x"), channel="orders")
+
+        assert any("OrderEvent" in r.getMessage() for r in records)
+
+    def test_repr(self) -> None:
+        mw = LoggingMiddleware()
+        assert "LoggingMiddleware" in repr(mw)
+
+
+# ── CorrelationMiddleware ──────────────────────────────────────────────────────
+
+
+class TestCorrelationMiddleware:
+    async def test_sets_correlation_id_during_dispatch(self) -> None:
+        """Inside a handler, CorrelationMiddleware.current_id() is non-None."""
+        captured: list[str | None] = []
+
+        def handler(event: Event) -> None:
+            captured.append(CorrelationMiddleware.current_id())
+
+        bus = InMemoryEventBus(middleware=[CorrelationMiddleware()])
+        bus.subscribe(OrderEvent, handler)
+        await bus.publish(OrderEvent(order_id="1"), channel="orders")
+
+        assert len(captured) == 1
+        assert captured[0] is not None
+
+    async def test_restores_previous_value_after_dispatch(self) -> None:
+        """CorrelationMiddleware resets the ContextVar after dispatch."""
+        assert CorrelationMiddleware.current_id() is None
+
+        bus = InMemoryEventBus(middleware=[CorrelationMiddleware()])
+        bus.subscribe(OrderEvent, lambda e: None)
+        await bus.publish(OrderEvent(order_id="1"), channel="orders")
+
+        assert CorrelationMiddleware.current_id() is None
+
+    async def test_uses_event_correlation_id_if_present(self) -> None:
+        """If the event has a correlation_id attribute, it is used."""
+        captured: list[str | None] = []
+
+        def handler(event: Event) -> None:
+            captured.append(CorrelationMiddleware.current_id())
+
+        bus = InMemoryEventBus(middleware=[CorrelationMiddleware()])
+        bus.subscribe(EntityCreatedEvent, handler)
+        await bus.publish(
+            EntityCreatedEvent(
+                entity_type="Post",
+                pk="1",
+                correlation_id="my-cid",
+                payload={},
+            ),
+            channel="events",
+        )
+
+        assert captured[0] == "my-cid"
+
+    async def test_generates_uuid_when_no_correlation_id(self) -> None:
+        """Without an existing correlation_id, a UUID4 string is generated."""
+        captured: list[str | None] = []
+
+        def handler(event: Event) -> None:
+            captured.append(CorrelationMiddleware.current_id())
+
+        bus = InMemoryEventBus(middleware=[CorrelationMiddleware()])
+        bus.subscribe(OrderEvent, handler)
+        await bus.publish(OrderEvent(order_id="1"), channel="orders")
+
+        cid = captured[0]
+        assert cid is not None
+        # UUID4 format: 8-4-4-4-12 hex chars with dashes
+        parts = cid.split("-")
+        assert len(parts) == 5
+
+    def test_current_id_returns_none_outside_dispatch(self) -> None:
+        """Outside a dispatch, current_id() returns None."""
+        assert CorrelationMiddleware.current_id() is None
+
+    def test_repr(self) -> None:
+        assert "CorrelationMiddleware" in repr(CorrelationMiddleware())
+
+
+# ── RetryMiddleware ────────────────────────────────────────────────────────────
+
+
+class TestRetryMiddleware:
+    async def test_succeeds_on_first_attempt(self) -> None:
+        """If next() succeeds immediately, no retry happens."""
+        call_count = 0
+
+        def handler(event: Event) -> None:
+            nonlocal call_count
+            call_count += 1
+
+        bus = InMemoryEventBus(
+            middleware=[RetryMiddleware(max_attempts=3, base_delay=0.0)]
+        )
+        bus.subscribe(OrderEvent, handler)
+        await bus.publish(OrderEvent(order_id="1"), channel="orders")
+
+        assert call_count == 1
+
+    async def test_retries_on_failure_then_succeeds(self) -> None:
+        """Handler fails twice then succeeds on the third attempt."""
+        attempts = 0
+
+        def flaky_handler(event: Event) -> None:
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise RuntimeError("transient failure")
+
+        bus = InMemoryEventBus(
+            middleware=[RetryMiddleware(max_attempts=3, base_delay=0.0)]
+        )
+        bus.subscribe(OrderEvent, flaky_handler)
+        await bus.publish(OrderEvent(order_id="1"), channel="orders")
+
+        assert attempts == 3
+
+    async def test_raises_after_all_attempts_exhausted(self) -> None:
+        """Raises the last exception when all retries are exhausted."""
+
+        def always_fails(event: Event) -> None:
+            raise ValueError("permanent failure")
+
+        bus = InMemoryEventBus(
+            middleware=[RetryMiddleware(max_attempts=2, base_delay=0.0)]
+        )
+        bus.subscribe(OrderEvent, always_fails)
+
+        # Bus wraps handler errors in ExceptionGroup before middleware sees them
+        with pytest.raises(ValueError, match="permanent failure"):
+            await bus.publish(OrderEvent(order_id="1"), channel="orders")
+
+    async def test_max_attempts_one_means_no_retry(self) -> None:
+        """max_attempts=1 calls next exactly once and re-raises immediately."""
+        attempts = 0
+
+        def handler(event: Event) -> None:
+            nonlocal attempts
+            attempts += 1
+            raise RuntimeError("fail")
+
+        bus = InMemoryEventBus(
+            middleware=[RetryMiddleware(max_attempts=1, base_delay=0.0)]
+        )
+        bus.subscribe(OrderEvent, handler)
+
+        with pytest.raises(RuntimeError):
+            await bus.publish(OrderEvent(order_id="1"), channel="orders")
+
+        assert attempts == 1
+
+    def test_invalid_max_attempts_raises(self) -> None:
+        with pytest.raises(ValueError):
+            RetryMiddleware(max_attempts=0)
+
+    def test_repr(self) -> None:
+        mw = RetryMiddleware(max_attempts=3, base_delay=1.0, max_delay=30.0)
+        r = repr(mw)
+        assert "RetryMiddleware" in r
+        assert "3" in r

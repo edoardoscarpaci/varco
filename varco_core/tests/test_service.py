@@ -56,12 +56,14 @@ from varco_core.dto import CreateDTO, ReadDTO, UpdateDTO
 from varco_core.exception.service import (
     ServiceAuthorizationError,
     ServiceNotFoundError,
+    ServiceValidationError,
 )
 from varco_core.meta import PKStrategy, PrimaryKey, pk_field
 from varco_core.model import AuditedDomainModel
 from varco_core.query.params import QueryParams
 from varco_core.repository import AsyncRepository
-from varco_core.service import AsyncService, IUoWProvider
+from varco_core.service import AsyncService, AsyncValidatorServiceMixin, IUoWProvider
+from varco_core.validation import AsyncDomainModelValidator, ValidationResult
 from varco_core.uow import AsyncUnitOfWork
 
 
@@ -1037,3 +1039,108 @@ class TestAsyncServiceDI:
         fetched = await svc.get(read_dto.pk, ctx)
         assert fetched.title == "di-test post"
         assert fetched.pk == read_dto.pk
+
+
+# ── AsyncValidatorServiceMixin ────────────────────────────────────────────────
+
+
+class _AlwaysPassAsyncValidator(AsyncDomainModelValidator[Post]):
+    """Async validator that always passes — used to verify the hook is called."""
+
+    def __init__(self) -> None:
+        self.call_count: int = 0
+
+    async def validate(self, value: Post) -> ValidationResult:
+        self.call_count += 1
+        return ValidationResult.ok()
+
+
+class _AlwaysFailAsyncValidator(AsyncDomainModelValidator[Post]):
+    """Async validator that always fails — used to verify errors propagate."""
+
+    async def validate(self, value: Post) -> ValidationResult:
+        return ValidationResult.error("async rule violated", field="title")
+
+
+class _AsyncValidatedPostService(
+    AsyncValidatorServiceMixin[Post, str, CreatePostDTO, PostReadDTO, UpdatePostDTO],
+    AsyncService[Post, str, CreatePostDTO, PostReadDTO, UpdatePostDTO],
+):
+    """Concrete service with AsyncValidatorServiceMixin injected."""
+
+    def _get_repo(self, uow: AsyncUnitOfWork) -> AsyncRepository[Post, Any]:
+        return uow.posts  # type: ignore[attr-defined]
+
+
+class TestAsyncValidatorServiceMixin:
+    @pytest.fixture()
+    def _make_svc(self, uow_provider: FakeUoWProvider, assembler: PostAssembler):
+        """Factory that wires a service with a given async validator instance."""
+
+        def _factory(validator):
+            svc = _AsyncValidatedPostService(
+                uow_provider=uow_provider,
+                authorizer=BaseAuthorizer(),
+                assembler=assembler,
+            )
+            _AsyncValidatedPostService._async_validator_entity = validator
+            return svc
+
+        yield _factory
+        # Reset class-level attribute after each test
+        _AsyncValidatedPostService._async_validator_entity = None
+
+    async def test_passing_validator_allows_create(self, _make_svc) -> None:
+        """create() succeeds when the async validator passes."""
+        validator = _AlwaysPassAsyncValidator()
+        svc = _make_svc(validator)
+        read_dto = await svc.create(CreatePostDTO(title="hello"), AuthContext())
+        assert read_dto.title == "hello"
+        assert validator.call_count == 1
+
+    async def test_failing_validator_blocks_create(self, _make_svc) -> None:
+        """create() raises ServiceValidationError when async validator fails."""
+        svc = _make_svc(_AlwaysFailAsyncValidator())
+        with pytest.raises(ServiceValidationError, match="async rule violated"):
+            await svc.create(CreatePostDTO(title="bad"), AuthContext())
+
+    async def test_passing_validator_allows_update(
+        self, _make_svc, uow_provider: FakeUoWProvider
+    ) -> None:
+        """update() succeeds when the async validator passes."""
+        validator = _AlwaysPassAsyncValidator()
+        svc = _make_svc(validator)
+        ctx = AuthContext()
+        read_dto = await svc.create(CreatePostDTO(title="original"), ctx)
+        updated = await svc.update(read_dto.pk, UpdatePostDTO(title="updated"), ctx)
+        assert updated.title == "updated"
+        # Called once for create and once for update
+        assert validator.call_count == 2
+
+    async def test_failing_validator_blocks_update(
+        self, _make_svc, uow_provider: FakeUoWProvider
+    ) -> None:
+        """update() raises ServiceValidationError when async validator fails."""
+        # Use a passing validator for create, then swap to failing for update
+        svc = _make_svc(_AlwaysPassAsyncValidator())
+        ctx = AuthContext()
+        read_dto = await svc.create(CreatePostDTO(title="ok"), ctx)
+
+        # Swap validator to always-fail
+        _AsyncValidatedPostService._async_validator_entity = _AlwaysFailAsyncValidator()
+        with pytest.raises(ServiceValidationError):
+            await svc.update(read_dto.pk, UpdatePostDTO(title="blocked"), ctx)
+
+    async def test_no_validator_is_noop(
+        self, uow_provider: FakeUoWProvider, assembler: PostAssembler
+    ) -> None:
+        """When _async_validator_entity is None, create/update work normally."""
+        # Explicitly ensure no validator is set
+        _AsyncValidatedPostService._async_validator_entity = None
+        svc = _AsyncValidatedPostService(
+            uow_provider=uow_provider,
+            authorizer=BaseAuthorizer(),
+            assembler=assembler,
+        )
+        read_dto = await svc.create(CreatePostDTO(title="no validator"), AuthContext())
+        assert read_dto.title == "no validator"

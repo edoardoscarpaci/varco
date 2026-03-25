@@ -21,8 +21,6 @@ from typing import Any
 from sqlalchemy import Select, asc, desc
 from sqlalchemy.orm import DeclarativeBase
 
-from varco_core.exception.query import OperationNotSupported
-from varco_core.exception.repository import FieldNotFound
 from varco_core.query.applicator.applicator import QueryApplicator
 from varco_core.query.type import SortField, SortOrder, TransformerNode
 from varco_core.query.visitor.sqlalchemy import SQLAlchemyQueryCompiler
@@ -113,7 +111,20 @@ class SQLAlchemyQueryApplicator(QueryApplicator):
         **kwargs: Any,
     ) -> Select:
         """
-        Apply an AST filter node as a ``WHERE`` clause to ``query``.
+        Apply an AST filter node as ``JOIN`` + ``WHERE`` clauses to ``query``.
+
+        When the AST contains dotted relationship paths (e.g. ``"author.name"``),
+        the compiler accumulates the required SA relationship attributes in
+        ``_pending_joins``.  This method applies those JOINs *before* the
+        ``WHERE`` clause so SQLAlchemy can resolve the joined columns correctly.
+
+        DESIGN: JOINs applied here, not in the compiler
+          ✅ Compiler returns a ``ColumnElement`` — changing that return type
+             would require altering ``BinaryWalkingVisitor`` and all subclasses.
+          ✅ The applicator owns the ``Select`` object and is the natural place
+             to add structural query changes (JOINs, pagination, sort).
+          ❌ Tighter coupling between applicator and compiler — mitigated by the
+             explicit lifecycle contract (clear → visit → collect → join → where).
 
         Args:
             query: A SQLAlchemy 2.x ``Select`` statement.
@@ -122,9 +133,22 @@ class SQLAlchemyQueryApplicator(QueryApplicator):
             kwargs: Unused.
 
         Returns:
-            A new ``Select`` statement with the filter applied.
+            A new ``Select`` statement with any required JOINs and the
+            ``WHERE`` clause applied.
         """
+        # Reset join tracking before compilation so stale joins from a
+        # previous call on the same compiler instance do not bleed in
+        self.query_visitor._clear_pending_joins()
+
         filter_expr = self.query_visitor.visit(node)
+
+        # Apply any JOINs collected during the walk in traversal order.
+        # Each element is a SA relationship attribute (e.g. PostORM.author).
+        # SA's join(rel_attr) form resolves the ON clause from the relationship
+        # definition — no manual join condition needed.
+        for rel_attr in self.query_visitor.collect_pending_joins():
+            query = query.join(rel_attr)
+
         # Use .where() — the SQLAlchemy 2.x API; .filter() is legacy ORM only
         return query.where(filter_expr)
 
@@ -163,7 +187,13 @@ class SQLAlchemyQueryApplicator(QueryApplicator):
         **kwargs: Any,
     ) -> Select:
         """
-        Apply ``ORDER BY`` clauses to ``query``.
+        Apply ``ORDER BY`` clauses to ``query``, with relationship JOIN support.
+
+        Dotted sort paths (e.g. ``"author.name"``) are resolved through the
+        compiler's relationship traversal logic, and any required JOINs are
+        added before the ``ORDER BY`` clause.  Joins are deduplicated against
+        any joins already applied by a preceding ``apply_query`` call on the
+        same compiler instance.
 
         Args:
             query:       A SQLAlchemy 2.x ``Select`` statement.
@@ -177,12 +207,21 @@ class SQLAlchemyQueryApplicator(QueryApplicator):
 
         Raises:
             ValueError:            Field not in ``allowed_fields`` whitelist.
-            OperationNotSupported: Dotted path in ``sort_field.field``.
+            OperationNotSupported: Traversal depth exceeded or unknown relationship.
             FieldNotFound:         Field does not exist on the model.
         """
         if not sort_fields:
             return query
 
+        # Reset join tracking so sort-path traversal is isolated from any
+        # prior apply_query pass on the same compiler instance.
+        # SA deduplicates identical JOINs (same table + condition) at query
+        # compilation time, so double-joining the same relationship is safe.
+        self.query_visitor._clear_pending_joins()
+
+        # Collect columns first; _resolve_column may populate _pending_joins
+        # for dotted sort paths (e.g. "author.name")
+        order_cols = []
         for sort in sort_fields:
             field_name = sort.field
 
@@ -193,9 +232,14 @@ class SQLAlchemyQueryApplicator(QueryApplicator):
                 )
 
             col = self._resolve_column(field_name)
-            query = query.order_by(
-                desc(col) if sort.order == SortOrder.DESC else asc(col)
-            )
+            order_cols.append((col, sort.order))
+
+        # Apply any JOINs required for the sort columns before ORDER BY
+        for rel_attr in self.query_visitor.collect_pending_joins():
+            query = query.join(rel_attr)
+
+        for col, order in order_cols:
+            query = query.order_by(desc(col) if order == SortOrder.DESC else asc(col))
 
         return query
 
@@ -203,26 +247,28 @@ class SQLAlchemyQueryApplicator(QueryApplicator):
 
     def _resolve_column(self, field_path: str) -> Any:
         """
-        Resolve a top-level column attribute on the model.
+        Resolve a column attribute for sort, delegating to the compiler.
+
+        Dotted relationship paths in sort fields (e.g. ``"author.name"``) are
+        resolved via the same compiler logic used for filters, including security
+        validation and join tracking.
+
+        Note: sort-generated joins are collected separately after this call in
+        ``apply_sort``; the compiler's ``_pending_joins`` state is shared, so
+        this must not be called concurrently with ``apply_query`` on the same
+        compiler instance.
 
         Args:
-            field_path: Simple column name (no dots).
+            field_path: Column name or dot-separated relationship path.
 
         Returns:
             The mapped column attribute.
 
         Raises:
-            OperationNotSupported: ``field_path`` contains a dot.
-            FieldNotFound:         Attribute missing from the model.
+            OperationNotSupported: Traversal depth exceeded or unknown relationship.
+            FieldNotFound:         Attribute missing from the model or leaf model.
+            ValueError:            Unsafe segment characters.
         """
-        if "." in field_path:
-            raise OperationNotSupported(
-                f"Nested relationship traversal is not supported in sort ({field_path!r})"
-            )
-        try:
-            return getattr(self.model_cls, field_path)
-        except AttributeError as exc:
-            raise FieldNotFound(
-                field=field_path,
-                table=self.model_cls.__tablename__,
-            ) from exc
+        # Delegate to the compiler's resolver so segment validation, depth
+        # checks, and join tracking are applied consistently for sort as well
+        return self.query_visitor._resolve_column(field_path)

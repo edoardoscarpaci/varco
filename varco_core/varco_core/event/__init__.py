@@ -98,6 +98,11 @@ from varco_core.event.dlq import (
     DeadLetterEntry,
     InMemoryDeadLetterQueue,
 )
+from varco_core.event.middleware import (
+    CorrelationMiddleware,
+    LoggingMiddleware,
+    RetryMiddleware,
+)
 
 __all__ = [
     # ── Channel constants ───────────────────────────────────────────────────
@@ -138,4 +143,8 @@ __all__ = [
     "AbstractDeadLetterQueue",
     "DeadLetterEntry",
     "InMemoryDeadLetterQueue",
+    # ── Built-in middleware ──────────────────────────────────────────────────
+    "LoggingMiddleware",
+    "CorrelationMiddleware",
+    "RetryMiddleware",
 ]

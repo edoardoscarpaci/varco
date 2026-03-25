@@ -72,6 +72,7 @@ Async safety:   ✅ All objects here are stateless and immutable after construct
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Generic, Protocol, TypeVar, runtime_checkable
@@ -564,10 +565,232 @@ class DomainModelValidator(ABC, Generic[D]):
         return f"{type(self).__name__}()"
 
 
+# ── AsyncValidator[T] ─────────────────────────────────────────────────────────
+
+
+@runtime_checkable
+class AsyncValidator(Protocol[T]):
+    """
+    Structural protocol for validators that require I/O.
+
+    Any class with ``async def validate(value: T) -> ValidationResult``
+    satisfies this protocol without inheriting from it.
+
+    Use this protocol when validation must query the database (e.g. uniqueness
+    checks) or call an external service.  For pure, stateless rules use the
+    synchronous ``Validator[T]`` protocol instead — it is cheaper and easier
+    to test.
+
+    ``@runtime_checkable`` enables ``isinstance(obj, AsyncValidator)`` checks.
+
+    DESIGN: separate protocol from ``Validator[T]``
+        ✅ ``Validator[T].validate()`` is sync — callers need not ``await``.
+        ✅ ``AsyncValidator[T].validate()`` is async — the distinction is
+           explicit and enforced at the type level.
+        ✅ Both protocols are structural — third-party validators need not
+           import ``varco_core`` at all.
+        ❌ Two protocols to learn — mitigated by clear naming and docstrings.
+
+    Thread safety:  ✅ Protocol has no state.
+    Async safety:   ✅ ``validate()`` is a coroutine.
+
+    Example::
+
+        class UniqueEmailValidator:
+            def __init__(self, repo: UserRepository) -> None:
+                self._repo = repo
+
+            async def validate(self, value: User) -> ValidationResult:
+                if await self._repo.exists_by_email(value.email):
+                    return ValidationResult.error("email already taken", field="email")
+                return ValidationResult.ok()
+
+        isinstance(UniqueEmailValidator(repo), AsyncValidator)  # True
+    """
+
+    async def validate(self, value: T) -> ValidationResult:
+        """
+        Validate ``value`` asynchronously.
+
+        Args:
+            value: The value to validate.
+
+        Returns:
+            ``ValidationResult.ok()`` when all rules pass.
+            A result with one or more errors otherwise.
+
+        Raises:
+            Nothing — collect errors and return; never raise directly.
+            Callers raise by calling ``result.raise_if_invalid()``.
+        """
+        ...
+
+
+# ── AsyncCompositeValidator[T] ────────────────────────────────────────────────
+
+
+class AsyncCompositeValidator(Generic[T]):
+    """
+    Fan-out async validator that delegates to multiple ``AsyncValidator[T]``
+    children and collects all their errors concurrently.
+
+    All child validators run concurrently via ``asyncio.gather`` — there is
+    no short-circuit on first failure.  This gives the caller a complete
+    picture of all violations in one round-trip.
+
+    DESIGN: ``asyncio.gather`` over sequential ``await``
+        ✅ All validators run concurrently — total latency is ``max(child_latency)``
+           rather than the sum.  Significant when validators hit the same DB.
+        ✅ Collect-all semantics — same as ``CompositeValidator``.
+        ❌ Validators must not share mutable state — concurrent execution is
+           unsafe if they do.  By convention, ``AsyncValidator`` implementations
+           are stateless (or use read-only injected repos).
+
+    Thread safety:  ✅ ``_validators`` is a tuple — immutable after construction.
+    Async safety:   ✅ ``validate()`` is a coroutine using ``asyncio.gather``.
+
+    Edge cases:
+        - Zero validators → returns ``ValidationResult.ok()`` with no I/O.
+        - If a child validator raises an unexpected exception, ``asyncio.gather``
+          propagates it immediately — no silent swallowing.  This is intentional:
+          an unexpected exception indicates a bug in the validator.
+
+    Example::
+
+        validator = AsyncCompositeValidator(
+            UniqueEmailValidator(repo),
+            UniqueUsernameValidator(repo),
+        )
+        result = await validator.validate(user)
+        result.raise_if_invalid()
+    """
+
+    def __init__(self, *validators: AsyncValidator[T]) -> None:
+        """
+        Args:
+            validators: One or more ``AsyncValidator[T]`` instances to fan out to.
+                        An empty composite always returns ``ValidationResult.ok()``.
+        """
+        self._validators: tuple[AsyncValidator[T], ...] = validators
+
+    async def validate(self, value: T) -> ValidationResult:
+        """
+        Run all child validators concurrently and combine their results.
+
+        Args:
+            value: The value to validate.
+
+        Returns:
+            Combined ``ValidationResult`` with all errors from all children.
+
+        Edge cases:
+            - Empty composite: returns ``ok()`` immediately.
+            - If any child raises, ``asyncio.gather`` propagates it.
+        """
+        if not self._validators:
+            return VALID
+        results: list[ValidationResult] = await asyncio.gather(
+            *(v.validate(value) for v in self._validators)
+        )
+        combined = VALID
+        for r in results:
+            combined = combined + r
+        return combined
+
+    def __repr__(self) -> str:
+        names = ", ".join(type(v).__name__ for v in self._validators)
+        return f"AsyncCompositeValidator({names})"
+
+
+# ── AsyncDomainModelValidator[D] ──────────────────────────────────────────────
+
+
+class AsyncDomainModelValidator(ABC, Generic[D]):
+    """
+    Abstract base class for async domain-model business-invariant validators.
+
+    Subclass this when validation requires I/O — e.g. a database uniqueness
+    check or an external API call.  For pure, stateless rules use
+    ``DomainModelValidator`` instead.
+
+    Satisfies ``AsyncValidator[D]`` structurally.  Register instances in the
+    DI container as ``AsyncValidator[D]`` and inject via
+    ``AsyncValidatorServiceMixin``.
+
+    DESIGN: parallel ABC to ``DomainModelValidator``
+        ✅ Consistent API — same helper methods (``_rule``), same ``__repr__``.
+        ✅ Clear separation — sync vs. async validators are distinct types;
+           ``isinstance(obj, AsyncValidator)`` distinguishes them at runtime.
+        ❌ Two base classes to document — justified by the sync/async split.
+
+    Thread safety:  ✅ No shared mutable state in the base class.
+    Async safety:   ✅ ``validate()`` is a coroutine.
+
+    Example::
+
+        from varco_core.validation import AsyncDomainModelValidator, ValidationResult
+
+        class UniqueSlugValidator(AsyncDomainModelValidator[Article]):
+            def __init__(self, repo: ArticleRepository) -> None:
+                self._repo = repo
+
+            async def validate(self, value: Article) -> ValidationResult:
+                exists = await self._repo.slug_exists(value.slug)
+                if exists:
+                    return ValidationResult.error("slug already in use", field="slug")
+                return ValidationResult.ok()
+    """
+
+    @abstractmethod
+    async def validate(self, value: D) -> ValidationResult:
+        """
+        Check all business invariants for ``value`` asynchronously.
+
+        Args:
+            value: The fully-assembled domain entity to validate.
+                   When called from ``AsyncValidatorServiceMixin``, ``value``
+                   has already passed through ``_prepare_for_create``.
+
+        Returns:
+            ``ValidationResult.ok()`` when all invariants hold.
+            A result with one or more errors otherwise.
+
+        Raises:
+            Nothing — collect errors and return; never raise directly.
+
+        Edge cases:
+            - ``value._raw_orm`` is ``None`` during ``create`` — the entity
+              has not yet been persisted.
+            - For ``update``, ``value._raw_orm`` IS set.
+        """
+
+    def _rule(
+        self,
+        condition: bool,
+        message: str,
+        *,
+        field: str | None = None,
+    ) -> ValidationResult:
+        """
+        Helper: return an error result when ``condition`` is ``True``.
+
+        Identical to ``DomainModelValidator._rule`` — see that class for docs.
+        """
+        if condition:
+            return ValidationResult.error(message, field=field)
+        return VALID
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}()"
+
+
 __all__ = [
     "DomainModelValidator",
+    "AsyncDomainModelValidator",
     "CompositeValidator",
+    "AsyncCompositeValidator",
     "Validator",
+    "AsyncValidator",
     "ValidationError",
     "ValidationResult",
     "VALID",
