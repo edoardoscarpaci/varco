@@ -196,6 +196,25 @@ from varco_core.tracing import (
     generate_correlation_id,
 )
 
+# ── OpenTelemetry observability ──────────────────────────────────────────────────
+from varco_core.observability import (
+    CounterConfig,
+    HistogramConfig,
+    Metric,
+    MetricKind,
+    OtelConfig,
+    OtelConfiguration,
+    SpanConfig,
+    TracingServiceMixin,
+    counter,
+    create_counter,
+    create_histogram,
+    create_span,
+    histogram,
+    register_gauge,
+    span,
+)
+
 # ── Auth helpers ─────────────────────────────────────────────────────────────────
 from varco_core.auth.helpers import (
     GrantBasedAuthorizer,
@@ -359,11 +378,27 @@ __all__ = [
     "CacheInvalidated",
     "CacheInvalidationEvent",
     "CachedService",
-    # ── Tracing ─────────────────────────────────────────────────────────────────
+    # ── Tracing / correlation ID ─────────────────────────────────────────────────
     "CorrelationIdFilter",
     "correlation_context",
     "current_correlation_id",
     "generate_correlation_id",
+    # ── OpenTelemetry observability ───────────────────────────────────────────────
+    "OtelConfig",
+    "OtelConfiguration",
+    "span",
+    "SpanConfig",
+    "create_span",
+    "counter",
+    "CounterConfig",
+    "histogram",
+    "HistogramConfig",
+    "create_counter",
+    "create_histogram",
+    "TracingServiceMixin",
+    "Metric",
+    "MetricKind",
+    "register_gauge",
     # ── Auth helpers ─────────────────────────────────────────────────────────────
     "GrantBasedAuthorizer",
     "OwnershipAuthorizer",

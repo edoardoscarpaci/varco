@@ -32,6 +32,14 @@ dependencies = [
     "PyJWT>=2.8,<3.0",
     # cryptography is used by varco_core.jwk for RSA/EC key operations
     "cryptography>=41.0",
+    # opentelemetry-api + sdk + OTLP exporter — used by varco_core.observability
+    # for @span, @counter, @histogram decorators and OtelConfiguration DI module.
+    # The SDK and OTLP exporter are required (not just the API) because
+    # OtelConfiguration builds TracerProvider / MeterProvider from the SDK and
+    # attaches the OTLP gRPC exporter when an endpoint is configured.
+    "opentelemetry-api>=1.20",
+    "opentelemetry-sdk>=1.20",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.20",
 ]
 
 [project.urls]
