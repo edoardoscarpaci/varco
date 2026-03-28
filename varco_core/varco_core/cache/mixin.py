@@ -100,8 +100,29 @@ CRUD intercepts
 
 Cache key format::
 
+    # Without tenant context (single-tenant / non-tenant services):
     "<_cache_namespace>:get:<pk>"
     "<_cache_namespace>:list:<md5(repr(params))[:12]>"
+
+    # With tenant context (multi-tenant services):
+    "<_cache_namespace>:<tenant_id>:get:<pk>"
+    "<_cache_namespace>:<tenant_id>:list:<md5(repr(params))[:12]>"
+
+The ``tenant_id`` segment is extracted from ``ctx.metadata["tenant_id"]`` and
+inserted as the second path component when present.  This isolates each
+tenant's entries so that a write by tenant "acme" never evicts tenant
+"globex" entries from the cache.
+
+Tenant-scoped list invalidation
+--------------------------------
+``_invalidate_list()`` uses ``CacheBackend.delete_prefix()`` when a
+``tenant_id`` is available::
+
+    delete_prefix("<namespace>:<tenant_id>:list:")
+
+This removes only the current tenant's list entries.  Without a tenant
+context, it falls back to ``cache.clear()`` (full flush) — the original
+behaviour for single-tenant / non-tenant services is preserved.
 
 MRO composition
 ---------------
@@ -131,6 +152,7 @@ from varco_core.dto import CreateDTO, ReadDTO, UpdateDTO
 from varco_core.event.producer import AbstractEventProducer
 from varco_core.model import DomainModel
 from varco_core.service.base import AsyncService
+from varco_core.service.mixin import ServiceMixin
 
 if TYPE_CHECKING:
     from varco_core.auth import AuthContext
@@ -145,7 +167,9 @@ R = TypeVar("R", bound=ReadDTO)
 U = TypeVar("U", bound=UpdateDTO)
 
 
-class CacheServiceMixin(AsyncService[D, PK, C, R, U], Generic[D, PK, C, R, U]):
+class CacheServiceMixin(
+    ServiceMixin, AsyncService[D, PK, C, R, U], Generic[D, PK, C, R, U]
+):
     """
     ``AsyncService`` mixin that adds transparent look-aside caching.
 
@@ -206,20 +230,83 @@ class CacheServiceMixin(AsyncService[D, PK, C, R, U], Generic[D, PK, C, R, U]):
 
     # ── Internal key helpers ──────────────────────────────────────────────────
 
-    def _cache_key(self, operation: str, suffix: Any) -> str:
-        """``"<namespace>:<operation>:<suffix>"``"""
+    def _cache_key(
+        self,
+        operation: str,
+        suffix: Any,
+        *,
+        tenant_id: str | None = None,
+    ) -> str:
+        """
+        Build a cache key for an operation on a specific entity (or list).
+
+        Key format:
+            - With tenant: ``"<namespace>:<tenant_id>:<operation>:<suffix>"``
+            - Without:     ``"<namespace>:<operation>:<suffix>"``
+
+        The ``tenant_id`` segment isolates each tenant's entries so reads and
+        writes for tenant "acme" never collide with entries for tenant "globex".
+
+        Args:
+            operation: ``"get"`` or ``"list"``.
+            suffix:    Entity PK (for ``"get"``) or a stable hash (for ``"list"``).
+            tenant_id: Tenant identifier from ``ctx.metadata``.  ``None``
+                       produces a non-tenant key — backward-compatible with
+                       single-tenant services.
+
+        Returns:
+            Fully-qualified cache key string.
+        """
+        if tenant_id:
+            # Tenant segment placed between namespace and operation so that
+            # delete_prefix("<namespace>:<tenant_id>:list:") scopes correctly.
+            return f"{self._cache_namespace}:{tenant_id}:{operation}:{suffix}"
         return f"{self._cache_namespace}:{operation}:{suffix}"
 
-    def _cache_list_key(self, params: QueryParams) -> str:
-        """Stable cache key for a ``list`` call — hashes the full ``QueryParams`` repr."""
+    def _cache_list_key(
+        self,
+        params: QueryParams,
+        *,
+        tenant_id: str | None = None,
+    ) -> str:
+        """
+        Stable cache key for a ``list`` call.
+
+        Hashes the full ``QueryParams`` repr (including any tenant-scoped
+        filters added by ``TenantAwareService._scoped_params()``) and
+        includes the tenant_id in the key so per-tenant list invalidation
+        can target ``delete_prefix("<namespace>:<tenant_id>:list:")``.
+
+        Args:
+            params:    The query parameters for this list call.
+            tenant_id: Tenant identifier from ``ctx.metadata``.  ``None``
+                       produces a non-tenant key.
+
+        Returns:
+            Cache key string, e.g. ``"post:acme:list:a3f9b2c1d5e6"``.
+        """
         h = hashlib.md5(repr(params).encode(), usedforsecurity=False).hexdigest()[:12]
-        return self._cache_key("list", h)
+        return self._cache_key("list", h, tenant_id=tenant_id)
 
     # ── Overridden read operations ────────────────────────────────────────────
 
     async def get(self, pk: PK, ctx: AuthContext) -> R:
-        """Look-aside ``get``: return cached ``ReadDTO`` or delegate to ``super().get()``."""
-        key = self._cache_key("get", pk)
+        """
+        Look-aside ``get``: return cached ``ReadDTO`` or delegate to ``super().get()``.
+
+        The cache key includes the tenant_id from ``ctx`` so tenants never
+        share cached entries for the same PK.
+
+        Args:
+            pk:  Entity primary key.
+            ctx: Auth context — ``ctx.metadata["tenant_id"]`` scopes the key.
+
+        Returns:
+            ``ReadDTO`` — from cache or freshly fetched.
+        """
+        # Extract tenant_id once — used for both the lookup key and the write key.
+        tenant_id: str | None = ctx.metadata.get("tenant_id") if ctx else None
+        key = self._cache_key("get", pk, tenant_id=tenant_id)
         hit = await self._cache.get(key)
         if hit is not None:
             _logger.debug(
@@ -237,8 +324,25 @@ class CacheServiceMixin(AsyncService[D, PK, C, R, U], Generic[D, PK, C, R, U]):
         return result
 
     async def list(self, params: QueryParams, ctx: AuthContext) -> list[R]:
-        """Look-aside ``list``: stable hash of ``QueryParams`` as the cache key."""
-        key = self._cache_list_key(params)
+        """
+        Look-aside ``list``: stable hash of ``QueryParams`` as the cache key.
+
+        The key includes the tenant_id so that different tenants never
+        share the same list cache entry even when filtering by the same fields.
+        (``TenantAwareService._scoped_params()`` already injects the tenant
+        filter into ``params`` before this method is called, so the hash
+        naturally differs per tenant — but the explicit tenant segment in the
+        key is required for ``delete_prefix``-based invalidation to work.)
+
+        Args:
+            params: Query parameters (filters, sort, pagination).
+            ctx:    Auth context — ``ctx.metadata["tenant_id"]`` scopes the key.
+
+        Returns:
+            List of ``ReadDTO`` — from cache or freshly fetched.
+        """
+        tenant_id: str | None = ctx.metadata.get("tenant_id") if ctx else None
+        key = self._cache_list_key(params, tenant_id=tenant_id)
         hit = await self._cache.get(key)
         if hit is not None:
             _logger.debug(
@@ -260,55 +364,112 @@ class CacheServiceMixin(AsyncService[D, PK, C, R, U], Generic[D, PK, C, R, U]):
     # ── Overridden write operations ───────────────────────────────────────────
 
     async def create(self, dto: C, ctx: AuthContext) -> R:
-        """Delegate to ``super().create()`` then flush the list cache."""
+        """
+        Delegate to ``super().create()`` then flush the tenant's list cache.
+
+        Only the creating tenant's list entries are evicted — other tenants'
+        list caches are untouched.
+
+        Args:
+            dto: Create DTO.
+            ctx: Auth context — tenant_id is extracted for scoped invalidation.
+
+        Returns:
+            ``ReadDTO`` of the newly created entity.
+        """
         result = await super().create(dto, ctx)  # type: ignore[misc]
-        await self._invalidate_list()
+        tenant_id: str | None = ctx.metadata.get("tenant_id") if ctx else None
+        await self._invalidate_list(tenant_id=tenant_id)
         _logger.debug(
-            "CacheServiceMixin[%s]: post-create list invalidation.",
+            "CacheServiceMixin[%s]: post-create list invalidation (tenant=%r).",
             self._cache_namespace,
+            tenant_id,
         )
         await self._publish_invalidated([], operation="create")
         return result
 
     async def update(self, pk: PK, dto: U, ctx: AuthContext) -> R:
-        """Delegate to ``super().update()`` then evict the get key and list cache."""
+        """
+        Delegate to ``super().update()`` then evict the get key and tenant's list cache.
+
+        Args:
+            pk:  Entity primary key.
+            dto: Update DTO.
+            ctx: Auth context — tenant_id scopes list invalidation.
+
+        Returns:
+            ``ReadDTO`` reflecting the updated state.
+        """
         result = await super().update(pk, dto, ctx)  # type: ignore[misc]
-        get_key = self._cache_key("get", pk)
+        tenant_id: str | None = ctx.metadata.get("tenant_id") if ctx else None
+        get_key = self._cache_key("get", pk, tenant_id=tenant_id)
         await self._cache.delete(get_key)
-        await self._invalidate_list()
+        await self._invalidate_list(tenant_id=tenant_id)
         _logger.debug(
-            "CacheServiceMixin[%s]: post-update invalidation for pk=%r.",
+            "CacheServiceMixin[%s]: post-update invalidation for pk=%r (tenant=%r).",
             self._cache_namespace,
             pk,
+            tenant_id,
         )
         await self._publish_invalidated([get_key], operation="update")
         return result
 
     async def delete(self, pk: PK, ctx: AuthContext) -> None:
-        """Delegate to ``super().delete()`` then evict the get key and list cache."""
+        """
+        Delegate to ``super().delete()`` then evict the get key and tenant's list cache.
+
+        Args:
+            pk:  Entity primary key.
+            ctx: Auth context — tenant_id scopes list invalidation.
+        """
         await super().delete(pk, ctx)  # type: ignore[misc]
-        get_key = self._cache_key("get", pk)
+        tenant_id: str | None = ctx.metadata.get("tenant_id") if ctx else None
+        get_key = self._cache_key("get", pk, tenant_id=tenant_id)
         await self._cache.delete(get_key)
-        await self._invalidate_list()
+        await self._invalidate_list(tenant_id=tenant_id)
         _logger.debug(
-            "CacheServiceMixin[%s]: post-delete invalidation for pk=%r.",
+            "CacheServiceMixin[%s]: post-delete invalidation for pk=%r (tenant=%r).",
             self._cache_namespace,
             pk,
+            tenant_id,
         )
         await self._publish_invalidated([get_key], operation="delete")
 
     # ── Invalidation helpers ──────────────────────────────────────────────────
 
-    async def _invalidate_list(self) -> None:
+    async def _invalidate_list(self, *, tenant_id: str | None = None) -> None:
         """
-        Flush all list-cache entries for this namespace.
+        Flush list-cache entries for this namespace, optionally scoped to a tenant.
 
         List keys include a hash of ``QueryParams`` so they cannot be enumerated
-        in advance.  ``CacheBackend.clear()`` sweeps matching keys — for Redis,
-        this is ``SCAN`` + ``DEL`` on ``key_prefix*``; for ``InMemoryCache`` it
-        clears all entries (intentionally conservative).
+        in advance.  When a ``tenant_id`` is provided we use
+        ``CacheBackend.delete_prefix()`` to remove only that tenant's list
+        entries — other tenants' caches are untouched.
+
+        Without a ``tenant_id`` (non-tenant service or admin context) we fall
+        back to ``cache.clear()`` — the original behaviour for single-tenant
+        deployments.
+
+        DESIGN: delete_prefix over clear
+            ✅ A create/update/delete by tenant "acme" no longer evicts tenant
+               "globex" list entries — avoids unnecessary cache thrashing.
+            ✅ ``delete_prefix`` is implemented efficiently: SCAN+DEL in Redis,
+               prefix-filtered iteration in ``InMemoryCache``.
+            ❌ Requires the cache key format to put tenant_id before the
+               ``"list"`` segment so the prefix is ``"<ns>:<tid>:list:"``.
+               The ``_cache_key`` signature enforces this layout.
+
+        Args:
+            tenant_id: Tenant to scope the list invalidation to.  ``None``
+                       falls back to a full ``cache.clear()``.
         """
-        await self._cache.clear()
+        if tenant_id:
+            # Scoped flush — only this tenant's list entries are evicted.
+            prefix = f"{self._cache_namespace}:{tenant_id}:list:"
+            await self._cache.delete_prefix(prefix)
+        else:
+            # No tenant context — fall back to full clear (single-tenant path).
+            await self._cache.clear()
 
     async def _publish_invalidated(self, keys: list[str], *, operation: str) -> None:
         """

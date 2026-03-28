@@ -27,10 +27,10 @@ import asyncio
 
 import pytest
 
-# testcontainers does not ship a first-class MemcachedContainer, so we use
-# the generic DockerContainer and expose the standard Memcached port (11211).
-from testcontainers.core.container import DockerContainer
-from testcontainers.core.waiting_utils import wait_for_logs
+# testcontainers ships MemcachedContainer which uses a TCP socket probe to wait
+# for readiness — more reliable than log-based waiting since memcached:alpine
+# logs nothing on startup.
+from testcontainers.memcached import MemcachedContainer
 
 from varco_memcached.cache import MemcachedCache, MemcachedCacheSettings
 
@@ -43,24 +43,21 @@ def memcached_container():
     """
     Start a Memcached Docker container for the duration of this test module.
 
-    Uses ``testcontainers`` generic DockerContainer.  The container is started
-    once and shared across all tests in the module to reduce Docker overhead.
+    Uses ``testcontainers.memcached.MemcachedContainer`` which waits for
+    readiness via a TCP socket probe — memcached:alpine emits no startup logs,
+    so log-based waiting would always time out.
 
     Yields:
-        The running ``DockerContainer`` instance.
+        The running ``MemcachedContainer`` instance.
     """
-    container = DockerContainer("memcached:1.6-alpine")
-    container.with_exposed_ports(11211)
-    container.start()
-    # Wait until Memcached is accepting connections.
-    # The 'memcached' image logs "server listening" after binding the port.
-    wait_for_logs(container, "server listening", timeout=30)
-    yield container
-    container.stop()
+    with MemcachedContainer() as container:
+        yield container
 
 
 @pytest.fixture
-def memcached_settings(memcached_container: DockerContainer) -> MemcachedCacheSettings:
+def memcached_settings(
+    memcached_container: MemcachedContainer,
+) -> MemcachedCacheSettings:
     """
     ``MemcachedCacheSettings`` pointing at the Docker-managed Memcached container.
 

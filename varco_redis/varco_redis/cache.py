@@ -340,7 +340,61 @@ class RedisCache(CacheBackend):
         """
         self._require_started()
         pattern = f"{self._settings.key_prefix}*"
-        # SCAN is non-blocking — preferred over KEYS for production safety.
+        await self._scan_and_delete(pattern)
+        _logger.debug("RedisCache: cleared all keys matching %r.", pattern)
+
+    async def delete_prefix(self, prefix: str) -> None:
+        """
+        Delete all Redis keys matching ``settings.key_prefix + prefix + "*"``.
+
+        Used by ``CacheServiceMixin`` to scope list-cache invalidation to a
+        single tenant without touching other tenants' entries.
+
+        Args:
+            prefix: Logical key prefix to match.  The ``settings.key_prefix``
+                    is prepended so the Redis scan stays within this cache's
+                    namespace.
+
+        Returns:
+            None.
+
+        Raises:
+            RuntimeError: If the cache has not been started.
+
+        Edge cases:
+            - An empty ``prefix`` is equivalent to ``clear()`` (removes all
+              keys within this cache's namespace).
+            - SCAN is non-blocking and safe for production — preferred over
+              ``KEYS`` which blocks the Redis server for large key sets.
+        """
+        self._require_started()
+        # Prepend the cache-level key_prefix so the scan stays within this
+        # backend's namespace even when multiple apps share a Redis instance.
+        pattern = f"{self._settings.key_prefix}{prefix}*"
+        deleted = await self._scan_and_delete(pattern)
+        _logger.debug(
+            "RedisCache: delete_prefix(%r) removed %d key(s).", prefix, deleted
+        )
+
+    async def _scan_and_delete(self, pattern: str) -> int:
+        """
+        SCAN Redis for keys matching ``pattern`` and delete them in batches.
+
+        SCAN is non-blocking — each call yields a cursor and a partial result
+        set, allowing the Redis server to handle other commands between pages.
+
+        Args:
+            pattern: Redis key glob pattern (e.g. ``"myapp:acme:list:*"``).
+
+        Returns:
+            Total number of keys deleted.
+
+        Raises:
+            RuntimeError: If the cache has not been started (caller's
+                          responsibility — not re-checked here).
+
+        Async safety:   ✅  Non-blocking SCAN — safe for concurrent use.
+        """
         cursor = 0
         deleted = 0
         while True:
@@ -350,7 +404,7 @@ class RedisCache(CacheBackend):
                 deleted += len(keys)
             if cursor == 0:
                 break
-        _logger.debug("RedisCache: cleared %d key(s) matching %r.", deleted, pattern)
+        return deleted
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 

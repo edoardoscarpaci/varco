@@ -14,7 +14,7 @@ Async safety:   ✅ All methods are ``async def``.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, AsyncIterator, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, AsyncIterator, Generic, Sequence, TypeVar
 
 from varco_core.model import DomainModel
 
@@ -179,6 +179,115 @@ class AsyncRepository(ABC, Generic[D, PK]):
               filtering soft-deleted entities from the caller's perspective.
             - For composite PKs the caller must pass a tuple in the same
               field order as the mapper's ``_pk_orm_attrs``.
+        """
+
+    # ── Bulk operations ────────────────────────────────────────────────────────
+
+    @abstractmethod
+    async def save_many(self, entities: Sequence[D]) -> list[D]:
+        """
+        Bulk INSERT or UPDATE a sequence of entities.
+
+        INSERT/UPDATE detection per entity follows the same rule as ``save()``:
+        ``entity._raw_orm is None`` → INSERT, otherwise → UPDATE.
+        Implementations should batch inserts and updates separately for
+        efficiency (e.g. ``session.add_all()`` + single flush for SA).
+
+        DESIGN: separate save_many from save
+          ✅ Allows backend-specific bulk SQL (INSERT … VALUES (…), (…), …)
+             rather than N individual round-trips.
+          ✅ Consistent API — same INSERT/UPDATE semantics as single save().
+          ❌ Mixed INSERT/UPDATE sequences require the implementation to split
+             the batch, which adds a small amount of internal complexity.
+
+        Args:
+            entities: Sequence of domain entities to persist.  Order is
+                      preserved in the returned list.
+
+        Returns:
+            List of persisted entities in input order, each with ``pk`` and
+            ``_raw_orm`` populated.  Always use the returned list — inputs are
+            never mutated.
+
+        Raises:
+            LookupError: Any UPDATE-path entity whose ``pk`` is not found
+                         in the backing store.
+
+        Edge cases:
+            - Empty sequence → returns ``[]`` without touching the DB.
+            - Mixed INSERT / UPDATE within the same call is supported.
+            - Atomicity of the batch depends on the caller's transaction: if
+              called inside an open UoW all writes commit or roll back together.
+        """
+
+    @abstractmethod
+    async def delete_many(self, entities: Sequence[D]) -> None:
+        """
+        Bulk DELETE a sequence of entities.
+
+        Implementations should issue a single ``DELETE WHERE pk IN (…)``
+        rather than N individual deletes where the backend supports it.
+
+        DESIGN: bulk DELETE over N individual deletes
+          ✅ Single DB round-trip for the whole batch.
+          ✅ Consistent error semantics — ``ValueError`` for unpersisted entities.
+          ❌ Partial success is not defined: if one delete fails the exception
+             propagates and remaining entities may or may not have been deleted
+             depending on the backend's auto-commit behaviour.
+
+        Args:
+            entities: Sequence of persisted domain entities.  All must have
+                      ``pk`` set (i.e. ``entity.is_persisted()`` is True).
+
+        Raises:
+            ValueError: Any entity in the sequence has not been persisted yet.
+
+        Edge cases:
+            - Empty sequence → no-op, returns immediately.
+            - Entities not found in the DB (deleted externally) are silently
+              ignored by most backends — no ``LookupError`` is raised.
+        """
+
+    @abstractmethod
+    async def update_many_by_query(
+        self,
+        params: QueryParams,
+        update: dict[str, Any],
+    ) -> int:
+        """
+        Apply a partial field update to all entities matching ``params``.
+
+        Issues a single bulk UPDATE statement rather than fetching and
+        re-saving individual entities.  Does not go through the domain model
+        mapper — field names in ``update`` must match the ORM column names.
+
+        DESIGN: raw bulk UPDATE over load-modify-save loop
+          ✅ Single DB round-trip regardless of how many rows match.
+          ✅ No ORM hydration overhead.
+          ❌ Bypasses domain model validation and mapper sync — callers must
+             ensure field names and value types are valid.
+          ❌ Does not trigger ``_check_entity`` / ``_prepare_for_create`` hooks
+             in the service layer — audit, soft-delete, etc. are not applied.
+
+        Args:
+            params: ``QueryParams`` whose ``node`` selects which rows to update.
+                    Sort and pagination are ignored — they have no effect on an
+                    UPDATE.  ``params.node is None`` → updates ALL rows.
+            update: Mapping of ORM field name → new value.  Must not be empty.
+
+        Returns:
+            Number of rows / documents actually modified.
+
+        Raises:
+            ValueError: ``update`` is an empty dict.
+
+        Edge cases:
+            - ``params.node is None`` → updates every row in the table (use
+              with caution).
+            - Field names must exist on the mapped ORM model; unknown fields
+              raise ``AttributeError`` (SA) or are silently ignored (Mongo).
+            - The returned count reflects rows *matched* — on some backends it
+              reflects rows *changed* (i.e. rows where values actually differ).
         """
 
     @abstractmethod

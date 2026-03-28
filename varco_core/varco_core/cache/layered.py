@@ -200,7 +200,7 @@ class LayeredCache(CacheBackend):
 
     # ── Cache operations ───────────────────────────────────────────────────────
 
-    async def get(self, key: Any) -> Any | None:
+    async def get(self, key: Any, *, type_hint: type | None = None) -> Any | None:
         """
         Walk layers from L1 to Ln.  On a miss, promote to faster layers.
 
@@ -208,7 +208,9 @@ class LayeredCache(CacheBackend):
         layers (L1 … L(n-1)) with ``promote_ttl``.
 
         Args:
-            key: Cache key to look up.
+            key:       Cache key to look up.
+            type_hint: Forwarded to each layer's ``get()`` so serializing backends
+                       (e.g. Redis as L2) can reconstruct typed objects.
 
         Returns:
             Cached value, or ``None`` if absent in all layers.
@@ -218,7 +220,7 @@ class LayeredCache(CacheBackend):
         """
         self._require_started()
         for i, layer in enumerate(self._layers):
-            value = await layer.get(key)
+            value = await layer.get(key, type_hint=type_hint)
             if value is not None:
                 # Promote to faster layers if the hit was not in L1.
                 if i > 0:
@@ -311,6 +313,35 @@ class LayeredCache(CacheBackend):
         self._require_started()
         await asyncio.gather(*(layer.clear() for layer in self._layers))
         _logger.debug("LayeredCache: cleared all %d layers.", len(self._layers))
+
+    async def delete_prefix(self, prefix: str) -> None:
+        """
+        Remove all entries matching ``prefix`` from ALL layers concurrently.
+
+        Delegates to each layer's ``delete_prefix()`` via ``asyncio.gather()``
+        — same concurrency model as ``delete()`` and ``clear()``.
+
+        Args:
+            prefix: Key prefix to match and remove.
+
+        Returns:
+            None.
+
+        Raises:
+            RuntimeError: If the cache has not been started.
+
+        Edge cases:
+            - If a layer raises, the exception propagates to the caller.
+              Remaining layers may or may not have completed their deletion.
+        """
+        self._require_started()
+        # All layers are updated concurrently — consistent with delete() / clear().
+        await asyncio.gather(*(layer.delete_prefix(prefix) for layer in self._layers))
+        _logger.debug(
+            "LayeredCache: delete_prefix(%r) across %d layers.",
+            prefix,
+            len(self._layers),
+        )
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 

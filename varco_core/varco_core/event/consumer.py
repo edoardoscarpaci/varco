@@ -102,8 +102,10 @@ from typing import TYPE_CHECKING, Any
 from varco_core.event.base import CHANNEL_ALL, AbstractEventBus, Event, Subscription
 
 if TYPE_CHECKING:
+    from varco_core.event.deduplication import AbstractDeduplicator
     from varco_core.event.dlq import AbstractDeadLetterQueue, DeadLetterEntry
     from varco_core.resilience.retry import RetryPolicy
+    from varco_core.service.inbox import InboxRepository
 
 _logger = logging.getLogger(__name__)
 
@@ -193,6 +195,72 @@ class _ListenEntry:
     directly without any retry loop (``max_attempts`` effectively = 1).
     """
 
+    deduplicator: AbstractDeduplicator | None = None
+    """
+    Optional deduplicator for this handler.
+
+    When set, the retry wrapper calls ``is_duplicate(event.event_id)`` before
+    invoking the handler.  If the event is a duplicate, the handler is skipped
+    silently — no retry loop, no DLQ entry.
+
+    After a successful handler invocation, ``mark_seen(event.event_id)`` is
+    called so subsequent re-deliveries of the same event are suppressed.
+
+    DESIGN: per-handler deduplicator over per-consumer
+        ✅ Fine-grained control — different handlers may require different
+           deduplication windows or different backends.
+        ✅ Idempotent handlers can opt out; non-idempotent handlers opt in.
+        ❌ Sharing the same deduplicator instance across multiple @listen
+           decorations is the recommended pattern — less setup boilerplate.
+
+    Edge cases:
+        - A handler that raises is NOT marked as seen — the deduplicator
+          leaves the event eligible for re-delivery and retry.
+        - ``deduplicator`` can be set without ``retry_policy`` — in that case
+          first-attempt failures are NOT retried but the event is also not
+          marked as seen (re-deliveries will be re-processed).
+    """
+
+    inbox: InboxRepository | None = None
+    """
+    Optional inbox repository for this handler.
+
+    When set, ``register_to()`` wraps the handler with ``_make_inbox_wrapper``
+    as the outermost layer.  Before the handler (and any retry loop) runs, the
+    incoming event is persisted as an ``InboxEntry``.  After successful
+    completion, the entry is marked processed.
+
+    If the handler raises (including after all retry attempts), the entry is
+    NOT marked processed — ``InboxPoller`` will replay the event on the next
+    poll tick.
+
+    DESIGN: inbox wrapper is outermost (wraps retry + dedup wrappers)
+        ✅ ``inbox.save`` fires once per delivery — not once per retry attempt.
+        ✅ ``mark_processed`` fires only after the outermost wrapper returns
+           without exception — the entry stays unprocessed until truly done.
+        ❌ If ``inbox.save`` fails, the handler is NOT called — the event is
+           neither processed nor saved.  This is the rarest failure mode; the
+           broker may re-deliver if not yet ACKed.
+
+    Stacking order in ``register_to``::
+
+        inbox_wrapper(
+            retry_wrapper(     # deduplication check inside
+                handler
+            )
+        )
+
+    Edge cases:
+        - ``inbox`` can be combined with ``deduplicator``, ``retry_policy``,
+          and ``dlq`` — each layer is independent and composable.
+        - If ``inbox`` is set without a deduplicator, re-delivery by
+          ``InboxPoller`` will cause the handler to run again.  Combine with
+          a deduplicator to achieve at-most-once semantics.
+        - The ``InboxRepository`` instance is captured at ``@listen``
+          decoration time — use a thread-safe / async-safe implementation
+          (e.g. ``SAInboxRepository`` with a session-per-call pattern).
+    """
+
 
 # ── @listen decorator ─────────────────────────────────────────────────────────
 
@@ -204,6 +272,8 @@ def listen(
     priority: int = 0,
     retry_policy: RetryPolicy | None = None,
     dlq: AbstractDeadLetterQueue | None = None,
+    deduplicator: AbstractDeduplicator | None = None,
+    inbox: InboxRepository | None = None,
 ) -> Callable:
     """
     Method decorator for ``EventConsumer`` subclasses.
@@ -258,6 +328,17 @@ def listen(
                       are pushed here instead of raising ``RetryExhaustedError``.
                       Can also be set without ``retry_policy`` to capture
                       first-attempt failures directly.  Defaults to ``None``.
+        deduplicator: Optional ``AbstractDeduplicator``.  When set, the retry
+                      wrapper checks ``is_duplicate(event.event_id)`` before
+                      calling the handler.  Duplicate events are silently skipped.
+                      After successful handler invocation, ``mark_seen`` is called.
+                      Defaults to ``None`` (no deduplication).
+        inbox:        Optional ``InboxRepository``.  When set, the handler is
+                      wrapped with inbox save-before / mark-after logic.  The
+                      incoming event is persisted as an ``InboxEntry`` before the
+                      handler runs; the entry is marked processed on success.
+                      On handler failure the entry is left unprocessed so
+                      ``InboxPoller`` can replay it.  Defaults to ``None``.
 
     Returns:
         The unmodified function with ``__listen_entries__`` attribute added.
@@ -330,6 +411,8 @@ def listen(
                     priority=priority,
                     retry_policy=retry_policy,
                     dlq=dlq,
+                    deduplicator=deduplicator,
+                    inbox=inbox,
                 )
             )
 
@@ -346,6 +429,8 @@ def _make_retry_wrapper(
     policy: RetryPolicy | None,
     dlq: AbstractDeadLetterQueue | None,
     channel: str,
+    *,
+    deduplicator: AbstractDeduplicator | None = None,
 ) -> Callable[[Event], Awaitable[None]]:
     """
     Build an async wrapper that retries ``handler`` and routes to ``dlq`` on exhaustion.
@@ -365,13 +450,16 @@ def _make_retry_wrapper(
            this overhead is negligible.
 
     Args:
-        handler:  Bound method to wrap.  May be sync or async — the wrapper
-                  always produces an ``async def``.
-        policy:   ``RetryPolicy`` controlling attempt count and back-off.
-                  ``None`` means a single attempt (no retry loop).
-        dlq:      ``AbstractDeadLetterQueue`` for exhausted events.
-                  ``None`` means ``RetryExhaustedError`` is re-raised.
-        channel:  Resolved channel string captured in the DLQ entry.
+        handler:       Bound method to wrap.  May be sync or async — the wrapper
+                       always produces an ``async def``.
+        policy:        ``RetryPolicy`` controlling attempt count and back-off.
+                       ``None`` means a single attempt (no retry loop).
+        dlq:           ``AbstractDeadLetterQueue`` for exhausted events.
+                       ``None`` means ``RetryExhaustedError`` is re-raised.
+        channel:       Resolved channel string captured in the DLQ entry.
+        deduplicator:  Optional ``AbstractDeduplicator``.  When set, the wrapper
+                       checks ``is_duplicate`` before the retry loop; duplicates
+                       are silently skipped without entering the retry path.
 
     Returns:
         An async callable ``(event: Event) -> None`` suitable for bus.subscribe().
@@ -386,6 +474,10 @@ def _make_retry_wrapper(
           DLQ routing — these are programmer errors, not transient failures.
         - ``dlq.push()`` errors are swallowed (``AbstractDeadLetterQueue``
           contract) — the wrapper will not crash the event loop on DLQ failure.
+        - Deduplication check fires BEFORE the retry loop — a duplicate event
+          is skipped on the first delivery check, not after N failed retries.
+        - ``mark_seen`` is called after the first successful completion only —
+          a failed handler is NOT marked as seen, so re-deliveries are retried.
     """
     # Import at call time (not module level) to avoid circular imports.
     # consumer.py is imported by event/__init__.py which is imported by dlq.py
@@ -402,14 +494,31 @@ def _make_retry_wrapper(
 
     async def wrapper(event: Event) -> None:
         """
-        Retry wrapper injected by ``@listen(retry_policy=..., dlq=...)``.
+        Retry + deduplication wrapper injected by ``@listen(...)``.
 
-        Runs the original handler up to ``max_attempts`` times.  On exhaustion,
-        routes to the DLQ (if configured) or re-raises ``RetryExhaustedError``.
+        Flow:
+          1. If ``deduplicator`` is set and ``is_duplicate(event.event_id)``
+             returns True → skip silently (no retry, no DLQ).
+          2. Run the handler up to ``max_attempts`` times.
+          3. On success → call ``mark_seen(event.event_id)`` if deduplicator set.
+          4. On exhaustion → route to DLQ or raise ``RetryExhaustedError``.
 
         Async safety: ✅ asyncio.sleep used for back-off — event loop is never
                          blocked between attempts.
         """
+        # ── Deduplication check ───────────────────────────────────────────────
+        # Fires BEFORE the retry loop — a duplicate is skipped immediately
+        # without entering any retry path and without touching the DLQ.
+        if deduplicator is not None:
+            if await deduplicator.is_duplicate(event.event_id):
+                _logger.debug(
+                    "Skipping duplicate event event_id=%s handler=%r channel=%r",
+                    event.event_id,
+                    handler_name,
+                    channel,
+                )
+                return  # Silently skip — not an error
+
         last_exc: BaseException | None = None
         first_failed_at: datetime | None = None
 
@@ -421,6 +530,13 @@ def _make_retry_wrapper(
                     await handler(event)
                 else:
                     handler(event)
+
+                # ── Handler succeeded ─────────────────────────────────────────
+                # mark_seen AFTER success (not before) — a crashed handler must
+                # not be treated as "done" so re-deliveries can retry it.
+                if deduplicator is not None:
+                    await deduplicator.mark_seen(event.event_id)
+
                 return  # Success — exit immediately
 
             except BaseException as exc:
@@ -589,22 +705,57 @@ class EventConsumer:
                     else entry.channel  # plain string → use directly
                 )
 
-                # Wrap the handler with retry + DLQ logic if configured.
-                # The wrapper is built here (not in @listen) so that:
-                #   1. The resolved channel string is captured in the closure —
-                #      needed for DeadLetterEntry.channel.
-                #   2. The bound method (with self already captured) is wrapped
-                #      rather than the unbound function.
-                actual_handler: Callable[[Event], Awaitable[None] | None] = (
+                # Build the wrapper stack at wiring time (not at @listen time)
+                # so the resolved channel string and bound self are available.
+                #
+                # Stacking order (outermost first):
+                #   inbox_wrapper(         ← save-before / mark-after
+                #       retry_wrapper(     ← retry loop + DLQ + dedup check
+                #           handler        ← raw bound method
+                #       )
+                #   )
+                #
+                # inbox wrapper is outermost so inbox.save fires once before
+                # any retry attempt; mark_processed fires only when all retries
+                # (and the dedup check) have succeeded.
+
+                # ── Layer 1: retry + DLQ + deduplication ─────────────────────
+                # Build the retry wrapper when any of the three inner wrapping
+                # concerns are active.  When all are None, register the raw
+                # method to avoid unnecessary indirection.
+                inner_handler: Callable[[Event], Awaitable[None] | None] = (
                     _make_retry_wrapper(
                         method,
                         entry.retry_policy,
                         entry.dlq,
                         resolved_channel,
+                        deduplicator=entry.deduplicator,
                     )
-                    if entry.retry_policy is not None or entry.dlq is not None
+                    if (
+                        entry.retry_policy is not None
+                        or entry.dlq is not None
+                        or entry.deduplicator is not None
+                    )
                     else method
                 )
+
+                # ── Layer 2 (outermost): inbox save-before / mark-after ───────
+                # Imported lazily to avoid a circular import:
+                #   consumer → inbox (service layer) → event.base → consumer
+                # The import is inside register_to (called at setup time, not
+                # per-event) so the one-time cost is negligible.
+                if entry.inbox is not None:
+                    from varco_core.service.inbox import _make_inbox_wrapper
+
+                    actual_handler: Callable[[Event], Awaitable[None] | None] = (
+                        _make_inbox_wrapper(
+                            inner_handler,
+                            entry.inbox,
+                            resolved_channel,
+                        )
+                    )
+                else:
+                    actual_handler = inner_handler
 
                 sub = bus.subscribe(
                     entry.event_type,

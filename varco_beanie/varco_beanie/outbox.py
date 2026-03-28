@@ -93,7 +93,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 from uuid import UUID, uuid4
 
 from beanie import Document
@@ -387,6 +387,56 @@ class BeanieOutboxRepository(OutboxRepository):
                 "BeanieOutboxRepository.delete: entry_id=%s not found (already deleted?)",
                 entry_id,
             )
+
+    async def save_many(self, entries: Sequence[OutboxEntry]) -> None:
+        """
+        Bulk INSERT multiple outbox entries using a single ``insert_many()`` call.
+
+        Overrides the default loop in ``OutboxRepository.save_many()`` to use
+        Beanie's ``insert_many()``, which issues a single Motor ``insertMany``
+        command.  One DB round-trip for the whole batch.
+
+        DESIGN: insert_many() over N individual insert() calls
+          ✅ Single Motor round-trip — constant latency regardless of batch size.
+          ✅ If a session is provided all inserts join the same transaction.
+          ❌ All inserts succeed or all fail — no partial batch recovery.
+
+        Args:
+            entries: Sequence of ``OutboxEntry`` objects to persist.
+
+        Edge cases:
+            - Empty sequence → no-op.
+            - On replica sets with a session, the inserts join the caller's
+              transaction and are atomic with the domain entity write.
+            - Without a session, each document is immediately visible on insert
+              (no rollback if a subsequent domain write fails).
+
+        Async safety: ✅ Awaits ``insert_many()`` once.
+        """
+        if not entries:
+            return
+
+        docs = [
+            OutboxDocument(
+                id=entry.entry_id,
+                event_type=entry.event_type,
+                channel=entry.channel,
+                payload=entry.payload,
+                created_at=entry.created_at,
+            )
+            for entry in entries
+        ]
+
+        insert_kwargs: dict = {}
+        if self._session is not None:
+            insert_kwargs["session"] = self._session
+
+        # insert_many() sends a single insertMany Motor command.
+        await OutboxDocument.insert_many(docs, **insert_kwargs)
+        _logger.debug(
+            "BeanieOutboxRepository.save_many: inserted %d entries",
+            len(docs),
+        )
 
     def __repr__(self) -> str:
         return (

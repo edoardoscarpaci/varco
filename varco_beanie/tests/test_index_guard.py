@@ -438,7 +438,8 @@ class TestBeanieIndexGuardCheck:
 @pytest.mark.integration
 async def test_integration_guard_against_real_mongodb() -> None:
     """
-    Requires a running MongoDB on localhost:27017.
+    Spins up a real MongoDB via testcontainers and verifies that BeanieIndexGuard
+    reports no drift when the expected indexes are present.
     Run with: VARCO_RUN_INTEGRATION=1 pytest -m integration
     """
     import os
@@ -446,20 +447,24 @@ async def test_integration_guard_against_real_mongodb() -> None:
     if not os.environ.get("VARCO_RUN_INTEGRATION"):
         pytest.skip("Set VARCO_RUN_INTEGRATION=1 to run integration tests")
 
-    from motor.motor_asyncio import AsyncIOMotorClient
+    from pymongo import AsyncMongoClient
+    from testcontainers.mongodb import MongoDbContainer
 
-    mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017/")
-    client = AsyncIOMotorClient(mongo_url)
+    # Use testcontainers so the test is self-contained — no pre-running MongoDB needed.
+    # Beanie 2.x dropped motor in favour of pymongo's own async client.
+    with MongoDbContainer() as mongo:
+        url = mongo.get_connection_url()
+        client: AsyncMongoClient = AsyncMongoClient(url)
 
-    # Create the test collection and ensure expected indexes exist.
-    db = client["varco_test_ig"]
-    await db["users_ig"].create_index("email", unique=True)
-    await db["users_ig"].create_index("name")
+        # Create the test collection and ensure expected indexes exist.
+        db = client["varco_test_ig"]
+        await db["users_ig"].create_index("email", unique=True)
+        await db["users_ig"].create_index("name")
 
-    try:
-        guard = BeanieIndexGuard(_User)
-        report = await guard.report(db)
-        assert report.has_drift is False
-    finally:
-        await db["users_ig"].drop()
-        client.close()
+        try:
+            guard = BeanieIndexGuard(_User)
+            report = await guard.report(db)
+            assert report.has_drift is False
+        finally:
+            await db["users_ig"].drop()
+            await client.aclose()

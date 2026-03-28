@@ -13,9 +13,11 @@ Async safety:   ✅ All methods are ``async def``.
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Generic, TypeVar
+from typing import Any, AsyncIterator, Generic, Sequence, TypeVar
 
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from varco_core.mapper import AbstractMapper
@@ -323,6 +325,185 @@ class AsyncSQLAlchemyRepository(AsyncRepository[D, PK], Generic[D, PK]):
         async with self._session.stream_scalars(stmt) as stream:
             async for row in stream:
                 yield self._mapper.from_orm(row)
+
+    # ── Bulk operations ────────────────────────────────────────────────────────
+
+    async def save_many(self, entities: Sequence[D]) -> list[D]:
+        """
+        Bulk INSERT or UPDATE a sequence of entities.
+
+        Splits the sequence into inserts (``_raw_orm is None``) and updates,
+        then processes each group with a single ``session.add_all()`` + flush
+        (inserts) or individual ``sync_to_orm()`` + flush (updates).
+
+        DESIGN: split insert/update groups then single flush per group
+          ✅ SA 2.x issues a single ``INSERT … VALUES (…), (…)`` for all new
+             ORM objects added before the flush — one DB round-trip.
+          ✅ Updates are synced to existing ORM objects and flushed together.
+          ❌ A mixed batch requires two flushes (one per group).  For purely
+             homogeneous batches this is a no-op overhead.
+
+        Args:
+            entities: Sequence of domain entities.  Order is preserved in the
+                      returned list (inserts first, then updates).
+
+        Returns:
+            List of persisted entities with ``pk`` and ``_raw_orm`` populated.
+
+        Raises:
+            LookupError: Any UPDATE-path entity whose ``pk`` is not found.
+
+        Thread safety:  ❌ ``AsyncSession`` is not thread-safe.
+        Async safety:   ✅ All flushes are awaited.
+
+        Edge cases:
+            - Empty sequence → returns ``[]``.
+            - Atomicity is controlled by the caller's UoW — all inserts and
+              updates commit or roll back together when the UoW exits.
+        """
+        if not entities:
+            return []
+
+        # Partition into new (INSERT) vs existing (UPDATE)
+        inserts = [e for e in entities if e._raw_orm is None]
+        updates = [e for e in entities if e._raw_orm is not None]
+
+        results: list[D] = []
+
+        if inserts:
+            # Map every new entity to an ORM object and stage them all at once.
+            # SA 2.x batches these into a single INSERT ... VALUES (...), (...).
+            orm_objs = [self._mapper.to_orm(e) for e in inserts]
+            self._session.add_all(orm_objs)
+            # Flush once to let the DB assign auto-generated PKs.
+            await self._session.flush()
+            results.extend(self._mapper.from_orm(obj) for obj in orm_objs)
+
+        if updates:
+            # Sync each entity's fields to its existing ORM object, then flush
+            # once — SA batches the UPDATEs in a single round-trip where possible.
+            for entity in updates:
+                raw: Any = entity._raw_orm
+                # Re-fetch if the session was closed or the object was evicted
+                if not self._session.is_active or raw not in self._session:
+                    raw = await self._session.get(self._mapper._orm_cls, entity.pk)
+                if raw is None:
+                    raise LookupError(
+                        f"Cannot update {type(entity).__name__} with pk={entity.pk!r}: "
+                        "record not found in the database."
+                    )
+                self._mapper.sync_to_orm(entity, raw)
+            await self._session.flush()
+            results.extend(
+                self._mapper.from_orm(e._raw_orm)  # type: ignore[arg-type]
+                for e in updates
+            )
+
+        return results
+
+    async def delete_many(self, entities: Sequence[D]) -> None:
+        """
+        Bulk DELETE a sequence of entities using a single WHERE pk IN (…).
+
+        Issues one ``DELETE`` statement regardless of how many entities are in
+        the sequence, rather than N individual ``session.delete()`` calls.
+
+        DESIGN: Core DELETE with IN clause over ORM delete loop
+          ✅ Single round-trip — O(1) DB calls instead of O(N).
+          ✅ No need to load ORM objects that aren't already in the session.
+          ❌ Bypasses SA cascade rules (e.g. ``delete-orphan`` cascades) —
+             callers are responsible for handling related objects.
+
+        Args:
+            entities: Sequence of persisted domain entities.
+
+        Raises:
+            ValueError: Any entity in the sequence has not been persisted yet.
+
+        Thread safety:  ❌ ``AsyncSession`` is not thread-safe.
+        Async safety:   ✅ Single await on the execute call.
+
+        Edge cases:
+            - Empty sequence → no-op.
+            - Entities absent from the DB are silently ignored (DELETE WHERE
+              IN includes non-existent PKs without raising).
+        """
+        if not entities:
+            return
+
+        # Validate all entities are persisted before touching the DB
+        for entity in entities:
+            if not entity.is_persisted():
+                raise ValueError(
+                    f"Cannot delete {type(entity).__name__}: "
+                    "not yet persisted (pk is None)."
+                )
+
+        # Resolve the ORM primary-key column for the WHERE IN clause.
+        # _pk_orm_attrs holds column name strings; use the first (or only) one.
+        pk_col = getattr(self._mapper._orm_cls, self._mapper._pk_orm_attrs[0])
+        pks = [e.pk for e in entities]
+
+        stmt = sa_delete(self._mapper._orm_cls).where(pk_col.in_(pks))
+        await self._session.execute(stmt)
+        # Flush to propagate the DELETE to the DB within the current transaction
+        await self._session.flush()
+
+    async def update_many_by_query(
+        self,
+        params: QueryParams,
+        update: dict[str, Any],
+    ) -> int:
+        """
+        Apply a partial field update to all rows matching ``params``.
+
+        Uses SQLAlchemy Core ``UPDATE`` so no ORM objects are loaded.
+        The WHERE clause is built from ``params.node`` via
+        ``SQLAlchemyQueryCompiler`` — same translator used by ``find_by_query``.
+
+        DESIGN: Core UPDATE over ORM fetch-and-save loop
+          ✅ Single DB round-trip; no ORM hydration overhead.
+          ✅ Scales to millions of rows without memory growth.
+          ❌ Skips domain-model validation and service-layer hooks (``_check_entity``,
+             ``_prepare_for_create``, audit, soft-delete, etc.).
+
+        Args:
+            params: ``QueryParams`` whose ``node`` selects target rows.
+                    Sort and pagination are ignored for bulk UPDATE.
+                    ``params.node is None`` → updates every row in the table.
+            update: ORM field name → new value.  Must not be empty.
+
+        Returns:
+            Number of rows modified (``result.rowcount``).
+
+        Raises:
+            ValueError: ``update`` is an empty dict.
+
+        Thread safety:  ❌ ``AsyncSession`` is not thread-safe.
+        Async safety:   ✅ Single await on the execute call.
+
+        Edge cases:
+            - ``params.node is None`` → full-table UPDATE (use with caution).
+            - Unknown field names raise ``AttributeError`` from SA column lookup.
+        """
+        if not update:
+            raise ValueError(
+                "update_many_by_query: 'update' dict must not be empty. "
+                "Provide at least one field name → value pair."
+            )
+
+        # Build the core UPDATE statement with VALUES
+        stmt = sa_update(self._mapper._orm_cls).values(**update)
+
+        # Apply the WHERE clause if a filter node is present
+        if params.node is not None:
+            compiler = SQLAlchemyQueryCompiler(model=self._mapper._orm_cls)
+            stmt = stmt.where(compiler.visit(params.node))
+
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        # rowcount is reliable for UPDATE/DELETE on all supported SA backends
+        return result.rowcount  # type: ignore[return-value]
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 

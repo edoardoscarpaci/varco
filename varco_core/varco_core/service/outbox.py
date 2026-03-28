@@ -99,7 +99,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 from uuid import UUID, uuid4
 
 from varco_core.event.base import CHANNEL_DEFAULT, AbstractEventBus, Event
@@ -295,6 +295,37 @@ class OutboxRepository(ABC):
             - Setting ``limit`` too high increases memory pressure; too low
               increases DB round trips.  Default 100 is a safe starting point.
         """
+
+    async def save_many(self, entries: Sequence[OutboxEntry]) -> None:
+        """
+        Persist multiple ``OutboxEntry`` objects in a single logical operation.
+
+        Default implementation calls ``save()`` sequentially in a loop.
+        Backend implementations should override this for bulk efficiency (e.g.
+        a single ``INSERT … VALUES (…), (…), …`` in SQLAlchemy).
+
+        DESIGN: concrete default with loop over abstract save()
+          ✅ Existing backend implementations inherit correct behaviour without
+             any changes — they get bulk persistence "for free" via the loop.
+          ✅ Backend-specific overrides can replace the loop with a true bulk
+             INSERT for improved throughput.
+          ❌ The default loop has O(N) round-trips if save() commits per call
+             (relay-variant repos).  Override for those backends.
+
+        Args:
+            entries: Sequence of ``OutboxEntry`` objects to persist.
+
+        Edge cases:
+            - Empty sequence → no-op.
+            - Atomicity depends on the caller's transaction context: within an
+              open UoW, all entries commit or roll back together.  Outside a
+              UoW, each ``save()`` call may commit independently (relay repos).
+
+        Thread safety:  ⚠️ Same thread-safety constraints as ``save()``.
+        Async safety:   ✅ All calls are ``await``-ed sequentially.
+        """
+        for entry in entries:
+            await self.save(entry)
 
     @abstractmethod
     async def delete(self, entry_id: UUID) -> None:

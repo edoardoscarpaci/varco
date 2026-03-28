@@ -13,7 +13,7 @@ Async safety:   ✅ All methods are ``async def``.
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Generic, TypeVar
+from typing import Any, AsyncIterator, Generic, Sequence, TypeVar
 
 from varco_core.mapper import AbstractMapper
 from varco_core.model import DomainModel
@@ -247,6 +247,149 @@ class AsyncBeanieRepository(AsyncRepository[D, PK], Generic[D, PK]):
             # Scalar PK — filter on _id (Beanie's primary key field)
             count = await self._mapper._orm_cls.find({"_id": pk}).count()
         return count > 0
+
+    # ── Bulk operations ────────────────────────────────────────────────────────
+
+    async def save_many(self, entities: Sequence[D]) -> list[D]:
+        """
+        Bulk INSERT or UPDATE a sequence of entities.
+
+        Inserts are sent as a single ``Document.insert_many()`` call — one
+        Motor round-trip for the whole batch.  Updates fall back to individual
+        ``raw.save()`` calls because Beanie has no bulk-update API that
+        integrates with the mapper's ``sync_to_orm()`` field-by-field sync.
+
+        DESIGN: insert_many() for inserts, individual save() for updates
+          ✅ Insert batch: single Motor ``insertMany`` command.
+          ✅ Update: existing ``_raw_orm`` reference is reused — no re-fetch.
+          ❌ Update batch: N individual ``save()`` calls — not a single command.
+             Acceptable because typical update batches are small; for very
+             large update batches consider ``update_many_by_query`` instead.
+
+        Args:
+            entities: Sequence of domain entities.  Order is preserved.
+
+        Returns:
+            List of persisted entities with ``pk`` and ``_raw_orm`` populated.
+
+        Thread safety:  ✅ Motor connections are thread-safe.
+        Async safety:   ✅ All awaits are sequential within this coroutine.
+
+        Edge cases:
+            - Empty sequence → returns ``[]``.
+            - Mixed INSERT / UPDATE in the same call is supported.
+        """
+        if not entities:
+            return []
+
+        inserts = [e for e in entities if e._raw_orm is None]
+        updates = [e for e in entities if e._raw_orm is not None]
+
+        results: list[D] = []
+
+        if inserts:
+            # Convert domain entities to Beanie Document objects, then bulk-insert.
+            orm_objs = [self._mapper.to_orm(e) for e in inserts]
+            # insert_many() sends a single Motor insertMany command.
+            await self._mapper._orm_cls.insert_many(orm_objs)
+            results.extend(self._mapper.from_orm(obj) for obj in orm_objs)
+
+        if updates:
+            for entity in updates:
+                raw: Any = entity._raw_orm
+                self._mapper.sync_to_orm(entity, raw)
+                await raw.save()
+                results.append(self._mapper.from_orm(raw))
+
+        return results
+
+    async def delete_many(self, entities: Sequence[D]) -> None:
+        """
+        Bulk DELETE a sequence of entities using a single ``$in`` query.
+
+        Issues one Motor ``deleteMany`` command rather than N ``delete()``
+        calls.
+
+        DESIGN: find + delete over individual delete loop
+          ✅ Single DB round-trip.
+          ❌ No cascade support — related documents are not cleaned up.
+
+        Args:
+            entities: Sequence of persisted domain entities.
+
+        Raises:
+            ValueError: Any entity has not been persisted yet.
+
+        Thread safety:  ✅ Motor connections are thread-safe.
+        Async safety:   ✅ Awaited once.
+
+        Edge cases:
+            - Empty sequence → no-op.
+            - PKs absent from the collection are silently ignored.
+        """
+        if not entities:
+            return
+
+        for entity in entities:
+            if not entity.is_persisted():
+                raise ValueError(
+                    f"Cannot delete {type(entity).__name__}: "
+                    "not yet persisted (pk is None)."
+                )
+
+        # Build a MongoDB $in filter on the _id (Beanie primary key field).
+        pks = [e.pk for e in entities]
+        await self._mapper._orm_cls.find({"_id": {"$in": pks}}).delete()
+
+    async def update_many_by_query(
+        self,
+        params: QueryParams,
+        update: dict[str, Any],
+    ) -> int:
+        """
+        Apply a partial ``$set`` update to all documents matching ``params``.
+
+        Uses Beanie's ``find(filter).update({"$set": …})`` — one Motor
+        ``updateMany`` command regardless of how many documents match.
+
+        DESIGN: $set updateMany over fetch-and-save loop
+          ✅ Single Motor round-trip.
+          ✅ Scales to large collections without memory growth.
+          ❌ Skips domain-model validation and service-layer hooks.
+
+        Args:
+            params: ``QueryParams`` whose ``node`` selects target documents.
+                    Sort and pagination are ignored for bulk updates.
+                    ``params.node is None`` → updates every document.
+            update: Field name → new value.  Must not be empty.
+
+        Returns:
+            Number of documents modified (Motor's ``modified_count``).
+
+        Raises:
+            ValueError: ``update`` is an empty dict.
+
+        Thread safety:  ✅ Motor connections are thread-safe.
+        Async safety:   ✅ Awaited once.
+
+        Edge cases:
+            - ``params.node is None`` → full-collection UPDATE (use with caution).
+            - Unknown field names are silently ignored by MongoDB — no error raised.
+        """
+        if not update:
+            raise ValueError(
+                "update_many_by_query: 'update' dict must not be empty. "
+                "Provide at least one field name → value pair."
+            )
+
+        # Translate the AST filter to a MongoDB filter dict
+        mongo_filter: dict[str, Any] = {}
+        if params.node is not None:
+            mongo_filter = BeanieQueryCompiler().visit(params.node)
+
+        result = await self._mapper._orm_cls.find(mongo_filter).update({"$set": update})
+        # Motor's UpdateResult.modified_count = documents actually changed
+        return result.modified_count  # type: ignore[return-value]
 
     async def stream_by_query(  # type: ignore[override]
         self,

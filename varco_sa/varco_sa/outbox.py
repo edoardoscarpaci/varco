@@ -79,7 +79,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 from uuid import UUID
 
 from sqlalchemy import DateTime, LargeBinary, String, delete as sa_delete, select
@@ -350,6 +350,50 @@ class SAOutboxRepository(OutboxRepository):
             entry_id,
         )
 
+    async def save_many(self, entries: Sequence[OutboxEntry]) -> None:
+        """
+        Bulk-stage multiple outbox entries into the session in one go.
+
+        Overrides the default loop in ``OutboxRepository.save_many()`` to use
+        ``session.add_all()`` — SA 2.x batches the staged objects into a single
+        ``INSERT … VALUES (…), (…), …`` on the next flush.
+
+        DESIGN: add_all() + deferred flush over N individual save() calls
+          ✅ Single INSERT statement for the whole batch — one DB round-trip.
+          ✅ Flush is still deferred to the caller's UoW commit — atomicity
+             with the domain entity writes is preserved.
+          ❌ All entries must be added before any flush — callers cannot
+             interleave save_many() calls across multiple flush boundaries.
+
+        Args:
+            entries: Sequence of ``OutboxEntry`` objects to persist.
+
+        Edge cases:
+            - Empty sequence → no-op.
+            - Atomicity: entries commit or roll back together with the UoW.
+
+        Async safety: ✅ Protected by the session lock (SQLAlchemy asyncio layer).
+        """
+        if not entries:
+            return
+
+        models = [
+            OutboxEntryModel(
+                entry_id=entry.entry_id,
+                event_type=entry.event_type,
+                channel=entry.channel,
+                payload=entry.payload,
+                created_at=entry.created_at,
+            )
+            for entry in entries
+        ]
+        # add_all() stages all ORM objects at once — single INSERT on next flush.
+        self._session.add_all(models)
+        _logger.debug(
+            "SAOutboxRepository.save_many: staged %d entries",
+            len(models),
+        )
+
     def __repr__(self) -> str:
         return f"SAOutboxRepository(session={self._session!r})"
 
@@ -528,6 +572,49 @@ class SARelayOutboxRepository(OutboxRepository):
         _logger.debug(
             "SARelayOutboxRepository.delete: committed deletion of entry_id=%s",
             entry_id,
+        )
+
+    async def save_many(self, entries: Sequence[OutboxEntry]) -> None:
+        """
+        Bulk INSERT multiple outbox entries in a single committed transaction.
+
+        Opens one session, stages all ``OutboxEntryModel`` objects via
+        ``add_all()``, and commits once.  One DB round-trip instead of N.
+
+        DESIGN: single session + add_all() + commit over N individual save() calls
+          ✅ Single INSERT statement + single COMMIT regardless of batch size.
+          ✅ Atomicity: all entries commit together or none do.
+          ❌ A failure mid-INSERT rolls back the entire batch — callers must
+             retry from scratch.
+
+        Args:
+            entries: Sequence of ``OutboxEntry`` objects to persist.
+
+        Edge cases:
+            - Empty sequence → no-op.
+            - On DB error, the session rolls back and the exception propagates.
+
+        Async safety: ✅ Each call creates, commits, and closes its own session.
+        """
+        if not entries:
+            return
+
+        async with self._session_factory() as session:
+            models = [
+                OutboxEntryModel(
+                    entry_id=entry.entry_id,
+                    event_type=entry.event_type,
+                    channel=entry.channel,
+                    payload=entry.payload,
+                    created_at=entry.created_at,
+                )
+                for entry in entries
+            ]
+            session.add_all(models)
+            await session.commit()
+        _logger.debug(
+            "SARelayOutboxRepository.save_many: committed %d entries",
+            len(entries),
         )
 
     def __repr__(self) -> str:

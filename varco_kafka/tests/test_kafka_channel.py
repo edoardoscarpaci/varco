@@ -74,17 +74,19 @@ class FakeAdminClient:
             return self._describe_responses
         result = []
         for t in topics:
-            result.append({"name": t, "error_code": 0 if t in self.topics else 3})
+            # Use "topic" key — matches aiokafka 0.13 describe_topics() dict shape.
+            # The implementation (channel.py) keys on "topic", not "name".
+            result.append({"topic": t, "error_code": 0 if t in self.topics else 3})
         return result
 
-    async def list_topics(self) -> Any:
-        """Return a fake ClusterMetadata with .topics attribute."""
+    async def list_topics(self) -> list[str]:
+        """Return topic names as a plain list — matches aiokafka 0.13 API.
 
-        class _FakeMeta:
-            def __init__(self, topics: set[str]) -> None:
-                self.topics = topics
-
-        return _FakeMeta(self.topics)
+        Older aiokafka returned ClusterMetadata; 0.13+ returns list[str] directly.
+        The implementation in channel.py iterates this return value directly.
+        """
+        # Return a sorted list so tests that don't control insertion order are stable.
+        return list(self.topics)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────

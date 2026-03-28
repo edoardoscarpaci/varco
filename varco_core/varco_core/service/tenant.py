@@ -114,7 +114,6 @@ from __future__ import annotations
 
 import dataclasses
 import threading
-from abc import ABC
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, ClassVar, Generator, Generic, TypeVar
@@ -130,6 +129,7 @@ from varco_core.providers import RepositoryProvider
 from varco_core.query.builder import QueryBuilder
 from varco_core.query.params import QueryParams
 from varco_core.service.base import AsyncService, IUoWProvider
+from varco_core.service.mixin import ServiceMixin
 
 D = TypeVar("D", bound=DomainModel)
 PK = TypeVar("PK")
@@ -351,7 +351,9 @@ class TenantUoWProvider(IUoWProvider):
 # ── TenantAwareService ────────────────────────────────────────────────────────
 
 
-class TenantAwareService(AsyncService[D, PK, C, R, U], ABC, Generic[D, PK, C, R, U]):
+class TenantAwareService(
+    ServiceMixin, AsyncService[D, PK, C, R, U], Generic[D, PK, C, R, U]
+):
     """
     Abstract ``AsyncService`` mixin that enforces row-level tenant isolation.
 

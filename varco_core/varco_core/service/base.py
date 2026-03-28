@@ -384,6 +384,99 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
         # Base: no stamping — return entity unchanged.
         return entity
 
+    async def _after_create(self, entity: D, read_dto: R, ctx: AuthContext) -> None:
+        """
+        Hook called AFTER the UoW commits on a successful ``create()``.
+
+        Override in mixin subclasses to react to entity creation without
+        duplicating ``create()`` itself.  Typical uses: emit an audit event,
+        send a notification, or update a secondary index.
+
+        **Chaining contract**: always end with
+        ``await super()._after_create(entity, read_dto, ctx)``
+        so multiple mixins in the MRO each run their post-create logic.
+
+        DESIGN: called after commit (not inside the UoW)
+            ✅ The entity is durably persisted before any side-effect fires —
+               no risk of emitting an audit event for a rolled-back write.
+            ✅ Mirrors the ``_publish_domain_event`` position in ``create()``.
+            ❌ Cannot roll back the create if the hook fails — treat hook
+               logic as best-effort (idempotent, non-transactional).
+
+        Args:
+            entity:   The saved domain entity (with ``pk`` assigned).
+            read_dto: The ``ReadDTO`` returned to the caller.
+            ctx:      Caller's identity and grants.
+
+        Edge cases:
+            - If this hook raises, the exception propagates to the caller —
+              the entity IS persisted.  Keep hook logic non-transactional.
+            - Chain with ``super()`` even if the mixin is a leaf class —
+              future mixins added higher in the MRO will chain correctly.
+        """
+        # Base: no-op.  Subclasses override and chain via super().
+        return
+
+    async def _after_update(
+        self,
+        before_dto: R,
+        entity: D,
+        read_dto: R,
+        ctx: AuthContext,
+    ) -> None:
+        """
+        Hook called AFTER the UoW commits on a successful ``update()``.
+
+        Provides both the pre-update ``ReadDTO`` (``before_dto``) and the
+        post-update ``ReadDTO`` (``read_dto``) so audit mixins can record
+        exactly what changed.
+
+        **Chaining contract**: always end with
+        ``await super()._after_update(before_dto, entity, read_dto, ctx)``
+
+        DESIGN: before_dto captured inside UoW before the update is applied
+            ✅ before_dto reflects the entity state AT THE START of the update
+               — valid because it is assembled from the entity fetched by
+               find_by_id BEFORE apply_update is called.
+            ✅ Passing read_dto avoids a second assembler call here.
+            ❌ before_dto is a frozen ReadDTO — contains only the fields the
+               assembler exposes.  Deep field diffs require domain-layer logic.
+
+        Args:
+            before_dto: ``ReadDTO`` of the entity before the update was applied.
+            entity:     The saved domain entity after update (with pk).
+            read_dto:   The ``ReadDTO`` returned to the caller (post-update).
+            ctx:        Caller's identity and grants.
+
+        Edge cases:
+            - If this hook raises the exception propagates — the entity IS updated.
+            - Chain via super() even in leaf mixin classes.
+        """
+        # Base: no-op.  Subclasses override and chain via super().
+        return
+
+    async def _after_delete(self, pk: Any, ctx: AuthContext) -> None:
+        """
+        Hook called AFTER the UoW commits on a successful ``delete()``.
+
+        ``pk`` is the primary key of the deleted entity.  The entity itself is
+        no longer retrievable from the repository at this point.
+
+        **Chaining contract**: always end with
+        ``await super()._after_delete(pk, ctx)``
+
+        Args:
+            pk:  Primary key of the deleted entity.
+            ctx: Caller's identity and grants.
+
+        Edge cases:
+            - Entity is already deleted when this fires — do not attempt to
+              fetch it again.
+            - Chain via super() even in leaf mixin classes.
+        """
+        # Base: no-op.  Subclasses override and chain via super().
+        return
+
     def _validate_entity(self, entity: D, ctx: AuthContext) -> None:
         """
         Validate a domain entity's business invariants before it is persisted.
@@ -884,10 +977,16 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
             EntityCreatedEvent(
                 entity_type=self._entity_type().__name__,
                 pk=saved.pk,
+                # Propagate tenant identity so consumers can select the correct
+                # per-tenant decryption key when reading the encrypted payload.
+                tenant_id=ctx.metadata.get("tenant_id") if ctx else None,
                 correlation_id=current_correlation_id(),
                 payload=read_dto.model_dump(),
             )
         )
+        # Post-create hook — called after commit and domain event publish.
+        # Mixins override this to emit audit events, notifications, etc.
+        await self._after_create(saved, read_dto, ctx)
         return read_dto
 
     async def update(self, pk: PK, dto: U, ctx: AuthContext) -> R:
@@ -937,6 +1036,11 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
                 Resource(entity_type=self._entity_type(), entity=entity),
             )
 
+            # Capture the pre-update ReadDTO BEFORE apply_update so _after_update
+            # can diff before/after states.  Assembled inside the UoW so the
+            # entity's lazy-loaded fields are available.
+            before_dto = self._assembler.to_read_dto(entity)
+
             updated = self._assembler.apply_update(entity, dto)
             # Validate the updated entity's business invariants before saving.
             # Runs after apply_update so validators see the new field values,
@@ -952,10 +1056,15 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
             EntityUpdatedEvent(
                 entity_type=self._entity_type().__name__,
                 pk=saved.pk,
+                # Same tenant propagation rationale as EntityCreatedEvent above.
+                tenant_id=ctx.metadata.get("tenant_id") if ctx else None,
                 correlation_id=current_correlation_id(),
                 payload=read_dto.model_dump(),
             )
         )
+        # Post-update hook — called after commit and domain event publish.
+        # before_dto carries the pre-update ReadDTO for diffing in audit mixins.
+        await self._after_update(before_dto, saved, read_dto, ctx)
         return read_dto
 
     async def delete(self, pk: PK, ctx: AuthContext) -> None:
@@ -1010,9 +1119,13 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
             EntityDeletedEvent(
                 entity_type=self._entity_type().__name__,
                 pk=deleted_pk,
+                # Same tenant propagation rationale as EntityCreatedEvent above.
+                tenant_id=ctx.metadata.get("tenant_id") if ctx else None,
                 correlation_id=current_correlation_id(),
             )
         )
+        # Post-delete hook — called after commit and domain event publish.
+        await self._after_delete(deleted_pk, ctx)
 
     # ── Abstract method — implement in concrete subclass ──────────────────────
 

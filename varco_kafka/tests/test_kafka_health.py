@@ -222,7 +222,8 @@ def test_repr_contains_bootstrap_servers() -> None:
 @pytest.mark.integration
 async def test_integration_healthy_against_real_kafka() -> None:
     """
-    Requires a running Kafka on localhost:9092.
+    Spins up a real Kafka via testcontainers and verifies the health check
+    reports HEALTHY with a non-negative latency.
     Run with: VARCO_RUN_INTEGRATION=1 pytest -m integration
     """
     import os
@@ -230,7 +231,12 @@ async def test_integration_healthy_against_real_kafka() -> None:
     if not os.environ.get("VARCO_RUN_INTEGRATION"):
         pytest.skip("Set VARCO_RUN_INTEGRATION=1 to run integration tests")
 
-    check = KafkaHealthCheck(bootstrap_servers="localhost:9092", timeout=10.0)
-    result = await check.check()
+    from testcontainers.kafka import KafkaContainer
+
+    # Use testcontainers so the test is self-contained — no pre-running Kafka needed.
+    with KafkaContainer() as kafka:
+        bootstrap = kafka.get_bootstrap_server()
+        check = KafkaHealthCheck(bootstrap_servers=bootstrap, timeout=10.0)
+        result = await check.check()
     assert result.status is HealthStatus.HEALTHY
     assert result.latency_ms is not None

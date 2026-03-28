@@ -194,6 +194,7 @@ class CachedService:
         cache: CacheBackend,
         *,
         namespace: str,
+        entity_type: type | None = None,
         default_ttl: float | None = None,
         producer: AbstractEventProducer | None = None,
         bus_channel: str = "varco.cache.invalidations",
@@ -201,6 +202,10 @@ class CachedService:
         self._service = service
         self._cache = cache
         self._namespace = namespace
+        # entity_type is forwarded to cache.get() as type_hint so the serializer
+        # can reconstruct typed objects on cache hits instead of returning plain dicts.
+        # None → backend's default deserialization (dict/list for JSON backends).
+        self._entity_type = entity_type
         self._default_ttl = default_ttl
         # Fall back to NoopEventProducer so _produce() calls are always safe
         # and callers never need a `if self._producer is not None` guard.
@@ -238,13 +243,18 @@ class CachedService:
 
     # ── Read-through helpers ───────────────────────────────────────────────────
 
-    async def _get_or_set(self, key: str, call: Any) -> Any:
+    async def _get_or_set(
+        self, key: str, call: Any, *, type_hint: type | None = None
+    ) -> Any:
         """
         Cache look-aside: return cached value, or call ``call`` and cache it.
 
         Args:
-            key:  Cache key.
-            call: Async callable that produces the value on a cache miss.
+            key:       Cache key.
+            call:      Async callable that produces the value on a cache miss.
+            type_hint: Passed to the backing cache's ``get()`` for typed
+                       deserialization.  Use ``entity_type`` for single-entity
+                       keys and ``list[entity_type]`` for list keys.
 
         Returns:
             Cached or freshly fetched value.
@@ -254,7 +264,9 @@ class CachedService:
             self._explicit.clear_invalidated(key)
             cached = None
         else:
-            cached = await self._cache.get(key)
+            # Forward type_hint so backends that serialize to bytes (e.g. RedisCache)
+            # can reconstruct the original typed object rather than returning a dict.
+            cached = await self._cache.get(key, type_hint=type_hint)
 
         if cached is not None:
             _logger.debug(
@@ -287,7 +299,9 @@ class CachedService:
         """
         key = self._get_key(entity_id)
         return await self._get_or_set(
-            key, lambda: self._service.get(entity_id, **kwargs)
+            key,
+            lambda: self._service.get(entity_id, **kwargs),
+            type_hint=self._entity_type,
         )
 
     async def list(self, **kwargs: Any) -> Any:
@@ -307,7 +321,11 @@ class CachedService:
             A list of entities (cached or freshly fetched).
         """
         key = self._list_key(**kwargs)
-        return await self._get_or_set(key, lambda: self._service.list(**kwargs))
+        # List results are typed as list[entity_type], not entity_type itself.
+        list_hint = list[self._entity_type] if self._entity_type is not None else None  # type: ignore[valid-type]
+        return await self._get_or_set(
+            key, lambda: self._service.list(**kwargs), type_hint=list_hint
+        )
 
     async def exists(self, entity_id: Any, **kwargs: Any) -> bool:
         """
@@ -327,7 +345,14 @@ class CachedService:
             ``True`` if the entity exists.
         """
         key = self._exists_key(entity_id)
-        cached = await self._cache.get(key)
+        # Check explicit invalidation first — mirrors the logic in _get_or_set.
+        # Without this check, delete()/update() would mark the exists key as
+        # invalidated but exists() would still return the stale cached value.
+        if self._explicit.should_invalidate(key, {}):
+            self._explicit.clear_invalidated(key)
+            cached = None
+        else:
+            cached = await self._cache.get(key)
         if cached is not None:
             return bool(cached)
         result = await self._service.exists(entity_id, **kwargs)

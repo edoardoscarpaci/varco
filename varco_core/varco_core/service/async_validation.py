@@ -84,6 +84,7 @@ from providify import InjectMeta
 from varco_core.dto import CreateDTO, ReadDTO, UpdateDTO
 from varco_core.model import DomainModel
 from varco_core.service.base import AsyncService
+from varco_core.service.mixin import ServiceMixin
 
 if TYPE_CHECKING:
     from varco_core.auth import AuthContext
@@ -97,7 +98,9 @@ R = TypeVar("R", bound=ReadDTO)
 U = TypeVar("U", bound=UpdateDTO)
 
 
-class AsyncValidatorServiceMixin(AsyncService[D, PK, C, R, U], Generic[D, PK, C, R, U]):
+class AsyncValidatorServiceMixin(
+    ServiceMixin, AsyncService[D, PK, C, R, U], Generic[D, PK, C, R, U]
+):
     """
     ``AsyncService`` mixin that runs a DI-injected ``AsyncValidator[D]``
     before every ``create`` and ``update`` persist call.

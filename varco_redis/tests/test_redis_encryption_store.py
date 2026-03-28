@@ -528,7 +528,9 @@ class TestRedisEncryptionKeyStoreIntegration:
     async def real_store(self, redis_container):
         import redis.asyncio as aioredis
 
-        url = redis_container.get_connection_url()
+        host = redis_container.get_container_host_ip()
+        port = redis_container.get_exposed_port(6379)
+        url = f"redis://{host}:{port}/0"
         client = aioredis.from_url(url, decode_responses=False)
         store = RedisEncryptionKeyStore(client, prefix=f"test:{id(self)}")
         yield store

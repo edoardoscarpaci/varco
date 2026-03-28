@@ -342,6 +342,22 @@ class InMemoryPostRepository(AsyncRepository[Post, str]):
         for entity in list(self._store.values()):
             yield entity
 
+    # ── Bulk stubs (required by AsyncRepository ABC) ──────────────────────────
+    # These are no-op stubs sufficient for tests that do not exercise bulk ops.
+
+    async def save_many(self, entities):  # type: ignore[override]
+        """Stub — delegates to individual save() calls."""
+        return [await self.save(e) for e in entities]
+
+    async def delete_many(self, entities):  # type: ignore[override]
+        """Stub — delegates to individual delete() calls."""
+        for e in entities:
+            await self.delete(e)
+
+    async def update_many_by_query(self, params, update):  # type: ignore[override]
+        """Stub — raises NotImplementedError; not needed in service tests."""
+        raise NotImplementedError("update_many_by_query not used in service tests")
+
 
 # ── In-memory Unit of Work ─────────────────────────────────────────────────────
 

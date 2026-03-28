@@ -51,7 +51,6 @@ Async safety:   ✅ All public methods are ``async def``.
 from __future__ import annotations
 
 import dataclasses
-from abc import ABC
 from datetime import UTC, datetime
 from typing import ClassVar, Generic, TypeVar
 
@@ -62,6 +61,7 @@ from varco_core.model import DomainModel
 from varco_core.query.builder import QueryBuilder
 from varco_core.query.params import QueryParams
 from varco_core.service.base import AsyncService
+from varco_core.service.mixin import ServiceMixin
 
 D = TypeVar("D", bound=DomainModel)
 PK = TypeVar("PK")
@@ -70,7 +70,9 @@ R = TypeVar("R", bound=ReadDTO)
 U = TypeVar("U", bound=UpdateDTO)
 
 
-class SoftDeleteService(AsyncService[D, PK, C, R, U], ABC, Generic[D, PK, C, R, U]):
+class SoftDeleteService(
+    ServiceMixin, AsyncService[D, PK, C, R, U], Generic[D, PK, C, R, U]
+):
     """
     Abstract ``AsyncService`` mixin that replaces physical deletion with
     soft deletion.

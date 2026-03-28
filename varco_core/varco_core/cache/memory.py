@@ -108,8 +108,8 @@ class NoOpCache(CacheBackend):
     async def stop(self) -> None:
         """No-op."""
 
-    async def get(self, key: Any) -> Any | None:
-        """Always returns ``None`` — no entry is ever cached."""
+    async def get(self, key: Any, *, type_hint: type | None = None) -> Any | None:
+        """Always returns ``None`` — no entry is ever cached.  ``type_hint`` is ignored."""
         return None
 
     async def set(self, key: Any, value: Any, *, ttl: float | None = None) -> None:
@@ -124,6 +124,9 @@ class NoOpCache(CacheBackend):
 
     async def clear(self) -> None:
         """No-op."""
+
+    async def delete_prefix(self, prefix: str) -> None:
+        """No-op — nothing is stored, so nothing to delete."""
 
     def __repr__(self) -> str:
         return "NoOpCache()"
@@ -227,7 +230,7 @@ class InMemoryCache(CacheBackend):
 
     # ── Cache operations ───────────────────────────────────────────────────────
 
-    async def get(self, key: Any) -> Any | None:
+    async def get(self, key: Any, *, type_hint: type | None = None) -> Any | None:
         """
         Return the cached value for ``key``, or ``None`` on miss / expiry.
 
@@ -235,7 +238,9 @@ class InMemoryCache(CacheBackend):
         before returning ``None``.
 
         Args:
-            key: Cache key to look up.
+            key:       Cache key to look up.
+            type_hint: Unused — in-memory stores Python objects directly, so no
+                       deserialization is required and the type is already preserved.
 
         Returns:
             Cached value, or ``None`` if absent or invalidated.
@@ -348,6 +353,40 @@ class InMemoryCache(CacheBackend):
         self._require_started()
         self._store.clear()
         _logger.debug("InMemoryCache: cleared.")
+
+    async def delete_prefix(self, prefix: str) -> None:
+        """
+        Remove all entries whose string key starts with ``prefix``.
+
+        Iterates the store once and collects matching keys, then deletes them
+        in a second pass — avoids mutating the dict during iteration.
+
+        Args:
+            prefix: Key prefix to match.
+
+        Returns:
+            None.
+
+        Raises:
+            RuntimeError: If the cache has not been started.
+
+        Edge cases:
+            - Non-string keys are coerced with ``str()`` before the prefix
+              check — consistent with how ``CacheServiceMixin`` builds keys.
+            - An empty ``prefix`` removes all entries (equivalent to
+              ``clear()``).
+        """
+        self._require_started()
+        # Collect first, then delete — mutating a dict while iterating raises RuntimeError.
+        keys_to_delete = [k for k in self._store if str(k).startswith(prefix)]
+        for k in keys_to_delete:
+            del self._store[k]
+        if keys_to_delete:
+            _logger.debug(
+                "InMemoryCache: deleted %d key(s) with prefix %r.",
+                len(keys_to_delete),
+                prefix,
+            )
 
     # ── Metrics / introspection ────────────────────────────────────────────────
 

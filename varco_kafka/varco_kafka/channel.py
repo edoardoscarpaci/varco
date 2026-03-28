@@ -285,13 +285,13 @@ class KafkaChannelManager(ChannelManager):
         """
         self._require_started()
         topic = self._settings.topic_name(channel)
-        # list_topics() returns a ClusterMetadata object — topics are in its
-        # .topics dict.  An empty set means no topics match.
+        # describe_topics() returns a list of dicts with shape:
+        #   {"topic": str, "error_code": int, "partitions": [...], ...}
+        # Key is "topic" (not "name") — matches aiokafka 0.13 to_object() output.
+        # error_code 0 means NO_ERROR (topic exists and is healthy).
         metadata = await self._admin.describe_topics([topic])  # type: ignore[union-attr]
-        # describe_topics returns a list of topic metadata dicts.
-        # A topic exists if its error_code is 0 (NONE).
         for meta in metadata:
-            if meta.get("name") == topic and meta.get("error_code") == 0:
+            if meta.get("topic") == topic and meta.get("error_code") == 0:
                 return True
         return False
 
@@ -310,13 +310,14 @@ class KafkaChannelManager(ChannelManager):
               Use a meaningful ``topic_prefix`` to scope to your service.
         """
         self._require_started()
-        # list_topics() returns ClusterMetadata — its .topics dict has topic
-        # names as keys.
-        metadata = await self._admin.list_topics()  # type: ignore[union-attr]
+        # list_topics() returns list[str] in aiokafka 0.13 — plain topic name strings.
+        # Older aiokafka returned ClusterMetadata with a .topics dict; that API
+        # was removed.  Sorting here keeps the output stable for callers.
+        topics: list[str] = await self._admin.list_topics()  # type: ignore[union-attr]
         prefix = self._settings.topic_prefix
         channels = [
             name.removeprefix(prefix)
-            for name in sorted(metadata.topics)
+            for name in sorted(topics)
             if not prefix or name.startswith(prefix)
         ]
         return channels

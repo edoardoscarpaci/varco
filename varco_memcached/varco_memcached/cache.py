@@ -401,6 +401,42 @@ class MemcachedCache(CacheBackend):
         )
         return raw is not None
 
+    async def delete_prefix(self, prefix: str) -> None:
+        """
+        Remove all entries whose logical key starts with ``prefix``.
+
+        DESIGN: registry-based prefix scan
+            Memcached has no native key-listing or prefix-delete command.
+            We maintain ``_key_registry`` — a set of all logical keys written via
+            ``set()`` — and scan it here to find matches.
+            ✅ Correct for keys written in the current process lifetime.
+            ❌ Keys written by other processes or before a restart are unknown
+               and will not be deleted; they expire naturally via TTL.
+            Alternative: ``flush_all()`` — too broad; evicts every key on the server.
+
+        Args:
+            prefix: Logical key prefix to match.  All keys ``k`` where
+                    ``str(k).startswith(prefix)`` are removed from Memcached.
+
+        Raises:
+            RuntimeError: If the cache has not been started.
+
+        Edge cases:
+            - Empty ``prefix`` → behaves like ``clear()`` (all tracked keys match).
+            - No keys match → no-op.
+        """
+        self._require_started()
+        # Snapshot to avoid mutating the set while iterating.
+        matching = [k for k in list(self._key_registry) if k.startswith(prefix)]
+        for logical_key in matching:
+            await self._client.delete(  # type: ignore[union-attr]
+                self._settings.memcached_key(logical_key)
+            )
+            self._key_registry.discard(logical_key)
+        _logger.debug(
+            "MemcachedCache: deleted %d key(s) with prefix %r.", len(matching), prefix
+        )
+
     async def clear(self) -> None:
         """
         Delete all keys tracked by this cache instance from Memcached.

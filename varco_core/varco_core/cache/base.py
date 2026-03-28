@@ -79,12 +79,16 @@ class AsyncCache(Protocol[K, V]):
         - ``clear()`` is a full flush — use with caution in production.
     """
 
-    async def get(self, key: K) -> V | None:
+    async def get(self, key: K, *, type_hint: type | None = None) -> V | None:
         """
         Return the cached value for ``key``, or ``None`` on a cache miss.
 
         Args:
-            key: Cache key to look up.
+            key:       Cache key to look up.
+            type_hint: Optional type passed to the deserializer so backends that
+                       serialize to bytes (e.g. Redis) can reconstruct typed objects
+                       instead of plain dicts.  Ignored by in-memory backends that
+                       store Python objects directly.
 
         Returns:
             The cached value, or ``None`` if the key is absent or expired.
@@ -138,6 +142,28 @@ class AsyncCache(Protocol[K, V]):
 
         Raises:
             RuntimeError: If the backend has not been started.
+        """
+        ...
+
+    async def delete_prefix(self, prefix: str) -> None:
+        """
+        Remove all entries whose key starts with ``prefix``.
+
+        Used by ``CacheServiceMixin`` to scope list-cache invalidation to a
+        single tenant — only keys matching ``"<namespace>:<tenant_id>:list:"``
+        are evicted, leaving other tenants' list entries intact.
+
+        Args:
+            prefix: Key prefix to match.  All keys where
+                    ``str(key).startswith(prefix)`` is ``True`` are deleted.
+
+        Raises:
+            RuntimeError: If the backend has not been started.
+
+        Edge cases:
+            - An empty ``prefix`` removes ALL entries — equivalent to
+              ``clear()``.  Callers should guard against this.
+            - No-op if no keys match — never raises on an empty result set.
         """
         ...
 
@@ -196,8 +222,10 @@ class CacheBackend(abc.ABC):
     # ── Cache operations ───────────────────────────────────────────────────────
 
     @abc.abstractmethod
-    async def get(self, key: Any) -> Any | None:
-        """Return cached value for ``key``, or ``None`` on miss."""
+    async def get(self, key: Any, *, type_hint: type | None = None) -> Any | None:
+        """Return cached value for ``key``, or ``None`` on miss.
+        ``type_hint`` is forwarded to the deserializer for backends that serialize
+        to bytes — in-memory backends may ignore it."""
 
     @abc.abstractmethod
     async def set(self, key: Any, value: Any, *, ttl: float | None = None) -> None:
@@ -214,6 +242,19 @@ class CacheBackend(abc.ABC):
     @abc.abstractmethod
     async def clear(self) -> None:
         """Remove ALL entries from this backend."""
+
+    @abc.abstractmethod
+    async def delete_prefix(self, prefix: str) -> None:
+        """
+        Remove all entries whose key starts with ``prefix``.
+
+        Args:
+            prefix: Key prefix to match.  Keys where
+                    ``str(key).startswith(prefix)`` are removed.
+
+        Edge cases:
+            - An empty ``prefix`` is equivalent to ``clear()``.
+        """
 
 
 # ── InvalidationStrategy ABC ───────────────────────────────────────────────────

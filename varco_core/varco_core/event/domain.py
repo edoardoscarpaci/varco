@@ -37,6 +37,23 @@ This gives subscribers two independent routing axes:
 - **Wildcard**:
   ``@listen(EntityEvent, channel="*")`` — every entity lifecycle event.
 
+Tenant isolation
+----------------
+``EntityEvent.tenant_id`` is populated from ``ctx.metadata["tenant_id"]``
+at event construction time inside the service.  Events produced outside a
+tenant context (e.g. background jobs, admin operations) carry ``None``.
+
+Consumers that need per-tenant isolation should filter by this field::
+
+    @listen(EntityCreatedEvent, channel="post")
+    async def on_post_created(self, event: EntityCreatedEvent) -> None:
+        if event.tenant_id != self._expected_tenant:
+            return  # skip events belonging to other tenants
+
+This field is also **critical for field-level encryption** — consumers
+receiving events with encrypted ``payload`` fields must use it to select
+the correct per-tenant decryption key.
+
 Correlation ID
 --------------
 ``EntityEvent.correlation_id`` is auto-populated from the active tracing
@@ -85,12 +102,29 @@ class EntityEvent(Event):
                          Matches ``type(entity).__name__`` on the service side.
         pk:              Primary key of the affected entity.  Type is ``Any``
                          because PKs may be ``int``, ``UUID``, or composite.
+        tenant_id:       Tenant that owns the affected entity, populated from
+                         ``ctx.metadata["tenant_id"]`` by the service layer.
+                         ``None`` when the event originates outside a tenant
+                         context (background jobs, admin CLI, etc.).
+                         Consumers that handle events with encrypted ``payload``
+                         fields **must** use this to select the decryption key.
         correlation_id:  Active request correlation ID, or ``None`` if the
                          event was produced outside a ``correlation_context``.
+
+    Edge cases:
+        - ``tenant_id`` is ``None`` for non-tenant services — consumers must
+          handle this gracefully rather than assuming all events are tenanted.
+        - Both ``tenant_id`` and ``correlation_id`` default to ``None`` so that
+          events produced outside service context (e.g. tests, scripts) remain
+          valid without supplying infra metadata.
     """
 
     entity_type: str
     pk: Any
+    # Populated from ctx.metadata["tenant_id"] at construction time inside
+    # AsyncService.create() / update() / delete().  None when produced outside
+    # a tenant context.  Critical for per-tenant decryption key selection.
+    tenant_id: str | None = None
     # Populated from current_correlation_id() at construction time inside
     # AsyncService._publish_domain_event().  Optional — None when produced
     # outside an active correlation context (e.g. background jobs).

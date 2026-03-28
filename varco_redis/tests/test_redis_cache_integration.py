@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from dataclasses import dataclass
 
 import pytest
 
@@ -70,20 +71,20 @@ def redis_url(redis_container) -> str:
 # ── Helper: tiny fake service ───────────────────────────────────────────────────
 
 
+@dataclass
 class _User:
-    """Lightweight stand-in for a domain entity."""
+    """
+    Lightweight stand-in for a domain entity.
 
-    def __init__(self, id: int, name: str) -> None:
-        self.id = id
-        self.name = name
+    DESIGN: @dataclass (not a plain class) — Pydantic's TypeAdapter supports
+    dataclasses natively, enabling full serialize/deserialize round-trips through
+    RedisCache without losing type information.  A plain class would serialize
+    to a dict via __dict__ but deserialize back as a dict (not a _User), causing
+    attribute access failures on cache hits.
+    """
 
-    def __eq__(self, other: object) -> bool:
-        return (
-            isinstance(other, _User) and self.id == other.id and self.name == other.name
-        )
-
-    def __repr__(self) -> str:
-        return f"_User(id={self.id}, name={self.name!r})"
+    id: int
+    name: str
 
 
 class _UserService:
@@ -281,7 +282,7 @@ class TestCachedServiceWithRedis:
 
         settings = RedisCacheSettings(url=redis_url, key_prefix="test:cs:get:")
         async with RedisCache(settings) as cache:
-            cached_svc = CachedService(svc, cache, namespace="user")
+            cached_svc = CachedService(svc, cache, namespace="user", entity_type=_User)
 
             # First call: cache miss → hits service
             user = await cached_svc.get(1)
@@ -302,7 +303,7 @@ class TestCachedServiceWithRedis:
 
         settings = RedisCacheSettings(url=redis_url, key_prefix="test:cs:list:")
         async with RedisCache(settings) as cache:
-            cached_svc = CachedService(svc, cache, namespace="user")
+            cached_svc = CachedService(svc, cache, namespace="user", entity_type=_User)
 
             users = await cached_svc.list()
             assert len(users) == 2
@@ -320,7 +321,7 @@ class TestCachedServiceWithRedis:
 
         settings = RedisCacheSettings(url=redis_url, key_prefix="test:cs:upd:")
         async with RedisCache(settings) as cache:
-            cached_svc = CachedService(svc, cache, namespace="user")
+            cached_svc = CachedService(svc, cache, namespace="user", entity_type=_User)
 
             # Cache the get result
             await cached_svc.get(1)
@@ -342,7 +343,7 @@ class TestCachedServiceWithRedis:
 
         settings = RedisCacheSettings(url=redis_url, key_prefix="test:cs:del:")
         async with RedisCache(settings) as cache:
-            cached_svc = CachedService(svc, cache, namespace="user")
+            cached_svc = CachedService(svc, cache, namespace="user", entity_type=_User)
 
             await cached_svc.get(1)
             assert svc.get_calls == 1
@@ -361,7 +362,7 @@ class TestCachedServiceWithRedis:
 
         settings = RedisCacheSettings(url=redis_url, key_prefix="test:cs:create:")
         async with RedisCache(settings) as cache:
-            cached_svc = CachedService(svc, cache, namespace="user")
+            cached_svc = CachedService(svc, cache, namespace="user", entity_type=_User)
 
             # Cache the list
             users = await cached_svc.list()
@@ -384,7 +385,7 @@ class TestCachedServiceWithRedis:
 
         settings = RedisCacheSettings(url=redis_url, key_prefix="test:cs:ex:")
         async with RedisCache(settings) as cache:
-            cached_svc = CachedService(svc, cache, namespace="user")
+            cached_svc = CachedService(svc, cache, namespace="user", entity_type=_User)
 
             assert await cached_svc.exists(1) is True
             assert svc.exists_calls == 1
