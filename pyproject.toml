@@ -13,4 +13,5 @@ members = [
     "varco_redis",
     "varco_beanie",
     "varco_sa",
+    "varco_memcached",
 ]

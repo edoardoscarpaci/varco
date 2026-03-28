@@ -1,0 +1,61 @@
+[project]
+name          = "varco-memcached"
+version       = "0.0.1"
+description   = "Memcached cache backend for varco — MemcachedCache built on aiomcache"
+authors       = [{ name = "edoardo.scarpaci", email = "edoardo.scarpaci@gmail.com" }]
+readme        = "README.md"
+license       = { text = "Apache-2.0" }
+requires-python = ">=3.12"
+keywords      = ["fastapi", "memcached", "cache", "async", "varco"]
+classifiers   = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    # Workspace sibling — resolved from the monorepo via [tool.uv.sources] below.
+    "varco-core",
+    # aiomcache is a pure-Python asyncio Memcached client.
+    "aiomcache>=0.8",
+    # Used for @Configuration / @Provider in MemcachedCacheConfiguration.
+    "providify>=0.1.4a3",
+    # Used for MemcachedCacheSettings — SettingsConfigDict + BaseSettings.
+    "pydantic-settings>=2.0",
+]
+
+[project.urls]
+Homepage   = "https://github.com/edoardoscarpaci/varco"
+Repository = "https://github.com/edoardoscarpaci/varco/tree/main/varco_memcached"
+Issues     = "https://github.com/edoardoscarpaci/varco/issues"
+
+[tool.uv.sources]
+# Resolve varco-core from the workspace so editable changes are visible immediately.
+varco-core = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    # testcontainers[memcached] spins up a real Memcached instance via Docker for
+    # integration tests.  Marked @pytest.mark.integration — run with: pytest -m integration
+    "testcontainers>=4.0",
+]
+
+[build-system]
+requires      = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["varco_memcached"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths    = ["tests"]
+markers      = [
+    "integration: real Memcached instance required (disabled by default — use -m integration)",
+]
