@@ -20,6 +20,26 @@ All public symbols are importable directly from ``varco_core.resilience``::
     # Timeout (async only)
     from varco_core.resilience import timeout, CallTimeoutError
 
+    # Rate limiting (async only)
+    from varco_core.resilience import (
+        rate_limit,
+        RateLimiter,
+        RateLimitConfig,
+        InMemoryRateLimiter,
+        RateLimitExceededError,
+    )
+
+    # Bulkhead — concurrency cap per dependency (async only)
+    from varco_core.resilience import (
+        bulkhead,
+        Bulkhead,
+        BulkheadConfig,
+        BulkheadFullError,
+    )
+
+    # Hedged requests — speculative duplicate for tail-latency reduction
+    from varco_core.resilience import hedge, HedgeConfig
+
 Patterns overview
 -----------------
 ``@retry`` / ``RetryPolicy``
@@ -35,6 +55,20 @@ Patterns overview
     Cancels an async function if it doesn't complete within a time limit.
     Async-only — sync timeouts are out of scope (require OS signals or threads).
 
+``RateLimiter`` / ``@rate_limit``
+    Caps the number of calls within a rolling time window.  ``InMemoryRateLimiter``
+    is per-process (single-node); use ``varco_redis.RedisRateLimiter`` for
+    distributed (multi-pod) rate limiting.  Async-only.
+
+``Bulkhead`` / ``@bulkhead``
+    Limits maximum concurrent calls to a single external dependency.  Prevents
+    one slow dependency from starving all async tasks.  Use a SHARED ``Bulkhead``
+    instance per dependency.  Async-only.
+
+``@hedge`` / ``HedgeConfig``
+    Issues a speculative duplicate call after a delay to reduce tail latency.
+    ⚠️  ONLY safe for idempotent operations (reads, upserts).  Async-only.
+
 Composing patterns::
 
     @timeout(10.0)
@@ -45,10 +79,24 @@ Composing patterns::
 
     # Execution order (outermost first):
     # timeout → retry loop → circuit_breaker → actual call
+
+    # Rate limiting + bulkhead — cap concurrent AND per-second calls
+    limiter = InMemoryRateLimiter(RateLimitConfig(rate=100, period=1.0))
+    db_bh   = Bulkhead(BulkheadConfig(max_concurrent=10))
+
+    @rate_limit(limiter=limiter)
+    @db_bh.protect
+    async def fetch_user(user_id: int) -> User: ...
 """
 
 from __future__ import annotations
 
+from varco_core.resilience.bulkhead import (
+    Bulkhead,
+    BulkheadConfig,
+    BulkheadFullError,
+    bulkhead,
+)
 from varco_core.resilience.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerConfig,
@@ -60,6 +108,17 @@ from varco_core.resilience.retry import (
     RetryExhaustedError,
     RetryPolicy,
     retry,
+)
+from varco_core.resilience.hedge import (
+    HedgeConfig,
+    hedge,
+)
+from varco_core.resilience.rate_limit import (
+    InMemoryRateLimiter,
+    RateLimitConfig,
+    RateLimitExceededError,
+    RateLimiter,
+    rate_limit,
 )
 from varco_core.resilience.timeout import (
     CallTimeoutError,
@@ -80,4 +139,18 @@ __all__ = [
     # ── Timeout ──────────────────────────────────────────────────────────────
     "timeout",
     "CallTimeoutError",
+    # ── Rate limiting ─────────────────────────────────────────────────────────
+    "rate_limit",
+    "RateLimiter",
+    "RateLimitConfig",
+    "InMemoryRateLimiter",
+    "RateLimitExceededError",
+    # ── Bulkhead ──────────────────────────────────────────────────────────────
+    "bulkhead",
+    "Bulkhead",
+    "BulkheadConfig",
+    "BulkheadFullError",
+    # ── Hedged requests ───────────────────────────────────────────────────────
+    "hedge",
+    "HedgeConfig",
 ]

@@ -385,7 +385,15 @@ page = await user_service.list(params, tenant_id=current_user.tenant_id)
 #### Scenario: Integrate a new external API (with resilience)
 
 ```python
-from varco_core.resilience import retry, timeout, circuit_breaker, RetryPolicy, CircuitBreakerConfig
+from varco_core.resilience import (
+    retry, timeout, circuit_breaker, rate_limit, bulkhead,
+    RetryPolicy, CircuitBreakerConfig, RateLimitConfig,
+    BulkheadConfig, InMemoryRateLimiter,
+)
+
+# Shared instances — one per external dependency (NOT per-call)
+_payment_limiter = InMemoryRateLimiter(RateLimitConfig(rate=100, period=1.0))
+_payment_bulkhead = Bulkhead(BulkheadConfig(max_concurrent=10, max_wait=0.5))
 
 class PaymentService:
     def __init__(self, http_client: httpx.AsyncClient):
@@ -413,7 +421,13 @@ class PaymentService:
 # 3. timeout cancels if > 10s
 ```
 
-**Caveat**: `CircuitBreaker` must be **shared** per external service. A per-call instance never accumulates failures:
+**Rate limiting**: Use `@rate_limit` to cap calls per second.  `InMemoryRateLimiter` is per-process; use `varco_redis.RedisRateLimiter` in multi-pod deployments.
+
+**Bulkhead**: Use `Bulkhead` to cap concurrent in-flight calls to one dependency.  Must be a **shared** instance (same rule as `CircuitBreaker`):
+
+**Hedged requests**: Use `@hedge` only for idempotent reads to cut tail latency — never for writes.
+
+**Caveat**: `CircuitBreaker` and `Bulkhead` must both be **shared** per external service. A per-call instance never accumulates failures / concurrency:
 
 ```python
 # ❌ WRONG: New breaker each call
@@ -467,6 +481,9 @@ All code in this repo follows the **coding-practice** skill. Key non-obvious rul
 | **Forgot `@PostConstruct` on consumer** | Events never delivered | `register_to()` never called; subscription created at wrong time | Add `@PostConstruct` method that calls `self.register_to(self._bus)` |
 | **Async lock at module level** | `RuntimeError: no running event loop` | Locks created before event loop starts | Create locks lazily inside methods: `self._lock = self._lock or asyncio.Lock()` |
 | **Missing `await` on async call** | Coroutine leaked, cleanup never runs | Easy to miss on unfamiliar APIs | IDE linting catches this; always `await` calls to `async def` |
+| **Per-call Bulkhead** | Concurrency never limited, dependency can be overwhelmed | Instance has its own fresh semaphore each call | Shared `Bulkhead` per external dependency, same as `CircuitBreaker` |
+| **InMemoryRateLimiter in multi-pod** | Each pod has its own counter; total rate = N × configured rate | Per-process storage, not shared | Use `varco_redis.RedisRateLimiter` for distributed (multi-pod) enforcement |
+| **Hedging non-idempotent writes** | Duplicate side-effects (email sent twice, double charge) | Both hedged copies execute concurrently | Only apply `@hedge` to idempotent reads/upserts; never to INSERT or transactional writes |
 
 ---
 
@@ -539,7 +556,9 @@ Before writing code, ask yourself:
 - [ ] **Is my event consumer testable?** → Decorated with `@listen`, wired in `@PostConstruct`, no bus reference in `__init__`?
 - [ ] **If I'm publishing events, am I using the outbox pattern?** → Events saved in same DB transaction, relayed asynchronously?
 - [ ] **If I'm caching, is my key namespaced?** → Includes tenant_id, user_id, or other scope identifier?
-- [ ] **If I'm using external APIs, do I have resilience?** → Timeout + retry + circuit breaker, with shared breaker instance?
+- [ ] **If I'm using external APIs, do I have resilience?** → Timeout + retry + circuit breaker + bulkhead (shared instances), with optional rate limiting?
+- [ ] **If I'm rate-limiting, is my limiter appropriate for the deployment?** → `InMemoryRateLimiter` for single-process; `RedisRateLimiter` for multi-pod.
+- [ ] **If I'm using `@hedge`, is the operation truly idempotent?** → Hedging non-idempotent writes causes duplicate side-effects.
 - [ ] **Are my dataclasses frozen?** → `@dataclass(frozen=True)` for value objects, configs, AST nodes?
 - [ ] **Am I creating locks lazily?** → Never at module level or `__init__`, always inside methods?
 - [ ] **Did I add docstrings with Args/Returns/Raises/Edge cases?** → Especially for new abstractions and non-obvious code

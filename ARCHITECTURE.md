@@ -191,14 +191,40 @@ KeySource (ABC)
 @timeout(seconds: float)                        — async only, raises asyncio.TimeoutError
 @retry(policy: RetryPolicy)                     — sync or async, exponential backoff
 @circuit_breaker(config: CircuitBreakerConfig)  — sync or async, failure threshold + half-open state
+@rate_limit(limiter, key_fn=None)               — async only, sliding-window call budget per key
+@bulkhead(config: BulkheadConfig)               — async only, max-concurrency cap per dependency
+@hedge(config: HedgeConfig)                     — async only, speculative duplicate for tail latency
 
 CircuitBreaker (shared instance pattern)
   └── Rule: one per external dependency, not per-call — must accumulate failures
   └── Methods: protect(fn), state property (CLOSED/OPEN/HALF_OPEN)
 
+Bulkhead (shared instance pattern — same rule as CircuitBreaker)
+  └── Rule: one Bulkhead per external dependency — shared semaphore counts across all callers
+  └── Methods: call(fn, *args), protect(fn)
+  └── BulkheadConfig: max_concurrent (semaphore slots), max_wait (0.0 = fail-fast)
+
+RateLimiter (ABC — two implementations)
+  ├── InMemoryRateLimiter  — per-process sliding window (collections.deque), single-node
+  └── RedisRateLimiter     — distributed sliding window (Redis sorted set + Lua), multi-pod
+  └── RateLimitConfig: rate (calls), period (seconds rolling window)
+  └── @rate_limit(limiter, key_fn) — gates async callables; key_fn(*args, **kwargs) → str
+
+HedgeConfig: delay (seconds before hedge fires), max_hedges (default 1)
+  └── ⚠️  ONLY for idempotent operations (reads, upserts) — both copies may execute
+
 Built into @listen:
   └── @listen(..., retry_policy=..., dlq=...) → wrapper built at register_to() time
 ```
+
+Type hierarchy (resilience)::
+
+    RateLimiter (ABC, varco_core)
+      ├── InMemoryRateLimiter  (varco_core)   — per-process, deque-based
+      └── RedisRateLimiter     (varco_redis)  — distributed, sorted-set + Lua
+
+    Bulkhead           (varco_core)   — asyncio.Semaphore, shared per dependency
+    CircuitBreaker     (varco_core)   — shared state machine, lazy asyncio.Lock
 
 ### Outbox Pattern
 
@@ -340,7 +366,7 @@ event_bus: AbstractEventBus = container.resolve(AbstractEventBus)
 | `service/` | Domain service layer, mixins, outbox | `AsyncService`, `ValidatorServiceMixin`, `CacheServiceMixin`, `OutboxRelay` |
 | `cache/` | Cache abstraction, backends, invalidation | `AsyncCache`, `CacheBackend`, `InvalidationStrategy`, `@cached` decorator |
 | `query/` | Query AST, parser, visitors, transformers | `QueryParams`, `FilterNode`, `ASTVisitor`, `QueryTransformer` |
-| `resilience/` | Retry, timeout, circuit breaker | `@retry`, `@timeout`, `@circuit_breaker` |
+| `resilience/` | Retry, timeout, circuit breaker, rate limiting, bulkhead, hedged requests | `@retry`, `@timeout`, `@circuit_breaker`, `@rate_limit`, `@bulkhead`, `@hedge` |
 | `authority/` | JWT signing, verification, key rotation | `JwtAuthority`, `TrustedIssuerRegistry`, `MultiKeyAuthority` |
 | `auth/` | User/role/permission abstractions | `AbstractAuthorizer`, permission models |
 | `repository.py` | Repository protocol | `AsyncRepository[D, PK]` |
