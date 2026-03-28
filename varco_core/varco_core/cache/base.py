@@ -46,9 +46,15 @@ Async safety:   ✅  All public methods are ``async def``.
 from __future__ import annotations
 
 import abc
-from typing import Any, TypeVar
+import logging
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from typing import Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from varco_core.cache.warming import CacheWarmer
+
+_logger = logging.getLogger(__name__)
 
 K = TypeVar("K")
 V = TypeVar("V")
@@ -212,8 +218,76 @@ class CacheBackend(abc.ABC):
     async def stop(self) -> None:
         """Close connections and release resources.  Idempotent."""
 
+    # ── Warmer registry ────────────────────────────────────────────────────────
+    #
+    # DESIGN: list stored on the instance, initialised lazily on first add_warmer()
+    # call rather than in __init__.  CacheBackend has no __init__ of its own —
+    # adding one would force all subclasses to call super().__init__().  The lazy
+    # approach is non-breaking: if no warmer is ever added, the attribute is never
+    # created and _run_warmers() is a no-op.
+    #
+    # Thread safety: add_warmer() is not thread-safe — call before start().
+
+    def add_warmer(self, warmer: CacheWarmer) -> None:
+        """
+        Register a ``CacheWarmer`` to run after ``start()`` completes.
+
+        Warmers are executed in registration order inside ``__aenter__``.
+        Must be called BEFORE the backend is started (before ``__aenter__``
+        or ``start()``).
+
+        Args:
+            warmer: The ``CacheWarmer`` to register.
+
+        Edge cases:
+            - Adding the same warmer instance twice causes it to run twice.
+            - Warmers added after ``start()`` will NOT run for the current
+              lifecycle — they run on the next ``start()``.
+
+        Thread safety:  ⚠️ Not thread-safe — call from a single coroutine
+                            before starting the backend.
+        """
+        if not hasattr(self, "_warmers"):
+            # Lazy initialisation — see DESIGN note above.
+            object.__setattr__(self, "_warmers", [])
+        self._warmers.append(warmer)  # type: ignore[attr-defined]
+
+    async def _run_warmers(self) -> None:
+        """
+        Execute all registered warmers sequentially, catching and logging errors.
+
+        Called by ``__aenter__`` after ``start()`` completes.  A failed warmer
+        is logged as a warning and skipped — startup is NOT aborted, because a
+        warm cache is a performance optimisation, not a correctness requirement.
+
+        Edge cases:
+            - No warmers registered → instant no-op (attribute may not exist).
+            - A warmer that raises logs at WARNING level and is skipped.
+            - Individual warmer exceptions do NOT propagate — see the design note
+              above for the rationale.
+
+        Async safety:   ✅ Sequential ``await`` on each warmer.
+        """
+        warmers: list[CacheWarmer] = getattr(self, "_warmers", [])
+        for warmer in warmers:
+            try:
+                _logger.info("CacheBackend: running warmer %r", warmer)
+                await warmer.warm(self)
+            except Exception as exc:
+                # Warming failure is non-fatal — a cold cache is worse than
+                # a missing warm, but it should not prevent the service from
+                # starting.  Log at WARNING so operators are alerted.
+                _logger.warning(
+                    "CacheBackend: warmer %r failed (will start with cold cache): %s",
+                    warmer,
+                    exc,
+                    exc_info=True,
+                )
+
     async def __aenter__(self) -> CacheBackend:
         await self.start()
+        # Run warmers AFTER start() — the backend is fully operational at this point.
+        await self._run_warmers()
         return self
 
     async def __aexit__(self, *_: Any) -> None:

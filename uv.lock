@@ -15,6 +15,7 @@ members = [
     "varco-memcached",
     "varco-redis",
     "varco-sa",
+    "varco-ws",
 ]
 
 [[package]]
@@ -1215,6 +1216,29 @@ provides-extras = ["postgresql"]
 [package.metadata.requires-dev]
 dev = [
     { name = "aiosqlite", specifier = ">=0.20" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+]
+
+[[package]]
+name = "varco-ws"
+version = "0.0.1"
+source = { editable = "varco_ws" }
+dependencies = [
+    { name = "varco-core" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "varco-core", editable = "varco_core" }]
+
+[package.metadata.requires-dev]
+dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
 ]

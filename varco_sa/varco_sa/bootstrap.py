@@ -56,6 +56,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
 from varco_core.model import DomainModel
+from varco_sa.pool_metrics import SAPoolMetrics, pool_metrics as _pool_metrics
 from varco_sa.provider import SQLAlchemyRepositoryProvider
 from varco_sa.schema_guard import SchemaGuard, SchemaDriftReport
 
@@ -249,6 +250,33 @@ class SAFastrestApp:
         """
         guard = SchemaGuard(self._config.base)
         return await guard.report(self._config.engine)
+
+    def pool_metrics(self) -> SAPoolMetrics:
+        """
+        Return a snapshot of the connection pool statistics.
+
+        Reads pool counters synchronously from the underlying ``AsyncEngine``.
+        Safe to call from any async context (no I/O performed).
+
+        Returns:
+            ``SAPoolMetrics`` snapshot with counts of checked-out, idle, and
+            overflow connections, plus a saturation flag.
+
+        Thread safety:  ✅ Stateless read — no mutations.
+        Async safety:   ✅ Synchronous; call from any context.
+
+        Edge cases:
+            - ``NullPool`` (e.g. test engines): all counters are 0.
+            - Snapshot is stale the moment it is returned — use for monitoring,
+              not for admission control.
+
+        Example::
+
+            metrics = app.pool_metrics()
+            if metrics.is_saturated:
+                logger.error("DB pool saturated: %s", metrics)
+        """
+        return _pool_metrics(self._config.engine)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────

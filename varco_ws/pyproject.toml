@@ -1,0 +1,49 @@
+[project]
+name          = "varco-ws"
+version       = "0.0.1"
+description   = "WebSocket and SSE event bus backends for varco — real-time browser push"
+authors       = [{ name = "edoardo.scarpaci", email = "edoardo.scarpaci@gmail.com" }]
+readme        = "README.md"
+license       = { text = "Apache-2.0" }
+requires-python = ">=3.12"
+keywords      = ["fastapi", "websocket", "sse", "async", "event-bus", "domain-events", "varco"]
+classifiers   = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    # Workspace sibling — resolved from the monorepo via [tool.uv.sources] below.
+    "varco-core",
+]
+
+[project.urls]
+Homepage   = "https://github.com/edoardoscarpaci/varco"
+Repository = "https://github.com/edoardoscarpaci/varco/tree/main/varco_ws"
+Issues     = "https://github.com/edoardoscarpaci/varco/issues"
+
+[tool.uv.sources]
+# Resolve varco-core from the workspace instead of PyPI during development.
+varco-core = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[build-system]
+requires      = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["varco_ws"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths    = ["tests"]

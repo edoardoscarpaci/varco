@@ -10,9 +10,13 @@ Complete technical map of all packages, modules, classes, and design patterns. U
 varco_core/              — Domain model, service layer, event system, resilience, DI contracts
   ├── event/             — AbstractEventBus, AbstractEventProducer, EventConsumer, @listen
   ├── service/           — AsyncService[D, PK, C, R, U], mixins (validator, tenant, soft-delete)
+  │   └── saga.py        — SagaOrchestrator, SagaStep, SagaState, AbstractSagaRepository
   ├── cache/             — AsyncCache protocol, CacheBackend ABC, invalidation strategies
+  │   └── warming.py     — CacheWarmer ABC, QueryCacheWarmer, SnapshotCacheWarmer, CompositeWarmer
   ├── query/             — QueryParser → AST → QueryTransformer → backend applicator
+  │   └── aggregation.py — AggregationFunc, AggregationExpression, AggregationQuery, SA applicator
   ├── resilience/        — @timeout, @retry, @circuit_breaker decorators
+  ├── lock.py            — AbstractDistributedLock, InMemoryLock, LockHandle
   ├── authority/         — JwtAuthority, TrustedIssuerRegistry, key rotation
   ├── auth/              — AbstractAuthorizer, user/role/permission models
   ├── repository.py      — AsyncRepository[D, PK] protocol
@@ -20,6 +24,7 @@ varco_core/              — Domain model, service layer, event system, resilien
   ├── model.py           — DomainModel ABC
   ├── dto/               — DTOBase, DTOFactory, pagination
   ├── mapper.py          — Type mapping utilities
+  ├── meta.py            — FieldHint, ForeignKey, PrimaryKey; CompositeKey type aliases
   ├── providers.py       — DIContainer, DI wiring helpers
   └── exception/         — Domain, service, query, HTTP exception hierarchy
 
@@ -33,6 +38,7 @@ varco_kafka/             — Kafka event bus backend (aiokafka)
 varco_redis/             — Redis Pub/Sub event bus + cache backend (redis.asyncio)
   ├── bus.py             — RedisEventBus(AbstractEventBus)
   ├── cache.py           — RedisCache(CacheBackend[K, V])
+  ├── lock.py            — RedisLock(AbstractDistributedLock) — SET NX PX + Lua atomic release
   ├── streams.py         — Redis streams utilities (for channels)
   ├── channel.py         — RedisChannel (pubsub or stream routing)
   ├── dlq.py             — RedisDLQ (dead letter queue)
@@ -41,6 +47,8 @@ varco_redis/             — Redis Pub/Sub event bus + cache backend (redis.asyn
 
 varco_sa/                — SQLAlchemy async ORM backend
   ├── __init__.py        — SAConfig, SAModelFactory, bind_repositories()
+  ├── bootstrap.py       — SAFastrestApp.pool_metrics() → SAPoolMetrics
+  ├── pool_metrics.py    — SAPoolMetrics frozen dataclass, pool_metrics(engine) helper
   ├── outbox.py          — OutboxRepository impl for SQLAlchemy
   ├── di.py              — SAConfiguration (@Configuration)
   └── (auto-generated)   — ORM models created from DomainModel subclasses at import time
@@ -49,6 +57,10 @@ varco_beanie/            — Beanie/MongoDB async ODM backend
   ├── __init__.py        — BeanieConfig, BeanieModelFactory
   ├── outbox.py          — OutboxRepository impl for Beanie
   └── di.py              — BeanieConfiguration (@Configuration)
+
+varco_ws/                — WebSocket and SSE push adapters (browser real-time events)
+  ├── websocket.py       — WebSocketEventBus (push adapter), WebSocketConnection
+  └── sse.py             — SSEEventBus (push adapter), SSEConnection, _STOP_SENTINEL
 ```
 
 ---
@@ -110,13 +122,20 @@ AsyncCache[K, V] (Protocol, runtime_checkable)
 CacheBackend[K, V] (ABC, extends AsyncCache)
   ├── Abstract: _get(key), _set(key, value), _delete(key), _clear()
   ├── Concrete: InMemoryCache, NoOpCache, RedisCache (varco_redis), LayeredCache
-  └── Lifecycle: __aenter__, __aexit__, start(), stop()
+  ├── Lifecycle: __aenter__, __aexit__, start(), stop()
+  └── Warming hook: add_warmer(warmer) → runs warmers in __aenter__ after start()
 
 InvalidationStrategy (ABC)
   ├── Concrete: TTLStrategy, ExplicitStrategy, TaggedStrategy
   │             EventDrivenStrategy, CompositeStrategy
   └── Lifecycle: start(), stop() called by hosting backend
   └── Rule: Never instantiate outside backend lifecycle — may hold subscriptions
+
+CacheWarmer (ABC) — varco_core.cache.warming
+  ├── QueryCacheWarmer(query_fn, ttl)    — calls query_fn(), populates key→value pairs
+  ├── SnapshotCacheWarmer(snapshot_fn, ttl) — calls snapshot_fn(), bulk-loads dict
+  └── CompositeWarmer(warmers)           — runs multiple warmers sequentially; stops on error
+  └── Hook: backend.add_warmer(warmer)  — invoked once during __aenter__
 ```
 
 ### Repository & UnitOfWork
@@ -158,6 +177,16 @@ Concrete visitors:
 
 QueryTransformer (wiring)
   └── parse(params) → visit(ast) → apply(backend_query)
+
+Aggregation (varco_core.query.aggregation) — separate from QueryParams
+  ├── AggregationFunc (StrEnum): COUNT, SUM, AVG, MIN, MAX
+  ├── AggregationExpression(func, field, alias)  — frozen dataclass; field=None for COUNT(*)
+  ├── AggregationQuery(group_by, aggregations, having, limit, offset)  — frozen dataclass
+  │   └── having: FilterNode | None  — reuses existing AST for WHERE-like HAVING clauses
+  └── SQLAlchemyAggregationApplicator.apply(stmt, agg_query) → Select
+      └── Maps AggregationExpression → func.count()/func.sum()/etc.
+      └── having compiled via SQLAlchemyQueryCompiler (reuses filter visitor)
+  └── Rule: Keep AggregationQuery separate from QueryParams — different cardinality (groups vs rows)
 ```
 
 ### Authority / JWT
@@ -245,6 +274,125 @@ OutboxRelay (background task)
   ├── poll loop: get_pending() → publish() → delete()
   └── Rule: only place allowed to call AbstractEventBus directly (besides register_to)
   └── Contract: push() to DLQ must never raise — logs errors and swallows
+```
+
+### Distributed Locking
+
+```
+AbstractDistributedLock (ABC) — varco_core.lock
+  ├── try_acquire(key, *, ttl) → LockHandle | None  (non-blocking)
+  ├── release(key, token)                            (token-guarded, phantom-safe)
+  └── acquire(key, *, ttl, timeout=10.0) → LockHandle  (blocking, polling loop)
+
+LockHandle (context manager)
+  ├── key: str, token: UUID
+  └── async with handle: ...   (auto-releases on exit)
+
+InMemoryLock (varco_core) — asyncio.Lock per key, lazy dict; for unit tests only
+
+RedisLock (varco_redis) — SET key NX PX ttl; release via Lua script (token check + DEL)
+  └── Rule: release uses Lua script to atomically check token before DEL
+            — prevents a slow holder from releasing a new owner's lock after TTL expiry
+
+LockNotAcquiredError(Exception)
+  └── Raised by acquire() when timeout expires before the lock is free
+```
+
+### Saga Orchestration
+
+```
+SagaStatus (StrEnum): PENDING, RUNNING, COMPLETED, COMPENSATING, COMPENSATED, FAILED
+
+SagaStep (frozen dataclass)
+  ├── name: str
+  ├── execute: Callable[[dict], Awaitable[None]]
+  └── compensate: Callable[[dict], Awaitable[None]]
+
+SagaState (frozen dataclass)
+  ├── saga_id: UUID
+  ├── status: SagaStatus
+  ├── completed_steps: int          — how many steps ran successfully (for compensation index)
+  ├── context: dict[str, Any]       — shared mutable bag passed to every step
+  └── error: str | None
+
+AbstractSagaRepository (ABC)
+  ├── save(state: SagaState) → None
+  └── load(saga_id: UUID) → SagaState | None
+
+InMemorySagaRepository — dict-backed; for unit tests
+
+SagaOrchestrator(steps, repository)
+  ├── run(initial_context, *, saga_id=None) → SagaState
+  │   └── Executes steps in order; persists state after each step
+  ├── resume(saga_id) → SagaState
+  │   └── Loads persisted state and continues from completed_steps
+  └── _compensate(state, error)
+      └── Runs compensations in REVERSE order (steps[n-1] → steps[0])
+      └── Compensation failures are logged but do not prevent other compensations
+
+Rule: compensation runs in reverse — each step must be idempotent (safe to re-run)
+Rule: SagaOrchestrator persists state after every step — crash-safe resume is possible
+```
+
+### Connection Pool Metrics (varco_sa)
+
+```
+SAPoolMetrics (frozen dataclass) — varco_sa.pool_metrics
+  ├── size: int               — engine pool_size
+  ├── checked_out: int        — connections currently in use
+  ├── checked_in: int         — idle connections in pool
+  ├── overflow: int           — connections above pool_size (up to max_overflow)
+  ├── max_overflow: int       — upper overflow limit (-1 = unlimited)
+  ├── invalid: int            — invalidated (stale) connections
+  ├── pool_type: str          — e.g. "QueuePool", "NullPool", "StaticPool"
+  ├── captured_at: datetime   — UTC timestamp of the snapshot
+  ├── is_saturated: bool      — True when checked_out >= size + max_overflow (and both > 0)
+  └── utilisation: float      — fraction of total capacity in use, in [0.0, 1.0]
+
+pool_metrics(engine: AsyncEngine) → SAPoolMetrics
+  └── Reads engine.sync_engine.pool stats; returns zeroed snapshot for NullPool/StaticPool
+
+SAFastrestApp.pool_metrics() → SAPoolMetrics  (convenience method on bootstrap object)
+```
+
+### WebSocket / SSE Push Adapters (varco_ws)
+
+```
+WebSocketEventBus (push adapter — NOT an AbstractEventBus subclass)
+  ├── __init__(bus: AbstractEventBus, *, event_type, channel)
+  ├── start() / stop()  — subscribe / cancel bus subscription (idempotent)
+  ├── async with WebSocketEventBus(bus) as ws_bus:  — context manager
+  ├── async with ws_bus.connect(websocket) as conn:  — register/deregister client
+  ├── connected_count: int
+  └── _broadcast(message) — asyncio.gather to all clients concurrently; disconnects failed clients
+
+WebSocketConnection
+  ├── connection_id: str   — defaults to id(websocket)
+  └── send(message: str)   — calls websocket.send_text(message)
+
+SSEEventBus (push adapter — NOT an AbstractEventBus subclass)
+  ├── __init__(bus: AbstractEventBus, *, event_type, channel, max_queue_size=100)
+  ├── start() / stop()  — subscribe / cancel + send _STOP_SENTINEL to all queues (idempotent)
+  ├── async with SSEEventBus(bus) as sse_bus:  — context manager
+  ├── async with sse_bus.subscribe() as conn:  — create/remove SSEConnection
+  ├── subscriber_count: int
+  └── _handle_event(event) — sequential fan-out to all SSEConnection queues
+
+SSEConnection
+  ├── _queue: asyncio.Queue[Any]  — per-connection event buffer; maxsize = max_queue_size
+  ├── _put(item)                  — put event or sentinel (blocks if queue full = backpressure)
+  └── stream() → AsyncIterator[str]  — yields SSE-formatted strings until _STOP_SENTINEL
+
+SSE wire format: "data: {json}\n\n"   (double newline = event terminator per SSE spec)
+
+DESIGN:
+  ✅ Push adapters, not bus subclasses — bus handles routing; adapters handle push layer
+  ✅ WebSocket: asyncio.gather fan-out — one slow client does not block others
+  ✅ SSE: per-client asyncio.Queue — independent backpressure per subscriber
+  ✅ SSE stop: _STOP_SENTINEL in queue — stream() generator terminates without polling
+  ❌ WebSocket: no per-client queue — slow send_text blocks the broadcast coroutine
+  ❌ SSE: memory grows with (clients × queue depth) — cap with max_queue_size
+  ❌ varco_ws has no DI module — wire manually in application startup
 ```
 
 ---
@@ -373,7 +521,11 @@ event_bus: AbstractEventBus = container.resolve(AbstractEventBus)
 | `uow.py` | Unit of work protocol | `AsyncUnitOfWork`, `IUoWProvider` |
 | `model.py` | Domain model base | `DomainModel` |
 | `dto/` | Data transfer objects | `DTOBase`, `DTOFactory`, `Page` |
-| `meta.py` | Field metadata decorators | `FieldHint`, `ForeignKey`, `PrimaryKey` |
+| `meta.py` | Field metadata decorators + composite key aliases | `FieldHint`, `ForeignKey`, `PrimaryKey`, `CompositeKey`, `CompositeKey2[T1,T2]`, `CompositeKey3[T1,T2,T3]` |
+| `lock.py` | Distributed locking ABC + in-memory impl | `AbstractDistributedLock`, `InMemoryLock`, `LockHandle`, `LockNotAcquiredError` |
+| `service/saga.py` | Saga orchestration + compensation | `SagaOrchestrator`, `SagaStep`, `SagaState`, `AbstractSagaRepository`, `InMemorySagaRepository` |
+| `cache/warming.py` | Cache pre-warming strategies | `CacheWarmer`, `QueryCacheWarmer`, `SnapshotCacheWarmer`, `CompositeWarmer` |
+| `query/aggregation.py` | Aggregation query AST + SA applicator | `AggregationFunc`, `AggregationExpression`, `AggregationQuery`, `SQLAlchemyAggregationApplicator` |
 | `exception/` | Exception hierarchy | `RepositoryException`, `ServiceException`, `QueryException` |
 | `providers.py` | DI container | `DIContainer` |
 
@@ -449,6 +601,7 @@ filtered_query = transformer.transform(base_query, params, User)
 - **Repository impl**: Standard async SQLAlchemy queries
 - **Outbox impl**: SQL table-based `OutboxRepository`
 - **Query applicator**: `SQLAlchemyFilterVisitor` converts AST → WHERE clause
+- **Pool metrics**: `pool_metrics(engine)` returns `SAPoolMetrics` snapshot; `SAFastrestApp.pool_metrics()` for convenience
 - **DI**: `SAConfiguration` with engine, declarative base, entity classes
 
 ### varco_kafka (Kafka)
@@ -462,10 +615,18 @@ filtered_query = transformer.transform(base_query, params, User)
 
 - **Bus impl**: `RedisEventBus` — uses Redis Pub/Sub or Streams
 - **Cache impl**: `RedisCache` — async redis.asyncio, lazy connection pooling
+- **Lock impl**: `RedisLock` — SET NX PX for acquisition; Lua script for token-guarded release
 - **Channel routing**: Redis pubsub channels or streams
 - **DLQ impl**: Dedicated Redis stream for dead letters
 - **Invalidation**: `EventDrivenStrategy` can subscribe to events and invalidate cache keys
 - **Config**: `RedisConfig` with host/port; `CacheConfig` with TTL, strategy
+
+### varco_ws (WebSocket / SSE)
+
+- **WebSocket adapter**: `WebSocketEventBus` wraps any `AbstractEventBus`; calls `websocket.send_text(str)` — compatible with FastAPI, Starlette, aiohttp
+- **SSE adapter**: `SSEEventBus` delivers events as `data: {...}\n\n` strings; integrate with `StreamingResponse` in any ASGI framework
+- **No DI module**: wire manually in application startup / lifespan handlers
+- **No broker dependency**: both adapters subscribe to an existing bus instance; the push layer is fully decoupled from transport
 
 ---
 
@@ -477,6 +638,10 @@ filtered_query = transformer.transform(base_query, params, User)
 | Publishes events after DB commit | Broker failure silently loses events | Use `OutboxRepository` + `OutboxRelay` |
 | Instantiates `InvalidationStrategy` outside cache lifecycle | May hold subscriptions/background tasks | Let `CacheBackend` manage it via `start()`/`stop()` |
 | Per-call `CircuitBreaker` instances | Never accumulates failures, so circuit never opens | Use shared instance per external dependency |
+| Saga step not idempotent | Compensation re-runs a step that already partially ran — double side-effects | Design every step to be idempotent; check state before side-effecting |
+| Saga without persistent repository | Crash mid-saga leaves system in half-applied state with no recovery path | Use `AbstractSagaRepository` to persist state after every step |
+| `WebSocketEventBus` / `SSEEventBus` used as `AbstractEventBus` | They are push adapters, not bus implementations — cannot publish or route | Pass them a real bus; use the bus for service-to-service; use adapters only for browser push |
+| Cache backend `add_warmer()` called after `__aenter__` | Warmers only run during `__aenter__` — adding one after start is a no-op | Register all warmers before `async with cache:` |
 | Subscribes to events in `__init__` | Blocks service instantiation, makes testing hard | Defer to `@PostConstruct` + `register_to()` |
 | Mixin hook doesn't call `super()` | Breaks the MRO chain, later mixins never run | Always chain with `return await super()._hook_name(...)` |
 

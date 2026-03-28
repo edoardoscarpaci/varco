@@ -54,7 +54,42 @@ from __future__ import annotations
 import dataclasses
 import typing
 from enum import Enum
-from typing import Annotated, Any
+from typing import Annotated, Any, TypeAlias, TypeVar
+
+# ── CompositeKey type aliases ─────────────────────────────────────────────────
+#
+# Ergonomic aliases for composite primary key type hints.
+#
+# Problem: composite PKs are represented as plain tuples throughout the
+# framework, but ``tuple[int, str]`` at a repository type parameter gives no
+# semantic signal about *why* the tuple exists.  These aliases name the intent.
+#
+# Usage::
+#
+#     from varco_core.meta import CompositeKey2
+#
+#     class UserRoleRepo(AsyncRepository[UserRole, CompositeKey2[int, int]]):
+#         ...
+#
+# DESIGN: TypeAlias over a Generic class
+#   ✅ TypeAlias produces plain tuples at runtime — no extra overhead.
+#   ✅ Structural — works with isinstance(pk, tuple) guards unchanged.
+#   ✅ Compatible with existing ``tuple[T1, T2]`` usage — no migration needed.
+#   ❌ Cannot add methods (e.g. field accessors) — use a named dataclass
+#      if richer ergonomics are needed in the future.
+
+_T1 = TypeVar("_T1")
+_T2 = TypeVar("_T2")
+_T3 = TypeVar("_T3")
+
+# Two-field composite key — the most common case (e.g. user_id + role_id).
+CompositeKey2: TypeAlias = tuple[_T1, _T2]  # type: ignore[type-arg]
+
+# Three-field composite key — less common but present in ternary junction tables.
+CompositeKey3: TypeAlias = tuple[_T1, _T2, _T3]  # type: ignore[type-arg]
+
+# Untyped alias for generic code that only checks ``isinstance(pk, tuple)``.
+CompositeKey: TypeAlias = tuple  # type: ignore[type-arg]
 
 
 @dataclasses.dataclass(frozen=True)
