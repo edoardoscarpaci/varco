@@ -58,6 +58,49 @@ from typing import Annotated, Any
 
 
 @dataclasses.dataclass(frozen=True)
+class EncryptedHint:
+    """
+    Presence marker that designates a domain field for at-rest encryption.
+
+    Place inside ``Annotated[<type>, EncryptedHint()]`` on any business field.
+    The mapper encrypts the value before writing to the ORM object and decrypts
+    it after reading — the service and DTO layers always see plaintext.
+
+    The SA factory stores the column as ``LargeBinary`` regardless of the
+    field's declared Python type (``str``, ``int``, etc.) because ciphertext
+    is always raw bytes.
+
+    Only one ``EncryptedHint`` per field is meaningful; additional occurrences
+    are silently ignored (``MetaReader._extract_metadata`` returns the first).
+
+    DESIGN: empty marker dataclass over a richer config object
+      ✅ Algorithm and key selection live in the injected ``FieldEncryptor``,
+         not in the field annotation — field declarations stay backend-agnostic
+      ✅ Zero footprint on the domain model class — no import from a crypto lib
+      ❌ No per-field algorithm override — use separate ``FieldEncryptor``
+         instances per domain class if different fields need different algorithms
+
+    Thread safety:  ✅ Immutable — frozen=True.
+    Async safety:   ✅ No mutable state.
+
+    Example::
+
+        from typing import Annotated
+        from varco_core.meta import EncryptedHint
+
+        @dataclass
+        class Patient(AuditedDomainModel):
+            name: str
+            ssn:   Annotated[str,       EncryptedHint()]   # encrypted at rest
+            notes: Annotated[str | None, EncryptedHint()]  # nullable encrypted
+    """
+
+    # Intentionally empty — the hint is a presence marker only.
+    # Future versions could add ``algorithm: str = "fernet"`` here.
+    pass
+
+
+@dataclasses.dataclass(frozen=True)
 class FieldHint:
     """
     ORM-level metadata attached directly to a field's type annotation.
@@ -576,6 +619,10 @@ class ParsedMeta:
     # SQLAlchemy ORM relationship declarations (SA-only; ignored by Beanie)
     relationships: list[Relationship]
     many_to_many: list[ManyToMany]
+    # Fields bearing EncryptedHint — stored as LargeBinary / bytes in the DB.
+    # The mapper encrypts before write and decrypts after read for these fields.
+    # Empty frozenset means no field-level encryption for this entity.
+    encrypted_fields: frozenset[str]
     # Post-build customisation hook
     customize: Any  # Callable[[type], None] | None
     # DomainMigrator subclass (the class itself, not an instance) | None
@@ -661,9 +708,12 @@ class MetaReader:
             pk_ann = type_hints.get("pk")
             pk_type, pk_strategy = MetaReader._extract_single_pk(domain_cls, pk_ann)
 
-        # ── 3. Business field hints + FK ──────────────────────────────────────
+        # ── 3. Business field hints + FK + encryption markers ─────────────────
         field_hints: dict[str, FieldHint | None] = {}
         foreign_keys: dict[str, ForeignKey] = {}
+        # Collect field names that carry EncryptedHint so the mapper and SA
+        # factory can handle them without re-reading the annotations at runtime.
+        encrypted_field_names: set[str] = set()
 
         for f in MetaReader.domain_fields(domain_cls):
             ann = type_hints.get(f.name)
@@ -671,6 +721,11 @@ class MetaReader:
             fk = MetaReader._extract_metadata(ann, ForeignKey)
             if fk is not None:
                 foreign_keys[f.name] = fk
+            # EncryptedHint is a presence marker — its mere existence is enough.
+            # _extract_metadata returns the first instance or None, which is
+            # exactly the check needed here.
+            if MetaReader._extract_metadata(ann, EncryptedHint) is not None:
+                encrypted_field_names.add(f.name)
 
         # ── 4. Table-level constraints ─────────────────────────────────────────
         raw_constraints = getattr(meta_cls, "constraints", [])
@@ -712,6 +767,7 @@ class MetaReader:
             constraints=constraints,
             relationships=orm_relationships,
             many_to_many=orm_many_to_many,
+            encrypted_fields=frozenset(encrypted_field_names),
             customize=customize,
             migrator=migrator,
         )

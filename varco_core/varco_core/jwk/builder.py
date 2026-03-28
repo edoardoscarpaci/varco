@@ -486,6 +486,90 @@ class JwkBuilder:
         """
         return JsonWebKeySet(keys=keys)
 
+    # ── Symmetric enc key factory ─────────────────────────────────────────────
+
+    @classmethod
+    def generate_oct_enc_key(
+        cls,
+        kid: str,
+        *,
+        bits: int = 256,
+        alg: str = "A256GCM",
+    ) -> JsonWebKey:
+        """
+        Generate a fresh random symmetric key as a ``use="enc"`` JWK.
+
+        The generated ``oct`` JWK can be stored in a key-store, loaded at
+        startup via ``JwkEncryptorBridge.from_jwk()``, and distributed to
+        trusted parties in a JWKS payload.
+
+        The ``k`` field contains the raw key bytes encoded as base64url (no
+        padding) per RFC 7518 §6.4.  For ``bits=256`` this is a 32-byte key —
+        the same size Fernet requires, enabling lossless round-trips through
+        ``JwkEncryptorBridge``.
+
+        Args:
+            kid:  Key ID — opaque label (e.g. ``"tenant:acme:v1"``).
+            bits: Key size in bits.  Must be a multiple of 8.
+                  ``256`` (default) ≙ 32 bytes — works with Fernet and AES-256.
+                  ``128`` ≙ 16 bytes — AES-128 only (not usable with Fernet).
+            alg:  Intended algorithm.  Informational only in this value object;
+                  defaults to ``"A256GCM"`` for AES-256-GCM.
+
+        Returns:
+            ``JsonWebKey`` with ``kty="oct"``, ``use="enc"``, and a freshly
+            generated ``k`` value.
+
+        Raises:
+            ImportError: ``cryptography`` is not installed.
+            ValueError:  ``bits`` is not a positive multiple of 8.
+
+        DESIGN: os.urandom over Fernet.generate_key()
+          ✅ ``bits`` is explicit — caller controls key size
+          ✅ The ``k`` field is the raw key (no Fernet header/padding) —
+             interoperable with any AES-based encryptor, not only Fernet
+          ✅ For ``bits=256``, the key is 32 random bytes — identical to what
+             ``Fernet.generate_key()`` produces internally before base64url encoding
+          ❌ Does not validate that ``alg`` matches ``bits`` — caller responsible
+
+        Thread safety:  ✅ os.urandom is thread-safe.
+        Async safety:   ✅ CPU + OS RNG — safe to call from async context.
+
+        Edge cases:
+            - ``bits=128`` → produces a 16-byte key.  ``JwkEncryptorBridge.from_jwk``
+              will raise ``ValueError`` because Fernet requires exactly 32 bytes.
+              Use ``bits=256`` to remain Fernet-compatible.
+            - ``kid`` must be unique within a JWKS; no uniqueness check is
+              performed here — callers are responsible.
+
+        Example::
+
+            from varco_core.jwk import JwkBuilder
+
+            jwk = JwkBuilder.generate_oct_enc_key("tenant:acme:v1")
+            # Store jwk.to_dict() in DB / Redis for recovery after restart.
+            # At startup:
+            enc = JwkEncryptorBridge.from_jwk(jwk)
+        """
+        import os
+
+        from varco_core.jwk.model import _b64url_encode
+
+        if bits <= 0 or bits % 8 != 0:
+            raise ValueError(
+                f"bits must be a positive multiple of 8, got {bits}. "
+                f"Common values: 128 (AES-128), 256 (AES-256 / Fernet)."
+            )
+
+        # Generate cryptographically random bytes via the OS RNG — this is what
+        # Fernet.generate_key() does internally before adding base64url wrapping.
+        raw_key = os.urandom(bits // 8)
+
+        # JWK oct "k" is base64url without padding (RFC 7518 §6.4.1)
+        k = _b64url_encode(raw_key)
+
+        return JsonWebKey(kty="oct", kid=kid, use="enc", alg=alg, k=k)
+
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     @classmethod

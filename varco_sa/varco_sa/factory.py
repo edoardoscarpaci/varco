@@ -56,6 +56,13 @@ from varco_core.meta import (
 )
 from varco_core.model import DomainModel
 
+# TYPE_CHECKING import only — cryptography is optional; FieldEncryptor is
+# imported for annotation purposes only, never at runtime in this module.
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from varco_core.encryption import FieldEncryptor
+
 D = TypeVar("D", bound=DomainModel)
 
 # ── Python type → SA column type ──────────────────────────────────────────────
@@ -115,8 +122,18 @@ class _SAAutoMapper(AbstractMapper[D, Any]):
         orm_cls: type,
         pk_orm_attrs: list[str],
         migrator: Any = None,
+        encryptor: FieldEncryptor | None = None,
+        encrypted_fields: frozenset[str] = frozenset(),
+        tenant_id_field: str | None = None,
     ) -> None:
-        super().__init__(domain_cls, orm_cls, migrator=migrator)
+        super().__init__(
+            domain_cls,
+            orm_cls,
+            migrator=migrator,
+            encryptor=encryptor,
+            encrypted_fields=encrypted_fields,
+            tenant_id_field=tenant_id_field,
+        )
         self._pk_attrs = pk_orm_attrs
 
     @cached_property
@@ -210,12 +227,32 @@ class SAModelFactory:
         # if two domain classes declare the same M2M through table.
         self._assoc_tables: dict[str, sa.Table] = {}
 
-    def build(self, domain_cls: type[D]) -> tuple[type, _SAAutoMapper[D, Any]]:
+    def build(
+        self,
+        domain_cls: type[D],
+        encryptor: FieldEncryptor | None = None,
+        tenant_id_field: str | None = None,
+    ) -> tuple[type, _SAAutoMapper[D, Any]]:
         """
         Generate (or return cached) SA ORM class and mapper for ``domain_cls``.
 
+        The ORM class (columns, table name, constraints) is cached after the
+        first call and returned on all subsequent calls — it is idempotent.
+        The mapper is also cached; if ``build()`` is called a second time with
+        a different ``encryptor``, the cached mapper is returned unchanged.
+        Call ``build()`` once per domain class at startup.
+
         Args:
-            domain_cls: Any ``DomainModel`` subclass.
+            domain_cls:     Any ``DomainModel`` subclass.
+            encryptor:      Optional ``FieldEncryptor`` for fields annotated
+                            with ``EncryptedHint``.  ``None`` means no
+                            field-level encryption even if ``EncryptedHint``
+                            is present — useful for staged rollouts.
+            tenant_id_field: Name of the field on the domain class that holds
+                             the tenant ID.  When set, the mapper reads this
+                             field and passes it as ``context`` to the
+                             encryptor — enabling ``TenantAwareEncryptorRegistry``
+                             to select per-tenant keys.  Example: ``"tenant_id"``.
 
         Returns:
             ``(generated_orm_class, configured_mapper)``
@@ -255,6 +292,11 @@ class SAModelFactory:
             orm_cls=orm_cls,
             pk_orm_attrs=pk_attrs,
             migrator=meta.migrator,
+            encryptor=encryptor,
+            # ParsedMeta.encrypted_fields is the authoritative source — the
+            # factory already read it from the domain class annotations.
+            encrypted_fields=meta.encrypted_fields,
+            tenant_id_field=tenant_id_field,
         )
 
         # Cache the ORM class BEFORE processing relationships so that recursive
@@ -362,10 +404,22 @@ class SAModelFactory:
                 )
             inner_type, is_optional = MetaReader.extract_inner_type(ann)
             hint = meta.fields.get(field.name)
-            col_type = _sa_type(
-                inner_type, field.name, hint.max_length if hint else None
-            )
-            nullable = hint.nullable if hint is not None else is_optional
+
+            # DESIGN: encrypted fields → LargeBinary regardless of Python type
+            #   ✅ Ciphertext is always opaque bytes — no type confusion in the DB
+            #   ✅ Works for str, int, float, or any JSON-serialisable type
+            #   ❌ Column type does not reflect the domain field type — debuggers
+            #      will show binary blobs; document this in the domain class
+            if field.name in meta.encrypted_fields:
+                # Always nullable for encrypted fields: a NULL plaintext stays NULL
+                # in the DB without being encrypted — guards against encrypting None.
+                col_type = LargeBinary()
+                nullable = is_optional
+            else:
+                col_type = _sa_type(
+                    inner_type, field.name, hint.max_length if hint else None
+                )
+                nullable = hint.nullable if hint is not None else is_optional
             unique = hint.unique if hint else False
             index = hint.index if hint else False
             sa_fk_args = SAModelFactory._resolve_fk(field.name, meta)
