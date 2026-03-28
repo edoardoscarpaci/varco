@@ -49,9 +49,11 @@ from typing import TYPE_CHECKING, Any
 from pymongo import AsyncMongoClient
 
 from providify import Configuration, Provider
+from varco_core.health import HealthCheck
 from varco_core.model import DomainModel
 from varco_core.providers import RepositoryProvider
 from varco_core.repository import AsyncRepository
+from varco_beanie.health import BeanieHealthCheck
 from varco_beanie.provider import BeanieRepositoryProvider
 from varco_beanie.query.compiler import BeanieQueryCompiler
 
@@ -201,6 +203,27 @@ class BeanieModule:
         #   ✅ Thread-safe because there is no mutable state
         #   ❌ If a future subclass adds state, callers must be updated
         return BeanieQueryCompiler()
+
+    @Provider(singleton=True)
+    def beanie_health_check(self) -> HealthCheck:
+        """
+        Provide a ``BeanieHealthCheck`` for liveness/readiness probes.
+
+        Uses the same ``AsyncMongoClient`` stored in ``self._settings`` —
+        no additional configuration is needed.
+
+        Returns:
+            A ``BeanieHealthCheck`` bound to the ``HealthCheck`` interface.
+
+        Example::
+
+            check = container.get(HealthCheck)
+            result = await check.check()
+            assert result.status == HealthStatus.HEALTHY
+        """
+        # Sync provider — BeanieHealthCheck holds only the client reference;
+        # server_info() is called only on check(), not here.
+        return BeanieHealthCheck(self._settings.mongo_client)
 
 
 # ── Per-entity repository binding helper ──────────────────────────────────────

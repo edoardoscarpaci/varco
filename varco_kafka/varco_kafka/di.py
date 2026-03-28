@@ -82,10 +82,12 @@ from providify import Configuration, Inject, Provider
 
 from varco_core.event.base import AbstractEventBus
 from varco_core.event.channel import ChannelManager
+from varco_core.health import HealthCheck
 
 from varco_kafka.bus import KafkaEventBus
 from varco_kafka.channel import KafkaChannelManager, KafkaChannelManagerSettings
 from varco_kafka.config import KafkaEventBusSettings
+from varco_kafka.health import KafkaHealthCheck
 
 _logger = logging.getLogger(__name__)
 
@@ -175,6 +177,33 @@ class KafkaEventBusConfiguration:
         # @PostConstruct is NOT called on provider-returned instances — start explicitly.
         await bus.start()
         return bus
+
+    @Provider(singleton=True)
+    def kafka_health_check(
+        self,
+        settings: Inject[KafkaEventBusSettings],
+    ) -> HealthCheck:
+        """
+        Provide a ``KafkaHealthCheck`` for liveness/readiness probes.
+
+        The check probes the same brokers configured for the event bus by
+        reusing ``KafkaEventBusSettings.bootstrap_servers``.
+
+        Args:
+            settings: ``KafkaEventBusSettings`` — injected from the container.
+
+        Returns:
+            A ``KafkaHealthCheck`` bound to the ``HealthCheck`` interface.
+
+        Example::
+
+            check = await container.aget(HealthCheck)
+            result = await check.check()
+            assert result.status == HealthStatus.HEALTHY
+        """
+        # Sync provider — KafkaHealthCheck has no async init; it creates a
+        # throw-away producer only on each check() call.
+        return KafkaHealthCheck(settings.bootstrap_servers)
 
 
 # ── KafkaChannelManagerConfiguration ─────────────────────────────────────────

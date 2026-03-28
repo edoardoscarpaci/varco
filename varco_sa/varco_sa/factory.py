@@ -205,6 +205,10 @@ class SAModelFactory:
     def __init__(self, base: type[DeclarativeBase]) -> None:
         self._base = base
         self._cache: dict[type, tuple[type, AbstractMapper]] = {}
+        # Association tables created by ManyToMany declarations.
+        # Keyed by through-table name to avoid duplicate Table registrations
+        # if two domain classes declare the same M2M through table.
+        self._assoc_tables: dict[str, sa.Table] = {}
 
     def build(self, domain_cls: type[D]) -> tuple[type, _SAAutoMapper[D, Any]]:
         """
@@ -246,17 +250,32 @@ class SAModelFactory:
 
         orm_cls = type(f"{domain_cls.__name__}ORM", (self._base,), orm_attrs)
 
-        if meta.customize is not None:
-            meta.customize(orm_cls)
-
         mapper = _SAAutoMapper(
             domain_cls=domain_cls,
             orm_cls=orm_cls,
             pk_orm_attrs=pk_attrs,
             migrator=meta.migrator,
         )
+
+        # Cache the ORM class BEFORE processing relationships so that recursive
+        # build() calls (triggered by building the related entity's ORM class)
+        # find this entry in the cache and return early, breaking circular refs.
         self._cache[domain_cls] = (orm_cls, mapper)
         SAModelRegistry._register(domain_cls, orm_cls)
+
+        # Wire SA relationship() attributes now that both sides can be resolved.
+        # Relationships use lambdas for lazy target-class lookup, so order of
+        # registration does not matter — they are evaluated at mapper init time.
+        if meta.relationships:
+            self._build_relationships(orm_cls, meta)
+        if meta.many_to_many:
+            self._build_many_to_many(orm_cls, meta)
+
+        if meta.customize is not None:
+            # customize runs last so it can override anything the auto-builder
+            # set (e.g. replace a generated relationship with a custom one).
+            meta.customize(orm_cls)
+
         return orm_cls, mapper
 
     # ── PK column builders ────────────────────────────────────────────────────
@@ -387,3 +406,155 @@ class SAModelFactory:
             elif isinstance(c, DomainCheckConstraint):
                 args.append(sa.CheckConstraint(c.condition, name=c.name))
         return tuple(args) if args else ()
+
+    # ── Relationship builders ─────────────────────────────────────────────────
+
+    def _build_relationships(self, orm_cls: type, meta: ParsedMeta) -> None:
+        """
+        Wire SQLAlchemy ``relationship()`` attributes for all one-to-many /
+        many-to-one / one-to-one hints declared in ``Meta.relationships``.
+
+        Each relationship is attached to ``orm_cls`` via ``setattr`` using a
+        **lazy callable** for the target class — SA resolves the lambda during
+        mapper configuration, not at ``relationship()`` call time.  This means
+        the target ORM class does not need to exist yet when this method runs.
+
+        If the target domain class has not been built yet, ``build()`` is called
+        recursively.  Because ``build()`` caches the ORM class *before* calling
+        this method, circular references are broken at the cache level.
+
+        Args:
+            orm_cls: The source ORM class that will gain the relationship attribute.
+            meta:    Parsed metadata for the source domain class.
+
+        Edge cases:
+            - ``foreign_keys`` tuple is empty → SA infers the FK automatically
+              (works when there is exactly one FK to the target table).
+            - ``back_populates`` is ``None`` → one-way relationship; no
+              back-reference attribute is set on the target.
+            - Same relationship declared on both sides → wired independently;
+              SA resolves the ``back_populates`` string at mapper init.
+
+        Thread safety:  ⚠️ Call at startup only (same constraint as ``build()``).
+        Async safety:   ✅ Synchronous; no I/O.
+        """
+        from sqlalchemy.orm import relationship
+
+        for rel in meta.relationships:
+            # Build the target ORM class if it hasn't been built yet.
+            # The recursive call is safe because build() caches before
+            # calling _build_relationships(), so any cycle terminates.
+            target_orm_cls, _ = self.build(rel.target)
+
+            # Capture target in a local variable to avoid late-binding in the lambda.
+            # Without this, all lambdas in the loop would reference the LAST target_orm_cls.
+            _target = target_orm_cls
+
+            # Resolve foreign_keys to actual Column objects on the source ORM class.
+            # SA accepts a list of Column objects or an empty list (auto-infer).
+            fk_cols = (
+                [getattr(orm_cls, fk) for fk in rel.foreign_keys]
+                if rel.foreign_keys
+                else []
+            )
+
+            # DESIGN: lambda form for lazy target resolution
+            #   ✅ Defers class lookup to mapper init — both sides can be registered in any order
+            #   ✅ Avoids "mapper not yet configured" errors during circular builds
+            #   ❌ Slightly harder to debug — target is a closure, not a string
+            sa_rel = relationship(
+                lambda t=_target: t,
+                foreign_keys=fk_cols or None,  # None → SA auto-infers from declared FKs
+                back_populates=rel.back_populates,
+                lazy=rel.lazy,
+                uselist=rel.uselist,
+            )
+            setattr(orm_cls, rel.attr_name, sa_rel)
+
+    def _build_many_to_many(self, orm_cls: type, meta: ParsedMeta) -> None:
+        """
+        Wire SQLAlchemy ``relationship()`` attributes for all many-to-many hints
+        declared in ``Meta.many_to_many``, creating the association table if it
+        does not already exist.
+
+        Association tables are cached in ``self._assoc_tables`` keyed by table
+        name.  If two domain classes declare the same ``through`` table name,
+        only the first encountered creates the table; subsequent calls reuse it.
+
+        The association table columns are resolved from the *source* and *target*
+        ORM classes' primary key columns.  If ``source_fk`` / ``target_fk`` are
+        not specified, the convention ``{tablename}_id`` is used.
+
+        Args:
+            orm_cls: The source ORM class that will gain the relationship attribute.
+            meta:    Parsed metadata for the source domain class.
+
+        Edge cases:
+            - Two models declare the same ``through`` table from opposite sides →
+              the first call registers the table; the second reuses it from cache.
+            - ``back_populates`` is ``None`` → one-way M2M relationship.
+            - ``source_fk`` / ``target_fk`` default to ``{tablename}_id`` if not
+              specified — this matches the common Rails/Django naming convention.
+
+        Raises:
+            KeyError: If the source or target ORM class has no ``__tablename__``.
+
+        Thread safety:  ⚠️ Call at startup only.
+        Async safety:   ✅ Synchronous; no I/O.
+        """
+        from sqlalchemy.orm import relationship
+
+        for m2m in meta.many_to_many:
+            # Recursively build target if not yet registered.
+            target_orm_cls, _ = self.build(m2m.target)
+
+            # Resolve association table — create once, reuse on duplicate declarations.
+            through = m2m.through
+            if through not in self._assoc_tables:
+                src_table = orm_cls.__tablename__  # type: ignore[attr-defined]
+                tgt_table = target_orm_cls.__tablename__  # type: ignore[attr-defined]
+
+                # Default FK column names follow the ``{tablename}_id`` convention.
+                src_fk_col = m2m.source_fk or f"{src_table}_id"
+                tgt_fk_col = m2m.target_fk or f"{tgt_table}_id"
+
+                # Determine the SA column type from the source / target PK columns.
+                # We look up the mapped table's PK to infer the correct type rather
+                # than hard-coding Integer — domain PKs can be UUID or String.
+                src_pk_col = list(sa.inspect(orm_cls).mapper.primary_key)[0]  # type: ignore[attr-defined]
+                tgt_pk_col = list(sa.inspect(target_orm_cls).mapper.primary_key)[0]  # type: ignore[attr-defined]
+
+                # DESIGN: assoc table FK column types mirror the actual PK types
+                #   ✅ Handles UUID, String, and Integer PKs without hard-coding
+                #   ✅ Type mismatch errors surfaced at table-creation time, not runtime
+                #   ❌ Requires both ORM classes to have a mapped table (always true here)
+                assoc_table = sa.Table(
+                    through,
+                    self._base.metadata,
+                    sa.Column(
+                        src_fk_col,
+                        src_pk_col.type,
+                        sa.ForeignKey(f"{src_table}.{src_pk_col.name}"),
+                        primary_key=True,
+                    ),
+                    sa.Column(
+                        tgt_fk_col,
+                        tgt_pk_col.type,
+                        sa.ForeignKey(f"{tgt_table}.{tgt_pk_col.name}"),
+                        primary_key=True,
+                    ),
+                )
+                self._assoc_tables[through] = assoc_table
+
+            assoc_table = self._assoc_tables[through]
+
+            # Capture loop variables to avoid late-binding closure issues.
+            _target = target_orm_cls
+            _assoc = assoc_table
+
+            sa_rel = relationship(
+                lambda t=_target: t,
+                secondary=_assoc,
+                back_populates=m2m.back_populates,
+            )
+            setattr(orm_cls, m2m.attr_name, sa_rel)

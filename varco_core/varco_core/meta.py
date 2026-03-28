@@ -343,6 +343,152 @@ class CheckConstraint:
 
 
 # ════════════════════════════════════════════════════════════════════════════════
+# Relationship / ManyToMany
+# ════════════════════════════════════════════════════════════════════════════════
+
+
+@dataclasses.dataclass(frozen=True)
+class Relationship:
+    """
+    Declares a SQLAlchemy ORM ``relationship()`` on the generated ORM class.
+
+    Place in ``Meta.relationships`` — NOT in field ``Annotated`` annotations —
+    to keep domain model fields as pure value objects while still generating
+    SA relationship attributes on the ORM class.
+
+    DESIGN: Meta.relationships over Annotated field hints
+        ✅ Domain models stay as plain dataclasses — no ORM-loaded object fields.
+        ✅ Consistent with how ``constraints`` and ``customize`` already live
+           in ``Meta``.  One mental model for all ORM-level configuration.
+        ❌ Relationship attributes are not visible from domain class type hints.
+           Use ``SAModelRegistry.get(MyClass).attr`` if you need them at
+           application-code level.
+
+    Attributes:
+        attr_name:    Name of the attribute to add to the generated ORM class.
+        target:       The related ``DomainModel`` subclass.
+        foreign_keys: Names of FK column(s) on THIS model's ORM class that
+                      form the join condition.  Matches the FK columns generated
+                      from ``ForeignKey`` hints.
+        back_populates: Attribute name on the target ORM class for bidirectional
+                        navigation.  Both sides must declare matching names.
+        lazy:         SA loading strategy.  ``"select"`` (default) = lazy N+1
+                      (safe for async), ``"joined"`` = eager JOIN,
+                      ``"subquery"`` = eager subquery, ``"noload"`` = never load.
+        uselist:      ``True`` (default) for one-to-many (list of objects).
+                      ``False`` for many-to-one or one-to-one (single object).
+
+    Thread safety:  ✅ Immutable — frozen=True.
+    Async safety:   ✅ No mutable state.
+
+    Edge cases:
+        - ``foreign_keys`` must match the exact column names in the generated
+          ORM class — these are the SA column names, not the domain field names
+          (they are the same in varco since no renaming occurs).
+        - For bidirectional relationships, both sides must declare
+          ``back_populates`` pointing at each other.  Mismatched names raise
+          at SA mapper configuration time.
+        - ``lazy="joined"`` with async SQLAlchemy requires ``selectin`` or
+          explicit ``with_parent()`` — use ``lazy="selectin"`` for async eager
+          loading instead.
+        - ``uselist=False`` on a one-to-many without a UNIQUE constraint on the
+          FK column may silently return only the first row.  Add
+          ``FieldHint(unique=True)`` to enforce one-to-one at the DB level.
+
+    Example::
+
+        @dataclass
+        class Post(DomainModel):
+            author_id: Annotated[UUID, ForeignKey(User, field="pk")]
+
+            class Meta:
+                table = "posts"
+                relationships = [
+                    Relationship(
+                        attr_name="author",
+                        target=User,
+                        foreign_keys=("author_id",),
+                        uselist=False,
+                        back_populates="posts",
+                    )
+                ]
+    """
+
+    attr_name: str
+    target: type  # DomainModel subclass
+    foreign_keys: tuple[str, ...] = ()
+    back_populates: str | None = None
+    lazy: str = "select"
+    uselist: bool = True
+
+
+@dataclasses.dataclass(frozen=True)
+class ManyToMany:
+    """
+    Declares a SQLAlchemy many-to-many ``relationship()`` via an association table.
+
+    Place in ``Meta.relationships`` alongside ``Relationship`` entries.
+    The factory auto-generates the association table in ``Base.metadata``
+    (or reuses one with the same name if it already exists).
+
+    DESIGN: auto-generated association table over manual Table declaration
+        ✅ Users need only specify the through-table name — no SA imports needed
+           in the domain layer.
+        ✅ FK column names are inferred from the related entity's table name +
+           ``_id`` suffix, or overridden via ``source_fk`` / ``target_fk``.
+        ❌ Complex through-table schemas (extra payload columns, composite PKs)
+           are not supported — use ``Meta.customize`` for those cases.
+
+    Attributes:
+        attr_name:    Name of the relationship attribute on the ORM class.
+        target:       The related ``DomainModel`` subclass.
+        through:      Association table name in the database.
+        source_fk:    Column name in the association table pointing at THIS
+                      model's PK.  Defaults to ``f"{meta.table}_id"``.
+        target_fk:    Column name in the association table pointing at the
+                      target's PK.  Defaults to ``f"{target.Meta.table}_id"``.
+        back_populates: Attribute name on the target ORM class for bidirectional
+                        navigation.
+
+    Thread safety:  ✅ Immutable — frozen=True.
+    Async safety:   ✅ No mutable state.
+
+    Edge cases:
+        - Two ``ManyToMany`` declarations sharing the same ``through`` name
+          (e.g. both sides of a bidirectional M2M) will reuse the same
+          association table.  The factory checks ``Base.metadata.tables`` before
+          creating a new one.
+        - The generated association table uses ``Integer`` FK columns by default.
+          If both entities use UUID PKs, set ``source_fk`` and ``target_fk``
+          explicitly and rely on ``Meta.customize`` for the column types —
+          or use ``through`` with a manually declared table.
+        - ``back_populates`` is optional for unidirectional M2M relationships.
+
+    Example::
+
+        @dataclass
+        class Post(DomainModel):
+            class Meta:
+                table = "posts"
+                relationships = [
+                    ManyToMany(
+                        attr_name="tags",
+                        target=Tag,
+                        through="post_tags",
+                        back_populates="posts",
+                    )
+                ]
+    """
+
+    attr_name: str
+    target: type  # DomainModel subclass
+    through: str  # association table name
+    source_fk: str | None = None
+    target_fk: str | None = None
+    back_populates: str | None = None
+
+
+# ════════════════════════════════════════════════════════════════════════════════
 # pk_field helper
 # ════════════════════════════════════════════════════════════════════════════════
 
@@ -427,6 +573,9 @@ class ParsedMeta:
     foreign_keys: dict[str, ForeignKey]
     # Table-level metadata
     constraints: list[UniqueConstraint | CheckConstraint]
+    # SQLAlchemy ORM relationship declarations (SA-only; ignored by Beanie)
+    relationships: list[Relationship]
+    many_to_many: list[ManyToMany]
     # Post-build customisation hook
     customize: Any  # Callable[[type], None] | None
     # DomainMigrator subclass (the class itself, not an instance) | None
@@ -531,12 +680,24 @@ class MetaReader:
             valid_names={f.name for f in MetaReader.domain_fields(domain_cls)},
         )
 
-        # ── 5. Post-build customisation hook ──────────────────────────────────
+        # ── 5. ORM relationship declarations (SA-only, Beanie ignores these) ────
+        # Meta.relationships is a list of Relationship or ManyToMany objects.
+        # They are silently split here into two typed lists so SAModelFactory
+        # can process them without isinstance checks in hot code.
+        raw_rels = getattr(meta_cls, "relationships", [])
+        orm_relationships: list[Relationship] = [
+            r for r in raw_rels if isinstance(r, Relationship)
+        ]
+        orm_many_to_many: list[ManyToMany] = [
+            r for r in raw_rels if isinstance(r, ManyToMany)
+        ]
+
+        # ── 6. Post-build customisation hook ──────────────────────────────────
         # Meta.customize must be a staticmethod or plain callable — it receives
         # the generated ORM class so the user can add relationships, events, etc.
         customize = getattr(meta_cls, "customize", None)
 
-        # ── 6. Optional data migrator ─────────────────────────────────────────
+        # ── 7. Optional data migrator ─────────────────────────────────────────
         # Meta.migrator must be a DomainMigrator subclass (the class itself,
         # not an instance). Only meaningful for VersionedDomainModel subclasses.
         migrator = getattr(meta_cls, "migrator", None)
@@ -549,6 +710,8 @@ class MetaReader:
             fields=field_hints,
             foreign_keys=foreign_keys,
             constraints=constraints,
+            relationships=orm_relationships,
+            many_to_many=orm_many_to_many,
             customize=customize,
             migrator=migrator,
         )

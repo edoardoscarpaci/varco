@@ -65,11 +65,13 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from providify import Configuration, Provider
+from varco_core.health import HealthCheck
 from varco_core.model import DomainModel
 from varco_core.providers import RepositoryProvider
 from varco_core.repository import AsyncRepository
 from varco_core.query.applicator.sqlalchemy import SQLAlchemyQueryApplicator
 from varco_sa.bootstrap import SAConfig
+from varco_sa.health import SAHealthCheck
 from varco_sa.provider import SQLAlchemyRepositoryProvider
 
 if TYPE_CHECKING:
@@ -192,6 +194,27 @@ class SAModule:
         #   ✅ Thread-safe because there is no mutable state
         #   ❌ If a future subclass adds state, callers must be updated
         return SQLAlchemyQueryApplicator()
+
+    @Provider(singleton=True)
+    def sa_health_check(self) -> HealthCheck:
+        """
+        Provide an ``SAHealthCheck`` for liveness/readiness probes.
+
+        Uses the same engine already stored in ``self._config`` — no additional
+        configuration is needed.
+
+        Returns:
+            An ``SAHealthCheck`` bound to the ``HealthCheck`` interface.
+
+        Example::
+
+            check = container.get(HealthCheck)
+            result = await check.check()
+            assert result.status == HealthStatus.HEALTHY
+        """
+        # Sync provider — SAHealthCheck holds only the engine reference;
+        # no async init step is required.
+        return SAHealthCheck(self._config.engine)
 
 
 # ── Per-entity repository binding helper ──────────────────────────────────────

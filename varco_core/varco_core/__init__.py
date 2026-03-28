@@ -215,6 +215,14 @@ from varco_core.observability import (
     span,
 )
 
+# ── Health probes ────────────────────────────────────────────────────────────────
+from varco_core.health import (
+    CompositeHealthCheck,
+    HealthCheck,
+    HealthResult,
+    HealthStatus,
+)
+
 # ── Auth helpers ─────────────────────────────────────────────────────────────────
 from varco_core.auth.helpers import (
     GrantBasedAuthorizer,
@@ -399,6 +407,11 @@ __all__ = [
     "Metric",
     "MetricKind",
     "register_gauge",
+    # ── Health probes ─────────────────────────────────────────────────────────────
+    "HealthCheck",
+    "HealthResult",
+    "HealthStatus",
+    "CompositeHealthCheck",
     # ── Auth helpers ─────────────────────────────────────────────────────────────
     "GrantBasedAuthorizer",
     "OwnershipAuthorizer",

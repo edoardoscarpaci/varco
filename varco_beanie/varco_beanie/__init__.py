@@ -46,6 +46,8 @@ providify DI integration::
 from varco_beanie.bootstrap import BeanieConfig, BeanieFastrestApp
 from varco_beanie.di import BeanieModule, BeanieSettings, bind_repositories
 from varco_beanie.factory import BeanieDocRegistry, BeanieModelFactory
+from varco_beanie.health import BeanieHealthCheck
+from varco_beanie.index_guard import BeanieIndexGuard, IndexDrift, IndexDriftReport
 from varco_beanie.outbox import BeanieOutboxRepository, OutboxDocument
 from varco_beanie.provider import BeanieRepositoryProvider
 from varco_beanie.repository import AsyncBeanieRepository
@@ -68,4 +70,10 @@ __all__ = [
     # ── Outbox pattern ────────────────────────────────────────────────────────
     "OutboxDocument",
     "BeanieOutboxRepository",
+    # ── Index drift detection ─────────────────────────────────────────────────
+    "BeanieIndexGuard",
+    "IndexDrift",
+    "IndexDriftReport",
+    # ── Health probe ──────────────────────────────────────────────────────────
+    "BeanieHealthCheck",
 ]

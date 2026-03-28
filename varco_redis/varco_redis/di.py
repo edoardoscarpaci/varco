@@ -90,10 +90,12 @@ from providify import Configuration, Inject, Provider
 
 from varco_core.event.base import AbstractEventBus
 from varco_core.event.channel import ChannelManager
+from varco_core.health import HealthCheck
 
 from varco_redis.bus import RedisEventBus
 from varco_redis.channel import RedisChannelManager
 from varco_redis.config import RedisEventBusSettings
+from varco_redis.health import RedisHealthCheck
 from varco_redis.streams import RedisStreamEventBus
 
 _logger = logging.getLogger(__name__)
@@ -178,6 +180,27 @@ class RedisEventBusConfiguration:
         # @PostConstruct is NOT called on provider-returned instances — start explicitly.
         await bus.start()
         return bus
+
+    @Provider(singleton=True)
+    def redis_health_check(
+        self,
+        settings: Inject[RedisEventBusSettings],
+    ) -> HealthCheck:
+        """
+        Provide a ``RedisHealthCheck`` for liveness/readiness probes.
+
+        Reuses ``RedisEventBusSettings.url`` so the health probe tests the
+        same Redis instance the event bus is connected to.
+
+        Args:
+            settings: ``RedisEventBusSettings`` — injected from the container.
+
+        Returns:
+            A ``RedisHealthCheck`` bound to the ``HealthCheck`` interface.
+        """
+        # Sync provider — RedisHealthCheck creates its own throw-away connection
+        # on each check() call; no async init is needed here.
+        return RedisHealthCheck(settings.url)
 
 
 # ── RedisChannelManagerConfiguration ─────────────────────────────────────────
@@ -324,3 +347,22 @@ class RedisStreamConfiguration:
         # @PostConstruct is NOT called on provider-returned instances — start explicitly.
         await bus.start()
         return bus
+
+    @Provider(singleton=True)
+    def redis_health_check(
+        self,
+        settings: Inject[RedisEventBusSettings],
+    ) -> HealthCheck:
+        """
+        Provide a ``RedisHealthCheck`` for liveness/readiness probes.
+
+        Reuses ``RedisEventBusSettings.url`` so the probe targets the same
+        Redis instance as the stream bus.
+
+        Args:
+            settings: ``RedisEventBusSettings`` — injected from the container.
+
+        Returns:
+            A ``RedisHealthCheck`` bound to the ``HealthCheck`` interface.
+        """
+        return RedisHealthCheck(settings.url)

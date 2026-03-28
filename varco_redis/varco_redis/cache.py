@@ -51,6 +51,8 @@ from providify import Configuration, Inject, PreDestroy, Provider
 
 from varco_core.cache.base import CacheBackend, InvalidationStrategy
 from varco_core.cache.config import CacheSettings
+from varco_core.cache.layered import LayeredCache
+from varco_core.cache.memory import InMemoryCache
 from varco_core.serialization import JsonSerializer, Serializer
 
 _logger = logging.getLogger(__name__)
@@ -452,8 +454,234 @@ class RedisCacheConfiguration:
         return cache
 
 
+# ── LayeredCacheSettings ──────────────────────────────────────────────────────
+
+
+class LayeredCacheSettings(CacheSettings):
+    """
+    Configuration for the ``RedisLayeredCacheConfiguration`` (L1 InMemory + L2 Redis).
+
+    Uses a dedicated ``VARCO_LAYERED_CACHE_`` prefix so this configuration can
+    coexist with ``RedisCacheConfiguration`` (``VARCO_REDIS_CACHE_``) in the
+    same container without env-var collision.
+
+    DESIGN: flat settings over nested RedisCacheSettings
+        ✅ Pydantic Settings does not support cleanly nested BaseSettings with
+           different prefixes — a flat layout avoids model_validator hacks.
+        ✅ All fields are directly env-readable with a single prefix.
+        ❌ Duplicates a few field names from RedisCacheSettings.  Acceptable
+           because the env prefixes are intentionally different.
+
+    Attributes:
+        url:            L2 Redis connection URL.
+                        Env: ``VARCO_LAYERED_CACHE_URL``.
+        key_prefix:     L2 Redis key prefix for namespace isolation.
+                        Env: ``VARCO_LAYERED_CACHE_KEY_PREFIX``.
+        decode_responses: Must be ``False`` (bytes mode) for L2.
+                          Env: ``VARCO_LAYERED_CACHE_DECODE_RESPONSES``.
+        socket_timeout: L2 Redis socket timeout in seconds.
+                        Env: ``VARCO_LAYERED_CACHE_SOCKET_TIMEOUT``.
+        l1_max_size:    Maximum number of entries held in L1 (InMemoryCache).
+                        ``None`` = unbounded.
+                        Env: ``VARCO_LAYERED_CACHE_L1_MAX_SIZE``.
+        l1_default_ttl: Default TTL for L1 entries in seconds.
+                        ``None`` = use the promoted L2 TTL if available.
+                        Env: ``VARCO_LAYERED_CACHE_L1_DEFAULT_TTL``.
+        write_mode:     ``"write-through"`` (default) — all writes go to both
+                        L1 and L2.  ``"write-around"`` — writes go to L2 only;
+                        L1 is populated only on the next read (lazy promotion).
+                        Env: ``VARCO_LAYERED_CACHE_WRITE_MODE``.
+        promote_ttl:    TTL applied to values promoted from L2 → L1.
+                        ``None`` = use the L1 default TTL.
+                        Env: ``VARCO_LAYERED_CACHE_PROMOTE_TTL``.
+
+    Thread safety:  ✅ Immutable — frozen=True.
+    Async safety:   ✅ No mutable state.
+
+    Edge cases:
+        - ``decode_responses`` must remain ``False`` — the cache uses bytes-
+          mode serialization; setting it to True causes deserialization errors.
+        - Setting ``write_mode="write-around"`` means L1 will be cold until the
+          first read after a write — suitable for write-heavy, read-light loads.
+        - ``l1_max_size=None`` is unbounded — in long-running services with many
+          unique keys this can grow large.  Set a reasonable cap in production.
+    """
+
+    model_config = SettingsConfigDict(
+        # Distinct from VARCO_REDIS_CACHE_ — avoids conflict if both
+        # RedisCacheConfiguration and RedisLayeredCacheConfiguration are installed.
+        env_prefix="VARCO_LAYERED_CACHE_",
+        frozen=True,
+    )
+
+    # ── L2 (Redis) settings ───────────────────────────────────────────────────
+
+    url: str = "redis://localhost:6379/0"
+    """L2 Redis URL.  Env: ``VARCO_LAYERED_CACHE_URL``."""
+
+    key_prefix: str = ""
+    """L2 key prefix.  Env: ``VARCO_LAYERED_CACHE_KEY_PREFIX``."""
+
+    decode_responses: bool = False
+    """Must be False.  Env: ``VARCO_LAYERED_CACHE_DECODE_RESPONSES``."""
+
+    socket_timeout: float | None = None
+    """L2 socket timeout in seconds.  Env: ``VARCO_LAYERED_CACHE_SOCKET_TIMEOUT``."""
+
+    # ── L1 (InMemoryCache) settings ───────────────────────────────────────────
+
+    l1_max_size: int | None = None
+    """L1 maximum entry count.  None = unbounded.  Env: ``VARCO_LAYERED_CACHE_L1_MAX_SIZE``."""
+
+    l1_default_ttl: float | None = None
+    """L1 default TTL in seconds.  Env: ``VARCO_LAYERED_CACHE_L1_DEFAULT_TTL``."""
+
+    # ── LayeredCache settings ─────────────────────────────────────────────────
+
+    write_mode: str = "write-through"
+    """Write propagation mode.  Env: ``VARCO_LAYERED_CACHE_WRITE_MODE``."""
+
+    promote_ttl: float | None = None
+    """TTL applied when promoting from L2 → L1.  Env: ``VARCO_LAYERED_CACHE_PROMOTE_TTL``."""
+
+
+# ── RedisLayeredCacheConfiguration ────────────────────────────────────────────
+
+
+@Configuration
+class RedisLayeredCacheConfiguration:
+    """
+    Providify ``@Configuration`` that wires a two-layer ``LayeredCache``
+    (L1 ``InMemoryCache`` + L2 ``RedisCache``) into the container.
+
+    Provides:
+        ``LayeredCacheSettings`` — all L1/L2 settings; override before
+                                    installing this configuration.
+        ``CacheBackend``          — started ``LayeredCache`` singleton.
+
+    Use this instead of ``RedisCacheConfiguration`` when you want a fast
+    in-process L1 cache in front of Redis.  Common for read-heavy workloads
+    where the same keys are accessed repeatedly in a short window.
+
+    Lifecycle:
+        The ``LayeredCache.start()`` starts both the L1 and L2 backends.
+        ``@PreDestroy`` on each backend's ``stop()`` is called automatically
+        when ``await container.ashutdown()`` is called.
+
+    DESIGN: builds both L1 and L2 internally over exposing them as separate
+    bindings
+        ✅ The composite is the useful artifact — callers need CacheBackend,
+           not the individual layers.
+        ✅ Keeps the DI graph simple — one install, one resolved interface.
+        ❌ Callers cannot independently inject the L1 or L2 backend.
+           If that's needed, install RedisCacheConfiguration separately and
+           compose manually.
+
+    Thread safety:  ✅  Providify singletons are created once and cached.
+    Async safety:   ✅  Provider is ``async def`` — safe to ``await``.
+
+    Example::
+
+        container = DIContainer()
+        await container.ainstall(RedisLayeredCacheConfiguration)
+        cache = await container.aget(CacheBackend)
+        await cache.set("user:42", user_data, ttl=300)
+        result = await cache.get("user:42")   # served from L1 on second call
+        await container.ashutdown()
+
+    Overriding settings::
+
+        container.provide(
+            lambda: LayeredCacheSettings(
+                url=os.environ["REDIS_URL"],
+                key_prefix="myapp:",
+                l1_max_size=1000,
+                l1_default_ttl=60.0,
+            ),
+            LayeredCacheSettings,
+        )
+        await container.ainstall(RedisLayeredCacheConfiguration)
+    """
+
+    @Provider(singleton=True)
+    def layered_cache_settings(self) -> LayeredCacheSettings:
+        """
+        Default ``LayeredCacheSettings`` with localhost Redis and unbounded L1.
+
+        Returns:
+            A ``LayeredCacheSettings`` with development-friendly defaults.
+        """
+        # Reads from VARCO_LAYERED_CACHE_* env vars if set.
+        return LayeredCacheSettings.from_env()
+
+    @Provider(singleton=True)
+    async def layered_cache(
+        self,
+        settings: Inject[LayeredCacheSettings],
+    ) -> CacheBackend:
+        """
+        Build, start, and return the ``LayeredCache`` singleton.
+
+        Constructs an ``InMemoryCache`` (L1) and a ``RedisCache`` (L2) from
+        the injected settings, then wraps them in a ``LayeredCache``.
+
+        Args:
+            settings: ``LayeredCacheSettings`` — injected from the container.
+
+        Returns:
+            A started ``LayeredCache`` bound to ``CacheBackend``.
+
+        Raises:
+            ConnectionError: If L2 Redis is unreachable at startup.
+
+        Edge cases:
+            - ``LayeredCache.start()`` starts L1 first, then L2.  If L2 fails
+              to start, L1 is already started — this is handled by LayeredCache
+              (it stops in reverse order on error).
+        """
+        _logger.info(
+            "RedisLayeredCacheConfiguration: starting LayeredCache "
+            "(l2_url=%s, l2_prefix=%r, l1_max_size=%s, write_mode=%r).",
+            settings.url,
+            settings.key_prefix,
+            settings.l1_max_size,
+            settings.write_mode,
+        )
+
+        # Build L1 — in-process InMemoryCache with optional TTL and size cap.
+        # L1 settings use CacheSettings with the l1_default_ttl from LayeredCacheSettings.
+        l1_settings = CacheSettings(default_ttl=settings.l1_default_ttl)
+        l1 = InMemoryCache(l1_settings, max_size=settings.l1_max_size)
+
+        # Build L2 — Redis-backed cache.  Construct RedisCacheSettings from the
+        # flat LayeredCacheSettings fields rather than reading a second env prefix.
+        l2_settings = RedisCacheSettings(
+            url=settings.url,
+            key_prefix=settings.key_prefix,
+            decode_responses=settings.decode_responses,
+            socket_timeout=settings.socket_timeout,
+            # default_ttl comes from the base CacheSettings field.
+            default_ttl=settings.default_ttl,
+        )
+        l2 = RedisCache(l2_settings)
+
+        # Wrap both layers in LayeredCache.
+        # start() is called here — not deferred to __aenter__ — because providify
+        # @PostConstruct is not called on provider-returned instances.
+        cache = LayeredCache(
+            l1,
+            l2,
+            write_mode=settings.write_mode,  # type: ignore[arg-type]
+            promote_ttl=settings.promote_ttl,
+        )
+        await cache.start()
+        return cache
+
+
 __all__ = [
     "RedisCacheSettings",
     "RedisCache",
     "RedisCacheConfiguration",
+    "LayeredCacheSettings",
+    "RedisLayeredCacheConfiguration",
 ]
