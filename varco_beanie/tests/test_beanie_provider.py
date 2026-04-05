@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from varco_core.model import DomainModel
+from varco_beanie.config import BeanieSettings
 from varco_beanie.provider import BeanieRepositoryProvider
 from varco_beanie.repository import AsyncBeanieRepository
 from varco_beanie.uow import BeanieUnitOfWork
@@ -72,11 +73,12 @@ def _make_provider(
         mock_factory.build.return_value = factory_build_return
         mock_factory_cls.return_value = mock_factory
 
-        provider = BeanieRepositoryProvider(
+        settings = BeanieSettings(
             mongo_client=mock_mongo_client,
             db_name="testdb",
             transactional=transactional,
         )
+        provider = BeanieRepositoryProvider(settings)
         provider._factory = mock_factory  # keep the mock accessible
     return provider
 

@@ -52,7 +52,10 @@ Async safety:   ✅ Synchronous; safe to call from async contexts.
 from __future__ import annotations
 
 import re
+import sys
 from typing import Any
+
+from providify import Singleton
 
 from varco_core.exception.query import OperationNotSupported
 from varco_core.query.type import (
@@ -109,6 +112,7 @@ def _sql_like_to_regex(pattern: str) -> str:
     return "".join(result)
 
 
+@Singleton(priority=-sys.maxsize, qualifier="beanie")
 class BeanieQueryCompiler(BinaryWalkingVisitor):
     """
     AST visitor that compiles query nodes into MongoDB filter documents.

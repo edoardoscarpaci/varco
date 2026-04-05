@@ -3,12 +3,14 @@ varco_sa.di
 ===========
 Providify DI integration for the SQLAlchemy async backend.
 
-Wires ``SQLAlchemyRepositoryProvider``, ``SQLAlchemyQueryApplicator``, and
-per-entity ``AsyncRepository[D]`` bindings into a ``DIContainer`` with a
-minimal setup API.
+``SQLAlchemyRepositoryProvider``, ``SAHealthCheck``, and
+per-entity ``AsyncRepository[D]`` bindings are wired into a ``DIContainer``
+with a minimal setup API.
 
-This mirrors the ``BeanieModule`` pattern from ``varco_beanie.di`` exactly,
-so apps that run both backends experience a consistent wiring ceremony.
+``SAModule`` is a scan-marker ``@Configuration``.  The concrete singletons
+(``SQLAlchemyRepositoryProvider``, ``SAHealthCheck``) are registered
+automatically when ``container.scan("varco_sa")`` is called — no explicit
+``@Provider`` factories are needed.
 
 Typical usage::
 
@@ -24,7 +26,7 @@ Typical usage::
 
     container = DIContainer()
 
-    # 1. Provide configuration (sync @Provider — install() stays synchronous)
+    # 1. Provide SAConfig — injected into SQLAlchemyRepositoryProvider and SAHealthCheck
     @Provider(singleton=True)
     def sa_config() -> SAConfig:
         return SAConfig(
@@ -35,26 +37,18 @@ Typical usage::
 
     container.provide(sa_config)
 
-    # 2. Install the module — injects SAConfig, registers providers
+    # 2. Install the module (scan-marker) and scan varco_sa
     container.install(SAModule)
+    container.scan("varco_sa", recursive=True)
 
-    # 3. Bind per-entity AsyncRepository[D] — must come after install()
+    # 3. Bind per-entity AsyncRepository[D] — must come after scan
     bind_repositories(container, User, Post)
 
     # 4. Resolve anywhere in your app
     repo = await container.aget(AsyncRepository[User])
 
-DESIGN: reuse SAConfig as the injectable settings object rather than
-introducing a parallel SASettings dataclass
-    ✅ SAConfig is already exported, well-documented, and frozen — it is
-       the natural configuration value object for this backend.
-    ✅ Avoids a second "settings vs config" duality that would confuse users.
-    ❌ Ties the DI wiring to varco_sa.bootstrap — if SAConfig ever changes,
-       SAModule.repository_provider() must be updated.  Acceptable: they
-       evolve together.
-
 Thread safety:  ✅ All binding registrations happen at startup before concurrent access.
-Async safety:   ✅ repository_provider is synchronous — SQLAlchemy has no async
+Async safety:   ✅ All providers are synchronous — SQLAlchemy has no async
                     init step equivalent to Beanie's init_beanie().
 """
 
@@ -62,17 +56,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy.ext.asyncio import async_sessionmaker
-
-from providify import Configuration, Provider
-from varco_core.health import HealthCheck
+from providify import Configuration, Inject, Provider
 from varco_core.model import DomainModel
 from varco_core.providers import RepositoryProvider
 from varco_core.repository import AsyncRepository
-from varco_core.query.applicator.sqlalchemy import SQLAlchemyQueryApplicator
-from varco_sa.bootstrap import SAConfig
-from varco_sa.health import SAHealthCheck
-from varco_sa.provider import SQLAlchemyRepositoryProvider
+from varco_core.service.base import IUoWProvider
 
 if TYPE_CHECKING:
     # Avoid a hard circular import — DIContainer is only needed for the
@@ -88,15 +76,10 @@ class SAModule:
     """
     Providify ``@Configuration`` module for the SQLAlchemy async backend.
 
-    When installed in a ``DIContainer``, registers the following bindings:
-
-    +-------------------------------+--------+-------+
-    | Type                          | Scope  | Async |
-    +===============================+========+=======+
-    | ``RepositoryProvider``        | SINGLE | no    |
-    +-------------------------------+--------+-------+
-    | ``SQLAlchemyQueryApplicator`` | SINGLE | no    |
-    +-------------------------------+--------+-------+
+    ``SQLAlchemyRepositoryProvider`` and ``SAHealthCheck`` are registered
+    automatically via their ``@Singleton`` decorators when
+    ``container.scan("varco_sa")`` is called.  This module serves as a
+    scan marker and provides the ``bind_repositories()`` helper.
 
     Per-entity ``AsyncRepository[D]`` bindings are NOT added here — call
     ``bind_repositories(container, *entity_classes)`` after ``install()``.
@@ -106,115 +89,39 @@ class SAModule:
     Prerequisites
     -------------
     ``SAConfig`` must be registered in the container before calling
-    ``container.install(SAModule)`` — the container injects it into
-    this class's ``__init__``.
+    ``container.install(SAModule)`` — it is injected into
+    ``SQLAlchemyRepositoryProvider`` and ``SAHealthCheck`` via ``Inject[SAConfig]``.
 
     Thread safety:  ✅ Module instance is created once at install() time.
-    Async safety:   ✅ Both providers are synchronous — SQLAlchemy requires
+    Async safety:   ✅ All providers are synchronous — SQLAlchemy requires
                        no async initialisation at construction time.
-
-    Args:
-        config: Injected ``SAConfig`` from the container.
     """
 
-    def __init__(self, config: SAConfig) -> None:
-        # config is injected by the container at install() time.
-        # Stored so @Provider methods can access engine, base, entity_classes.
-        self._config = config
-
     @Provider(singleton=True)
-    def repository_provider(self) -> RepositoryProvider:
+    def uow_provider(self, repo_provider: Inject[RepositoryProvider]) -> IUoWProvider:
         """
-        Create, configure, and return the ``SQLAlchemyRepositoryProvider``.
+        Expose ``SQLAlchemyRepositoryProvider`` as the ``IUoWProvider`` interface.
 
-        Builds an ``async_sessionmaker`` from the injected engine and session
-        options, then registers all ``entity_classes`` so that ORM tables
-        are mapped before the first ``make_uow()`` call.
+        ``AsyncService.__init__`` injects ``IUoWProvider`` — this binding
+        satisfies that requirement automatically when ``SAModule`` is installed.
 
-        DESIGN: sync @Provider over async
-            SQLAlchemy's ``async_sessionmaker`` and ``SQLAlchemyRepositoryProvider``
-            are pure in-memory construction — no network I/O or async init step
-            exists.  A sync provider keeps ``container.install()`` synchronous,
-            allowing callers to use ``install()`` instead of ``ainstall()``.
-            ✅ Simpler setup — no ``await container.ainstall(SAModule)`` required.
-            ✅ ``async_sessionmaker`` and the provider are reusable across tasks.
-            ❌ If a future SA version adds async engine initialisation, this
-               will need to become async.  Track SQLAlchemy changelog.
+        DESIGN: explicit provider over RepositoryProvider extending IUoWProvider
+            ✅ Avoids a circular import:
+               ``providers.py`` → ``service.base`` → ``service/__init__``
+               → ``service/tenant`` → ``providers.py``.
+            ✅ DI container resolves ``IUoWProvider`` independently of
+               ``RepositoryProvider`` — both types remain injectable separately.
+            ✅ The ``RepositoryProvider`` singleton is reused — no second
+               instance is created.
+            ❌ Requires this explicit @Provider method on SAModule;
+               cannot be auto-discovered by scanning alone.
 
         Returns:
-            A fully configured ``SQLAlchemyRepositoryProvider`` cast to the
-            abstract ``RepositoryProvider`` interface — callers should inject
-            ``RepositoryProvider``, not the concrete type.
-
-        Edge cases:
-            - If ``entity_classes`` is empty in the config, no entities are
-              registered.  Call ``provider.register(*classes)`` manually before
-              the first ``make_uow()`` or add them to ``SAConfig``.
-            - ``session_options`` defaults to ``{"expire_on_commit": False}``
-              in ``SAConfig`` — prevents lazy-load errors after commit in async
-              contexts.  Do not override this unless you understand the implications.
+            The same ``RepositoryProvider`` singleton, typed as ``IUoWProvider``.
         """
-        # Build the session factory once — shared across all UoW instances
-        # created by this provider.  expire_on_commit=False is in the SAConfig
-        # default, matching the recommended async SQLAlchemy setup.
-        session_factory = async_sessionmaker(
-            self._config.engine,
-            **self._config.session_options,
-        )
-
-        provider = SQLAlchemyRepositoryProvider(
-            base=self._config.base,
-            session_factory=session_factory,
-        )
-
-        if self._config.entity_classes:
-            # Register all domain classes upfront — ORM table mappings are
-            # generated lazily by SAModelFactory on first register() call.
-            provider.register(*self._config.entity_classes)
-
-        return provider
-
-    @Provider(singleton=True)
-    def query_applicator(self) -> SQLAlchemyQueryApplicator:
-        """
-        Provide a shared ``SQLAlchemyQueryApplicator`` instance.
-
-        ``SQLAlchemyQueryApplicator`` is stateless — all public methods are pure
-        functions of their inputs — so a single instance is safe to share
-        across all repositories and concurrent requests.
-
-        Returns:
-            A singleton ``SQLAlchemyQueryApplicator``.
-
-        Thread safety:  ✅ Stateless — no instance state to protect.
-        Async safety:   ✅ All visitor methods are synchronous.
-        """
-        # DESIGN: singleton over creating a new applicator per repository call
-        #   ✅ Zero allocation overhead at query time
-        #   ✅ Thread-safe because there is no mutable state
-        #   ❌ If a future subclass adds state, callers must be updated
-        return SQLAlchemyQueryApplicator()
-
-    @Provider(singleton=True)
-    def sa_health_check(self) -> HealthCheck:
-        """
-        Provide an ``SAHealthCheck`` for liveness/readiness probes.
-
-        Uses the same engine already stored in ``self._config`` — no additional
-        configuration is needed.
-
-        Returns:
-            An ``SAHealthCheck`` bound to the ``HealthCheck`` interface.
-
-        Example::
-
-            check = container.get(HealthCheck)
-            result = await check.check()
-            assert result.status == HealthStatus.HEALTHY
-        """
-        # Sync provider — SAHealthCheck holds only the engine reference;
-        # no async init step is required.
-        return SAHealthCheck(self._config.engine)
+        # Return the same singleton — RepositoryProvider's make_uow() satisfies
+        # IUoWProvider without any wrapping.
+        return repo_provider
 
 
 # ── Per-entity repository binding helper ──────────────────────────────────────

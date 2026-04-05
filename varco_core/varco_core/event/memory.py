@@ -59,8 +59,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any
+
+from providify import Instance, Singleton
 
 from varco_core.event.base import (
     CHANNEL_ALL,
@@ -81,6 +84,7 @@ _logger = logging.getLogger(__name__)
 # ── InMemoryEventBus ──────────────────────────────────────────────────────────
 
 
+@Singleton(priority=-sys.maxsize - 1, qualifier="in_memory")
 class InMemoryEventBus(AbstractEventBus):
     """
     Synchronous or background in-process event bus.
@@ -124,13 +128,15 @@ class InMemoryEventBus(AbstractEventBus):
         *,
         error_policy: ErrorPolicy = ErrorPolicy.COLLECT_ALL,
         dispatch_mode: DispatchMode = DispatchMode.SYNC,
-        middleware: list[EventMiddleware] | None = None,
+        middleware: Instance[EventMiddleware] | list[EventMiddleware] | None = None,
     ) -> None:
         """
         Args:
             error_policy:  Handler error policy.
             dispatch_mode: ``SYNC`` or ``BACKGROUND``.  See module docstring.
-            middleware:    Ordered list of ``EventMiddleware`` instances.
+            middleware:    DI instance handle for ``EventMiddleware`` bindings.
+                           All registered middlewares are resolved via
+                           ``middleware.get_all()`` when provided.
         """
         self._subscriptions: list[_SubscriptionEntry] = []
 
@@ -149,7 +155,21 @@ class InMemoryEventBus(AbstractEventBus):
 
         self._error_policy = error_policy
         self._dispatch_mode = dispatch_mode
-        self._middleware: list[EventMiddleware] = middleware or []
+        # Support both DI-injected Instance[EventMiddleware] and direct list
+        # construction (used in tests and non-DI usage patterns).
+        # DESIGN: isinstance guard over a single code path
+        #   ✅ Backward-compatible — existing tests that pass list(...) unchanged.
+        #   ✅ DI path resolves all registered EventMiddleware singletons via get_all().
+        #   ❌ Two branches — acceptable given the stable public API contract.
+        if middleware is None:
+            self._middleware: list[EventMiddleware] = []
+        elif isinstance(middleware, list):
+            self._middleware = middleware
+        else:
+            # Instance[EventMiddleware] from DI container
+            self._middleware = (
+                list(middleware.get_all()) if middleware.resolvable() else []
+            )
 
         # Strong references to pending background tasks — prevents GC from
         # collecting tasks before they complete.  Each task removes itself

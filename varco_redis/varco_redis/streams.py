@@ -77,12 +77,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
+import sys
 from collections.abc import Awaitable, Callable, Coroutine
-from typing import Any
+from typing import Annotated, Any
 
 import redis.asyncio as aioredis
 
-from providify import PreDestroy
+from providify import Inject, Instance, InjectMeta, PostConstruct, PreDestroy, Singleton
 
 from varco_core.event.base import (
     CHANNEL_ALL,
@@ -128,6 +129,7 @@ _BATCH_SIZE: int = 10
 _DEFAULT_GROUP: str = "varco"
 
 
+@Singleton(priority=-sys.maxsize, qualifier="redis_streams")
 class RedisStreamEventBus(AbstractEventBus):
     """
     ``AbstractEventBus`` backed by Redis Streams via ``redis.asyncio``.
@@ -176,19 +178,18 @@ class RedisStreamEventBus(AbstractEventBus):
 
     def __init__(
         self,
-        config: RedisEventBusSettings | None = None,
+        config: Inject[RedisEventBusSettings],
         *,
         consumer_group: str = _DEFAULT_GROUP,
         consumer_name: str | None = None,
         batch_size: int = _BATCH_SIZE,
         error_policy: ErrorPolicy = ErrorPolicy.COLLECT_ALL,
-        middleware: list[EventMiddleware] | None = None,
-        serializer: EventSerializer | None = None,
+        middleware: Instance[EventMiddleware] | list[EventMiddleware] | None = None,
+        serializer: Annotated[EventSerializer, InjectMeta(optional=True)] = None,
     ) -> None:
         """
         Args:
-            config:         Redis settings.  Defaults to ``RedisEventBusSettings()``
-                            (localhost, reads from ``VARCO_REDIS_*`` env vars).
+            config:         Redis settings injected from the container.
             consumer_group: Group name for ``XREADGROUP``.  Instances sharing
                             the same group load-balance consumption.
             consumer_name:  Per-consumer identity within the group.  Must be
@@ -196,20 +197,29 @@ class RedisStreamEventBus(AbstractEventBus):
                             ``"{hostname}-{pid}"`` which is unique per process.
             batch_size:     Max entries to read per XREADGROUP call.
             error_policy:   Handler error policy.
-            middleware:     Ordered middleware list (index 0 is outermost).
+            middleware:     DI instance handle for ``EventMiddleware`` bindings.
             serializer:     Pluggable event serializer.  Defaults to
                             ``JsonEventSerializer()``.
         """
         import os  # deferred — only needed once at construction time
 
-        self._config = config or RedisEventBusSettings()
+        self._config = config
         self._consumer_group = consumer_group
         # Default consumer name: hostname + PID — unique per process,
         # survives restarts with a recognisable identity for redis-cli XPENDING.
         self._consumer_name = consumer_name or f"{socket.gethostname()}-{os.getpid()}"
         self._batch_size = batch_size
         self._error_policy = error_policy
-        self._middleware: list[EventMiddleware] = middleware or []
+        # Support both DI-injected Instance[EventMiddleware] and direct list
+        # construction (used in tests and non-DI usage patterns).
+        if middleware is None:
+            self._middleware: list[EventMiddleware] = []
+        elif isinstance(middleware, list):
+            self._middleware = middleware
+        else:
+            self._middleware = (
+                list(middleware.get_all()) if middleware.resolvable() else []
+            )
         self._serializer: EventSerializer = serializer or JsonEventSerializer()
 
         self._subscriptions: list[_SubscriptionEntry] = []
@@ -233,6 +243,7 @@ class RedisStreamEventBus(AbstractEventBus):
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
+    @PostConstruct
     async def start(self) -> None:
         """
         Connect to Redis, create consumer groups, and start the listener task.

@@ -178,7 +178,7 @@ class TestRedisEventBusSettings:
 
 class TestRedisEventBusLifecycle:
     async def test_publish_before_start_raises(self) -> None:
-        bus = RedisEventBus()
+        bus = RedisEventBus(RedisEventBusSettings())
         with pytest.raises(RuntimeError, match="start()"):
             await bus.publish(OrderPlacedEvent(order_id="1"))
 
@@ -196,7 +196,7 @@ class TestRedisEventBusLifecycle:
             await bus.stop()
 
     async def test_stop_before_start_is_noop(self) -> None:
-        bus = RedisEventBus()
+        bus = RedisEventBus(RedisEventBusSettings())
         await bus.stop()  # must not raise
 
     async def test_context_manager(

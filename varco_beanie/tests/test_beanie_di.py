@@ -29,12 +29,12 @@ import pytest
 from varco_core.model import DomainModel
 from varco_core.providers import RepositoryProvider
 from varco_core.repository import AsyncRepository
+from varco_beanie.config import BeanieSettings
 from varco_beanie.di import (
-    BeanieModule,
-    BeanieSettings,
     _make_repo_provider,
     bind_repositories,
 )
+from varco_beanie.provider import BeanieRepositoryProvider
 from varco_beanie.query.compiler import BeanieQueryCompiler
 
 
@@ -90,54 +90,41 @@ def test_beanie_settings_stores_provided_values() -> None:
     assert settings.transactional is True
 
 
-# ── BeanieModule.repository_provider() ───────────────────────────────────────
+# ── BeanieRepositoryProvider (DI-injected via BeanieSettings) ────────────────
 
 
-async def test_beanie_module_repository_provider_returns_repository_provider() -> None:
-    """repository_provider() returns an object typed as RepositoryProvider."""
+def test_beanie_module_repository_provider_returns_repository_provider() -> None:
+    """BeanieRepositoryProvider is a RepositoryProvider."""
     mock_client = MagicMock()
     settings = BeanieSettings(mongo_client=mock_client, db_name="testdb")
-    module = BeanieModule(settings=settings)
 
-    with (
-        patch(
-            "varco_beanie.di.BeanieRepositoryProvider", autospec=True
-        ) as mock_provider_cls,
-        patch("beanie.init_beanie", new_callable=AsyncMock),
-        patch("varco_beanie.provider.BeanieDocRegistry") as mock_registry,
-    ):
-        mock_registry.all_documents.return_value = []
-        mock_provider_instance = AsyncMock(spec=RepositoryProvider)
-        mock_provider_instance.register = MagicMock()
-        mock_provider_instance.init = AsyncMock()
-        mock_provider_cls.return_value = mock_provider_instance
+    with patch("varco_beanie.provider.BeanieModelFactory"):
+        provider = BeanieRepositoryProvider(settings)
 
-        result = await module.repository_provider()
-
-    assert result is mock_provider_instance
+    assert isinstance(provider, RepositoryProvider)
 
 
 async def test_beanie_module_repository_provider_calls_init() -> None:
-    """repository_provider() awaits provider.init() to initialise Beanie."""
+    """BeanieRepositoryProvider.init() calls beanie.init_beanie()."""
     mock_client = MagicMock()
     settings = BeanieSettings(mongo_client=mock_client, db_name="testdb")
-    module = BeanieModule(settings=settings)
 
-    with patch("varco_beanie.di.BeanieRepositoryProvider") as mock_cls:
-        mock_instance = MagicMock()
-        mock_instance.init = AsyncMock()
-        mock_instance.register = MagicMock()
-        mock_cls.return_value = mock_instance
+    with patch("varco_beanie.provider.BeanieModelFactory"):
+        provider = BeanieRepositoryProvider(settings)
 
-        await module.repository_provider()
+    with (
+        patch("beanie.init_beanie", new_callable=AsyncMock) as mock_init,
+        patch("varco_beanie.provider.BeanieDocRegistry") as mock_registry,
+    ):
+        mock_registry.all_documents.return_value = []
+        await provider.init()
 
-    mock_instance.init.assert_awaited_once()
+    mock_init.assert_awaited_once()
 
 
-async def test_beanie_module_repository_provider_registers_entity_classes() -> None:
+def test_beanie_module_repository_provider_registers_entity_classes() -> None:
     """
-    repository_provider() calls provider.register(*entity_classes) when
-    entity_classes is non-empty.
+    BeanieRepositoryProvider registers entity_classes from settings in __init__.
     """
     mock_client = MagicMock()
     settings = BeanieSettings(
@@ -145,51 +132,38 @@ async def test_beanie_module_repository_provider_registers_entity_classes() -> N
         db_name="testdb",
         entity_classes=(_User, _Post),
     )
-    module = BeanieModule(settings=settings)
 
-    with patch("varco_beanie.di.BeanieRepositoryProvider") as mock_cls:
-        mock_instance = MagicMock()
-        mock_instance.init = AsyncMock()
-        mock_instance.register = MagicMock()
-        mock_cls.return_value = mock_instance
+    with patch("varco_beanie.provider.BeanieModelFactory") as mock_factory_cls:
+        mock_factory = MagicMock()
+        mock_factory.build.return_value = (MagicMock(), MagicMock())
+        mock_factory_cls.return_value = mock_factory
 
-        await module.repository_provider()
+        BeanieRepositoryProvider(settings)
 
-    mock_instance.register.assert_called_once_with(_User, _Post)
+    assert mock_factory.build.call_count == 2
 
 
-async def test_beanie_module_repository_provider_skips_register_when_no_entities() -> (
-    None
-):
+def test_beanie_module_repository_provider_skips_register_when_no_entities() -> None:
     """
-    repository_provider() does NOT call register() when entity_classes is empty.
-
-    Edge case: user may register entities manually after provider creation.
+    BeanieRepositoryProvider does NOT call register() when entity_classes is empty.
     """
-    mock_client = MagicMock()
-    settings = BeanieSettings(mongo_client=mock_client, db_name="testdb")
-    module = BeanieModule(settings=settings)
+    settings = BeanieSettings(mongo_client=MagicMock(), db_name="testdb")
 
-    with patch("varco_beanie.di.BeanieRepositoryProvider") as mock_cls:
-        mock_instance = MagicMock()
-        mock_instance.init = AsyncMock()
-        mock_instance.register = MagicMock()
-        mock_cls.return_value = mock_instance
+    with patch("varco_beanie.provider.BeanieModelFactory") as mock_factory_cls:
+        mock_factory = MagicMock()
+        mock_factory_cls.return_value = mock_factory
 
-        await module.repository_provider()
+        BeanieRepositoryProvider(settings)
 
-    mock_instance.register.assert_not_called()
+    mock_factory.build.assert_not_called()
 
 
-# ── BeanieModule.query_compiler() ────────────────────────────────────────────
+# ── BeanieQueryCompiler ───────────────────────────────────────────────────────
 
 
 def test_beanie_module_query_compiler_returns_beanie_query_compiler() -> None:
-    """query_compiler() returns a BeanieQueryCompiler instance."""
-    settings = BeanieSettings(mongo_client=MagicMock(), db_name="testdb")
-    module = BeanieModule(settings=settings)
-
-    result = module.query_compiler()
+    """BeanieQueryCompiler can be instantiated directly."""
+    result = BeanieQueryCompiler()
 
     assert isinstance(result, BeanieQueryCompiler)
 

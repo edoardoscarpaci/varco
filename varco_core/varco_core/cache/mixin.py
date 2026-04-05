@@ -151,7 +151,7 @@ from varco_core.cache.service import CacheInvalidated
 from varco_core.dto import CreateDTO, ReadDTO, UpdateDTO
 from varco_core.event.producer import AbstractEventProducer
 from varco_core.model import DomainModel
-from varco_core.service.base import AsyncService
+from varco_core.service.base import AsyncService, _ANON_CTX
 from varco_core.service.mixin import ServiceMixin
 
 if TYPE_CHECKING:
@@ -290,7 +290,7 @@ class CacheServiceMixin(
 
     # ── Overridden read operations ────────────────────────────────────────────
 
-    async def get(self, pk: PK, ctx: AuthContext) -> R:
+    async def get(self, pk: PK, ctx: AuthContext = _ANON_CTX) -> R:
         """
         Look-aside ``get``: return cached ``ReadDTO`` or delegate to ``super().get()``.
 
@@ -323,7 +323,7 @@ class CacheServiceMixin(
         await self._cache.set(key, result, ttl=self._cache_ttl)
         return result
 
-    async def list(self, params: QueryParams, ctx: AuthContext) -> list[R]:
+    async def list(self, params: QueryParams, ctx: AuthContext = _ANON_CTX) -> list[R]:
         """
         Look-aside ``list``: stable hash of ``QueryParams`` as the cache key.
 
@@ -363,7 +363,7 @@ class CacheServiceMixin(
 
     # ── Overridden write operations ───────────────────────────────────────────
 
-    async def create(self, dto: C, ctx: AuthContext) -> R:
+    async def create(self, dto: C, ctx: AuthContext = _ANON_CTX) -> R:
         """
         Delegate to ``super().create()`` then flush the tenant's list cache.
 
@@ -388,7 +388,7 @@ class CacheServiceMixin(
         await self._publish_invalidated([], operation="create")
         return result
 
-    async def update(self, pk: PK, dto: U, ctx: AuthContext) -> R:
+    async def update(self, pk: PK, dto: U, ctx: AuthContext = _ANON_CTX) -> R:
         """
         Delegate to ``super().update()`` then evict the get key and tenant's list cache.
 
@@ -414,7 +414,7 @@ class CacheServiceMixin(
         await self._publish_invalidated([get_key], operation="update")
         return result
 
-    async def delete(self, pk: PK, ctx: AuthContext) -> None:
+    async def delete(self, pk: PK, ctx: AuthContext = _ANON_CTX) -> None:
         """
         Delegate to ``super().delete()`` then evict the get key and tenant's list cache.
 

@@ -256,6 +256,16 @@ from varco_core.jwk import (
     JwkBuilder,
 )
 
+# ── Job layer ────────────────────────────────────────────────────────────────────
+from varco_core.job import (
+    AbstractJobRunner,
+    AbstractJobStore,
+    Job,
+    JobStatus,
+    auth_context_from_snapshot,
+    auth_context_to_snapshot,
+)
+
 # ── Authority layer ─────────────────────────────────────────────────────────────
 from varco_core.authority import (
     AuthorizationConfig,
@@ -445,6 +455,13 @@ __all__ = [
     "circuit_breaker",
     "retry",
     "timeout",
+    # ── Job layer ────────────────────────────────────────────────────────────────
+    "Job",
+    "JobStatus",
+    "AbstractJobStore",
+    "AbstractJobRunner",
+    "auth_context_to_snapshot",
+    "auth_context_from_snapshot",
     # ── Authority layer ─────────────────────────────────────────────────────────
     "JwtAuthority",
     "MultiKeyAuthority",

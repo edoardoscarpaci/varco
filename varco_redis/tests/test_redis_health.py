@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from varco_core.health import HealthStatus
+from varco_redis.config import RedisEventBusSettings
 from varco_redis.health import RedisHealthCheck
 
 
@@ -38,7 +39,7 @@ async def test_healthy_returns_healthy_status() -> None:
     import redis.asyncio as _aioredis
 
     with patch.object(_aioredis, "from_url", return_value=mock_client):
-        check = RedisHealthCheck(url="redis://localhost:6379/0")
+        check = RedisHealthCheck(RedisEventBusSettings(url="redis://localhost:6379/0"))
         result = await check.check()
 
     assert result.status is HealthStatus.HEALTHY
@@ -55,7 +56,7 @@ async def test_healthy_calls_ping() -> None:
     import redis.asyncio as _aioredis
 
     with patch.object(_aioredis, "from_url", return_value=mock_client):
-        check = RedisHealthCheck(url="redis://localhost:6379/0")
+        check = RedisHealthCheck(RedisEventBusSettings(url="redis://localhost:6379/0"))
         await check.check()
 
     mock_client.ping.assert_awaited_once()
@@ -76,7 +77,9 @@ async def test_timeout_returns_unhealthy() -> None:
     import redis.asyncio as _aioredis
 
     with patch.object(_aioredis, "from_url", return_value=mock_client):
-        check = RedisHealthCheck(url="redis://localhost:6379/0", timeout=0.001)
+        check = RedisHealthCheck(
+            RedisEventBusSettings(url="redis://localhost:6379/0"), timeout=0.001
+        )
         result = await check.check()
 
     assert result.status is HealthStatus.UNHEALTHY
@@ -95,7 +98,7 @@ async def test_connection_error_returns_unhealthy() -> None:
     import redis.asyncio as _aioredis
 
     with patch.object(_aioredis, "from_url", return_value=mock_client):
-        check = RedisHealthCheck(url="redis://localhost:6379/0")
+        check = RedisHealthCheck(RedisEventBusSettings(url="redis://localhost:6379/0"))
         result = await check.check()
 
     assert result.status is HealthStatus.UNHEALTHY
@@ -110,7 +113,7 @@ async def test_generic_exception_returns_unhealthy() -> None:
     import redis.asyncio as _aioredis
 
     with patch.object(_aioredis, "from_url", return_value=mock_client):
-        check = RedisHealthCheck(url="redis://localhost:6379/0")
+        check = RedisHealthCheck(RedisEventBusSettings(url="redis://localhost:6379/0"))
         result = await check.check()
 
     assert result.status is HealthStatus.UNHEALTHY
@@ -124,7 +127,7 @@ async def test_check_never_raises_on_error() -> None:
     import redis.asyncio as _aioredis
 
     with patch.object(_aioredis, "from_url", side_effect=OSError("no route")):
-        check = RedisHealthCheck(url="redis://localhost:6379/0")
+        check = RedisHealthCheck(RedisEventBusSettings(url="redis://localhost:6379/0"))
         result = await check.check()  # must not raise
 
     assert result.status is HealthStatus.UNHEALTHY
@@ -141,7 +144,7 @@ async def test_aclose_called_on_success() -> None:
     import redis.asyncio as _aioredis
 
     with patch.object(_aioredis, "from_url", return_value=mock_client):
-        check = RedisHealthCheck(url="redis://localhost:6379/0")
+        check = RedisHealthCheck(RedisEventBusSettings(url="redis://localhost:6379/0"))
         await check.check()
 
     mock_client.aclose.assert_awaited_once()
@@ -155,7 +158,7 @@ async def test_aclose_called_on_error() -> None:
     import redis.asyncio as _aioredis
 
     with patch.object(_aioredis, "from_url", return_value=mock_client):
-        check = RedisHealthCheck(url="redis://localhost:6379/0")
+        check = RedisHealthCheck(RedisEventBusSettings(url="redis://localhost:6379/0"))
         await check.check()
 
     mock_client.aclose.assert_awaited_once()
@@ -165,7 +168,9 @@ async def test_aclose_called_on_error() -> None:
 
 
 def test_repr_contains_url() -> None:
-    check = RedisHealthCheck(url="redis://myhost:6379/1", timeout=3.0)
+    check = RedisHealthCheck(
+        RedisEventBusSettings(url="redis://myhost:6379/1"), timeout=3.0
+    )
     text = repr(check)
     assert "myhost" in text
     assert "3.0" in text
@@ -193,7 +198,7 @@ async def test_integration_healthy_against_real_redis() -> None:
         host = redis.get_container_host_ip()
         port = redis.get_exposed_port(6379)
         url = f"redis://{host}:{port}/0"
-        check = RedisHealthCheck(url=url, timeout=5.0)
+        check = RedisHealthCheck(RedisEventBusSettings(url=url), timeout=5.0)
         result = await check.check()
     assert result.status is HealthStatus.HEALTHY
     assert result.latency_ms is not None and result.latency_ms >= 0.0

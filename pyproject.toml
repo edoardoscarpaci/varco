@@ -15,4 +15,10 @@ members = [
     "varco_sa",
     "varco_memcached",
     "varco_ws",
+    "varco_fastapi",
+]
+
+[dependency-groups]
+dev = [
+    "asyncpg>=0.31.0",
 ]

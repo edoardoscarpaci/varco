@@ -37,6 +37,7 @@ from typing import AsyncIterator, TypeAlias, TypeVar
 from varco_core.assembler import AbstractDTOAssembler
 from varco_core.auth import AuthContext
 from varco_core.dto import CreateDTO, PagedReadDTO, ReadDTO, UpdateDTO
+from varco_core.service.base import _ANON_CTX
 from varco_core.query.params import QueryParams
 
 # ── TypeVars ──────────────────────────────────────────────────────────────────
@@ -100,7 +101,7 @@ class ServiceProtocol(Protocol[D, PK, C, R, U]):  # type: ignore[misc]
           must honour the same signature to satisfy the protocol.
     """
 
-    async def get(self, pk: PK, ctx: AuthContext) -> R:
+    async def get(self, pk: PK, ctx: AuthContext = _ANON_CTX) -> R:
         """
         Fetch a single entity by primary key.
 
@@ -117,7 +118,7 @@ class ServiceProtocol(Protocol[D, PK, C, R, U]):  # type: ignore[misc]
         """
         ...
 
-    async def list(self, params: QueryParams, ctx: AuthContext) -> list[R]:
+    async def list(self, params: QueryParams, ctx: AuthContext = _ANON_CTX) -> list[R]:
         """
         Return all entities matching ``params``.
 
@@ -133,7 +134,7 @@ class ServiceProtocol(Protocol[D, PK, C, R, U]):  # type: ignore[misc]
         """
         ...
 
-    async def count(self, params: QueryParams, ctx: AuthContext) -> int:
+    async def count(self, params: QueryParams, ctx: AuthContext = _ANON_CTX) -> int:
         """
         Count entities matching ``params`` without fetching them.
 
@@ -152,7 +153,7 @@ class ServiceProtocol(Protocol[D, PK, C, R, U]):  # type: ignore[misc]
     async def paged_list(
         self,
         params: QueryParams,
-        ctx: AuthContext,
+        ctx: AuthContext = _ANON_CTX,
         *,
         raw_query: str | None = None,
     ) -> PagedReadDTO[R]:
@@ -173,7 +174,7 @@ class ServiceProtocol(Protocol[D, PK, C, R, U]):  # type: ignore[misc]
         """
         ...
 
-    async def create(self, dto: C, ctx: AuthContext) -> R:
+    async def create(self, dto: C, ctx: AuthContext = _ANON_CTX) -> R:
         """
         Create a new entity from ``dto``.
 
@@ -190,7 +191,7 @@ class ServiceProtocol(Protocol[D, PK, C, R, U]):  # type: ignore[misc]
         """
         ...
 
-    async def update(self, pk: PK, dto: U, ctx: AuthContext) -> R:
+    async def update(self, pk: PK, dto: U, ctx: AuthContext = _ANON_CTX) -> R:
         """
         Apply ``dto`` to the entity identified by ``pk``.
 
@@ -209,7 +210,7 @@ class ServiceProtocol(Protocol[D, PK, C, R, U]):  # type: ignore[misc]
         """
         ...
 
-    async def delete(self, pk: PK, ctx: AuthContext) -> None:
+    async def delete(self, pk: PK, ctx: AuthContext = _ANON_CTX) -> None:
         """
         Remove the entity identified by ``pk``.
 
@@ -229,7 +230,7 @@ class ServiceProtocol(Protocol[D, PK, C, R, U]):  # type: ignore[misc]
         """
         ...
 
-    async def exists(self, pk: PK, ctx: AuthContext) -> bool:
+    async def exists(self, pk: PK, ctx: AuthContext = _ANON_CTX) -> bool:
         """
         Return ``True`` if an entity with ``pk`` exists in the backing store.
 

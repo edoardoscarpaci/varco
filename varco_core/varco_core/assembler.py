@@ -210,10 +210,18 @@ class AbstractDTOAssembler(ABC, Generic[D, C, R, U]):
         Example::
 
             def apply_update(self, entity: Post, dto: UpdatePostDTO) -> Post:
-                from dataclasses import replace
-                return replace(
+                from varco_core.model import domain_replace
+                return domain_replace(
                     entity,
                     title=dto.title if dto.title is not None else entity.title,
                     body=dto.body   if dto.body  is not None else entity.body,
                 )
+
+            # IMPORTANT: use ``domain_replace()`` from ``varco_core.model``,
+            # NOT plain ``dataclasses.replace()``.  On Python ≤ 3.12,
+            # ``dataclasses.replace()`` resets ``init=False`` fields (``pk``,
+            # ``_raw_orm``, ``created_at``, ``updated_at``) to their dataclass
+            # defaults — ``pk`` becomes ``None`` and the next ``save()`` treats
+            # the entity as a new INSERT, silently creating a duplicate row.
+            # ``domain_replace()`` copies those fields back automatically.
         """

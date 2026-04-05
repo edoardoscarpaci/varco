@@ -661,17 +661,24 @@ class EventConsumer:
         metadata (set by ``@listen``) and calls ``bus.subscribe()`` for
         each entry.
 
+        Also stores returned subscriptions in ``self._subscriptions`` (lazily
+        initialised on first call) so that ``stop()`` can cancel them without
+        requiring callers to retain the return value.
+
         Args:
             bus: The ``AbstractEventBus`` to register handlers against.
 
         Returns:
             List of ``Subscription`` handles, one per ``@listen`` entry found.
-            Retain these if you need to deregister the consumer later.
+            Retain these if you need to deregister the consumer later; the
+            handles are also accessible via ``self._subscriptions``.
 
         Edge cases:
             - Returns an empty list if no ``@listen`` methods are found.
             - Does NOT deduplicate — stacked ``@listen`` entries on the same
               method each produce their own ``Subscription`` handle.
+            - Calling ``register_to`` twice appends to ``_subscriptions`` —
+              avoid double-registration or cancel the first set first.
 
         Thread safety:  ✅ Called once at setup — not during concurrent dispatch.
         Async safety:   ✅ ``bus.subscribe`` is synchronous — safe to call
@@ -685,6 +692,7 @@ class EventConsumer:
             # Later, in teardown:
             for sub in subscriptions:
                 sub.cancel()
+            # — or just call consumer.stop() if using the lifecycle API.
         """
         subscriptions: list[Subscription] = []
 
@@ -766,7 +774,111 @@ class EventConsumer:
                 )
                 subscriptions.append(sub)
 
+        # ── Store subscriptions for lifecycle management ──────────────────────
+        # Accumulated on self so stop() can cancel without the caller needing
+        # to retain the return value.  Lazy-initialised (not in __init__) so
+        # EventConsumer remains safe as a mixin — no cooperative __init__
+        # fragility introduced.  Extending with a list (not replacing) so
+        # multiple register_to() calls accumulate correctly even though
+        # double-registration is discouraged.
+        if not hasattr(self, "_subscriptions"):
+            # First registration — initialise the list now.
+            self._subscriptions: list[Subscription] = []
+        self._subscriptions.extend(subscriptions)
+
         return subscriptions
+
+    async def start(self) -> None:
+        """
+        Lifecycle hook — register all ``@listen`` handlers to ``self._bus``.
+
+        Satisfies the ``AbstractLifecycle`` protocol expected by
+        ``VarcoLifespan.register()``.  When called by ``VarcoLifespan``,
+        subscriptions are created at the right point in the startup sequence
+        (after the bus is running) and cancelled in reverse order on shutdown
+        via ``stop()``.
+
+        **Contract**: the subclass must set ``self._bus`` before
+        ``start()`` is called — typically in ``__init__`` via DI::
+
+            class PostEventConsumer(EventConsumer):
+                def __init__(self, bus: Inject[AbstractEventBus]) -> None:
+                    self._bus = bus   # ← required for start()
+
+        If you are NOT using ``VarcoLifespan`` (e.g. a standalone script),
+        call ``register_to(bus)`` directly instead.
+
+        DESIGN: start() delegates to register_to() instead of duplicating logic
+            ✅ A single implementation path — both ``@PostConstruct`` and the
+               lifecycle API call the same ``register_to()`` code.
+            ✅ ``register_to()`` remains callable independently for tests and
+               non-lifecycle setups.
+            ❌ ``self._bus`` is a convention, not enforced by the base class —
+               an ``AttributeError`` surfaces immediately if it is missing,
+               with a helpful message from the ``getattr`` check below.
+
+        Raises:
+            AttributeError: ``self._bus`` is not set on the subclass instance.
+
+        Thread safety:  ✅ Called once at startup by VarcoLifespan.
+        Async safety:   ✅ ``register_to`` is synchronous; the coroutine shell
+                           is required to satisfy ``AbstractLifecycle``.
+
+        Edge cases:
+            - Calling ``start()`` after ``stop()`` re-registers all handlers
+              (``register_to`` appends to ``_subscriptions`` again) — correct
+              for restart scenarios.
+            - If ``start()`` is called AND ``register_to()`` is also called
+              manually (e.g. via ``@PostConstruct``), handlers will be
+              subscribed twice.  Use one path only per consumer.
+        """
+        bus = getattr(self, "_bus", None)
+        if bus is None:
+            raise AttributeError(
+                f"{type(self).__name__}.start() requires self._bus to be set. "
+                "Assign it in __init__: self._bus = bus. "
+                "This is required for VarcoLifespan lifecycle management."
+            )
+        self.register_to(bus)
+
+    async def stop(self) -> None:
+        """
+        Lifecycle hook — cancel all active subscriptions created by this consumer.
+
+        Satisfies the ``AbstractLifecycle`` protocol expected by
+        ``VarcoLifespan.register()``.  Called in LIFO order during shutdown,
+        so consumers stop before the bus they subscribed to.
+
+        Cancels every ``Subscription`` stored in ``self._subscriptions``
+        (accumulated by all prior ``register_to()`` / ``start()`` calls) and
+        resets the list to empty.
+
+        DESIGN: cancel all stored subscriptions on stop
+            ✅ Symmetrical with start() — every handler registered by this
+               consumer is removed on shutdown, even across multiple
+               register_to() calls (e.g. if registered to two buses).
+            ✅ Idempotent — calling stop() twice is safe; the second call
+               finds an empty list and is a no-op.
+            ❌ Subscription.cancel() errors are NOT swallowed here —
+               they propagate to VarcoLifespan._stop_all(), which logs
+               them but continues the shutdown sequence.
+
+        Thread safety:  ✅ Called once at shutdown by VarcoLifespan.
+        Async safety:   ✅ Coroutine shell required by AbstractLifecycle;
+                           Subscription.cancel() is synchronous.
+
+        Edge cases:
+            - If ``register_to()`` was never called, ``_subscriptions`` does
+              not exist and ``getattr(..., [])`` returns an empty list — no-op.
+            - ``Subscription.cancel()`` is idempotent on most bus implementations.
+              Cancelling an already-cancelled subscription is safe.
+        """
+        # Lazily initialised in register_to — getattr default is correct here:
+        # if start() was never called, there is nothing to cancel.
+        for sub in getattr(self, "_subscriptions", []):
+            sub.cancel()
+        # Reset to empty so a subsequent start() starts fresh.
+        self._subscriptions = []
 
     def __repr__(self) -> str:
         # Count @listen entries across all methods for a useful repr

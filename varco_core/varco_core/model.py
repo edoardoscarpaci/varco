@@ -28,6 +28,7 @@ Usage::
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, TypeVar
@@ -179,6 +180,89 @@ def cast_raw(entity: DomainModel, orm_type: type[OT]) -> OT:
             "Check that the correct backend is active."
         )
     return raw  # type: ignore[return-value]
+
+
+# ── domain_replace ────────────────────────────────────────────────────────────
+
+D = TypeVar("D", bound=DomainModel)
+
+
+def domain_replace(entity: D, **changes: Any) -> D:
+    """
+    Drop-in replacement for ``dataclasses.replace()`` that preserves
+    ``init=False`` fields on Python ≤ 3.12.
+
+    Python ≤ 3.12 ``dataclasses.replace()`` resets every ``init=False`` field
+    to its dataclass ``default`` value.  On ``DomainModel`` subclasses this
+    means ``pk`` and ``_raw_orm`` are silently set to ``None`` after every
+    copy-with-changes.  Downstream effects:
+
+    - ``pk=None`` causes the SA repository to treat the result as a new INSERT
+      instead of an UPDATE, silently storing a duplicate row under a fresh UUID.
+    - ``_raw_orm=None`` loses the loaded ORM object, triggering another SELECT
+      on the next ``entity.raw()`` call.
+
+    This helper calls ``dataclasses.replace()`` and then copies the current
+    value of every ``init=False`` field from the original entity back onto the
+    copy, restoring the invariant that a copy-with-changes is identical to the
+    original for all framework-managed fields.
+
+    Python 3.13+ already copies ``init=False`` fields in
+    ``dataclasses.replace()`` — this helper is a safe no-op on 3.13; the
+    ``object.__setattr__`` calls write the same value that is already present.
+
+    DESIGN: single helper over per-assembler workarounds
+        ✅ One audited place for the ``object.__setattr__`` dance instead of
+           every ``apply_update()`` implementation duplicating it.
+        ✅ Automatically handles any ``init=False`` field the developer adds
+           to their entity in the future — no assembler update required.
+        ✅ Drop-in: same call signature as ``dataclasses.replace()``.
+        ❌ ``object.__setattr__`` bypasses frozen-dataclass guards — intentional
+           here because we are restoring values, not mutating them in a
+           logically meaningful way.  Safe because the written value equals
+           the source value.
+
+    Args:
+        entity:   The original ``DomainModel`` instance.
+        **changes: Field overrides, identical to ``dataclasses.replace()``.
+
+    Returns:
+        A new instance with ``changes`` applied AND all ``init=False`` fields
+        copied from ``entity``.
+
+    Edge cases:
+        - Passing an ``init=False`` field name in ``changes`` will be silently
+          overwritten by the copy-back loop — this mirrors the Python 3.13
+          behaviour where ``dataclasses.replace()`` ignores ``init=False``
+          fields in ``changes`` with a ``TypeError`` on < 3.13.  Do not pass
+          ``init=False`` fields in ``changes``.
+        - Works correctly on ``frozen=True`` dataclasses — ``object.__setattr__``
+          is the standard pattern used by the ORM mapper itself.
+
+    Thread safety:  ✅ Pure function — no shared state.
+    Async safety:   ✅ Synchronous — no I/O.
+
+    Example::
+
+        # In PostAssembler.apply_update — no manual object.__setattr__ needed:
+        def apply_update(self, entity: Post, dto: PostUpdate) -> Post:
+            return domain_replace(
+                entity,
+                title=dto.title if dto.title is not None else entity.title,
+                body=dto.body   if dto.body  is not None else entity.body,
+            )
+    """
+    updated = dataclasses.replace(entity, **changes)
+
+    # Copy every init=False field from the original entity.
+    # On Python ≤ 3.12 these are reset to their dataclass default by
+    # dataclasses.replace(); on 3.13+ they are already correct — the
+    # assignment is a no-op but costs nothing.
+    for f in dataclasses.fields(entity):
+        if not f.init:
+            object.__setattr__(updated, f.name, getattr(entity, f.name))
+
+    return updated
 
 
 # ── Audited base ───────────────────────────────────────────────────────────────

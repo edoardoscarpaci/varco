@@ -38,22 +38,24 @@ Async safety:   ✅ check() is async def; all I/O uses await.
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
-from typing import TYPE_CHECKING
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from typing import Annotated
+
+from providify import InjectMeta, Singleton
 
 from varco_core.health import HealthCheck, HealthResult, HealthStatus
-
-if TYPE_CHECKING:
-    # AsyncEngine is only needed for type hints — avoid the import in test
-    # environments that mock the engine.
-    from sqlalchemy.ext.asyncio import AsyncEngine
+from varco_sa.config import SAConfig
 
 
 # ── SAHealthCheck ─────────────────────────────────────────────────────────────
 
 
+@Singleton(priority=-sys.maxsize, qualifier="sa")
 class SAHealthCheck(HealthCheck):
     """
     Liveness probe for a SQLAlchemy-backed database.
@@ -81,19 +83,39 @@ class SAHealthCheck(HealthCheck):
 
     def __init__(
         self,
-        engine: AsyncEngine,
+        config: Annotated[SAConfig, InjectMeta(optional=True)] = None,
         *,
+        engine: AsyncEngine | None = None,
         timeout: float = 5.0,
     ) -> None:
         """
         Initialise the SQLAlchemy health probe.
 
         Args:
-            engine:  The ``AsyncEngine`` to probe — typically the same engine
-                     registered in ``SAConfig`` and injected into ``SAModule``.
+            config:  Injected ``SAConfig`` — the probe uses ``config.engine``
+                     to target the same database as the repository provider.
+                     Used by the DI container.
+            engine:  Legacy keyword arg — explicit ``AsyncEngine`` for direct
+                     construction (tests, non-DI usage).
             timeout: Probe timeout in seconds.
+
+        DESIGN: dual-path constructor matches ``SQLAlchemyRepositoryProvider``
+            ✅ Backward-compatible — tests that pass ``engine=...`` keep working.
+            ✅ DI path uses ``Inject[SAConfig]`` — single clean injection point.
+            ❌ Two code paths — accepted to avoid breaking the public API.
+
+        Raises:
+            TypeError: Neither ``config`` nor ``engine`` is provided.
         """
-        self._engine = engine
+        if config is not None:
+            self._engine: AsyncEngine = config.engine
+        elif engine is not None:
+            self._engine = engine
+        else:
+            raise TypeError(
+                "SAHealthCheck requires either a ``SAConfig`` injected via DI "
+                "or an explicit ``engine`` keyword argument for direct construction."
+            )
         self._timeout = timeout
 
     @property

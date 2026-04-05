@@ -67,8 +67,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from abc import ABC, abstractmethod
 from uuid import UUID
+
+from providify import Singleton
 
 _logger = logging.getLogger(__name__)
 
@@ -151,6 +154,7 @@ class AbstractDeduplicator(ABC):
 # ── InMemoryDeduplicator ──────────────────────────────────────────────────────
 
 
+@Singleton(priority=-sys.maxsize - 1, qualifier="in_memory")
 class InMemoryDeduplicator(AbstractDeduplicator):
     """
     In-memory deduplication backed by an insertion-ordered dict.

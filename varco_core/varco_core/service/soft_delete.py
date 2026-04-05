@@ -60,7 +60,7 @@ from varco_core.exception.service import ServiceNotFoundError
 from varco_core.model import DomainModel
 from varco_core.query.builder import QueryBuilder
 from varco_core.query.params import QueryParams
-from varco_core.service.base import AsyncService
+from varco_core.service.base import AsyncService, _ANON_CTX
 from varco_core.service.mixin import ServiceMixin
 
 D = TypeVar("D", bound=DomainModel)
@@ -206,7 +206,7 @@ class SoftDeleteService(
 
     # ── Overridden CRUD ───────────────────────────────────────────────────────
 
-    async def delete(self, pk: PK, ctx: AuthContext) -> None:
+    async def delete(self, pk: PK, ctx: AuthContext = _ANON_CTX) -> None:
         """
         Soft-delete an entity by setting ``deleted_at`` to the current UTC time.
 
@@ -263,7 +263,7 @@ class SoftDeleteService(
             soft_deleted = dataclasses.replace(entity, **{self._soft_delete_field: now})
             await self._get_repo(uow).save(soft_deleted)
 
-    async def restore(self, pk: PK, ctx: AuthContext) -> R:
+    async def restore(self, pk: PK, ctx: AuthContext = _ANON_CTX) -> R:
         """
         Restore a soft-deleted entity by clearing ``deleted_at``.
 

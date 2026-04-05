@@ -35,20 +35,19 @@ Async safety:   ✅ check() is async def; all I/O uses await.
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
-from typing import TYPE_CHECKING
 
+from providify import Inject, Singleton
+
+from varco_beanie.config import BeanieSettings
 from varco_core.health import HealthCheck, HealthResult, HealthStatus
-
-if TYPE_CHECKING:
-    # AsyncMongoClient only needed for type hints — avoids importing pymongo
-    # in environments that mock the client.
-    from pymongo import AsyncMongoClient
 
 
 # ── BeanieHealthCheck ─────────────────────────────────────────────────────────
 
 
+@Singleton(priority=-sys.maxsize, qualifier="beanie")
 class BeanieHealthCheck(HealthCheck):
     """
     Liveness probe for a MongoDB server.
@@ -73,7 +72,7 @@ class BeanieHealthCheck(HealthCheck):
 
     def __init__(
         self,
-        client: AsyncMongoClient,
+        settings: Inject[BeanieSettings],
         *,
         timeout: float = 5.0,
     ) -> None:
@@ -81,12 +80,12 @@ class BeanieHealthCheck(HealthCheck):
         Initialise the MongoDB health probe.
 
         Args:
-            client:  The ``AsyncMongoClient`` to probe — typically the one
-                     registered in ``BeanieSettings`` and injected into
-                     ``BeanieModule``.
-            timeout: Probe timeout in seconds.
+            settings: Injected ``BeanieSettings`` — the probe uses
+                      ``settings.mongo_client`` to target the same MongoDB
+                      instance as the repository provider.
+            timeout:  Probe timeout in seconds.
         """
-        self._client = client
+        self._client = settings.mongo_client
         self._timeout = timeout
 
     @property

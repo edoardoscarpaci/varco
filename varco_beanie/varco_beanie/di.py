@@ -1,22 +1,26 @@
 """
 varco_beanie.di
 ===================
-providify DI integration for the Beanie (pymongo / MongoDB) backend.
+Providify DI integration for the Beanie (pymongo / MongoDB) backend.
 
-Wires ``BeanieRepositoryProvider``, ``BeanieQueryCompiler``, and per-entity
-``AsyncRepository[D]`` bindings into a ``DIContainer`` with a minimal setup API.
+``BeanieRepositoryProvider``, ``BeanieQueryCompiler``, and ``BeanieHealthCheck``
+are registered automatically via their ``@Singleton`` decorators when
+``container.scan("varco_beanie")`` is called.  ``BeanieModule`` is a
+scan-marker ``@Configuration`` — it no longer contains ``@Provider`` factories
+for classes that can self-register.
 
 Typical usage::
 
     from pymongo import AsyncMongoClient
     from providify import DIContainer, Provider
 
-    from varco_beanie.di import BeanieModule, BeanieSettings, bind_repositories
+    from varco_beanie.di import BeanieModule, bind_repositories
+    from varco_beanie.config import BeanieSettings
     from myapp.models import User, Post          # your DomainModel subclasses
 
     container = DIContainer()
 
-    # 1. Provide settings (sync @Provider — so install() stays synchronous)
+    # 1. Provide settings — injected into BeanieRepositoryProvider and BeanieHealthCheck
     @Provider(singleton=True)
     def beanie_settings() -> BeanieSettings:
         return BeanieSettings(
@@ -27,82 +31,37 @@ Typical usage::
 
     container.provide(beanie_settings)
 
-    # 2. Install the module — injects BeanieSettings, registers providers
-    #    Use ainstall if BeanieSettings itself comes from an async @Provider
+    # 2. Install the module (scan-marker) and scan varco_beanie
     container.install(BeanieModule)
+    container.scan("varco_beanie", recursive=True)
 
-    # 3. Bind per-entity AsyncRepository[D] — must come after install()
+    # 3. Bind per-entity AsyncRepository[D] — must come after scan
     bind_repositories(container, User, Post)
 
     # 4. Resolve anywhere in your app
     repo = await container.aget(AsyncRepository[User])
 
 Thread safety:  ✅ All binding registrations happen at startup before concurrent access.
-Async safety:   ✅ Repository provider method is async; resolution via aget().
+Async safety:   ✅ BeanieRepositoryProvider.init() is async; resolution via aget().
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from pymongo import AsyncMongoClient
-
 from providify import Configuration, Provider
-from varco_core.health import HealthCheck
 from varco_core.model import DomainModel
 from varco_core.providers import RepositoryProvider
 from varco_core.repository import AsyncRepository
-from varco_beanie.health import BeanieHealthCheck
-from varco_beanie.provider import BeanieRepositoryProvider
-from varco_beanie.query.compiler import BeanieQueryCompiler
+
+# Re-export BeanieSettings from config so existing imports of
+# ``from varco_beanie.di import BeanieSettings`` keep working.
+from varco_beanie.config import BeanieSettings  # noqa: F401
 
 if TYPE_CHECKING:
     # Avoid a hard circular import — DIContainer is only needed for the
     # bind_repositories() type hint, not at runtime.
     from providify import DIContainer
-
-
-# ── Settings ──────────────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class BeanieSettings:
-    """
-    Immutable configuration bundle for the Beanie DI module.
-
-    Frozen so it can safely be shared across threads and cached as a
-    singleton without defensive copying.
-
-    DESIGN: separate settings object over constructor injection on BeanieModule
-      ✅ All config grouped in one place — easy to swap for tests
-      ✅ Frozen dataclass is hashable — can be used as a dict key if needed
-      ✅ Keeps BeanieModule.__init__ to a single parameter (DI-friendly)
-      ❌ One extra level of indirection vs passing mongo_client directly
-
-    Thread safety:  ✅ Immutable after construction.
-    Async safety:   ✅ No async state.
-
-    Args:
-        mongo_client:   A connected ``AsyncMongoClient`` instance (pymongo>=4.11).
-        db_name:        MongoDB database name.
-        entity_classes: Domain model classes to register at module init time.
-                        Can also be registered later via
-                        ``provider.register(*classes)`` before first use.
-        transactional:  Wrap all UoW operations in a MongoDB transaction.
-                        Requires a replica set or sharded cluster — standalone
-                        instances do not support multi-document transactions.
-
-    Edge cases:
-        - Empty ``entity_classes`` is allowed — register entities later.
-        - ``transactional=True`` on a standalone node raises at runtime
-          when the first transaction begins, not at construction time.
-    """
-
-    mongo_client: AsyncMongoClient
-    db_name: str
-    entity_classes: tuple[type[DomainModel], ...] = field(default_factory=tuple)
-    transactional: bool = False
 
 
 # ── Configuration module ──────────────────────────────────────────────────────
@@ -111,17 +70,13 @@ class BeanieSettings:
 @Configuration
 class BeanieModule:
     """
-    providify ``@Configuration`` module for the Beanie (MongoDB) backend.
+    Providify ``@Configuration`` module for the Beanie (MongoDB) backend.
 
-    When installed in a ``DIContainer``, registers the following bindings:
-
-    +-------------------------------+--------+-------+
-    | Type                          | Scope  | Async |
-    +===============================+========+=======+
-    | ``RepositoryProvider``        | SINGLE | yes   |
-    +-------------------------------+--------+-------+
-    | ``BeanieQueryCompiler``       | SINGLE | no    |
-    +-------------------------------+--------+-------+
+    ``BeanieRepositoryProvider``, ``BeanieQueryCompiler``, and
+    ``BeanieHealthCheck`` are registered automatically via their
+    ``@Singleton`` decorators when ``container.scan("varco_beanie")`` is
+    called.  This module serves as a scan marker and exports the
+    ``bind_repositories()`` helper.
 
     Per-entity ``AsyncRepository[D]`` bindings are NOT added here — call
     ``bind_repositories(container, *entity_classes)`` after ``install()``.
@@ -131,99 +86,15 @@ class BeanieModule:
     Prerequisites
     -------------
     ``BeanieSettings`` must be registered in the container before calling
-    ``container.install(BeanieModule)`` — the container injects it into
-    this class's ``__init__``.
+    ``container.install(BeanieModule)`` — it is injected into
+    ``BeanieRepositoryProvider`` and ``BeanieHealthCheck`` via
+    ``Inject[BeanieSettings]``.
 
     Thread safety:  ✅ Module instance is created once at install() time.
-    Async safety:   ✅ ``repository_provider`` is async — use aget() to resolve.
-
-    Args:
-        settings: Injected ``BeanieSettings`` from the container.
+    Async safety:   ✅ ``BeanieRepositoryProvider.init()`` is called via
+                       ``@PostConstruct`` — the container awaits it during
+                       warm-up.
     """
-
-    def __init__(self, settings: BeanieSettings) -> None:
-        # settings is injected by the container at install() time.
-        # We store it so @Provider methods can access it via self._settings.
-        self._settings = settings
-
-    @Provider(singleton=True)
-    async def repository_provider(self) -> RepositoryProvider:
-        """
-        Create, configure, and initialise the ``BeanieRepositoryProvider``.
-
-        Calls ``await provider.init()`` so Beanie's document models are
-        registered with pymongo before any repository operation runs.
-
-        Returns:
-            A fully initialised ``BeanieRepositoryProvider`` cast to the
-            abstract ``RepositoryProvider`` interface — callers should
-            inject ``RepositoryProvider``, never the concrete type.
-
-        Raises:
-            Any exception raised by ``beanie.init_beanie()`` propagates
-            directly (e.g. connection refused from pymongo driver).
-
-        Edge cases:
-            - If ``entity_classes`` is empty in settings, callers must call
-              ``provider.register(*classes)`` and ``await provider.init()``
-              manually before using repositories.
-            - ``init()`` is idempotent — safe to call more than once.
-        """
-        provider = BeanieRepositoryProvider(
-            mongo_client=self._settings.mongo_client,
-            db_name=self._settings.db_name,
-            transactional=self._settings.transactional,
-        )
-
-        if self._settings.entity_classes:
-            # Register all domain classes so ORM document types are built
-            # before init_beanie() is called — Beanie needs the full list upfront.
-            provider.register(*self._settings.entity_classes)
-
-        await provider.init()
-        return provider
-
-    @Provider(singleton=True)
-    def query_compiler(self) -> BeanieQueryCompiler:
-        """
-        Provide a shared ``BeanieQueryCompiler`` instance.
-
-        ``BeanieQueryCompiler`` is stateless — every public method is a pure
-        function of its inputs — so a single instance is safe to share
-        across all repositories and requests.
-
-        Returns:
-            A singleton ``BeanieQueryCompiler``.
-
-        Thread safety:  ✅ Stateless — no instance state to protect.
-        Async safety:   ✅ All visitor methods are synchronous.
-        """
-        # DESIGN: singleton over creating a new compiler per repository call
-        #   ✅ Zero allocation overhead at query time
-        #   ✅ Thread-safe because there is no mutable state
-        #   ❌ If a future subclass adds state, callers must be updated
-        return BeanieQueryCompiler()
-
-    @Provider(singleton=True)
-    def beanie_health_check(self) -> HealthCheck:
-        """
-        Provide a ``BeanieHealthCheck`` for liveness/readiness probes.
-
-        Uses the same ``AsyncMongoClient`` stored in ``self._settings`` —
-        no additional configuration is needed.
-
-        Returns:
-            A ``BeanieHealthCheck`` bound to the ``HealthCheck`` interface.
-
-        Example::
-
-            check = container.get(HealthCheck)
-            result = await check.check()
-            assert result.status == HealthStatus.HEALTHY
-        """
-        # Sync provider — BeanieHealthCheck holds only the client reference;
-        # server_info() is called only on check(), not here.
-        return BeanieHealthCheck(self._settings.mongo_client)
 
 
 # ── Per-entity repository binding helper ──────────────────────────────────────
@@ -253,8 +124,8 @@ def bind_repositories(
     Prerequisites
     -------------
     ``BeanieModule`` must be installed before calling this function —
-    the generated providers inject ``RepositoryProvider`` which is registered
-    by ``BeanieModule.repository_provider()``.
+    the generated providers inject ``RepositoryProvider`` which is
+    registered via ``@Singleton`` on ``BeanieRepositoryProvider``.
 
     Args:
         container:       The ``DIContainer`` to register bindings into.
@@ -313,7 +184,7 @@ def _make_repo_provider(entity_cls: type[DomainModel]) -> Any:
 
     async def _repo_factory(provider: RepositoryProvider) -> AsyncRepository:  # type: ignore[type-arg]
         # provider is injected by the container (resolved as RepositoryProvider
-        # singleton from BeanieModule.repository_provider()).
+        # singleton from @Singleton on BeanieRepositoryProvider).
         # get_repository() returns the correct AsyncBeanieRepository subtype
         # for entity_cls without needing any additional parameters.
         return provider.get_repository(entity_cls)
@@ -330,3 +201,12 @@ def _make_repo_provider(entity_cls: type[DomainModel]) -> Any:
     # Stamp @Provider metadata — DEPENDENT scope (default) so a fresh repo
     # wrapper is returned each time; repositories carry no state between calls.
     return Provider(_repo_factory)
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+__all__ = [
+    "BeanieModule",
+    "BeanieSettings",
+    "bind_repositories",
+]

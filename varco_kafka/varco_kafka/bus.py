@@ -64,15 +64,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from collections.abc import Awaitable, Callable, Coroutine
-from typing import Any
+from typing import Annotated, Any
 
 # aiokafka is a hard dependency of this package — imported at module level so
 # unit tests can patch varco_kafka.bus.AIOKafkaProducer etc. without needing
 # to reach into the aiokafka namespace directly.
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
-from providify import PreDestroy
+from providify import Inject, Instance, InjectMeta, PostConstruct, PreDestroy, Singleton
 
 from varco_core.event.base import (
     CHANNEL_ALL,
@@ -91,6 +92,7 @@ from varco_kafka.config import KafkaEventBusSettings
 _logger = logging.getLogger(__name__)
 
 
+@Singleton(priority=-sys.maxsize, qualifier="kafka")
 class KafkaEventBus(AbstractEventBus):
     """
     ``AbstractEventBus`` backed by Apache Kafka via ``aiokafka``.
@@ -132,25 +134,34 @@ class KafkaEventBus(AbstractEventBus):
 
     def __init__(
         self,
-        config: KafkaEventBusSettings | None = None,
+        config: Inject[KafkaEventBusSettings],
         *,
         error_policy: ErrorPolicy = ErrorPolicy.COLLECT_ALL,
-        middleware: list[EventMiddleware] | None = None,
-        serializer: EventSerializer | None = None,
+        middleware: Instance[EventMiddleware] | list[EventMiddleware] | None = None,
+        serializer: Annotated[EventSerializer, InjectMeta(optional=True)] = None,
     ) -> None:
         """
         Args:
-            config:       Kafka settings.  Defaults to ``KafkaEventBusSettings()``
-                          (localhost, reads from ``VARCO_KAFKA_*`` env vars).
+            config:       Kafka settings injected from the container.
             error_policy: Handler error policy.
-            middleware:   Ordered middleware list (index 0 is outermost).
-            serializer:   Pluggable event serializer.  Defaults to
-                          ``JsonEventSerializer()``.  Swap in a custom
-                          ``Serializer[Event]`` for msgpack, protobuf, etc.
+            middleware:   DI instance handle for ``EventMiddleware`` bindings.
+                          All registered middlewares are resolved via
+                          ``middleware.get_all()`` when provided.
+            serializer:   Pluggable event serializer.  Injected optionally;
+                          defaults to ``JsonEventSerializer()`` when absent.
         """
-        self._config = config or KafkaEventBusSettings()
+        self._config = config
         self._error_policy = error_policy
-        self._middleware: list[EventMiddleware] = middleware or []
+        # Support both DI-injected Instance[EventMiddleware] and direct list
+        # construction (used in tests and non-DI usage patterns).
+        if middleware is None:
+            self._middleware: list[EventMiddleware] = []
+        elif isinstance(middleware, list):
+            self._middleware = middleware
+        else:
+            self._middleware = (
+                list(middleware.get_all()) if middleware.resolvable() else []
+            )
 
         # Use the provided serializer or fall back to JSON.
         # Stored as an instance so it is pluggable and stateful serializers
@@ -180,6 +191,7 @@ class KafkaEventBus(AbstractEventBus):
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
+    @PostConstruct
     async def start(self) -> None:
         """
         Connect the Kafka producer and start the background consumer task.

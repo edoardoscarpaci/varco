@@ -49,79 +49,24 @@ Async safety:   ✅ ``create_all`` and ``check_schema`` are ``async def``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from varco_core.model import DomainModel
+# SAConfig moved to config.py to break the circular import:
+# provider.py → Inject[SAConfig] must not import bootstrap.py
+# (which imports provider.py).  Both now import from config.py.
+from varco_sa.config import SAConfig  # noqa: F401 — re-exported for backward compat
 from varco_sa.pool_metrics import SAPoolMetrics, pool_metrics as _pool_metrics
 from varco_sa.provider import SQLAlchemyRepositoryProvider
 from varco_sa.schema_guard import SchemaGuard, SchemaDriftReport
 
 if TYPE_CHECKING:
-    # IUoWProvider is used as the type for uow_provider — guard to avoid
-    # importing the core hierarchy at runtime for users who only need SAConfig.
     pass
 
-
-# ── SAConfig ──────────────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class SAConfig:
-    """
-    Immutable configuration for an SA-backed varco application.
-
-    Attributes:
-        engine:           Async SQLAlchemy engine.  Use
-                          ``create_async_engine("dialect+driver://...")`` to
-                          create one.
-        base:             Shared ``DeclarativeBase`` subclass.  All SA ORM
-                          classes generated from ``entity_classes`` are
-                          attached to this base.
-        entity_classes:   Domain model classes to register.  Passed directly
-                          to ``provider.register()`` at construction time.
-        session_options:  Keyword arguments forwarded to ``async_sessionmaker``.
-                          Common keys: ``expire_on_commit`` (default: ``False``),
-                          ``autoflush``.
-
-    Thread safety:  ✅ frozen=True — immutable after construction.
-    Async safety:   ✅ Pure configuration value object; no I/O.
-
-    Edge cases:
-        - ``entity_classes`` is stored as a ``tuple`` — ordering matters only
-          for ``SAModelFactory.build()`` call order, not for correctness.
-        - ``session_options`` defaults to ``{"expire_on_commit": False}``
-          which is the recommended setting for async SQLAlchemy (avoids lazy
-          loading errors after commit).
-
-    Example::
-
-        SAConfig(
-            engine=create_async_engine("postgresql+asyncpg://user:pw@host/db"),
-            base=Base,
-            entity_classes=(User, Post, Comment),
-            session_options={"expire_on_commit": False, "autoflush": False},
-        )
-    """
-
-    # Connected async engine — the source of database sessions
-    engine: AsyncEngine
-
-    # Shared declarative base — all generated ORM classes inherit from this
-    base: type[DeclarativeBase]
-
-    # Domain classes to register at startup
-    entity_classes: tuple[type[DomainModel], ...]
-
-    # Extra keyword args for async_sessionmaker.
-    # DESIGN: default expire_on_commit=False — prevents implicit lazy-load
-    # errors after commit in async contexts where I/O is not allowed.
-    session_options: dict[str, Any] = field(
-        default_factory=lambda: {"expire_on_commit": False}
-    )
+# Re-export SAConfig at the module level so ``from varco_sa.bootstrap import SAConfig``
+# keeps working for existing code that used the old location.
+__all__ = ["SAConfig", "SAFastrestApp"]
 
 
 # ── SAFastrestApp ─────────────────────────────────────────────────────────────
@@ -177,15 +122,15 @@ class SAFastrestApp:
         # in the config default, but callers may override it.
         session_factory = async_sessionmaker(config.engine, **config.session_options)
 
-        # Build the provider and register all entity classes immediately.
-        # Registration must happen before any make_uow() call.
+        # Use the legacy keyword-arg path — SAFastrestApp is a non-DI coordinator
+        # that constructs the provider directly with an already-built session factory.
         self._provider = SQLAlchemyRepositoryProvider(
             base=config.base,
             session_factory=session_factory,
         )
         self._provider.register(*config.entity_classes)
 
-        # Keep config for schema helpers that need the engine and base
+        # Keep config for schema helpers that need the engine and base.
         self._config = config
 
     @property

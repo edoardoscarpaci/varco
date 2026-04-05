@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from varco_core.health import HealthStatus
+from varco_kafka.config import KafkaEventBusSettings
 from varco_kafka.health import KafkaHealthCheck
 
 
@@ -63,7 +64,7 @@ async def test_healthy_returns_healthy_status() -> None:
     import aiokafka as _aiokafka
 
     with patch.object(_aiokafka, "AIOKafkaProducer", return_value=producer):
-        check = KafkaHealthCheck(bootstrap_servers="kafka:9092")
+        check = KafkaHealthCheck(KafkaEventBusSettings(bootstrap_servers="kafka:9092"))
         result = await check.check()
 
     assert result.status is HealthStatus.HEALTHY
@@ -75,7 +76,7 @@ async def test_healthy_component_name() -> None:
     import aiokafka as _aiokafka
 
     with patch.object(_aiokafka, "AIOKafkaProducer", return_value=producer):
-        check = KafkaHealthCheck(bootstrap_servers="kafka:9092")
+        check = KafkaHealthCheck(KafkaEventBusSettings(bootstrap_servers="kafka:9092"))
         result = await check.check()
 
     assert result.component == "kafka"
@@ -87,7 +88,7 @@ async def test_healthy_has_latency() -> None:
     import aiokafka as _aiokafka
 
     with patch.object(_aiokafka, "AIOKafkaProducer", return_value=producer):
-        check = KafkaHealthCheck(bootstrap_servers="kafka:9092")
+        check = KafkaHealthCheck(KafkaEventBusSettings(bootstrap_servers="kafka:9092"))
         result = await check.check()
 
     assert result.latency_ms is not None
@@ -108,7 +109,9 @@ async def test_timeout_on_start_returns_unhealthy() -> None:
     import aiokafka as _aiokafka
 
     with patch.object(_aiokafka, "AIOKafkaProducer", return_value=producer):
-        check = KafkaHealthCheck(bootstrap_servers="kafka:9092", timeout=0.001)
+        check = KafkaHealthCheck(
+            KafkaEventBusSettings(bootstrap_servers="kafka:9092"), timeout=0.001
+        )
         result = await check.check()
 
     assert result.status is HealthStatus.UNHEALTHY
@@ -130,7 +133,9 @@ async def test_timeout_on_metadata_returns_unhealthy() -> None:
     import aiokafka as _aiokafka
 
     with patch.object(_aiokafka, "AIOKafkaProducer", return_value=producer):
-        check = KafkaHealthCheck(bootstrap_servers="kafka:9092", timeout=0.001)
+        check = KafkaHealthCheck(
+            KafkaEventBusSettings(bootstrap_servers="kafka:9092"), timeout=0.001
+        )
         result = await check.check()
 
     assert result.status is HealthStatus.UNHEALTHY
@@ -145,7 +150,7 @@ async def test_connection_error_returns_unhealthy() -> None:
     import aiokafka as _aiokafka
 
     with patch.object(_aiokafka, "AIOKafkaProducer", return_value=producer):
-        check = KafkaHealthCheck(bootstrap_servers="kafka:9092")
+        check = KafkaHealthCheck(KafkaEventBusSettings(bootstrap_servers="kafka:9092"))
         result = await check.check()
 
     assert result.status is HealthStatus.UNHEALTHY
@@ -158,7 +163,7 @@ async def test_metadata_error_returns_unhealthy() -> None:
     import aiokafka as _aiokafka
 
     with patch.object(_aiokafka, "AIOKafkaProducer", return_value=producer):
-        check = KafkaHealthCheck(bootstrap_servers="kafka:9092")
+        check = KafkaHealthCheck(KafkaEventBusSettings(bootstrap_servers="kafka:9092"))
         result = await check.check()
 
     assert result.status is HealthStatus.UNHEALTHY
@@ -173,7 +178,7 @@ async def test_producer_stopped_on_success() -> None:
     import aiokafka as _aiokafka
 
     with patch.object(_aiokafka, "AIOKafkaProducer", return_value=producer):
-        check = KafkaHealthCheck(bootstrap_servers="kafka:9092")
+        check = KafkaHealthCheck(KafkaEventBusSettings(bootstrap_servers="kafka:9092"))
         await check.check()
 
     producer.stop.assert_awaited_once()
@@ -185,7 +190,7 @@ async def test_producer_stopped_on_error() -> None:
     import aiokafka as _aiokafka
 
     with patch.object(_aiokafka, "AIOKafkaProducer", return_value=producer):
-        check = KafkaHealthCheck(bootstrap_servers="kafka:9092")
+        check = KafkaHealthCheck(KafkaEventBusSettings(bootstrap_servers="kafka:9092"))
         await check.check()
 
     producer.stop.assert_awaited_once()
@@ -200,7 +205,7 @@ async def test_check_never_raises_on_error() -> None:
     import aiokafka as _aiokafka
 
     with patch.object(_aiokafka, "AIOKafkaProducer", return_value=producer):
-        check = KafkaHealthCheck(bootstrap_servers="kafka:9092")
+        check = KafkaHealthCheck(KafkaEventBusSettings(bootstrap_servers="kafka:9092"))
         result = await check.check()  # must not raise
 
     assert result.status is HealthStatus.UNHEALTHY
@@ -210,7 +215,9 @@ async def test_check_never_raises_on_error() -> None:
 
 
 def test_repr_contains_bootstrap_servers() -> None:
-    check = KafkaHealthCheck(bootstrap_servers="b1:9092,b2:9092", timeout=3.0)
+    check = KafkaHealthCheck(
+        KafkaEventBusSettings(bootstrap_servers="b1:9092,b2:9092"), timeout=3.0
+    )
     text = repr(check)
     assert "b1:9092" in text
     assert "3.0" in text

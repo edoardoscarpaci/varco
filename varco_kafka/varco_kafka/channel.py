@@ -52,12 +52,15 @@ Async safety:   ✅  All public methods are ``async def``.
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any
 
 from aiokafka.admin import AIOKafkaAdminClient, NewTopic
 from aiokafka.errors import TopicAlreadyExistsError
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
+
+from providify import Inject, PostConstruct, PreDestroy, Singleton
 
 from varco_core.config import VarcoSettings
 from varco_core.event.base import ChannelConfig
@@ -128,6 +131,7 @@ class KafkaChannelManagerSettings(VarcoSettings):
 # ── KafkaChannelManager ───────────────────────────────────────────────────────
 
 
+@Singleton(priority=-sys.maxsize, qualifier="kafka")
 class KafkaChannelManager(ChannelManager):
     """
     Kafka topic management via ``AIOKafkaAdminClient``.
@@ -164,19 +168,19 @@ class KafkaChannelManager(ChannelManager):
           or topic names will diverge between the manager and the bus.
     """
 
-    def __init__(self, settings: KafkaChannelManagerSettings | None = None) -> None:
+    def __init__(self, settings: Inject[KafkaChannelManagerSettings]) -> None:
         """
         Args:
-            settings: Admin configuration.  Defaults to
-                      ``KafkaChannelManagerSettings()`` (reads from env vars).
+            settings: Admin configuration injected from the container.
         """
-        self._settings = settings or KafkaChannelManagerSettings()
+        self._settings = settings
         # Admin client is created in start() — aiokafka objects must be created
         # inside a running event loop.
         self._admin: AIOKafkaAdminClient | None = None
 
     # ── ChannelManager implementation ─────────────────────────────────────────
 
+    @PostConstruct
     async def start(self) -> None:
         """
         Connect the AIOKafkaAdminClient.
@@ -200,6 +204,7 @@ class KafkaChannelManager(ChannelManager):
             self._settings.bootstrap_servers,
         )
 
+    @PreDestroy
     async def stop(self) -> None:
         """Close the admin client.  Idempotent — safe to call multiple times."""
         if self._admin is None:

@@ -6,8 +6,12 @@ Concrete ``RepositoryProvider`` for Beanie (Motor / MongoDB).
 
 from __future__ import annotations
 
+import sys
 from typing import Any, TypeVar
 
+from providify import Inject, PostConstruct, Singleton
+
+from varco_beanie.config import BeanieSettings
 from varco_beanie.factory import BeanieDocRegistry, BeanieModelFactory
 from varco_core.model import DomainModel
 from varco_core.providers import RepositoryProvider
@@ -16,6 +20,7 @@ from varco_core.repository import AsyncRepository
 D = TypeVar("D", bound=DomainModel)
 
 
+@Singleton(priority=-sys.maxsize, qualifier="beanie")
 class BeanieRepositoryProvider(RepositoryProvider):
     """
     ``RepositoryProvider`` backed by Beanie (Motor / MongoDB).
@@ -48,28 +53,37 @@ class BeanieRepositoryProvider(RepositoryProvider):
 
     def __init__(
         self,
-        mongo_client: Any,
-        db_name: str,
-        *,
-        transactional: bool = False,
+        settings: Inject[BeanieSettings],
     ) -> None:
-        self._client = mongo_client
-        self._db_name = db_name
-        self._transactional = transactional
+        """
+        Args:
+            settings: Injected ``BeanieSettings`` — provides the mongo client,
+                      database name, entity classes, and transaction flag.
+        """
+        self._client = settings.mongo_client
+        self._db_name = settings.db_name
+        self._transactional = settings.transactional
         self._factory = BeanieModelFactory()
         self._built: dict[type, tuple[type, Any]] = {}
+
+        # Register entities from settings upfront so all document models are
+        # known before @PostConstruct calls init().
+        if settings.entity_classes:
+            self.register(*settings.entity_classes)
 
     def register(self, *domain_classes: type[DomainModel]) -> None:
         for cls in domain_classes:
             if cls not in self._built:
                 self._built[cls] = self._factory.build(cls)
 
+    @PostConstruct
     async def init(self) -> None:
         """
         Initialise Beanie with all registered Document classes.
 
-        Must be called once at startup after all ``register()`` /
-        ``autodiscover()`` calls.  Idempotent — safe to call multiple times.
+        Called automatically by the DI container via ``@PostConstruct``
+        after the singleton is first resolved.  Idempotent — safe to call
+        multiple times.
         """
         from beanie import init_beanie
 

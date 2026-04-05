@@ -53,15 +53,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from collections.abc import Awaitable, Callable, Coroutine
-from typing import Any
+from typing import Annotated, Any
 
 # redis is a hard dependency of this package — imported at module level so
 # unit tests can patch varco_redis.bus.aioredis without reaching into the
 # redis package namespace directly.
 import redis.asyncio as aioredis
 
-from providify import PreDestroy
+from providify import Inject, Instance, InjectMeta, PostConstruct, PreDestroy, Singleton
 
 from varco_core.event.base import (
     CHANNEL_ALL,
@@ -84,6 +85,7 @@ _logger = logging.getLogger(__name__)
 _POLL_INTERVAL: float = 0.01  # 10 ms
 
 
+@Singleton(priority=-sys.maxsize, qualifier="redis")
 class RedisEventBus(AbstractEventBus):
     """
     ``AbstractEventBus`` backed by Redis Pub/Sub via ``redis.asyncio``.
@@ -123,24 +125,34 @@ class RedisEventBus(AbstractEventBus):
 
     def __init__(
         self,
-        config: RedisEventBusSettings | None = None,
+        config: Inject[RedisEventBusSettings],
         *,
         error_policy: ErrorPolicy = ErrorPolicy.COLLECT_ALL,
-        middleware: list[EventMiddleware] | None = None,
-        serializer: EventSerializer | None = None,
+        middleware: Instance[EventMiddleware] | list[EventMiddleware] | None = None,
+        serializer: Annotated[EventSerializer, InjectMeta(optional=True)] = None,
     ) -> None:
         """
         Args:
-            config:       Redis settings.  Defaults to ``RedisEventBusSettings()``
-                          (localhost, reads from ``VARCO_REDIS_*`` env vars).
+            config:       Redis settings injected from the container.
             error_policy: Handler error policy.
-            middleware:   Ordered middleware list (index 0 is outermost).
-            serializer:   Pluggable event serializer.  Defaults to
-                          ``JsonEventSerializer()``.
+            middleware:   DI instance handle for ``EventMiddleware`` bindings.
+                          All registered middlewares are resolved via
+                          ``middleware.get_all()`` when provided.
+            serializer:   Pluggable event serializer.  Injected optionally;
+                          defaults to ``JsonEventSerializer()`` when absent.
         """
-        self._config = config or RedisEventBusSettings()
+        self._config = config
         self._error_policy = error_policy
-        self._middleware: list[EventMiddleware] = middleware or []
+        # Support both DI-injected Instance[EventMiddleware] and direct list
+        # construction (used in tests and non-DI usage patterns).
+        if middleware is None:
+            self._middleware: list[EventMiddleware] = []
+        elif isinstance(middleware, list):
+            self._middleware = middleware
+        else:
+            self._middleware = (
+                list(middleware.get_all()) if middleware.resolvable() else []
+            )
 
         # Use provided serializer or fall back to JSON.
         self._serializer: EventSerializer = serializer or JsonEventSerializer()
@@ -164,6 +176,7 @@ class RedisEventBus(AbstractEventBus):
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
+    @PostConstruct
     async def start(self) -> None:
         """
         Connect to Redis and start the background Pub/Sub listener task.

@@ -79,7 +79,7 @@ from opentelemetry.trace import StatusCode
 from varco_core.dto import CreateDTO, ReadDTO, UpdateDTO
 from varco_core.model import DomainModel
 from varco_core.observability.span import SpanConfig
-from varco_core.service.base import AsyncService
+from varco_core.service.base import AsyncService, _ANON_CTX
 from varco_core.tracing import current_correlation_id
 
 if TYPE_CHECKING:
@@ -129,23 +129,23 @@ class TracingServiceMixin(AsyncService[D, PK, C, R, U], ABC, Generic[D, PK, C, R
 
     # ── CRUD overrides ────────────────────────────────────────────────────────
 
-    async def create(self, dto: C, ctx: AuthContext) -> R:
+    async def create(self, dto: C, ctx: AuthContext = _ANON_CTX) -> R:
         """Create an entity, wrapped in an OTel span."""
         return await self._run_in_span("create", super().create, dto, ctx)
 
-    async def read(self, pk: PK, ctx: AuthContext) -> R:
+    async def read(self, pk: PK, ctx: AuthContext = _ANON_CTX) -> R:
         """Read an entity by primary key, wrapped in an OTel span."""
         return await self._run_in_span("read", super().read, pk, ctx)
 
-    async def update(self, pk: PK, dto: U, ctx: AuthContext) -> R:
+    async def update(self, pk: PK, dto: U, ctx: AuthContext = _ANON_CTX) -> R:
         """Update an entity, wrapped in an OTel span."""
         return await self._run_in_span("update", super().update, pk, dto, ctx)
 
-    async def delete(self, pk: PK, ctx: AuthContext) -> None:
+    async def delete(self, pk: PK, ctx: AuthContext = _ANON_CTX) -> None:
         """Delete an entity, wrapped in an OTel span."""
         await self._run_in_span("delete", super().delete, pk, ctx)
 
-    async def list(self, params: QueryParams, ctx: AuthContext) -> list[R]:
+    async def list(self, params: QueryParams, ctx: AuthContext = _ANON_CTX) -> list[R]:
         """List entities matching query params, wrapped in an OTel span."""
         return await self._run_in_span("list", super().list, params, ctx)
 

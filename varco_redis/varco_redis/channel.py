@@ -30,7 +30,9 @@ Async safety:   ✅  All public methods are ``async def``.
 from __future__ import annotations
 
 import logging
+import sys
 
+from providify import Inject, PostConstruct, PreDestroy, Singleton
 
 from varco_core.event.base import ChannelConfig
 from varco_core.event.channel import ChannelManager
@@ -56,6 +58,7 @@ RedisChannelManagerSettings = RedisEventBusSettings
 # ── RedisChannelManager ───────────────────────────────────────────────────────
 
 
+@Singleton(priority=-sys.maxsize, qualifier="redis")
 class RedisChannelManager(ChannelManager):
     """
     Redis Pub/Sub channel management via a local registry.
@@ -89,13 +92,12 @@ class RedisChannelManager(ChannelManager):
         - Local registry is not persisted — it resets on object construction.
     """
 
-    def __init__(self, settings: RedisEventBusSettings | None = None) -> None:
+    def __init__(self, settings: Inject[RedisEventBusSettings]) -> None:
         """
         Args:
-            settings: Redis connection settings.  Defaults to
-                      ``RedisEventBusSettings()`` (reads from env vars).
+            settings: Redis connection settings injected from the container.
         """
-        self._settings = settings or RedisEventBusSettings()
+        self._settings = settings
 
         # Local registry: logical channel name → optional ChannelConfig.
         # Redis Pub/Sub has no server-side channel registry; we track locally.
@@ -107,6 +109,7 @@ class RedisChannelManager(ChannelManager):
 
     # ── ChannelManager implementation ─────────────────────────────────────────
 
+    @PostConstruct
     async def start(self) -> None:
         """
         Mark the manager as started.
@@ -126,6 +129,7 @@ class RedisChannelManager(ChannelManager):
         self._started = True
         _logger.debug("RedisChannelManager started (url=%s)", self._settings.url)
 
+    @PreDestroy
     async def stop(self) -> None:
         """
         Mark the manager as stopped.  Idempotent — safe to call multiple times.

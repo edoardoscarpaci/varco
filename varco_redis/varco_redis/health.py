@@ -32,14 +32,19 @@ Async safety:   ✅ check() is async def; all I/O uses await.
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
 
+from providify import Inject, Singleton
+
 from varco_core.health import HealthCheck, HealthResult, HealthStatus
+from varco_redis.config import RedisEventBusSettings
 
 
 # ── RedisHealthCheck ──────────────────────────────────────────────────────────
 
 
+@Singleton(priority=-sys.maxsize, qualifier="redis")
 class RedisHealthCheck(HealthCheck):
     """
     Liveness probe for a Redis instance.
@@ -64,7 +69,7 @@ class RedisHealthCheck(HealthCheck):
 
     def __init__(
         self,
-        url: str,
+        settings: Inject[RedisEventBusSettings],
         *,
         timeout: float = 5.0,
     ) -> None:
@@ -72,10 +77,12 @@ class RedisHealthCheck(HealthCheck):
         Initialise the Redis health probe.
 
         Args:
-            url:     Redis connection URL (e.g. ``"redis://localhost:6379/0"``).
-            timeout: Probe timeout in seconds.
+            settings: Redis connection settings injected from the container.
+                      The probe uses ``settings.url`` to target the same Redis
+                      instance as the event bus.
+            timeout:  Probe timeout in seconds.
         """
-        self._url = url
+        self._url = settings.url
         self._timeout = timeout
 
     @property

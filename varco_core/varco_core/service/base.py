@@ -136,6 +136,7 @@ from varco_core.assembler import AbstractDTOAssembler
 from varco_core.auth import AbstractAuthorizer, Action, AuthContext, Resource
 from varco_core.dto import CreateDTO, ReadDTO, UpdateDTO
 from varco_core.dto.pagination import PagedReadDTO, paged_response
+from varco_core.event.base import CHANNEL_DEFAULT, Event
 from varco_core.event.domain import (
     EntityCreatedEvent,
     EntityDeletedEvent,
@@ -160,6 +161,19 @@ PK = TypeVar("PK")
 C = TypeVar("C", bound=CreateDTO)
 R = TypeVar("R", bound=ReadDTO)
 U = TypeVar("U", bound=UpdateDTO)
+
+# Anonymous / unauthenticated fallback context — used as the default value for
+# all ``ctx`` parameters so callers can omit ``ctx`` entirely when no auth is
+# needed (e.g. internal jobs, tests, no-auth endpoints).
+#
+# DESIGN: module-level singleton instead of ``None`` default
+#   ✅ Safe as a default: AuthContext is frozen with only immutable fields
+#      (frozenset, tuple) — no mutable-default-argument pitfall.
+#   ✅ Authorizer always receives a real AuthContext object — no None guards.
+#   ✅ BaseAuthorizer (permissive) passes it through unchanged.
+#   ❌ A caller that forgets to pass ctx silently operates as anonymous —
+#      only a concern when real auth is wired; permissive default catches it.
+_ANON_CTX: AuthContext = AuthContext()
 
 
 # ── IUoWProvider ──────────────────────────────────────────────────────────────
@@ -289,6 +303,43 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
         # Fall back to NoopEventProducer so _produce() calls are always safe
         # even when no bus is configured — Null Object pattern avoids guards.
         self._producer: AbstractEventProducer = producer or NoopEventProducer()
+
+    # ── Protected event-publish helper ────────────────────────────────────────
+
+    async def _emit(self, event: Event, *, channel: str = CHANNEL_DEFAULT) -> None:
+        """
+        Publish a single domain event via the injected producer.
+
+        Service subclasses call ``_emit`` instead of accessing
+        ``self._producer._produce()`` directly — this keeps the producer
+        dependency encapsulated and avoids leaking the knowledge that
+        ``_produce`` is a protected method on ``AbstractEventProducer``.
+
+        Typical usage in a service hook::
+
+            async def _after_create(self, entity: Post, read_dto: PostRead, ctx) -> None:
+                await super()._after_create(entity, read_dto, ctx)
+                await self._emit(PostCreatedEvent(post_id=entity.pk), channel="posts")
+
+        Args:
+            event:   The domain event to publish.
+            channel: Target channel.  Defaults to ``CHANNEL_DEFAULT``
+                     (``"default"``).
+
+        Raises:
+            Any exception propagated from the underlying bus implementation.
+
+        Edge cases:
+            - When no bus is configured, ``_producer`` is a ``NoopEventProducer``
+              which silently discards the call — no guard needed.
+            - If ``_produce`` raises, the exception propagates to the caller.
+              The entity IS persisted.  For guaranteed delivery, use the outbox
+              pattern (``OutboxRepository`` + ``OutboxRelay``).
+
+        Async safety:   ✅ Delegates to ``AbstractEventProducer._produce``.
+        Thread safety:  ✅ Stateless — ``_producer`` is an injected singleton.
+        """
+        await self._producer._produce(event, channel=channel)
 
     # ── Composable extension hooks ────────────────────────────────────────────
     # Override these in mixin subclasses to inject cross-cutting behaviour
@@ -594,7 +645,7 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
 
     # ── Public CRUD methods ───────────────────────────────────────────────────
 
-    async def get(self, pk: PK, ctx: AuthContext) -> R:
+    async def get(self, pk: PK, ctx: AuthContext = _ANON_CTX) -> R:
         """
         Fetch a single entity by primary key and return its ``ReadDTO``.
 
@@ -642,7 +693,7 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
             )
             return self._assembler.to_read_dto(entity)
 
-    async def list(self, params: QueryParams, ctx: AuthContext) -> list[R]:
+    async def list(self, params: QueryParams, ctx: AuthContext = _ANON_CTX) -> list[R]:
         """
         Query entities matching ``params`` and return their ``ReadDTO``\\s.
 
@@ -682,7 +733,7 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
             entities = await self._get_repo(uow).find_by_query(scoped)
             return [self._assembler.to_read_dto(e) for e in entities]
 
-    async def count(self, params: QueryParams, ctx: AuthContext) -> int:
+    async def count(self, params: QueryParams, ctx: AuthContext = _ANON_CTX) -> int:
         """
         Count entities matching ``params`` without fetching their data.
 
@@ -856,7 +907,7 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
     async def stream(
         self,
         params: QueryParams,
-        ctx: AuthContext,
+        ctx: AuthContext = _ANON_CTX,
     ) -> AsyncIterator[R]:
         """
         Yield ``ReadDTO``\\s one at a time without loading all results into memory.
@@ -924,7 +975,7 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
             async for entity in self._get_repo(uow).stream_by_query(scoped):
                 yield self._assembler.to_read_dto(entity)
 
-    async def create(self, dto: C, ctx: AuthContext) -> R:
+    async def create(self, dto: C, ctx: AuthContext = _ANON_CTX) -> R:
         """
         Create a new entity from ``dto`` and return its ``ReadDTO``.
 
@@ -989,7 +1040,7 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
         await self._after_create(saved, read_dto, ctx)
         return read_dto
 
-    async def update(self, pk: PK, dto: U, ctx: AuthContext) -> R:
+    async def update(self, pk: PK, dto: U, ctx: AuthContext = _ANON_CTX) -> R:
         """
         Update an existing entity and return its updated ``ReadDTO``.
 
@@ -1067,7 +1118,29 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
         await self._after_update(before_dto, saved, read_dto, ctx)
         return read_dto
 
-    async def delete(self, pk: PK, ctx: AuthContext) -> None:
+    async def patch(self, pk: PK, dto: U, ctx: AuthContext = _ANON_CTX) -> R:
+        """
+        Partial update (JSON Merge Patch) — delegates to ``update()``.
+
+        ``patch`` and ``update`` use the same ``apply_update`` logic; the
+        distinction is semantic (HTTP PATCH vs PUT).  ``UpdateDTO`` fields are
+        already optional so the assembler's ``apply_update`` naturally handles
+        partial payloads by leaving ``None`` fields unchanged.
+
+        Args:
+            pk:  Primary key of the entity to update.
+            dto: ``UpdateDTO`` with only the fields to change set.
+            ctx: Caller's identity and grants.
+
+        Returns:
+            The ``ReadDTO`` reflecting the entity's new state.
+
+        Thread safety:  ✅ Delegates entirely to update().
+        Async safety:   ✅ Awaited through.
+        """
+        return await self.update(pk, dto, ctx)
+
+    async def delete(self, pk: PK, ctx: AuthContext = _ANON_CTX) -> None:
         """
         Delete an entity by primary key.
 

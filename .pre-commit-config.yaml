@@ -62,3 +62,22 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+  - repo: local
+    hooks:
+      - id: pytest-fastapi
+        name: pytest (varco_fastapi)
+        entry: uv run --package varco-fastapi pytest varco_fastapi/tests --tb=short -q
+        language: system
+        pass_filenames: false
+        always_run: true
+  
+  - repo: local
+    hooks:
+      - id: pytest-memcached
+        name: pytest (varco_memcached)
+        entry: uv run --package varco-memcached pytest varco_memcached/tests --tb=short -q
+        language: system
+        pass_filenames: false
+        always_run: true
+

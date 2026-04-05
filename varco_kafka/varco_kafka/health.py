@@ -33,14 +33,19 @@ Async safety:   ✅ check() is async def; all I/O uses await.
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
 
+from providify import Inject, Singleton
+
 from varco_core.health import HealthCheck, HealthResult, HealthStatus
+from varco_kafka.config import KafkaEventBusSettings
 
 
 # ── KafkaHealthCheck ──────────────────────────────────────────────────────────
 
 
+@Singleton(priority=-sys.maxsize, qualifier="kafka")
 class KafkaHealthCheck(HealthCheck):
     """
     Liveness probe for a Kafka cluster.
@@ -66,7 +71,7 @@ class KafkaHealthCheck(HealthCheck):
 
     def __init__(
         self,
-        bootstrap_servers: str,
+        settings: Inject[KafkaEventBusSettings],
         *,
         timeout: float = 5.0,
     ) -> None:
@@ -74,12 +79,12 @@ class KafkaHealthCheck(HealthCheck):
         Initialise the Kafka health probe.
 
         Args:
-            bootstrap_servers: Comma-separated broker addresses
-                               (e.g. ``"kafka:9092"`` or ``"b1:9092,b2:9092"``).
-            timeout:           Probe timeout in seconds.  The probe attempts
-                               to connect and fetch metadata within this budget.
+            settings: Kafka connection settings injected from the container.
+                      The probe uses ``settings.bootstrap_servers`` to target
+                      the same brokers as the event bus.
+            timeout:  Probe timeout in seconds.
         """
-        self._bootstrap_servers = bootstrap_servers
+        self._bootstrap_servers = settings.bootstrap_servers
         self._timeout = timeout
 
     @property

@@ -194,7 +194,7 @@ class TestKafkaConfig:
 
 class TestKafkaEventBusLifecycle:
     async def test_publish_before_start_raises(self) -> None:
-        bus = KafkaEventBus()
+        bus = KafkaEventBus(KafkaEventBusSettings())
         with pytest.raises(RuntimeError, match="start()"):
             await bus.publish(OrderPlacedEvent(order_id="1"))
 
@@ -215,7 +215,7 @@ class TestKafkaEventBusLifecycle:
             await bus.stop()
 
     async def test_stop_before_start_is_noop(self) -> None:
-        bus = KafkaEventBus()
+        bus = KafkaEventBus(KafkaEventBusSettings())
         await bus.stop()  # must not raise
 
     async def test_context_manager_starts_and_stops(

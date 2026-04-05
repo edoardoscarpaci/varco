@@ -1,0 +1,36 @@
+[project]
+name    = "varco-example"
+version = "0.1.0"
+description = "End-to-end reference implementation of the varco stack"
+
+[dependency-groups]
+# Install with: uv sync (testcontainers + httpx are in the workspace dev group)
+# Integration tests require Docker on the host.
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.28",
+    "testcontainers[postgres,redis]>=4.14",
+    "uvicorn>=0.42",
+    "asyncpg>=0.29",
+]
+
+[tool.pytest.ini_options]
+# asyncio_mode = "auto" — all async def test_* functions run automatically
+# without requiring @pytest.mark.asyncio.  Matches convention across the
+# entire varco workspace (see varco_core/pyproject.toml, etc.).
+asyncio_mode = "auto"
+# Use a single session-scoped event loop so session-scoped async fixtures
+# (running_server with uvicorn) share the same loop as function-scoped tests.
+# Without this, uvicorn's asyncio.Task runs in the fixture's loop while
+# httpx.AsyncClient runs in the test's loop — requests never complete.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths    = ["example/tests"]
+# Integration tests require Docker (testcontainers).  Run with:
+#   uv run pytest example/tests/ -m integration
+# Skip integration tests (default for fast local loops):
+#   uv run pytest example/tests/ -m "not integration"
+markers = [
+    "integration: requires Docker (testcontainers) — skipped by default",
+]

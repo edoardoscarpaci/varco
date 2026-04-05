@@ -22,7 +22,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from varco_core.health import HealthStatus
+from varco_beanie.config import BeanieSettings
 from varco_beanie.health import BeanieHealthCheck
+
+
+def _make_check(client, *, timeout: float = 5.0) -> BeanieHealthCheck:
+    """Construct BeanieHealthCheck with a BeanieSettings wrapping the mock client."""
+    settings = BeanieSettings(mongo_client=client, db_name="test")
+    return BeanieHealthCheck(settings, timeout=timeout)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -48,26 +55,26 @@ def _make_client(*, side_effect=None, return_value=None) -> MagicMock:
 
 
 async def test_healthy_returns_healthy_status() -> None:
-    check = BeanieHealthCheck(client=_make_client())
+    check = _make_check(_make_client())
     result = await check.check()
     assert result.status is HealthStatus.HEALTHY
 
 
 async def test_healthy_component_name() -> None:
-    check = BeanieHealthCheck(client=_make_client())
+    check = _make_check(_make_client())
     result = await check.check()
     assert result.component == "mongodb"
 
 
 async def test_healthy_has_latency() -> None:
-    check = BeanieHealthCheck(client=_make_client())
+    check = _make_check(_make_client())
     result = await check.check()
     assert result.latency_ms is not None
     assert result.latency_ms >= 0.0
 
 
 async def test_healthy_no_detail() -> None:
-    check = BeanieHealthCheck(client=_make_client())
+    check = _make_check(_make_client())
     result = await check.check()
     assert result.detail is None
 
@@ -81,7 +88,7 @@ async def test_timeout_returns_unhealthy() -> None:
 
     client = MagicMock()
     client.server_info = _hang
-    check = BeanieHealthCheck(client=client, timeout=0.001)
+    check = _make_check(client, timeout=0.001)
     result = await check.check()
 
     assert result.status is HealthStatus.UNHEALTHY
@@ -93,9 +100,7 @@ async def test_timeout_returns_unhealthy() -> None:
 
 
 async def test_connection_error_returns_unhealthy() -> None:
-    check = BeanieHealthCheck(
-        client=_make_client(side_effect=ConnectionRefusedError("no server"))
-    )
+    check = _make_check(_make_client(side_effect=ConnectionRefusedError("no server")))
     result = await check.check()
     assert result.status is HealthStatus.UNHEALTHY
     assert "no server" in (result.detail or "")
@@ -104,9 +109,7 @@ async def test_connection_error_returns_unhealthy() -> None:
 async def test_server_selection_timeout_returns_unhealthy() -> None:
     # pymongo raises ServerSelectionTimeoutError when no primary is available.
     # Simulate with a generic timeout-like exception.
-    check = BeanieHealthCheck(
-        client=_make_client(side_effect=RuntimeError("no primary available"))
-    )
+    check = _make_check(_make_client(side_effect=RuntimeError("no primary available")))
     result = await check.check()
     assert result.status is HealthStatus.UNHEALTHY
 
@@ -115,7 +118,7 @@ async def test_server_selection_timeout_returns_unhealthy() -> None:
 
 
 async def test_check_never_raises() -> None:
-    check = BeanieHealthCheck(client=_make_client(side_effect=Exception("crash")))
+    check = _make_check(_make_client(side_effect=Exception("crash")))
     result = await check.check()  # must not raise
     assert result.status is HealthStatus.UNHEALTHY
 
@@ -124,7 +127,7 @@ async def test_check_never_raises() -> None:
 
 
 def test_repr_contains_timeout() -> None:
-    check = BeanieHealthCheck(client=_make_client(), timeout=2.5)
+    check = _make_check(_make_client(), timeout=2.5)
     assert "2.5" in repr(check)
 
 
@@ -151,7 +154,7 @@ async def test_integration_healthy_against_real_mongodb() -> None:
         url = mongo.get_connection_url()
         client: AsyncMongoClient = AsyncMongoClient(url)
         try:
-            check = BeanieHealthCheck(client=client, timeout=5.0)
+            check = _make_check(client, timeout=5.0)
             result = await check.check()
         finally:
             await client.aclose()

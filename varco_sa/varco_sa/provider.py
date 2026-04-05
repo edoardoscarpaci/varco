@@ -6,9 +6,14 @@ Concrete ``RepositoryProvider`` for SQLAlchemy async.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import sys
 from typing import Any, TypeVar
 
+from providify import InjectMeta, Singleton
+from typing import Annotated
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from varco_sa.config import SAConfig
 from varco_sa.factory import SAModelFactory
 from varco_core.model import DomainModel
 from varco_core.providers import RepositoryProvider
@@ -17,6 +22,7 @@ from varco_core.repository import AsyncRepository
 D = TypeVar("D", bound=DomainModel)
 
 
+@Singleton(priority=-sys.maxsize, qualifier="sa")
 class SQLAlchemyRepositoryProvider(RepositoryProvider):
     """
     ``RepositoryProvider`` backed by SQLAlchemy async.
@@ -58,13 +64,58 @@ class SQLAlchemyRepositoryProvider(RepositoryProvider):
 
     def __init__(
         self,
-        base: Any,
-        session_factory: Callable,
+        config: Annotated[SAConfig, InjectMeta(optional=True)] = None,
+        *,
+        base: Any | None = None,
+        session_factory: Any | None = None,
     ) -> None:
-        self._base = base
-        self._session_factory = session_factory
-        self._factory = SAModelFactory(base=base)
-        self._built: dict[type, tuple[type, Any]] = {}
+        """
+        Args:
+            config:          Injected ``SAConfig`` — provides the engine,
+                             declarative base, entity classes, and session
+                             options.  Used by the DI container.
+            base:            Legacy keyword arg — ``DeclarativeBase`` subclass.
+                             Accepted for backward compatibility with direct
+                             construction (tests, non-DI usage).
+            session_factory: Legacy keyword arg — ``async_sessionmaker`` or
+                             any ``() → AsyncSession`` callable.
+
+        DESIGN: dual-path constructor over separate factory method
+            ✅ Backward-compatible — existing tests and ``SAFastrestApp`` pass
+               ``base`` / ``session_factory`` directly and keep working.
+            ✅ DI path uses ``Inject[SAConfig]`` — single clean injection point.
+            ❌ Two code paths — accepted to avoid breaking the public API.
+
+        Raises:
+            TypeError: Neither ``config`` nor (``base`` + ``session_factory``)
+                       is provided.
+        """
+        if config is not None:
+            # DI path: everything from the injected SAConfig value object.
+            self._base = config.base
+            self._session_factory = async_sessionmaker(
+                config.engine,
+                **config.session_options,
+            )
+            self._factory = SAModelFactory(base=config.base)
+            self._built: dict[type, tuple[type, Any]] = {}
+            # Register entities upfront so ORM tables are mapped
+            # before the first make_uow() call.
+            if config.entity_classes:
+                self.register(*config.entity_classes)
+        elif base is not None and session_factory is not None:
+            # Legacy path: direct construction with explicit base + factory.
+            # Used by SAFastrestApp, tests, and non-DI bootstrap code.
+            self._base = base
+            self._session_factory = session_factory
+            self._factory = SAModelFactory(base=base)
+            self._built = {}
+        else:
+            raise TypeError(
+                "SQLAlchemyRepositoryProvider requires either a ``SAConfig`` "
+                "injected via DI or explicit ``base`` + ``session_factory`` "
+                "keyword arguments for direct construction."
+            )
 
     def register(self, *domain_classes: type[DomainModel]) -> None:
         for cls in domain_classes:
