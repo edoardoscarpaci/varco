@@ -36,9 +36,12 @@ dependencies = [
 [project.optional-dependencies]
 # WebSocket and SSE support (requires varco_ws from the workspace)
 ws  = ["varco-ws"]
-# MCP (Model Context Protocol) adapter support — future
+# MCP (Model Context Protocol) adapter support
+# Enables MCPAdapter.to_mcp_server() and MCPAdapter.mount()
 mcp = ["mcp>=1.0"]
-# A2A (Agent-to-Agent / Google Agent protocol) support — future
+# A2A (Agent-to-Agent / Google A2A protocol) support
+# SkillAdapter works without this extra (it uses FastAPI directly);
+# install for the google-a2a SDK types if you need A2A client utilities.
 a2a = []
 # OpenTelemetry instrumentation — optional; gracefully no-ops when absent
 otel = [

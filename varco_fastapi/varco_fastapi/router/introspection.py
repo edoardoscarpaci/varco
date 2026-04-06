@@ -91,6 +91,26 @@ class ResolvedRoute:
     route_order: int = 0
     extra: dict[str, Any] = field(default_factory=dict, compare=False, hash=False)
 
+    # ── MCP (Model Context Protocol) ──────────────────────────────────────────
+    # Raw values as declared on the route — MCPAdapter resolves the fallback
+    # chain (mcp_description → summary → description → auto-sentence) at use
+    # time so callers can always inspect what was explicitly overridden.
+    mcp_enabled: bool = False
+    # None means "auto-generate from crud_action + resource or method_name"
+    mcp_name: str | None = None
+    # None means "fall back to summary, then description, then auto-sentence"
+    mcp_description: str | None = None
+    mcp_tags: tuple[str, ...] = field(default_factory=tuple)
+
+    # ── A2A / Google Skill ────────────────────────────────────────────────────
+    skill_enabled: bool = False
+    skill_id: str | None = None
+    skill_name: str | None = None
+    skill_description: str | None = None
+    # Empty tuple → adapter defaults to ("application/json",)
+    skill_input_modes: tuple[str, ...] = field(default_factory=tuple)
+    skill_output_modes: tuple[str, ...] = field(default_factory=tuple)
+
 
 # ── Path parameter extraction ──────────────────────────────────────────────────
 
@@ -235,8 +255,8 @@ def introspect_routes(
                 name=action,
                 method=method,
                 path=path_suffix,
-                summary=getattr(cls, f"_{action}_summary", None),
-                description=getattr(cls, f"_{action}_description", None),
+                summary=getattr(router_cls, f"_{action}_summary", None),
+                description=getattr(router_cls, f"_{action}_description", None),
                 request_model=req_model,
                 response_model=resp_model,
                 path_params=_extract_path_params(path_suffix),
@@ -247,6 +267,26 @@ def introspect_routes(
                 deprecated=getattr(cls, f"_{action}_deprecated", False),
                 tags=tuple(getattr(cls, f"_{action}_tags", None) or tags),
                 route_order=0,
+                # MCP / Skill metadata — read from router_cls (not from the mixin cls)
+                # so that ClassVar overrides on the concrete router are respected.
+                # e.g. OrderRouter._create_mcp = True overrides CreateMixin._create_mcp = False
+                mcp_enabled=getattr(router_cls, f"_{action}_mcp", False),
+                mcp_name=getattr(router_cls, f"_{action}_mcp_name", None),
+                mcp_description=getattr(router_cls, f"_{action}_mcp_description", None),
+                mcp_tags=tuple(getattr(router_cls, f"_{action}_mcp_tags", None) or ()),
+                # Skill (A2A) metadata — same: read from concrete class, not the mixin
+                skill_enabled=getattr(router_cls, f"_{action}_skill", False),
+                skill_id=getattr(router_cls, f"_{action}_skill_id", None),
+                skill_name=getattr(router_cls, f"_{action}_skill_name", None),
+                skill_description=getattr(
+                    router_cls, f"_{action}_skill_description", None
+                ),
+                skill_input_modes=tuple(
+                    getattr(router_cls, f"_{action}_skill_input_modes", None) or ()
+                ),
+                skill_output_modes=tuple(
+                    getattr(router_cls, f"_{action}_skill_output_modes", None) or ()
+                ),
             )
             if enabled_routes is None or action in enabled_routes:
                 routes.append(route)
@@ -291,6 +331,18 @@ def introspect_routes(
                     "operation_id": entry.operation_id,
                     "include_in_schema": entry.include_in_schema,
                 },
+                # MCP metadata from @route decorator
+                mcp_enabled=entry.mcp,
+                mcp_name=entry.mcp_name,
+                mcp_description=entry.mcp_description,
+                mcp_tags=tuple(entry.mcp_tags or ()),
+                # Skill (A2A) metadata from @route decorator
+                skill_enabled=entry.skill,
+                skill_id=entry.skill_id,
+                skill_name=entry.skill_name,
+                skill_description=entry.skill_description,
+                skill_input_modes=tuple(entry.skill_input_modes or ()),
+                skill_output_modes=tuple(entry.skill_output_modes or ()),
             )
             if enabled_routes is None or attr_name in enabled_routes:
                 routes.append(route)

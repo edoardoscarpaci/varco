@@ -93,6 +93,21 @@ class CreateMixin(RouterMixin):
     _create_rate_limiter: ClassVar[Any | None] = None
     _create_rate_limit_key_fn: ClassVar[Callable[..., str] | None] = None
 
+    # ── MCP / A2A metadata ────────────────────────────────────────────────────
+    # mcp=True → MCPAdapter exposes POST / as an MCP tool "create_{resource}"
+    # skill=True → SkillAdapter exposes it as a Google A2A skill
+    # Fine-grained fields override the auto-generated names / descriptions.
+    _create_mcp: ClassVar[bool] = False
+    _create_mcp_name: ClassVar[str | None] = None
+    _create_mcp_description: ClassVar[str | None] = None
+    _create_mcp_tags: ClassVar[list[str] | None] = None
+    _create_skill: ClassVar[bool] = False
+    _create_skill_id: ClassVar[str | None] = None
+    _create_skill_name: ClassVar[str | None] = None
+    _create_skill_description: ClassVar[str | None] = None
+    _create_skill_input_modes: ClassVar[list[str] | None] = None
+    _create_skill_output_modes: ClassVar[list[str] | None] = None
+
 
 # ── ReadMixin ─────────────────────────────────────────────────────────────────
 
@@ -124,6 +139,18 @@ class ReadMixin(RouterMixin):
     _read_async_capable: ClassVar[bool] = True
     _read_rate_limiter: ClassVar[Any | None] = None
     _read_rate_limit_key_fn: ClassVar[Callable[..., str] | None] = None
+
+    # ── MCP / A2A metadata ────────────────────────────────────────────────────
+    _read_mcp: ClassVar[bool] = False
+    _read_mcp_name: ClassVar[str | None] = None
+    _read_mcp_description: ClassVar[str | None] = None
+    _read_mcp_tags: ClassVar[list[str] | None] = None
+    _read_skill: ClassVar[bool] = False
+    _read_skill_id: ClassVar[str | None] = None
+    _read_skill_name: ClassVar[str | None] = None
+    _read_skill_description: ClassVar[str | None] = None
+    _read_skill_input_modes: ClassVar[list[str] | None] = None
+    _read_skill_output_modes: ClassVar[list[str] | None] = None
 
 
 # ── UpdateMixin ────────────────────────────────────────────────────────────────
@@ -157,6 +184,18 @@ class UpdateMixin(RouterMixin):
     _update_async_capable: ClassVar[bool] = True
     _update_rate_limiter: ClassVar[Any | None] = None
     _update_rate_limit_key_fn: ClassVar[Callable[..., str] | None] = None
+
+    # ── MCP / A2A metadata ────────────────────────────────────────────────────
+    _update_mcp: ClassVar[bool] = False
+    _update_mcp_name: ClassVar[str | None] = None
+    _update_mcp_description: ClassVar[str | None] = None
+    _update_mcp_tags: ClassVar[list[str] | None] = None
+    _update_skill: ClassVar[bool] = False
+    _update_skill_id: ClassVar[str | None] = None
+    _update_skill_name: ClassVar[str | None] = None
+    _update_skill_description: ClassVar[str | None] = None
+    _update_skill_input_modes: ClassVar[list[str] | None] = None
+    _update_skill_output_modes: ClassVar[list[str] | None] = None
 
 
 # ── PatchMixin ────────────────────────────────────────────────────────────────
@@ -200,6 +239,18 @@ class PatchMixin(RouterMixin):
     _patch_rate_limiter: ClassVar[Any | None] = None
     _patch_rate_limit_key_fn: ClassVar[Callable[..., str] | None] = None
 
+    # ── MCP / A2A metadata ────────────────────────────────────────────────────
+    _patch_mcp: ClassVar[bool] = False
+    _patch_mcp_name: ClassVar[str | None] = None
+    _patch_mcp_description: ClassVar[str | None] = None
+    _patch_mcp_tags: ClassVar[list[str] | None] = None
+    _patch_skill: ClassVar[bool] = False
+    _patch_skill_id: ClassVar[str | None] = None
+    _patch_skill_name: ClassVar[str | None] = None
+    _patch_skill_description: ClassVar[str | None] = None
+    _patch_skill_input_modes: ClassVar[list[str] | None] = None
+    _patch_skill_output_modes: ClassVar[list[str] | None] = None
+
 
 # ── DeleteMixin ───────────────────────────────────────────────────────────────
 
@@ -236,6 +287,18 @@ class DeleteMixin(RouterMixin):
     _delete_async_capable: ClassVar[bool] = False
     _delete_rate_limiter: ClassVar[Any | None] = None
     _delete_rate_limit_key_fn: ClassVar[Callable[..., str] | None] = None
+
+    # ── MCP / A2A metadata ────────────────────────────────────────────────────
+    _delete_mcp: ClassVar[bool] = False
+    _delete_mcp_name: ClassVar[str | None] = None
+    _delete_mcp_description: ClassVar[str | None] = None
+    _delete_mcp_tags: ClassVar[list[str] | None] = None
+    _delete_skill: ClassVar[bool] = False
+    _delete_skill_id: ClassVar[str | None] = None
+    _delete_skill_name: ClassVar[str | None] = None
+    _delete_skill_description: ClassVar[str | None] = None
+    _delete_skill_input_modes: ClassVar[list[str] | None] = None
+    _delete_skill_output_modes: ClassVar[list[str] | None] = None
 
 
 # ── ListMixin ─────────────────────────────────────────────────────────────────
@@ -294,6 +357,18 @@ class ListMixin(RouterMixin):
     _list_async_capable: ClassVar[bool] = True
     _list_rate_limiter: ClassVar[Any | None] = None
     _list_rate_limit_key_fn: ClassVar[Callable[..., str] | None] = None
+
+    # ── MCP / A2A metadata ────────────────────────────────────────────────────
+    _list_mcp: ClassVar[bool] = False
+    _list_mcp_name: ClassVar[str | None] = None
+    _list_mcp_description: ClassVar[str | None] = None
+    _list_mcp_tags: ClassVar[list[str] | None] = None
+    _list_skill: ClassVar[bool] = False
+    _list_skill_id: ClassVar[str | None] = None
+    _list_skill_name: ClassVar[str | None] = None
+    _list_skill_description: ClassVar[str | None] = None
+    _list_skill_input_modes: ClassVar[list[str] | None] = None
+    _list_skill_output_modes: ClassVar[list[str] | None] = None
 
 
 # ── WebSocketMixin ────────────────────────────────────────────────────────────

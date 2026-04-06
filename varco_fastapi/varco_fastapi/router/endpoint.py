@@ -90,6 +90,32 @@ class _RouteEntry:
     deprecated: bool = False
     include_in_schema: bool = True
 
+    # ── MCP (Model Context Protocol) metadata ─────────────────────────────────
+    # When mcp=True, MCPAdapter exposes this route as an MCP tool.
+    # Fine-grained fields override the auto-generated values so callers can
+    # tune the LLM-facing interface without touching the HTTP/OpenAPI docs.
+    mcp: bool = False
+    # Override the auto-generated tool name (default: crud_action_resource or method_name)
+    mcp_name: str | None = None
+    # Override tool description shown to the LLM (fallback: summary → description → auto)
+    mcp_description: str | None = None
+    # Arbitrary tags passed through to the MCP tool definition for LLM context
+    mcp_tags: list[str] | None = None
+
+    # ── A2A / Google Skill metadata ───────────────────────────────────────────
+    # When skill=True, SkillAdapter exposes this route as a Google A2A skill.
+    skill: bool = False
+    # Override skill ID in the Agent Card (default: crud_action_resource or method_name)
+    skill_id: str | None = None
+    # Override skill display name (default: title-case of skill_id)
+    skill_name: str | None = None
+    # Override skill description in the Agent Card (fallback: summary → description → auto)
+    skill_description: str | None = None
+    # MIME types the skill accepts.  Default: ["application/json"]
+    skill_input_modes: list[str] | None = None
+    # MIME types the skill returns.  Default: ["application/json"]
+    skill_output_modes: list[str] | None = None
+
 
 # ── @route decorator ───────────────────────────────────────────────────────────
 
@@ -112,6 +138,18 @@ def route(
     operation_id: str | None = None,
     deprecated: bool = False,
     include_in_schema: bool = True,
+    # ── MCP (Model Context Protocol) ─────────────────────────────────────────
+    mcp: bool = False,
+    mcp_name: str | None = None,
+    mcp_description: str | None = None,
+    mcp_tags: list[str] | None = None,
+    # ── A2A / Google Skill ────────────────────────────────────────────────────
+    skill: bool = False,
+    skill_id: str | None = None,
+    skill_name: str | None = None,
+    skill_description: str | None = None,
+    skill_input_modes: list[str] | None = None,
+    skill_output_modes: list[str] | None = None,
 ) -> Callable:
     """
     Decorator to declare a custom HTTP endpoint on a ``VarcoRouter`` subclass.
@@ -135,8 +173,30 @@ def route(
         dependencies:      Extra FastAPI ``Depends()`` callables.
         tags:              OpenAPI tags (override router-level tags).
         operation_id:      Custom OpenAPI operation ID.
-        deprecated:        Mark as deprecated in OpenAPI docs.
-        include_in_schema: Whether to include in the OpenAPI schema.
+        deprecated:           Mark as deprecated in OpenAPI docs.
+        include_in_schema:    Whether to include in the OpenAPI schema.
+        mcp:                  If ``True``, expose this route as an MCP tool via
+                              ``MCPAdapter``.  Defaults to ``False``.
+        mcp_name:             Override the auto-generated MCP tool name.
+                              Default: ``"{crud_action}_{resource}"`` or method name.
+        mcp_description:      Override the description shown to the LLM.
+                              Fallback chain: ``mcp_description → summary →
+                              description → auto-sentence``.
+        mcp_tags:             Arbitrary tags forwarded to the MCP tool definition
+                              for LLM context (e.g. ``["orders", "write"]``).
+        skill:                If ``True``, expose this route as a Google A2A skill
+                              via ``SkillAdapter``.  Defaults to ``False``.
+        skill_id:             Override the skill ID in the Agent Card.
+                              Default: same as ``mcp_name`` derivation.
+        skill_name:           Override the skill display name in the Agent Card.
+                              Default: title-case of ``skill_id``.
+        skill_description:    Override the skill description in the Agent Card.
+                              Fallback chain: ``skill_description → summary →
+                              description → auto-sentence``.
+        skill_input_modes:    MIME types the skill accepts.
+                              Default: ``["application/json"]``.
+        skill_output_modes:   MIME types the skill returns.
+                              Default: ``["application/json"]``.
 
     Returns:
         The decorated function (unchanged).
@@ -178,6 +238,18 @@ def route(
             operation_id=operation_id,
             deprecated=deprecated,
             include_in_schema=include_in_schema,
+            # MCP fields — stored as-is; MCPAdapter resolves the fallback chain
+            mcp=mcp,
+            mcp_name=mcp_name,
+            mcp_description=mcp_description,
+            mcp_tags=mcp_tags,
+            # Skill fields — stored as-is; SkillAdapter resolves the fallback chain
+            skill=skill,
+            skill_id=skill_id,
+            skill_name=skill_name,
+            skill_description=skill_description,
+            skill_input_modes=skill_input_modes,
+            skill_output_modes=skill_output_modes,
         )
         func.__route_entry__ = entry
         return func

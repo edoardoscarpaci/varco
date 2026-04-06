@@ -480,4 +480,44 @@ __all__ = [
     "create_varco_container",
     "setup_varco_defaults",
     "setup_event_producer",
+    # MCP / Skill adapter DI helpers — re-exported from their modules for
+    # one-stop import: from varco_fastapi.di import bind_mcp_adapter
+    "bind_mcp_adapter",
+    "bind_skill_adapter",
 ]
+
+
+# ── Re-export adapter DI helpers for one-stop import convenience ──────────────
+
+
+def bind_mcp_adapter(*args: Any, **kwargs: Any) -> None:
+    """
+    Re-export of ``varco_fastapi.router.mcp.bind_mcp_adapter``.
+
+    Convenience alias so DI wiring code can import everything from one place::
+
+        from varco_fastapi.di import (
+            VarcoFastAPIModule,
+            bind_clients,
+            bind_mcp_adapter,
+            bind_skill_adapter,
+        )
+
+    See ``varco_fastapi.router.mcp.bind_mcp_adapter`` for full documentation.
+    """
+    from varco_fastapi.router.mcp import bind_mcp_adapter as _impl  # noqa: PLC0415
+
+    return _impl(*args, **kwargs)
+
+
+def bind_skill_adapter(*args: Any, **kwargs: Any) -> None:
+    """
+    Re-export of ``varco_fastapi.router.skill.bind_skill_adapter``.
+
+    Convenience alias so DI wiring code can import everything from one place.
+
+    See ``varco_fastapi.router.skill.bind_skill_adapter`` for full documentation.
+    """
+    from varco_fastapi.router.skill import bind_skill_adapter as _impl  # noqa: PLC0415
+
+    return _impl(*args, **kwargs)

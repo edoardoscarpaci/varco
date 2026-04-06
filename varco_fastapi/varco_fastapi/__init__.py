@@ -192,6 +192,22 @@ from varco_fastapi.exceptions import add_exception_handlers
 # ── DI ────────────────────────────────────────────────────────────────────────
 from varco_fastapi.di import VarcoFastAPIModule, bind_clients
 
+# ── App factory ───────────────────────────────────────────────────────────────
+from varco_fastapi.app import create_varco_app
+
+# ── Validation ────────────────────────────────────────────────────────────────
+from varco_fastapi.validation import (
+    ConfigurationError,
+    validate_router_class,
+    validate_container_bindings,
+)
+
+# ── MCP adapter ───────────────────────────────────────────────────────────────
+from varco_fastapi.router.mcp import MCPAdapter, MCPToolDefinition, bind_mcp_adapter
+
+# ── Skill / A2A adapter ───────────────────────────────────────────────────────
+from varco_fastapi.router.skill import SkillAdapter, SkillDefinition, bind_skill_adapter
+
 __all__ = [
     # Context
     "RequestContext",
@@ -282,4 +298,18 @@ __all__ = [
     # DI
     "VarcoFastAPIModule",
     "bind_clients",
+    # App factory
+    "create_varco_app",
+    # Validation
+    "ConfigurationError",
+    "validate_router_class",
+    "validate_container_bindings",
+    # MCP adapter
+    "MCPAdapter",
+    "MCPToolDefinition",
+    "bind_mcp_adapter",
+    # Skill / A2A adapter
+    "SkillAdapter",
+    "SkillDefinition",
+    "bind_skill_adapter",
 ]
