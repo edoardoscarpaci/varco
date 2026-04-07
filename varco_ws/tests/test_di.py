@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import pytest
 
+from providify import Provider
+
 from varco_core.event.base import AbstractEventBus
 from varco_core.event.memory import InMemoryEventBus
 
@@ -42,8 +44,15 @@ def _make_container_with_bus() -> tuple[object, InMemoryEventBus]:
 
     container = DIContainer()
     bus = InMemoryEventBus()
+
     # Register InMemoryEventBus as the AbstractEventBus implementation.
-    container.provide(lambda: bus, AbstractEventBus)
+    # providify resolves the DI token from the return type annotation and
+    # requires the @Provider decorator on the factory function.
+    @Provider(singleton=True)
+    def _bus_provider() -> AbstractEventBus:  # type: ignore[type-arg]
+        return bus
+
+    container.provide(_bus_provider)
     return container, bus
 
 
