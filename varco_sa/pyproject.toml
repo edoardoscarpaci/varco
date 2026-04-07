@@ -1,6 +1,6 @@
 [project]
 name          = "varco-sa"
-version       = "0.0.2"
+version       = "0.1.0"
 description   = "SQLAlchemy async backend for varco — runtime ORM generation, repository, schema guard, and Alembic helpers"
 authors       = [{ name = "edoardo.scarpaci", email = "edoardo.scarpaci@gmail.com" }]
 readme        = "README.md"

@@ -1,6 +1,6 @@
 [project]
 name          = "varco-redis"
-version       = "0.0.2"
+version       = "0.1.0"
 description   = "Redis Pub/Sub event bus backend for varco — RedisEventBus built on redis.asyncio"
 authors       = [{ name = "edoardo.scarpaci", email = "edoardo.scarpaci@gmail.com" }]
 readme        = "README.md"

@@ -603,6 +603,22 @@ filtered_query = transformer.transform(base_query, params, User)
 - **Query applicator**: `SQLAlchemyFilterVisitor` converts AST → WHERE clause
 - **Pool metrics**: `pool_metrics(engine)` returns `SAPoolMetrics` snapshot; `SAFastrestApp.pool_metrics()` for convenience
 - **DI**: `SAConfiguration` with engine, declarative base, entity classes
+- **Encryption key store**: `SAEncryptionKeyStore` — stores encryption keys in a dedicated
+  `varco_encryption_keys` table using SQLAlchemy Core (no `SAModelFactory` dependency).
+  Call `await store.ensure_table()` at startup or add a manual Alembic migration.
+  Table schema: `kid` (PK), `algorithm`, `key_material` (base64url), `created_at`,
+  `tenant_id` (NULL = global), `is_primary`, `wrapped`.
+
+  ```python
+  from varco_sa.encryption_store import SAEncryptionKeyStore
+  from varco_core.authority import EncryptionKeyManager
+
+  engine = create_async_engine("postgresql+asyncpg://...")
+  store = SAEncryptionKeyStore(engine)
+  await store.ensure_table()   # idempotent — uses CREATE TABLE IF NOT EXISTS
+  manager = EncryptionKeyManager(store, master_encryptor=kek)
+  registry = await manager.build_tenant_registry()
+  ```
 
 ### varco_kafka (Kafka)
 
@@ -627,6 +643,102 @@ filtered_query = transformer.transform(base_query, params, User)
 - **SSE adapter**: `SSEEventBus` delivers events as `data: {...}\n\n` strings; integrate with `StreamingResponse` in any ASGI framework
 - **No DI module**: wire manually in application startup / lifespan handlers
 - **No broker dependency**: both adapters subscribe to an existing bus instance; the push layer is fully decoupled from transport
+
+  ```python
+  # FastAPI wiring pattern for varco_ws
+  from varco_ws.websocket import WebSocketEventBus
+
+  ws_bus = WebSocketEventBus(bus, event_type=OrderEvent, channel="orders")
+
+  @app.on_event("startup")
+  async def startup():
+      await ws_bus.start()
+
+  @app.websocket("/ws/orders")
+  async def orders_ws(websocket: WebSocket):
+      await websocket.accept()
+      async with ws_bus.connect(websocket):
+          await asyncio.sleep(3600)  # keep alive until client disconnects
+  ```
+
+  > **Note**: `WebSocketEventBus` and `SSEEventBus` are **push adapters**, not
+  > `AbstractEventBus` implementations. Do not pass them where a bus is expected.
+  > They subscribe to an existing bus and forward serialised events to connected clients.
+
+### varco_fastapi (FastAPI adapter)
+
+- **Router mixins**: `CreateMixin`, `ReadMixin`, `UpdateMixin`, `DeleteMixin`, `ListMixin`,
+  `StreamMixin` — compose standard HTTP endpoints without boilerplate.
+- **Auth middleware**: `AuthMiddleware` validates JWT bearer tokens using `TrustedIssuerRegistry`.
+- **Typed HTTP clients**: `AsyncVarcoClient` / `SyncVarcoClient` with retry, circuit breaker, and JWT injection.
+- **DI wiring**: `VarcoFastAPIModule` + `bind_clients()`.
+
+#### SkillAdapter — Google A2A protocol
+
+`SkillAdapter` converts any `VarcoRouter` class into a Google A2A (Agent-to-Agent) agent.
+It reads `ResolvedRoute` metadata via `introspect_routes()` and exposes every route flagged
+with `skill_enabled=True` as an A2A skill. Execution is delegated to `AsyncVarcoClient` —
+no handler logic is duplicated.
+
+A2A protocol surfaces mounted by `adapter.mount(app)`:
+- `GET  /.well-known/agent.json` — Agent Card (skill discovery)
+- `POST /tasks/send` — execute a skill synchronously
+- `GET  /tasks/{task_id}` — poll task status (v1: echo-back, no history stored)
+
+```python
+from varco_fastapi.router.skill import SkillAdapter, bind_skill_adapter
+
+# Direct usage
+adapter = SkillAdapter(
+    OrderRouter,
+    agent_name="OrderAgent",
+    agent_description="Manages customer orders",
+    client=OrderClient(base_url="http://localhost:8080"),
+)
+adapter.mount(app)  # registers /.well-known/agent.json + /tasks/*
+
+# DI-friendly usage
+bind_skill_adapter(container, OrderRouter, agent_name="OrderAgent",
+                   agent_description="Manages orders", client_cls=OrderClient)
+# Inject[SkillAdapter] now resolves to the adapter
+```
+
+**Design**: v1 tasks are synchronous — all CRUD operations complete in the `/tasks/send`
+response. Long-running operations (ML inference, file processing) will require async task
+storage in a future version.
+
+**Optional extra**: `pip install varco-fastapi[a2a]` for the Google A2A SDK types.
+`SkillAdapter` itself works without it — the extra only adds A2A client utilities.
+
+#### MCPAdapter — Model Context Protocol
+
+`MCPAdapter` converts any `VarcoRouter` class into an MCP (Model Context Protocol) server.
+Routes flagged with `mcp_enabled=True` are exposed as MCP tools. Execution is delegated
+to `AsyncVarcoClient`.
+
+```python
+from varco_fastapi.router.mcp import MCPAdapter, bind_mcp_adapter
+
+# Option A: mount as HTTP+SSE endpoint on an existing FastAPI app
+adapter = MCPAdapter(OrderRouter, client=OrderClient(base_url="http://localhost:8080"))
+adapter.mount(app)           # registers POST /mcp + GET /mcp/sse
+
+# Option B: run as standalone stdio MCP server (for local LLMs)
+server = adapter.to_mcp_server()
+server.run()
+
+# DI-friendly usage
+bind_mcp_adapter(container, OrderRouter, client_cls=OrderClient)
+# Inject[MCPAdapter] now resolves to the adapter
+```
+
+**Input schema generation**: `MCPAdapter` automatically builds a JSON Schema for each tool
+from path parameters, request body model (`model_json_schema()`), and pagination/filter
+params for list routes.
+
+**Optional extra**: `pip install varco-fastapi[mcp]` (`mcp>=1.0`). The adapter is
+constructible without the extra — `to_mcp_server()` and `mount()` raise `ImportError`
+with a clear install message if the SDK is absent.
 
 ---
 

@@ -1,0 +1,154 @@
+# CD — build and publish all varco packages to PyPI.
+#
+# DESIGN: OIDC trusted publishing over API token secrets
+#   ✅ No long-lived secret stored in GitHub — token is minted per-job and expires.
+#   ✅ PyPI verifies the GitHub repo identity, not a rotating API token.
+#   ✅ Simpler rotation — nothing to rotate; trust relationship is managed in PyPI UI.
+#   ❌ Requires one-time setup in PyPI project settings (add this repo as a trusted publisher).
+#   See: https://docs.pypi.org/trusted-publishers/
+#
+# Trigger: a git tag matching v* (e.g. v0.0.1, v1.2.3).
+# All 8 packages are built and published atomically — a single tag releases everything.
+# If you ever need to release packages independently, split this into per-package workflows.
+#
+# IMPORTANT: Before this workflow can publish, configure each varco-* project on PyPI
+# with a Trusted Publisher pointing to this repository + this workflow file name.
+
+name: Publish to PyPI
+
+on:
+  push:
+    # Only trigger on version tags — never on branch pushes.
+    tags:
+      - "v*"
+
+  # Allow manual trigger for dry-runs or emergency re-publishes.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run — build wheels but do not publish"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  build:
+    name: "Build wheels"
+    runs-on: ubuntu-latest
+    outputs:
+      # Pass the dist/ path to the publish job so it knows what to upload.
+      dist_path: dist/
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install workspace (needed to resolve sibling deps during build)
+        run: uv sync --all-extras
+
+      # Build each package into the shared dist/ directory.
+      # uv build respects the [build-system] in each package's pyproject.toml.
+      # Wheels and sdists are written to dist/ at the workspace root.
+      - name: Build all packages
+        run: |
+          mkdir -p dist
+          for pkg in varco_core varco_kafka varco_redis varco_sa varco_beanie varco_ws varco_fastapi varco_memcached; do
+            echo "── Building $pkg ──"
+            uv build --package "$pkg" --out-dir dist/
+          done
+
+      # Verify that every built wheel contains py.typed — catches regressions
+      # where the marker file was accidentally omitted from the package.
+      - name: Verify py.typed present in all wheels
+        run: |
+          python - <<'EOF'
+          import zipfile, pathlib, sys
+
+          dist = pathlib.Path("dist")
+          wheels = list(dist.glob("*.whl"))
+          if not wheels:
+              print("ERROR: no wheels found in dist/", file=sys.stderr)
+              sys.exit(1)
+
+          missing = []
+          for whl in wheels:
+              with zipfile.ZipFile(whl) as zf:
+                  names = zf.namelist()
+                  # py.typed must be inside one of the package directories
+                  has_marker = any(n.endswith("py.typed") for n in names)
+                  if not has_marker:
+                      missing.append(whl.name)
+                  else:
+                      print(f"  ✅ {whl.name} — py.typed found")
+
+          if missing:
+              print(f"\nERROR: py.typed missing from: {missing}", file=sys.stderr)
+              sys.exit(1)
+          print(f"\nAll {len(wheels)} wheels contain py.typed ✅")
+          EOF
+
+      # Upload dist/ as an artifact so the publish job can access it without
+      # rebuilding. Artifacts are shared between jobs in the same workflow run.
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  publish:
+    name: "Publish to PyPI"
+    needs: build
+    runs-on: ubuntu-latest
+    # The publish job only runs when triggered by a tag push AND dry_run != true.
+    # Manual workflow_dispatch with dry_run=true stops here after the build job.
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')
+
+    # OIDC trusted publishing requires the id-token write permission.
+    # This permission must be scoped as tightly as possible — only this job needs it.
+    permissions:
+      id-token: write   # Required for OIDC trusted publishing
+      contents: read
+
+    environment:
+      # The "pypi" environment in GitHub repo settings can add a required reviewer
+      # before publishing — an extra manual gate for production releases.
+      name: pypi
+      url: https://pypi.org/project/varco-core/
+
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: List built artifacts
+        run: ls -lh dist/
+
+      # pypa/gh-action-pypi-publish handles OIDC token exchange with PyPI.
+      # No PYPI_API_TOKEN secret is needed — PyPI trusts this workflow by identity.
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          # skip-existing: true allows re-running without failing on already-published
+          # versions — useful for partial publish failures.
+          skip-existing: true
+          verbose: true

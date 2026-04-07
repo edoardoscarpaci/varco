@@ -1,6 +1,6 @@
 [project]
 name          = "varco-core"
-version       = "0.0.4"
+version       = "0.1.0"
 description   = "Backend-agnostic domain model, service layer, authorization, query AST and DTOs for varco"
 authors       = [{ name = "edoardo.scarpaci", email = "edoardo.scarpaci@gmail.com" }]
 readme        = "README.md"

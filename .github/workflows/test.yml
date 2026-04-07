@@ -1,0 +1,92 @@
+# CI — unit tests for all varco workspace packages.
+#
+# DESIGN: per-package matrix jobs over a single monolithic job
+#   ✅ Package failures are isolated — one broken package doesn't block all others.
+#   ✅ Parallelism: all packages run concurrently, total wall-time ≈ slowest package.
+#   ✅ Each job only installs the deps it actually needs.
+#   ❌ More GitHub Actions minutes consumed vs. a single job (tradeoff accepted).
+#
+# Integration tests (Kafka, Redis, MongoDB brokers via Docker) are intentionally
+# excluded here — they run separately via the `integration.yml` workflow which
+# spins up the required services. The `pytest -m "not integration"` flag ensures
+# the default run never hangs waiting for an unavailable broker.
+
+name: Tests
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+# Cancel in-flight runs for the same branch/PR — avoids wasting minutes on
+# superseded commits while a new push is already queued.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: "pytest · ${{ matrix.package }}"
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Run all packages even if one fails — we want the full picture per PR.
+      fail-fast: false
+      matrix:
+        package:
+          - varco_core
+          - varco_kafka
+          - varco_redis
+          - varco_sa
+          - varco_beanie
+          - varco_ws
+          - varco_fastapi
+          - varco_memcached
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # astral-sh/setup-uv installs the uv binary and enables its global cache.
+      # Caching is keyed on uv.lock so the cache is invalidated exactly when
+      # the lockfile changes — not on every push.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Install the full workspace so every sibling dep resolves correctly.
+      # --all-extras ensures optional extras (ws, mcp, otel, a2a) are installed
+      # so their code paths are covered by tests.
+      - name: Install workspace dependencies
+        run: uv sync --all-extras
+
+      # -m "not integration" skips tests tagged @pytest.mark.integration — those
+      # require a live broker (Kafka, Redis, MongoDB) which is not available here.
+      # Integration tests run in a separate workflow with Docker service containers.
+      - name: Run unit tests — ${{ matrix.package }}
+        run: uv run pytest ${{ matrix.package }}/tests/ -m "not integration" -v --tb=short
+
+  # Aggregate job — PRs can require this single status instead of listing every
+  # matrix leg. Add "All tests passed" as a required check in branch protection.
+  all-tests:
+    name: All tests passed
+    needs: test
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check matrix result
+        # Fails if any matrix leg failed or was cancelled.
+        run: |
+          if [[ "${{ needs.test.result }}" != "success" ]]; then
+            echo "One or more test jobs failed or were cancelled."
+            exit 1
+          fi
+          echo "All test jobs succeeded."

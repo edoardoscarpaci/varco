@@ -1,6 +1,6 @@
 [project]
 name          = "varco-ws"
-version       = "0.0.1"
+version       = "0.1.0"
 description   = "WebSocket and SSE event bus backends for varco — real-time browser push"
 authors       = [{ name = "edoardo.scarpaci", email = "edoardo.scarpaci@gmail.com" }]
 readme        = "README.md"

@@ -1373,7 +1373,7 @@ wheels = [
 
 [[package]]
 name = "varco-beanie"
-version = "0.0.2"
+version = "0.1.0"
 source = { editable = "varco_beanie" }
 dependencies = [
     { name = "beanie" },
@@ -1408,7 +1408,7 @@ dev = [
 
 [[package]]
 name = "varco-core"
-version = "0.0.4"
+version = "0.1.0"
 source = { editable = "varco_core" }
 dependencies = [
     { name = "cryptography" },
@@ -1449,7 +1449,7 @@ dev = [
 
 [[package]]
 name = "varco-fastapi"
-version = "0.0.1"
+version = "0.1.0"
 source = { editable = "varco_fastapi" }
 dependencies = [
     { name = "fastapi" },
@@ -1511,7 +1511,7 @@ dev = [
 
 [[package]]
 name = "varco-kafka"
-version = "0.0.2"
+version = "0.1.0"
 source = { editable = "varco_kafka" }
 dependencies = [
     { name = "aiokafka" },
@@ -1544,7 +1544,7 @@ dev = [
 
 [[package]]
 name = "varco-memcached"
-version = "0.0.1"
+version = "0.1.0"
 source = { editable = "varco_memcached" }
 dependencies = [
     { name = "aiomcache" },
@@ -1577,7 +1577,7 @@ dev = [
 
 [[package]]
 name = "varco-redis"
-version = "0.0.2"
+version = "0.1.0"
 source = { editable = "varco_redis" }
 dependencies = [
     { name = "providify" },
@@ -1610,7 +1610,7 @@ dev = [
 
 [[package]]
 name = "varco-sa"
-version = "0.0.2"
+version = "0.1.0"
 source = { editable = "varco_sa" }
 dependencies = [
     { name = "providify" },
@@ -1648,7 +1648,7 @@ dev = [
 
 [[package]]
 name = "varco-ws"
-version = "0.0.1"
+version = "0.1.0"
 source = { editable = "varco_ws" }
 dependencies = [
     { name = "varco-core" },

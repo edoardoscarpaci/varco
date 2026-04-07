@@ -1,6 +1,6 @@
 [project]
 name          = "varco-beanie"
-version       = "0.0.2"
+version       = "0.1.0"
 description   = "Beanie (Motor / MongoDB) async backend for varco — runtime ORM generation, repository, and UoW"
 authors       = [{ name = "edoardo.scarpaci", email = "edoardo.scarpaci@gmail.com" }]
 readme        = "README.md"
