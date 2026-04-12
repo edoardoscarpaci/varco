@@ -1,6 +1,6 @@
 [project]
 name          = "varco-redis"
-version       = "0.1.0"
+version       = "1.0.6"
 description   = "Redis Pub/Sub event bus backend for varco — RedisEventBus built on redis.asyncio"
 authors       = [{ name = "edoardo.scarpaci", email = "edoardo.scarpaci@gmail.com" }]
 readme        = "README.md"
@@ -25,7 +25,7 @@ dependencies = [
     "redis>=5.0",
     # providify is used directly for @Singleton / @PreDestroy on RedisEventBus
     # and for @Configuration / @Provider in varco_redis.di.
-    "providify>=0.1.4a3",
+    "providify>=0.1.6",
     # pydantic-settings is used directly in varco_redis.config for SettingsConfigDict.
     # It is also a transitive dep via varco-core, but listed explicitly here.
     "pydantic-settings>=2.0",

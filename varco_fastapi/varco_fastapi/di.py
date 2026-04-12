@@ -52,16 +52,17 @@ Async safety:   ✅ No I/O during registration; providers are called lazily.
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING, Any
 
 # ── Module-level imports for DI type resolution ───────────────────────────────
-# These must live at module scope — NOT inside _try_build_module() — because
-# ``from __future__ import annotations`` turns all annotations into strings.
-# When providify calls ``typing.get_type_hints(provider_method)`` it resolves
-# those strings using the function's ``__globals__`` (== this module's globals).
-# If a type is only imported locally inside _try_build_module(), it is never
-# added to ``__globals__`` and ``get_type_hints`` raises NameError, which
-# providify surfaces as "Provider must declare a return type hint".
+# These must live at module scope because ``from __future__ import annotations``
+# turns all annotations into strings.  When providify calls
+# ``typing.get_type_hints(provider_fn)`` it resolves those strings using the
+# function's ``__globals__`` (== this module's globals).  Any type only imported
+# locally would be missing from ``__globals__`` and ``get_type_hints`` would
+# raise NameError, which providify surfaces as "Provider must declare a return
+# type hint".
 from varco_fastapi.auth.trust_store import TrustStore
 from varco_fastapi.client.base import ClientProfile
 from varco_fastapi.context import (
@@ -72,14 +73,26 @@ from varco_fastapi.context import (
 )
 from varco_fastapi.middleware.cors import CORSConfig
 from varco_core.job.task import TaskRegistry
-from varco_core.job.serializer import DefaultTaskSerializer
+from varco_core.job.serializer import DefaultTaskSerializer, TaskSerializer
 
 # Event producer types — also needed by setup_event_producer() for the same reason.
 from varco_core.event.base import AbstractEventBus
 from varco_core.event.producer import AbstractEventProducer, BusEventProducer
 
+from providify import Configuration, Provider, Singleton
+
 if TYPE_CHECKING:
     pass
+
+
+# ── Singleton stamps for varco_core classes (no providify dep there) ──────────
+# varco_core must stay providify-free — apply scope decorators here, once, at
+# module import time.  Idempotent: stamping an already-decorated class is harmless.
+#
+# priority = -sys.maxsize - 1  →  lowest possible, so any user-supplied binding
+# for these types wins automatically (user priority > default).
+Singleton(priority=-sys.maxsize - 1)(DefaultTaskSerializer)
+Singleton(priority=-sys.maxsize - 1)(TaskRegistry)
 
 
 def bind_clients(container: Any, *client_classes: type) -> None:
@@ -163,118 +176,94 @@ def bind_clients(container: Any, *client_classes: type) -> None:
 # ── VarcoFastAPIModule ────────────────────────────────────────────────────────
 
 
-def _try_build_module() -> type | None:
+@Configuration
+class VarcoFastAPIModule:
     """
-    Attempt to build the ``VarcoFastAPIModule`` ``@Configuration`` class.
+    ``@Configuration`` module for varco_fastapi defaults.
 
-    Returns ``None`` if providify is not installed.
+    Discovered and auto-installed by ``container.scan("varco_fastapi", recursive=True)``.
+    No explicit ``container.install(VarcoFastAPIModule)`` call is required.
 
-    DESIGN: lazy import + None fallback over hard dependency on providify
-        ✅ varco_fastapi can be used without DI (pass explicit instances)
-        ✅ No ImportError at module load time if providify is absent
-        ❌ Users must check if VarcoFastAPIModule is None before installing
+    Registers (all overrideable via ``container.bind()`` before scanning):
+        - ``TrustStore``       — from ``VARCO_TRUST_STORE_DIR`` env vars
+        - ``CORSConfig``       — from ``VARCO_CORS_ORIGINS`` env var
+        - ``ClientProfile``    — from ``VARCO_CLIENT_TIMEOUT`` env vars
+        - ``TaskRegistry``     — shared singleton across all routers
+        - ``RequestContext``   — per-request ContextVar (non-singleton)
+        - ``JwtContext``       — per-request JWT ContextVar (non-singleton)
+
+    Thread safety:  ✅ Module instance is created once at install() time.
+    Async safety:   ✅ All providers are synchronous.
     """
-    try:
-        from providify import Configuration, Provider, Singleton  # noqa: PLC0415
-    except ImportError:
-        return None
 
-    # ── Apply @Singleton to DefaultTaskSerializer ─────────────────────────────
-    # (All type imports have been promoted to module level — see the comment near
-    # the top of this file for why ``from __future__ import annotations`` forces
-    # them into __globals__ for get_type_hints() to resolve provider return types.)
-    # varco_core has no dependency on providify, so the scope decorator cannot
-    # live in that package.  We apply it here, where providify IS available,
-    # as a one-time idempotent side-effect.
-    #
-    # priority = -sys.maxsize - 1  →  lowest possible priority, so any
-    # user-supplied binding for TaskSerializer wins automatically.
-    #
-    # DESIGN: side-effect in _try_build_module (module import time)
-    #   ✅ Applied exactly once — _try_build_module is only called once at module load
-    #   ✅ Idempotent — calling Singleton() on an already-decorated class is harmless
-    #   ✅ Keeps varco_core zero-dependency (no providify import there)
-    #   ❌ Slightly non-obvious — mitigated by this comment
-    import sys as _sys  # noqa: PLC0415
-
-    Singleton(priority=-_sys.maxsize - 1)(DefaultTaskSerializer)
-
-    @Configuration
-    class VarcoFastAPIModule:
+    @Provider(singleton=True)
+    def trust_store(self) -> TrustStore:
         """
-        Default DI bindings for varco_fastapi.
+        TLS trust store loaded from env vars (``VARCO_TRUST_STORE_DIR``, etc.).
 
-        Override individual providers by registering a replacement binding
-        in your application's ``@Configuration`` class before installing this
-        module, or by calling ``container.bind()`` after installation.
-
-        Registered providers:
-            AbstractJobStore  → InMemoryJobStore (singleton)
-            AbstractJobRunner → JobRunner(store) (singleton)
-            TrustStore        → TrustStore.from_env() (singleton)
-            CORSConfig        → CORSConfig.from_env() (singleton)
-            ClientProfile     → ClientProfile.from_env() (singleton)
-            TaskRegistry      → TaskRegistry() (singleton, shared across all routers)
-            RequestContext    → get_request_context() (Live — always current request)
-            JwtContext        → get_jwt_context() (Live — always current request)
-
-        ``TaskSerializer`` is NOT registered here — call ``setup_varco_defaults(container)``
-        after installation to bind ``TaskSerializer → DefaultTaskSerializer``.
-
-        Thread safety:  ✅ Provider methods are called once (singleton) by the container.
-        Async safety:   ✅ No async providers here — all constructions are sync.
+        Returns:
+            A ``TrustStore`` configured from the environment.
         """
+        return TrustStore.from_env()
 
-        @Provider(singleton=True)
-        def trust_store(self) -> TrustStore:
-            """TLS trust store from env vars (``VARCO_TRUST_STORE_DIR``, etc.)."""
-            return TrustStore.from_env()
+    @Provider(singleton=True)
+    def cors_config(self) -> CORSConfig:
+        """
+        CORS configuration from ``VARCO_CORS_ORIGINS`` env var.
 
-        @Provider(singleton=True)
-        def cors_config(self) -> CORSConfig:
-            """CORS configuration from env vars (``VARCO_CORS_ORIGINS``, etc.)."""
-            return CORSConfig.from_env()
+        Returns:
+            A ``CORSConfig`` configured from the environment.
+        """
+        return CORSConfig.from_env()
 
-        @Provider(singleton=True)
-        def client_profile(self) -> ClientProfile:
-            """Default client profile from env vars (``VARCO_CLIENT_TIMEOUT``, etc.)."""
-            return ClientProfile.from_env()
+    @Provider(singleton=True)
+    def client_profile(self) -> ClientProfile:
+        """
+        Default HTTP client profile from ``VARCO_CLIENT_TIMEOUT`` env vars.
 
-        @Provider(singleton=True)
-        def task_registry(self) -> TaskRegistry:
-            """
-            Shared singleton task registry.
+        Returns:
+            A ``ClientProfile`` configured from the environment.
+        """
+        return ClientProfile.from_env()
 
-            All ``VarcoCRUDRouter.build_router()`` calls register their CRUD
-            action tasks here, making them available to ``JobRunner.recover()``.
-            """
-            return TaskRegistry()
+    @Provider(singleton=True)
+    def task_registry(self) -> TaskRegistry:
+        """
+        Shared ``TaskRegistry`` singleton used by all ``VarcoCRUDRouter`` instances.
 
-        @Provider
-        def request_context(self) -> RequestContext:
-            """
-            Current request context — auth, request ID, raw token.
+        All ``build_router()`` calls register their CRUD action tasks here so
+        ``JobRunner.recover()`` can re-submit PENDING jobs after a restart.
 
-            Wrapped in ``Live[RequestContext]`` by the DI container so singletons
-            always get the current request's values, not a stale snapshot.
-            """
-            return get_request_context()
+        Returns:
+            A new ``TaskRegistry`` shared across all routers.
+        """
+        return TaskRegistry()
 
-        @Provider
-        def jwt_context(self) -> JwtContext:
-            """
-            Parsed JWT for the current request.
+    @Provider
+    def request_context(self) -> RequestContext:
+        """
+        Current request context — auth, request ID, raw token.
 
-            Wrapped in ``Live[JwtContext]`` by the DI container.
-            Token is parsed without signature verification.
-            """
-            return get_jwt_context()
+        Non-singleton: ``RequestContext`` is per-request state stored in a
+        ``ContextVar``.  The container wraps it in ``Live[RequestContext]`` so
+        singletons always receive the current request's values.
 
-    return VarcoFastAPIModule
+        Returns:
+            The ``RequestContext`` for the current asyncio task.
+        """
+        return get_request_context()
 
+    @Provider
+    def jwt_context(self) -> JwtContext:
+        """
+        Parsed JWT payload for the current request.
 
-# Build once at import time; will be None if providify is not installed
-VarcoFastAPIModule = _try_build_module()
+        Non-singleton for the same reason as ``request_context`` above.
+
+        Returns:
+            The ``JwtContext`` for the current asyncio task.
+        """
+        return get_jwt_context()
 
 
 def create_varco_container(*packages: str) -> Any:
@@ -373,16 +362,10 @@ def setup_varco_defaults(container: Any) -> None:
     Thread safety:  ✅ Registration is expected at bootstrap (single-threaded).
     Async safety:   ✅ No I/O during registration.
     """
-    try:
-        from varco_core.job.serializer import (
-            DefaultTaskSerializer,
-            TaskSerializer,
-        )  # noqa: PLC0415
-    except ImportError:
-        return  # varco_core not installed — nothing to bind
-
-    # DefaultTaskSerializer is @Singleton (stamped in _try_build_module above).
-    # container.bind() respects the class-level scope metadata — no singleton=True
+    # DefaultTaskSerializer is @Singleton (stamped at module level above).
+    # TaskSerializer and DefaultTaskSerializer are imported at module level, but
+    # we re-use the module-level names here — no local import needed.
+    # container.bind() respects class-level scope metadata — no singleton=True
     # needed on the @Provider side because scope lives on the class itself.
     container.bind(TaskSerializer, DefaultTaskSerializer)
 
@@ -446,13 +429,8 @@ def setup_event_producer(container: Any) -> None:
     Thread safety:  ✅ Registration is expected at bootstrap (single-threaded).
     Async safety:   ✅ No I/O during registration.
     """
-    # AbstractEventProducer, BusEventProducer, AbstractEventBus are already
-    # imported at module level so get_type_hints() can resolve them.
-    try:
-        from providify import Provider, Singleton  # noqa: PLC0415
-    except ImportError:
-        # providify not installed — graceful no-op.
-        return
+    # AbstractEventProducer, BusEventProducer, AbstractEventBus, Provider, Singleton
+    # are all imported at module level — no local imports needed here.
 
     # Apply @Singleton to BusEventProducer so DI creates a single shared
     # producer for all services.  BusEventProducer is stateless once
@@ -460,9 +438,7 @@ def setup_event_producer(container: Any) -> None:
     #
     # priority = -sys.maxsize - 1 → lowest possible, so any user-supplied
     # AbstractEventProducer binding wins automatically.
-    import sys as _sys  # noqa: PLC0415
-
-    Singleton(priority=-_sys.maxsize - 1)(BusEventProducer)
+    Singleton(priority=-sys.maxsize - 1)(BusEventProducer)
 
     # Register a @Provider that injects AbstractEventBus into BusEventProducer.
     # Named function (not lambda) for clean describe() output in the container.
@@ -477,6 +453,7 @@ def setup_event_producer(container: Any) -> None:
 __all__ = [
     "VarcoFastAPIModule",
     "bind_clients",
+    "bootstrap",
     "create_varco_container",
     "setup_varco_defaults",
     "setup_event_producer",
@@ -485,6 +462,97 @@ __all__ = [
     "bind_mcp_adapter",
     "bind_skill_adapter",
 ]
+
+
+# ── bootstrap ─────────────────────────────────────────────────────────────────
+
+
+def bootstrap(
+    container: Any = None,
+    *packages: str,
+    setup_defaults: bool = True,
+    setup_producer: bool = False,
+) -> Any:
+    """
+    Bootstrap ``varco_fastapi`` into a ``DIContainer``.
+
+    Installs :data:`VarcoFastAPIModule`, calls
+    ``container.scan("varco_fastapi", recursive=True)`` plus any
+    additional ``packages``, and optionally runs
+    :func:`setup_varco_defaults` and :func:`setup_event_producer`.
+
+    This is a convenience wrapper around :func:`create_varco_container`
+    that also installs the FastAPI module — the minimum required setup
+    for a ``varco_fastapi``-based application::
+
+        from varco_fastapi.di import bootstrap
+
+        container = bootstrap("myapp")   # scans varco_fastapi + myapp
+        # All VarcoFastAPIModule providers are available immediately
+
+    Full application bootstrap with a Redis event bus::
+
+        from varco_redis.di import bootstrap as redis_bootstrap
+        from varco_fastapi.di import bootstrap as fastapi_bootstrap
+
+        container = await redis_bootstrap()
+        fastapi_bootstrap(container, "myapp", setup_producer=True)
+        # AbstractEventProducer → BusEventProducer is now bound
+
+    Args:
+        container:       An existing ``DIContainer`` to install into.
+                         When ``None``, ``DIContainer.current()`` is used —
+                         the process-level singleton.
+        *packages:       Additional package names to scan after
+                         ``"varco_fastapi"`` — typically your application
+                         package (e.g. ``"myapp"``).
+        setup_defaults:  When ``True`` (default), calls
+                         :func:`setup_varco_defaults` to bind
+                         ``TaskSerializer → DefaultTaskSerializer``.
+        setup_producer:  When ``True``, calls :func:`setup_event_producer`
+                         to bind ``AbstractEventProducer → BusEventProducer``.
+                         Only meaningful after a bus module is installed.
+
+    Returns:
+        The ``DIContainer`` after installation, scanning, and optional
+        default bindings.
+
+    Edge cases:
+        - ``setup_producer=True`` without a bus module installed causes a
+          ``LookupError`` at first ``AbstractEventProducer`` resolution.
+          Always install a bus module before passing ``setup_producer=True``.
+        - ``VarcoFastAPIModule`` is ``None`` when providify is not installed —
+          ``bootstrap()`` returns ``None`` in that case.
+
+    Thread safety:  ✅ Bootstrap is intended for single-threaded startup only.
+    Async safety:   ✅ No I/O during installation; providers are called lazily.
+    """
+    try:
+        from providify import DIContainer  # noqa: PLC0415
+    except ImportError:
+        return None
+
+    if container is None:
+        # Use the process-level singleton container — consistent with
+        # create_varco_container().
+        container = DIContainer.current()
+
+    # Scan varco_fastapi itself, then any caller-supplied packages.
+    # The scanner discovers VarcoFastAPIModule (@Configuration) and calls
+    # container.install(VarcoFastAPIModule) automatically — no explicit
+    # install() call needed.  varco_fastapi is scanned first so its
+    # @Singleton classes are registered before application-level overrides.
+    all_packages = ("varco_fastapi", *packages)
+    for pkg in all_packages:
+        container.scan(pkg, recursive=True)
+
+    if setup_defaults:
+        setup_varco_defaults(container)
+
+    if setup_producer:
+        setup_event_producer(container)
+
+    return container
 
 
 # ── Re-export adapter DI helpers for one-stop import convenience ──────────────

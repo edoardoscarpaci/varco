@@ -32,6 +32,24 @@ DESIGN: explicit registration over DI container scanning
     ✅ Works as a FastAPI ``lifespan`` context manager
     ❌ Must be configured manually at app startup — no auto-discovery
 
+Recommended startup order
+-------------------------
+Register components in dependency order.  Each component starts after the
+things it depends on, and stops before them (LIFO shutdown is automatic)::
+
+    lifespan.register(bus)           # 1. Bus first — no other component can
+                                     #    subscribe before it starts its loop.
+    lifespan.register(consumer)      # 2. Consumer calls register_to(bus) in
+                                     #    start() — bus must already be running.
+    lifespan.register(ws_bus)        # 3. WebSocketEventBus.start() calls
+    lifespan.register(sse_bus)       #    bus.subscribe() — needs bus running.
+    lifespan.register(outbox_relay)  # 4. Polls DB + publishes to bus — needs both.
+    lifespan.register(job_runner)    # 5. Independent — can start last.
+
+    # Shutdown (LIFO): job_runner → outbox_relay → sse_bus → ws_bus → consumer → bus
+
+Rule of thumb: register a component *after* everything it depends on.
+
 Thread safety:  ⚠️ Registration must happen before app startup (not thread-safe).
 Async safety:   ✅ ``__call__`` is an async context manager (FastAPI lifespan).
 """
@@ -39,6 +57,7 @@ Async safety:   ✅ ``__call__`` is an async context manager (FastAPI lifespan).
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Protocol, runtime_checkable
 
@@ -99,8 +118,21 @@ class VarcoLifespan:
     Async safety:   ✅ ``__call__`` is an async context manager.
     """
 
-    def __init__(self, *components: Any) -> None:
+    def __init__(
+        self,
+        *components: Any,
+        setup: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         self._components: list[Any] = list(components)
+        # Optional async hook called before any component is started.
+        # Useful when the caller needs to perform async DI resolution
+        # (e.g. await container.ainstall(...)) and then register the
+        # resolved components via self.register() — all before start().
+        # DESIGN: setup callback over subclassing
+        #   ✅ Keeps VarcoLifespan a plain orchestrator — no DI knowledge
+        #   ✅ Closure captures all outer-scope state naturally
+        #   ❌ Caller must not forget to register components inside setup
+        self._setup: Callable[[], Awaitable[None]] | None = setup
 
     def register(self, component: Any) -> None:
         """
@@ -147,6 +179,11 @@ class VarcoLifespan:
               logged and subsequent stops still run — a failing stop must not
               block other components from cleaning up.
         """
+        # Run async setup first so it can register additional components
+        # (e.g. DI resolution of bus/consumer/job_runner) before the start loop.
+        if self._setup is not None:
+            await self._setup()
+
         # Start in registration order
         started: list[Any] = []
         for component in self._components:

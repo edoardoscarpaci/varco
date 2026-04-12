@@ -1,6 +1,6 @@
 [project]
 name          = "varco-core"
-version       = "0.1.0"
+version       = "1.0.6"
 description   = "Backend-agnostic domain model, service layer, authorization, query AST and DTOs for varco"
 authors       = [{ name = "edoardo.scarpaci", email = "edoardo.scarpaci@gmail.com" }]
 readme        = "README.md"
@@ -25,7 +25,7 @@ dependencies = [
     # backend config classes (RedisEventBusSettings, KafkaEventBusSettings, etc.)
     # to read configuration from environment variables automatically.
     "pydantic-settings>=2.0",
-    "providify>=0.1.4a3",
+    "providify>=0.1.6",
     # lark is used by QueryParser — runtime dependency, not dev-only
     "lark>=1.1",
     # PyJWT is used by varco_core.jwt for encoding/decoding JWT tokens

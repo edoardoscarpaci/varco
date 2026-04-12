@@ -62,7 +62,16 @@ from typing import Annotated, Any
 # redis package namespace directly.
 import redis.asyncio as aioredis
 
-from providify import Inject, Instance, InjectMeta, PostConstruct, PreDestroy, Singleton
+from providify import (
+    Configuration,
+    Inject,
+    Instance,
+    InjectMeta,
+    PostConstruct,
+    PreDestroy,
+    Provider,
+    Singleton,
+)
 
 from varco_core.event.base import (
     CHANNEL_ALL,
@@ -491,3 +500,69 @@ class RedisEventBus(AbstractEventBus):
             f"subscriptions={active}, "
             f"started={self._started})"
         )
+
+
+# ── Bus-type selector ─────────────────────────────────────────────────────────
+# ``RedisEventBusSelectorConfiguration`` is a ``@Configuration`` class discovered
+# by ``container.scan("varco_redis", recursive=True)`` via the scanner's
+# ``_autoregister_configurator`` path.  Its ``@Provider`` method registers
+# ``AbstractEventBus`` in the container without any explicit ``install()`` call.
+#
+# DESIGN: @Configuration selector over module-level @Provider function
+#   ✅ Scan discovers @Configuration classes automatically (scanner does NOT skip
+#      classes starting with uppercase, only names starting with ``_``).
+#   ✅ Single env var (VARCO_REDIS_USE_STREAMS=true) selects the bus type.
+#   ✅ RedisStreamEventBus has no @Singleton decorator — only created here.
+#   ❌ Requires one extra class vs a bare function, but the class groups the
+#      selector with its documentation.
+
+
+@Configuration
+class RedisEventBusSelectorConfiguration:
+    """
+    DI ``@Configuration`` that selects and registers the active Redis event bus.
+
+    Discovered and auto-installed by ``container.scan("varco_redis", recursive=True)``.
+    No explicit ``container.install(RedisEventBusSelectorConfiguration)`` call is needed.
+
+    The ``bus`` provider reads ``VARCO_REDIS_USE_STREAMS`` from the injected
+    ``RedisEventBusSettings`` singleton and returns either ``RedisStreamEventBus``
+    (at-least-once) or ``RedisEventBus`` (at-most-once Pub/Sub).
+
+    Thread safety:  ✅ Installed once at startup.
+    Async safety:   ✅ No I/O at construction time — I/O happens in ``start()``.
+    """
+
+    @Provider(singleton=True)
+    def bus(
+        self,
+        settings: Inject[RedisEventBusSettings],
+    ) -> AbstractEventBus:  # type: ignore[type-arg]
+        """
+        Select and construct the active Redis event bus implementation.
+
+        Returns ``RedisStreamEventBus`` when ``settings.use_streams`` is ``True``
+        (i.e. ``VARCO_REDIS_USE_STREAMS=true``), otherwise ``RedisEventBus``.
+
+        Args:
+            settings: ``RedisEventBusSettings`` singleton injected from the container.
+
+        Returns:
+            The appropriate bus implementation as ``AbstractEventBus``.
+
+        Edge cases:
+            - Switching ``use_streams`` requires a process restart — the singleton
+              is resolved once at warm-up and cached for the container's lifetime.
+            - Both implementations share the same ``RedisEventBusSettings`` object —
+              ``url``, ``channel_prefix``, etc. apply to whichever is active.
+
+        Thread safety:  ✅ Called once; result is a shared singleton.
+        Async safety:   ✅ No I/O at construction time.
+        """
+        # Import here to break the potential circular dependency:
+        # bus.py → streams.py → bus.py (both import from varco_redis.config).
+        from varco_redis.streams import RedisStreamEventBus  # noqa: PLC0415
+
+        if settings.use_streams:
+            return RedisStreamEventBus(config=settings)
+        return RedisEventBus(config=settings)

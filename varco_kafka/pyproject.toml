@@ -1,6 +1,6 @@
 [project]
 name          = "varco-kafka"
-version       = "0.1.0"
+version       = "1.0.6"
 description   = "Apache Kafka event bus backend for varco — KafkaEventBus built on aiokafka"
 authors       = [{ name = "edoardo.scarpaci", email = "edoardo.scarpaci@gmail.com" }]
 readme        = "README.md"
@@ -27,7 +27,7 @@ dependencies = [
     # and for @Configuration / @Provider in varco_kafka.di.
     # It is already a transitive dep via varco-core but listed here to make the
     # direct usage explicit and to protect against future varco-core decoupling.
-    "providify>=0.1.4a3",
+    "providify>=0.1.6",
     # pydantic-settings is used directly in varco_kafka.config for SettingsConfigDict.
     # It is also a transitive dep via varco-core, but listed explicitly here.
     "pydantic-settings>=2.0",

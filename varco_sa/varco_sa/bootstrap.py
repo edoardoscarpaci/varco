@@ -49,7 +49,8 @@ Async safety:   ✅ ``create_all`` and ``check_schema`` are ``async def``.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import os
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -62,11 +63,119 @@ from varco_sa.provider import SQLAlchemyRepositoryProvider
 from varco_sa.schema_guard import SchemaGuard, SchemaDriftReport
 
 if TYPE_CHECKING:
-    pass
+    from sqlalchemy.orm import DeclarativeBase
+    from varco_core.model import DomainModel
 
 # Re-export SAConfig at the module level so ``from varco_sa.bootstrap import SAConfig``
 # keeps working for existing code that used the old location.
-__all__ = ["SAConfig", "SAFastrestApp"]
+__all__ = ["SAConfig", "SAFastrestApp", "make_sa_provider"]
+
+
+# ── make_sa_provider ──────────────────────────────────────────────────────────
+
+
+def make_sa_provider(
+    base: type[DeclarativeBase],
+    *entity_classes: type[DomainModel],
+    env_var: str = "DATABASE_URL",
+    echo: bool = False,
+    session_options: dict[str, Any] | None = None,
+) -> Any:
+    """
+    Build a ``@Provider``-decorated factory that creates an ``SAConfig``
+    from the ``DATABASE_URL`` environment variable.
+
+    This is a one-line alternative to the boilerplate ``@Provider`` + engine +
+    ``SAConfig`` pattern::
+
+        # Before (13 lines):
+        @Provider(singleton=True)
+        def _sa_config() -> SAConfig:
+            return SAConfig(
+                engine=create_async_engine(os.environ["DATABASE_URL"], echo=False),
+                base=Base,
+                entity_classes=(Post,),
+            )
+        container.provide(_sa_config)
+
+        # After (1 line):
+        container.provide(make_sa_provider(Base, Post))
+
+    The returned provider is lazy — the engine and ``SAConfig`` are not
+    constructed until the first time ``DIContainer.get(SAConfig)`` is called.
+
+    Args:
+        base:            Shared ``DeclarativeBase`` subclass.  All SA ORM
+                         classes generated from ``entity_classes`` are
+                         attached to this base.
+        *entity_classes: ``DomainModel`` subclasses to register.  Forwarded
+                         to ``SAConfig.entity_classes``.
+        env_var:         Name of the environment variable holding the
+                         database URL.  Defaults to ``"DATABASE_URL"``.
+        echo:            Forward to ``create_async_engine(echo=...)``.
+                         Set ``True`` for verbose SQL logging in development.
+        session_options: Extra kwargs forwarded to ``async_sessionmaker``.
+                         Defaults to ``{"expire_on_commit": False}`` when
+                         ``None``.
+
+    Returns:
+        A ``@Provider(singleton=True)``-decorated factory function ready to
+        pass to ``container.provide()``.
+
+    Raises:
+        KeyError: ``DATABASE_URL`` (or the custom ``env_var``) is not set at
+                  provider resolution time.
+
+    Edge cases:
+        - The env var is read lazily (at first resolution), not at call time —
+          the function can be called before the environment is fully configured.
+        - ``entity_classes`` is captured in a closure over the tuple at call
+          time — adding new entity classes after this call has no effect.
+
+    Thread safety:  ✅ Provider is called once (singleton=True).
+    Async safety:   ✅ Factory is synchronous — no async I/O at construction.
+
+    Example::
+
+        container = DIContainer()
+        container.provide(make_sa_provider(Base, Post, User))
+        sa_bootstrap(container)   # scan + bind repos
+    """
+    try:
+        from providify import Provider  # noqa: PLC0415
+    except ImportError:
+        raise ImportError(
+            "make_sa_provider requires providify. "
+            "Install it with: pip install providify"
+        ) from None
+
+    from sqlalchemy.ext.asyncio import create_async_engine  # noqa: PLC0415
+
+    # Capture all args in the closure — the factory is called lazily later.
+    _base = base
+    _entity_classes = tuple(entity_classes)
+    _env_var = env_var
+    _echo = echo
+    _session_options = session_options
+
+    @Provider(singleton=True)
+    def _sa_config_factory() -> SAConfig:
+        """Auto-generated SAConfig provider reading DATABASE_URL from env."""
+        url = os.environ[_env_var]
+        return SAConfig(
+            engine=create_async_engine(url, echo=_echo),
+            base=_base,
+            entity_classes=_entity_classes,
+            # When session_options is None, let SAConfig use its own default
+            # ({"expire_on_commit": False}) by not passing the field at all.
+            **(
+                {"session_options": _session_options}
+                if _session_options is not None
+                else {}
+            ),
+        )
+
+    return _sa_config_factory
 
 
 # ── SAFastrestApp ─────────────────────────────────────────────────────────────

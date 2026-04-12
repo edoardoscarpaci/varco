@@ -855,11 +855,10 @@ wheels = [
 
 [[package]]
 name = "providify"
-version = "0.1.4a3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ef/95/2664f0ffe5434443f80792ebf1e319005d925725facf33eded6ed30abe0e/providify-0.1.4a3.tar.gz", hash = "sha256:71f17acf612111cf457a719f0bd86f48ab80923a505ae169194dc213345017a5", size = 78656, upload-time = "2026-03-21T14:07:30.036Z" }
+version = "0.1.6"
+source = { path = "vendor/providify-0.1.6-py3-none-any.whl" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2b/4b/41567678a7d51071be9601c726ac2012fc233a902ef9b3232d704bcc7771/providify-0.1.4a3-py3-none-any.whl", hash = "sha256:c95900cc0e904e91e18b3ca56fc4bcc15d990faa31f333ff70fedfdcb1019a48", size = 79670, upload-time = "2026-03-21T14:07:28.807Z" },
+    { filename = "providify-0.1.6-py3-none-any.whl", hash = "sha256:3da6a5e95343b09c5d46046625920762abf8ad5a0d1e86f37fcb30d620e6f596" },
 ]
 
 [[package]]
@@ -1373,7 +1372,7 @@ wheels = [
 
 [[package]]
 name = "varco-beanie"
-version = "0.1.0"
+version = "1.0.6"
 source = { editable = "varco_beanie" }
 dependencies = [
     { name = "beanie" },
@@ -1393,7 +1392,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "beanie", specifier = ">=2.0" },
-    { name = "providify", specifier = ">=0.1.4a3" },
+    { name = "providify", path = "vendor/providify-0.1.6-py3-none-any.whl" },
     { name = "pymongo", specifier = ">=4.11" },
     { name = "varco-core", editable = "varco_core" },
 ]
@@ -1408,7 +1407,7 @@ dev = [
 
 [[package]]
 name = "varco-core"
-version = "0.1.0"
+version = "1.0.6"
 source = { editable = "varco_core" }
 dependencies = [
     { name = "cryptography" },
@@ -1435,7 +1434,7 @@ requires-dist = [
     { name = "opentelemetry-api", specifier = ">=1.20" },
     { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.20" },
     { name = "opentelemetry-sdk", specifier = ">=1.20" },
-    { name = "providify", specifier = ">=0.1.4a3" },
+    { name = "providify", path = "vendor/providify-0.1.6-py3-none-any.whl" },
     { name = "pydantic", specifier = ">=2.12.5,<3.0.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "pyjwt", specifier = ">=2.8,<3.0" },
@@ -1449,7 +1448,7 @@ dev = [
 
 [[package]]
 name = "varco-fastapi"
-version = "0.1.0"
+version = "1.0.6"
 source = { editable = "varco_fastapi" }
 dependencies = [
     { name = "fastapi" },
@@ -1491,7 +1490,7 @@ requires-dist = [
     { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.20" },
     { name = "opentelemetry-instrumentation-fastapi", marker = "extra == 'otel'", specifier = ">=0.42b0" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.20" },
-    { name = "providify", specifier = ">=0.1.4a3" },
+    { name = "providify", path = "vendor/providify-0.1.6-py3-none-any.whl" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "varco-core", editable = "varco_core" },
@@ -1511,7 +1510,7 @@ dev = [
 
 [[package]]
 name = "varco-kafka"
-version = "0.1.0"
+version = "1.0.6"
 source = { editable = "varco_kafka" }
 dependencies = [
     { name = "aiokafka" },
@@ -1530,7 +1529,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiokafka", specifier = ">=0.11" },
-    { name = "providify", specifier = ">=0.1.4a3" },
+    { name = "providify", path = "vendor/providify-0.1.6-py3-none-any.whl" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "varco-core", editable = "varco_core" },
 ]
@@ -1544,7 +1543,7 @@ dev = [
 
 [[package]]
 name = "varco-memcached"
-version = "0.1.0"
+version = "1.0.6"
 source = { editable = "varco_memcached" }
 dependencies = [
     { name = "aiomcache" },
@@ -1563,7 +1562,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiomcache", specifier = ">=0.8" },
-    { name = "providify", specifier = ">=0.1.4a3" },
+    { name = "providify", path = "vendor/providify-0.1.6-py3-none-any.whl" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "varco-core", editable = "varco_core" },
 ]
@@ -1577,7 +1576,7 @@ dev = [
 
 [[package]]
 name = "varco-redis"
-version = "0.1.0"
+version = "1.0.6"
 source = { editable = "varco_redis" }
 dependencies = [
     { name = "providify" },
@@ -1595,7 +1594,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "providify", specifier = ">=0.1.4a3" },
+    { name = "providify", path = "vendor/providify-0.1.6-py3-none-any.whl" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "redis", specifier = ">=5.0" },
     { name = "varco-core", editable = "varco_core" },
@@ -1610,7 +1609,7 @@ dev = [
 
 [[package]]
 name = "varco-sa"
-version = "0.1.0"
+version = "1.0.6"
 source = { editable = "varco_sa" }
 dependencies = [
     { name = "providify" },
@@ -1633,7 +1632,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "asyncpg", marker = "extra == 'postgresql'", specifier = ">=0.29" },
-    { name = "providify", specifier = ">=0.1.4a3" },
+    { name = "providify", path = "vendor/providify-0.1.6-py3-none-any.whl" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "varco-core", editable = "varco_core" },
 ]
@@ -1648,7 +1647,7 @@ dev = [
 
 [[package]]
 name = "varco-ws"
-version = "0.1.0"
+version = "1.0.6"
 source = { editable = "varco_ws" }
 dependencies = [
     { name = "varco-core" },

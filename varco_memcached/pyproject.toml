@@ -1,6 +1,6 @@
 [project]
 name          = "varco-memcached"
-version       = "0.1.0"
+version       = "1.0.6"
 description   = "Memcached cache backend for varco — MemcachedCache built on aiomcache"
 authors       = [{ name = "edoardo.scarpaci", email = "edoardo.scarpaci@gmail.com" }]
 readme        = "README.md"
@@ -23,7 +23,7 @@ dependencies = [
     # aiomcache is a pure-Python asyncio Memcached client.
     "aiomcache>=0.8",
     # Used for @Configuration / @Provider in MemcachedCacheConfiguration.
-    "providify>=0.1.4a3",
+    "providify>=0.1.6",
     # Used for MemcachedCacheSettings — SettingsConfigDict + BaseSettings.
     "pydantic-settings>=2.0",
 ]

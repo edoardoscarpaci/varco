@@ -203,10 +203,105 @@ def _make_repo_provider(entity_cls: type[DomainModel]) -> Any:
     return Provider(_repo_factory)
 
 
+# ── bootstrap ─────────────────────────────────────────────────────────────────
+
+
+def bootstrap(
+    container: Any = None,
+    *entity_classes: type[DomainModel],
+) -> Any:
+    """
+    Bootstrap ``varco_beanie`` into a ``DIContainer``.
+
+    Installs :class:`BeanieModule` and calls
+    ``container.scan("varco_beanie", recursive=True)`` to discover
+    ``BeanieRepositoryProvider``, ``BeanieQueryCompiler``, and
+    ``BeanieHealthCheck``.  Optionally binds per-entity
+    ``AsyncRepository[D]`` providers in the same call.
+
+    ``BeanieSettings`` **must** be registered in the container before calling
+    this function — it is injected into both ``BeanieRepositoryProvider``
+    and ``BeanieHealthCheck``::
+
+        from pymongo import AsyncMongoClient
+        from providify import DIContainer, Provider
+        from varco_beanie.di import bootstrap, BeanieSettings
+        from myapp.models import User, Post
+
+        container = DIContainer()
+
+        @Provider(singleton=True)
+        def beanie_settings() -> BeanieSettings:
+            return BeanieSettings(
+                mongo_client=AsyncMongoClient("mongodb://localhost:27017"),
+                db_name="myapp",
+                entity_classes=(User, Post),
+            )
+
+        container.provide(beanie_settings)
+        bootstrap(container, User, Post)   # install + scan + bind repos in one call
+
+        # BeanieRepositoryProvider.init() is async — warm up the container
+        await container.awarm_up()
+
+    Args:
+        container:       An existing ``DIContainer`` to install into.
+                         When ``None``, ``DIContainer.current()`` is used —
+                         the process-level singleton.
+        *entity_classes: Optional ``DomainModel`` subclasses to pass to
+                         :func:`bind_repositories`.  When provided,
+                         ``AsyncRepository[D]`` bindings are registered for
+                         each class in the same bootstrap call.
+
+    Returns:
+        The ``DIContainer`` after installation, scanning, and optional
+        repository binding.
+
+    Raises:
+        LookupError: Raised lazily at resolution time if ``BeanieSettings`` is
+                     not registered before this call.
+
+    Edge cases:
+        - ``BeanieRepositoryProvider.init()`` is async — call
+          ``await container.awarm_up()`` after ``bootstrap()`` to trigger
+          its ``@PostConstruct`` and run ``init_beanie()`` before serving requests.
+        - Calling twice is safe — scanning and ``install`` are idempotent.
+        - No ``entity_classes`` means no ``AsyncRepository[D]`` bindings are
+          registered; call :func:`bind_repositories` separately later.
+
+    Thread safety:  ✅ Bootstrap is intended for single-threaded startup only.
+    Async safety:   ⚠️ This function is synchronous, but
+                       ``BeanieRepositoryProvider`` is initialised asynchronously
+                       via ``@PostConstruct``.  Always call
+                       ``await container.awarm_up()`` afterwards.
+    """
+    try:
+        from providify import DIContainer  # noqa: PLC0415
+    except ImportError:
+        return None
+
+    if container is None:
+        # Use the process-level singleton container so callers don't need
+        # to pass it around — consistent with create_varco_container().
+        container = DIContainer.current()
+
+    # BeanieModule is an empty backward-compat @Configuration — install() is a no-op.
+    # All @Singleton classes in varco_beanie are discovered by scan automatically.
+    container.scan("varco_beanie", recursive=True)
+
+    if entity_classes:
+        # Convenience: bind per-entity AsyncRepository[D] in the same call
+        # so callers don't need a separate bind_repositories() call.
+        bind_repositories(container, *entity_classes)
+
+    return container
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 __all__ = [
     "BeanieModule",
     "BeanieSettings",
     "bind_repositories",
+    "bootstrap",
 ]

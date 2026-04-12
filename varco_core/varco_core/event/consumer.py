@@ -631,6 +631,33 @@ class EventConsumer:
     ``register_to`` returns a list of ``Subscription`` handles — retain them
     if you need to deregister later (e.g. during teardown or in tests).
 
+    REQUIRED PATTERN — ``_bus`` attribute for ``VarcoLifespan`` integration
+    -----------------------------------------------------------------------
+    When using ``EventConsumer`` with ``VarcoLifespan.register()``, the
+    subclass **must** declare and assign ``self._bus`` in its ``__init__``.
+    ``start()`` reads ``self._bus`` and calls ``self.register_to(self._bus)``.
+    Missing this assignment causes ``AttributeError`` at startup.
+
+    ::
+
+        class PostEventConsumer(EventConsumer):
+            # ↓ DI injects the bus at construction time
+            def __init__(self, bus: Inject[AbstractEventBus]) -> None:
+                self._bus = bus   # ← REQUIRED for VarcoLifespan.register()
+
+            @PostConstruct
+            def _setup(self) -> None:
+                # Alternative: wire via @PostConstruct instead of start().
+                # Use ONE approach per consumer — not both.
+                self.register_to(self._bus)
+
+            @listen(OrderPlacedEvent, channel="orders")
+            async def on_order(self, event: OrderPlacedEvent) -> None:
+                ...
+
+    If you are NOT using ``VarcoLifespan`` (e.g. tests or scripts),
+    call ``register_to(bus)`` directly and skip ``_bus`` entirely.
+
     DESIGN: explicit ``register_to`` over auto-registration in ``__init__``
         ✅ MRO-safe for multiple inheritance — no cooperative ``__init__``
            fragility.
@@ -638,7 +665,7 @@ class EventConsumer:
            bus itself is constructed lazily.
         ✅ Works with providify ``@PostConstruct`` for DI-native wiring.
         ❌ Callers must remember to call ``register_to`` — not automatic.
-           Mitigated by ``@PostConstruct`` convention documented above.
+           Mitigated by the ``_bus`` convention for lifecycle-managed consumers.
 
     Thread safety:  ✅ ``register_to`` is called once during setup.
     Async safety:   ✅ Handlers are invoked by the bus — may be async or sync.
@@ -652,6 +679,13 @@ class EventConsumer:
           defined on parent classes are discovered automatically.
         - Methods without ``__listen_entries__`` are silently skipped.
     """
+
+    # Declared (not initialised) so IDEs and type checkers surface the
+    # attribute.  Subclasses must assign it in __init__ when using the
+    # VarcoLifespan lifecycle API (start() / stop()).  Marked as AbstractEventBus
+    # via TYPE_CHECKING to avoid a runtime import cycle.
+    if TYPE_CHECKING:
+        _bus: AbstractEventBus
 
     def register_to(self, bus: AbstractEventBus) -> list[Subscription]:
         """

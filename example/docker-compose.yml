@@ -1,0 +1,163 @@
+# ── Varco Post Example — Docker Compose ──────────────────────────────────────
+#
+# Brings up the full application stack for local development and demo:
+#   - app       — FastAPI ASGI server (varco example)
+#   - db        — PostgreSQL 16 (entity storage)
+#   - redis     — Redis 7  (event bus Pub/Sub + look-aside cache)
+#
+# Usage
+# -----
+#   # Start the stack (builds the app image on first run):
+#   cd example
+#   docker compose up --build
+#
+#   # Run in the background:
+#   docker compose up --build -d
+#
+#   # Stop and remove containers (data volumes preserved):
+#   docker compose down
+#
+#   # Stop and remove containers + data volumes (full reset):
+#   docker compose down -v
+#
+# API quick tour (after `docker compose up`)
+# -------------------------------------------
+#   # 1. Login as admin (alice) — returns a JWT access token
+#   curl -s -X POST http://localhost:8000/auth/login \
+#        -H "Content-Type: application/json" \
+#        -d '{"username":"alice","password":"alice123"}' | python3 -m json.tool
+#
+#   # 2. Export the token for reuse
+#   TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
+#           -H "Content-Type: application/json" \
+#           -d '{"username":"alice","password":"alice123"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+#
+#   # 3. Create a post (requires Bearer token)
+#   curl -s -X POST http://localhost:8000/v1/posts \
+#        -H "Authorization: Bearer $TOKEN" \
+#        -H "Content-Type: application/json" \
+#        -d '{"title":"Hello varco","body":"My first post"}' | python3 -m json.tool
+#
+#   # 4. List posts (public — no token required)
+#   curl -s http://localhost:8000/v1/posts | python3 -m json.tool
+#
+#   # 5. Inspect caller identity
+#   curl -s http://localhost:8000/auth/me -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
+#
+#   # 6. Real-time SSE stream (keep-alive; press Ctrl-C to stop)
+#   curl -N http://localhost:8000/events/posts
+#
+#   # 7. Real-time WebSocket stream (requires wscat: npm i -g wscat)
+#   wscat -c ws://localhost:8000/ws/posts
+#
+#   # 8. OpenAPI docs
+#   open http://localhost:8000/docs
+#
+# Persistent JWT key (optional)
+# ------------------------------
+# By default the app generates an ephemeral RSA-2048 key at startup — tokens
+# are invalidated on app restart.  To use a stable key:
+#
+#   # Generate a private key (once):
+#   openssl genrsa -out jwt_private.pem 2048
+#
+#   # Add to docker-compose.yml environment (or .env):
+#   VARCO_JWT_PRIVATE_KEY_PEM: |
+#     -----BEGIN PRIVATE KEY-----
+#     MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSk...
+#     -----END PRIVATE KEY-----
+#
+# DESIGN: single Redis instance for both event bus and cache
+#   ✅ Zero-config quickstart — one service, one connection string.
+#   ✅ Redis Pub/Sub and cache keyspaces are isolated by prefix/channel name.
+#   ❌ A cache flush (FLUSHALL) would also clear the event channel history.
+#   For production, use separate Redis instances or cluster namespaces.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL — entity storage ────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: varco
+      POSTGRES_PASSWORD: varco
+      POSTGRES_DB: varco
+    ports:
+      # Expose on a non-standard port to avoid conflicts with local Postgres.
+      - "5433:5432"
+    volumes:
+      # Named volume for data persistence across container restarts.
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U varco -d varco"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── Redis — event bus + cache ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ── varco-example application ──────────────────────────────────────────────
+  app:
+    build:
+      # Build context is the workspace root so all sibling packages are
+      # accessible to the Dockerfile COPY instructions.
+      context: ..
+      dockerfile: example/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # ── Database ──────────────────────────────────────────────────────────
+      # asyncpg DSN — must use the Docker service name "db" as the host.
+      DATABASE_URL: "postgresql+asyncpg://varco:varco@db/varco"
+
+      # ── Redis (event bus + cache share the same instance) ─────────────────
+      VARCO_REDIS_URL: "redis://redis:6379"
+      VARCO_REDIS_CACHE_URL: "redis://redis:6379"
+
+      # ── JWT signing key ───────────────────────────────────────────────────
+      # Leave blank (or remove) to auto-generate an ephemeral key at startup.
+      # Set to a PEM string for persistent tokens across restarts:
+      #
+      # VARCO_JWT_PRIVATE_KEY_PEM: |
+      #   -----BEGIN PRIVATE KEY-----
+      #   ...base64-encoded RSA-2048 private key...
+      #   -----END PRIVATE KEY-----
+      VARCO_JWT_PRIVATE_KEY_PEM: ""
+
+      # ── CORS origins ──────────────────────────────────────────────────────
+      # Comma-separated list of allowed origins.  "*" allows all (dev only).
+      VARCO_CORS_ORIGINS: "*"
+
+      # ── Logging ───────────────────────────────────────────────────────────
+      # Set to "DEBUG" for verbose output (SQL queries, event bus messages).
+      LOG_LEVEL: "INFO"
+
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+# ── Named volumes ──────────────────────────────────────────────────────────
+volumes:
+  db_data:
+    driver: local
+  redis_data:
+    driver: local

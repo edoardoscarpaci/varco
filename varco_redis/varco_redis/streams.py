@@ -77,13 +77,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
-import sys
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import Annotated, Any
 
 import redis.asyncio as aioredis
 
-from providify import Inject, Instance, InjectMeta, PostConstruct, PreDestroy, Singleton
+from providify import Inject, Instance, InjectMeta, PostConstruct, PreDestroy
 
 from varco_core.event.base import (
     CHANNEL_ALL,
@@ -129,7 +128,6 @@ _BATCH_SIZE: int = 10
 _DEFAULT_GROUP: str = "varco"
 
 
-@Singleton(priority=-sys.maxsize, qualifier="redis_streams")
 class RedisStreamEventBus(AbstractEventBus):
     """
     ``AbstractEventBus`` backed by Redis Streams via ``redis.asyncio``.
@@ -493,6 +491,28 @@ class RedisStreamEventBus(AbstractEventBus):
             )
         except asyncio.CancelledError:
             raise
+        except aioredis.ResponseError as exc:
+            if "NOGROUP" in str(exc):
+                # Race condition: subscribe() added a stream to _tracked_streams
+                # and scheduled asyncio.ensure_future(_ensure_group()) but the
+                # listener loop ran before that coroutine executed, so the
+                # consumer group doesn't exist yet.
+                # Recovery: eagerly create groups for all tracked streams now.
+                # The next _read_and_dispatch() call will succeed.
+                _logger.debug(
+                    "RedisStreamEventBus: NOGROUP on XREADGROUP — ensuring groups "
+                    "for %d tracked stream(s) before next poll cycle.",
+                    len(self._tracked_streams),
+                )
+                for stream_key in list(self._tracked_streams):
+                    await self._ensure_group(stream_key)
+            else:
+                _logger.warning(
+                    "RedisStreamEventBus: XREADGROUP failed: %s",
+                    exc,
+                    exc_info=True,
+                )
+            return
         except Exception as exc:  # noqa: BLE001
             _logger.warning(
                 "RedisStreamEventBus: XREADGROUP failed: %s",

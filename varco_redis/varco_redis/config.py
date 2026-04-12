@@ -45,10 +45,12 @@ Async safety:   ✅ No mutable state.
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
+from providify import Singleton
 
 from varco_core.event.config import EventBusSettings
 
@@ -56,6 +58,7 @@ from varco_core.event.config import EventBusSettings
 # ── RedisEventBusSettings ─────────────────────────────────────────────────────
 
 
+@Singleton(priority=-sys.maxsize)
 class RedisEventBusSettings(EventBusSettings):
     """
     Immutable configuration for ``RedisEventBus``.
@@ -99,6 +102,13 @@ class RedisEventBusSettings(EventBusSettings):
 
     url: str = "redis://localhost:6379/0"
     """Redis connection URL.  Env var: ``VARCO_REDIS_URL``."""
+
+    use_streams: bool = False
+    """
+    When ``True``, the container resolves ``RedisStreamEventBus`` (at-least-once,
+    Redis Streams) instead of ``RedisEventBus`` (at-most-once, Pub/Sub).
+    Env var: ``VARCO_REDIS_USE_STREAMS=true``.
+    """
 
     decode_responses: bool = False
     """Must stay False — bus uses raw bytes for serialization."""

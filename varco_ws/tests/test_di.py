@@ -1,14 +1,14 @@
 """
 tests.test_di
 =============
-Unit tests for varco_ws.di — WebSocketConfiguration and SSEConfiguration.
+Unit tests for varco_ws.di — DI bootstrap via scan and backward-compat aliases.
 
 Covers:
-    WebSocketConfiguration  — provides a WebSocketEventBus singleton that
-                               wraps the container's AbstractEventBus.
-    SSEConfiguration        — provides an SSEEventBus singleton that wraps
-                               the container's AbstractEventBus.
-    varco_ws public __init__ — DI classes are exported at the package level.
+    container.scan("varco_ws")   — discovers @Singleton WebSocketEventBus and
+                                   SSEEventBus automatically.
+    WebSocketConfiguration       — backward-compat no-op alias; install() is safe.
+    SSEConfiguration             — backward-compat no-op alias; install() is safe.
+    varco_ws public __init__     — DI classes are exported at the package level.
 
 All tests use InMemoryEventBus — no real broker required.
 """
@@ -56,6 +56,20 @@ def _make_container_with_bus() -> tuple[object, InMemoryEventBus]:
     return container, bus
 
 
+def _make_container_with_ws_scan() -> tuple[object, InMemoryEventBus]:
+    """
+    Build a container with InMemoryEventBus and scan varco_ws so both
+    WebSocketEventBus and SSEEventBus are registered as @Singleton.
+
+    Use this in tests that need DI-resolved adapters — the new scan-based API
+    replaces the old container.install(WebSocketConfiguration) pattern.
+    """
+    container, bus = _make_container_with_bus()
+    # scan() discovers both @Singleton adapters — replaces install(XConfiguration).
+    container.scan("varco_ws", recursive=True)
+    return container, bus
+
+
 # ── __init__ re-export tests ───────────────────────────────────────────────────
 
 
@@ -74,123 +88,133 @@ def test_sse_configuration_exported_from_init() -> None:
     assert SSEConfiguration is SSEConfigurationDirect
 
 
-# ── WebSocketConfiguration tests ──────────────────────────────────────────────
+# ── Backward-compat install() tests ──────────────────────────────────────────
 
 
-def test_websocket_configuration_provides_websocket_event_bus() -> None:
+def test_websocket_configuration_install_is_safe() -> None:
     """
-    After installing WebSocketConfiguration, the container must resolve
-    WebSocketEventBus.
+    container.install(WebSocketConfiguration) must not raise.
+
+    WebSocketConfiguration is now a no-op @Configuration alias — calling install()
+    is safe and backward-compatible but does not register WebSocketEventBus.
+    Use container.scan("varco_ws", recursive=True) to register the adapter.
     """
     container, _ = _make_container_with_bus()
+    # Must not raise — backward-compat path is always safe.
     container.install(WebSocketConfiguration)
+
+
+def test_sse_configuration_install_is_safe() -> None:
+    """
+    container.install(SSEConfiguration) must not raise.
+
+    SSEConfiguration is now a no-op @Configuration alias — install() is safe
+    but does not register SSEEventBus by itself.  Use scan instead.
+    """
+    container, _ = _make_container_with_bus()
+    container.install(SSEConfiguration)
+
+
+# ── Scan-based discovery tests ────────────────────────────────────────────────
+
+
+def test_scan_provides_websocket_event_bus() -> None:
+    """
+    After scanning varco_ws, the container must resolve WebSocketEventBus.
+    """
+    container, _ = _make_container_with_ws_scan()
 
     ws_bus = container.get(WebSocketEventBus)
     assert isinstance(ws_bus, WebSocketEventBus)
 
 
-def test_websocket_configuration_wraps_registered_bus() -> None:
+def test_scan_websocket_wraps_registered_bus() -> None:
     """
-    The WebSocketEventBus provided by WebSocketConfiguration must wrap
-    the AbstractEventBus that was registered in the container.
+    The WebSocketEventBus discovered by scan must wrap the AbstractEventBus
+    that was registered in the container.
     """
-    container, bus = _make_container_with_bus()
-    container.install(WebSocketConfiguration)
+    container, bus = _make_container_with_ws_scan()
 
     ws_bus = container.get(WebSocketEventBus)
     # Internal attribute _bus must be the registered InMemoryEventBus.
     assert ws_bus._bus is bus
 
 
-def test_websocket_configuration_singleton() -> None:
+def test_scan_websocket_singleton() -> None:
     """
     WebSocketEventBus must be a singleton — resolving it twice returns the
     same instance.
     """
-    container, _ = _make_container_with_bus()
-    container.install(WebSocketConfiguration)
+    container, _ = _make_container_with_ws_scan()
 
     first = container.get(WebSocketEventBus)
     second = container.get(WebSocketEventBus)
     assert first is second
 
 
-def test_websocket_configuration_bus_not_started_after_install() -> None:
+def test_scan_websocket_bus_not_started_after_scan() -> None:
     """
     The WebSocketEventBus must NOT be started automatically by the DI module.
     Callers must call start() explicitly in their lifespan handler.
 
     DESIGN: not starting automatically avoids an asyncio.Loop dependency at
-    installation time — the container may be built synchronously before an
-    event loop is running.
+    scan time — the container may be built synchronously before an event loop
+    is running.
     """
-    container, _ = _make_container_with_bus()
-    container.install(WebSocketConfiguration)
+    container, _ = _make_container_with_ws_scan()
 
     ws_bus = container.get(WebSocketEventBus)
     # Internal subscription handle is None when not started.
     assert ws_bus._subscription is None
 
 
-# ── SSEConfiguration tests ────────────────────────────────────────────────────
-
-
-def test_sse_configuration_provides_sse_event_bus() -> None:
+def test_scan_provides_sse_event_bus() -> None:
     """
-    After installing SSEConfiguration, the container must resolve SSEEventBus.
+    After scanning varco_ws, the container must resolve SSEEventBus.
     """
-    container, _ = _make_container_with_bus()
-    container.install(SSEConfiguration)
+    container, _ = _make_container_with_ws_scan()
 
     sse_bus = container.get(SSEEventBus)
     assert isinstance(sse_bus, SSEEventBus)
 
 
-def test_sse_configuration_wraps_registered_bus() -> None:
+def test_scan_sse_wraps_registered_bus() -> None:
     """
-    The SSEEventBus provided by SSEConfiguration must wrap the
-    AbstractEventBus that was registered in the container.
+    The SSEEventBus discovered by scan must wrap the AbstractEventBus
+    that was registered in the container.
     """
-    container, bus = _make_container_with_bus()
-    container.install(SSEConfiguration)
+    container, bus = _make_container_with_ws_scan()
 
     sse_bus = container.get(SSEEventBus)
     assert sse_bus._bus is bus
 
 
-def test_sse_configuration_singleton() -> None:
+def test_scan_sse_singleton() -> None:
     """SSEEventBus must be a singleton."""
-    container, _ = _make_container_with_bus()
-    container.install(SSEConfiguration)
+    container, _ = _make_container_with_ws_scan()
 
     first = container.get(SSEEventBus)
     second = container.get(SSEEventBus)
     assert first is second
 
 
-def test_sse_configuration_bus_not_started_after_install() -> None:
+def test_scan_sse_bus_not_started_after_scan() -> None:
     """
     The SSEEventBus must NOT be started automatically.  Callers start it
     in the FastAPI lifespan handler.
     """
-    container, _ = _make_container_with_bus()
-    container.install(SSEConfiguration)
+    container, _ = _make_container_with_ws_scan()
 
     sse_bus = container.get(SSEEventBus)
     assert sse_bus._subscription is None
 
 
-# ── Combined WS + SSE tests ───────────────────────────────────────────────────
-
-
-def test_both_configurations_can_be_installed_together() -> None:
+def test_scan_provides_both_adapters() -> None:
     """
-    Installing both WebSocketConfiguration and SSEConfiguration in the same
-    container must not conflict — they provide different types.
+    A single scan("varco_ws") must provide both WebSocketEventBus and SSEEventBus
+    in the same container without conflicts — they provide different types.
     """
-    container, _ = _make_container_with_bus()
-    container.install(WebSocketConfiguration)
-    container.install(SSEConfiguration)
+    container, _ = _make_container_with_ws_scan()
 
     ws_bus = container.get(WebSocketEventBus)
     sse_bus = container.get(SSEEventBus)
@@ -217,8 +241,7 @@ async def test_ws_bus_is_functional_after_start() -> None:
         __event_type__ = "test.ping"
         count: int = 0
 
-    container, bus = _make_container_with_bus()
-    container.install(WebSocketConfiguration)
+    container, bus = _make_container_with_ws_scan()
 
     ws_bus = container.get(WebSocketEventBus)
     await ws_bus.start()
@@ -253,8 +276,7 @@ async def test_sse_bus_is_functional_after_start() -> None:
         __event_type__ = "test.pong"
         value: str = ""
 
-    container, bus = _make_container_with_bus()
-    container.install(SSEConfiguration)
+    container, bus = _make_container_with_ws_scan()
 
     sse_bus = container.get(SSEEventBus)
     await sse_bus.start()

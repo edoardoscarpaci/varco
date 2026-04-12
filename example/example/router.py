@@ -116,46 +116,58 @@ class PostRouter(
     @route("GET", "/{post_id}/summary")
     async def get_summary(self, post_id: UUID) -> dict:
         """
-        Lightweight post summary — only ``pk`` and ``title``.
+        Lightweight post summary — only ``pk``, ``title``, and ``author_id``.
 
         Demonstrates a custom ``@route`` endpoint alongside standard CRUD.
-        This handler is NOT registered in ``TaskRegistry`` (no async recovery).
+        The caller's identity is read from the ``AuthContext`` ContextVar set
+        by ``RequestContextMiddleware`` — the same context used by all CRUD
+        mixins.  This is the canonical pattern for custom route handlers that
+        need the authenticated user.
 
-        Auth context is available via ``self._auth`` on the router — for a
-        real handler that needs the caller's identity, inject:
-
-            from varco_fastapi.context import get_request_context
-            ctx = get_request_context().auth
+        Auth rules (delegated to ``PostAuthorizer``):
+            - Anonymous: ✅ (posts are publicly readable)
+            - Editor:    ✅ (can read any post)
+            - Admin:     ✅ (can read any post)
 
         Args:
             post_id: UUID from the path parameter.
 
         Returns:
-            ``{"pk": "<uuid>", "title": "<title>"}``
+            ``{"pk": "<uuid>", "title": "<title>", "author_id": "<uuid>",
+               "caller": "<user_id or null>"}``
 
         Raises:
             404: Post not found (``ServiceNotFoundError`` → HTTP 404 via the
                  error middleware in ``varco_fastapi.middleware.error``).
+            403: Caller is not permitted to read this post (PostAuthorizer).
 
         Edge cases:
-            - This endpoint bypasses the cache — it calls ``_service.get()``
-              directly (which internally goes through ``CacheServiceMixin.get``
-              and benefits from caching).
+            - The ``service.get()`` call goes through ``CacheServiceMixin`` —
+              responses are cached after the first hit (within the 5-min TTL).
             - ``with_async=true`` is NOT supported on custom ``@route`` methods
               unless you explicitly call ``_submit_job()`` here.
+            - ``get_request_context()`` raises ``LookupError`` if
+              ``RequestContextMiddleware`` is not installed on the app.
+              The middleware is installed in ``create_app()`` — safe in practice.
         """
-        # The service.get() call goes through CacheServiceMixin — cached after
-        # the first request for this post_id (within the TTL).
-        #
-        # Auth context: for a full implementation, resolve the context via:
-        #   ctx = get_request_context().auth
-        # For this example we pass a minimal auth context.
-        from varco_core.auth.base import AuthContext  # noqa: PLC0415
+        # Read the per-request AuthContext from the ContextVar set by
+        # RequestContextMiddleware.  This is safe to call inside any async
+        # handler because the middleware runs before the handler.
+        from varco_fastapi.context import get_request_context  # noqa: PLC0415
 
-        ctx = AuthContext(user_id="system")
+        ctx = get_request_context().auth
 
+        # service.get() calls PostAuthorizer.authorize(ctx, Action.READ, resource)
+        # internally.  Anonymous callers are allowed; PostAuthorizer permits READ
+        # for all roles including unauthenticated callers.
         post = await self._service.get(post_id, ctx)
-        return {"pk": str(post.pk), "title": post.title}
+        return {
+            "pk": str(post.pk),
+            "title": post.title,
+            "author_id": str(post.author_id) if post.author_id else None,
+            # Include caller identity so clients can see who made the request.
+            "caller": ctx.user_id,
+        }
 
 
 __all__ = ["PostRouter"]

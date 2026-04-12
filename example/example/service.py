@@ -60,10 +60,14 @@ from uuid import UUID
 
 from providify import Inject, Singleton
 
+from typing import Annotated
+
 from varco_core.assembler import AbstractDTOAssembler
 from varco_core.auth.base import AbstractAuthorizer
 from varco_core.cache.mixin import CacheServiceMixin
+from varco_core.event.producer import AbstractEventProducer
 from varco_core.service.base import AsyncService, IUoWProvider
+from providify import InjectMeta
 
 from example.dtos import PostCreate, PostRead, PostUpdate
 from example.events import PostCreatedEvent, PostDeletedEvent
@@ -113,6 +117,13 @@ class PostService(
         # annotation introspection resolves the correct PostAssembler binding
         # (registered under AbstractDTOAssembler[Post, PostCreate, PostRead, PostUpdate]).
         assembler: Inject[AbstractDTOAssembler[Post, PostCreate, PostRead, PostUpdate]],
+        # Optional — defaults to NoopEventProducer when no bus is wired.
+        # Must be declared here (not only on AsyncService.__init__) so that
+        # providify sees the parameter and injects AbstractEventProducer when
+        # setup_producer=True wires BusEventProducer into the container.
+        # Without this declaration, providify resolves PostService.__init__
+        # only and passes producer=None → AsyncService uses NoopEventProducer.
+        producer: Annotated[AbstractEventProducer, InjectMeta(optional=True)] = None,
     ) -> None:
         """
         Args:
@@ -121,21 +132,28 @@ class PostService(
                           ``BaseAuthorizer`` (permissive) if no custom
                           authorizer is registered.
             assembler:    Injected ``PostAssembler`` — handles DTO ↔ Post mapping.
+            producer:     Optional ``AbstractEventProducer``.  Injected by the DI
+                          container when ``setup_producer=True`` (wires
+                          ``BusEventProducer`` → ``AbstractEventBus``).  When
+                          absent (unit tests, no bus wired), ``AsyncService``
+                          falls back to ``NoopEventProducer``.
 
         Edge cases:
-            - ``_producer`` (event producer) is injected optionally via
-              ``AbstractEventProducer`` ClassVar inherited from ``AsyncService``.
-              When no bus is registered, the container injects ``NoopEventProducer``.
             - ``_cache`` is injected via ClassVar from ``CacheServiceMixin`` —
               no parameter needed here; providify sets it at the class level.
+            - If ``setup_producer=False`` (default), the container has no binding
+              for ``AbstractEventProducer``; ``InjectMeta(optional=True)`` makes
+              the parameter resolve to ``None`` safely.
         """
-        # Pass only the parameters AsyncService.__init__ expects.
+        # Forward producer so AsyncService.__init__ uses the injected instance
+        # instead of defaulting to NoopEventProducer.
         # CacheServiceMixin contributes no __init__ parameters — its dependencies
         # (_cache, _cache_producer) are ClassVar-injected at the class level.
         super().__init__(
             uow_provider=uow_provider,
             authorizer=authorizer,
             assembler=assembler,
+            producer=producer,
         )
 
     def _get_repo(self, uow):
@@ -152,7 +170,7 @@ class PostService(
         Returns:
             ``AsyncRepository[Post]`` backed by the current session.
         """
-        return uow.posts  # type: ignore[attr-defined]
+        return uow.get_repository(Post)
 
     def _prepare_for_create(self, entity: Post, ctx: AuthContext) -> Post:
         """

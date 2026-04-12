@@ -72,6 +72,7 @@ _logger = logging.getLogger(__name__)
 # ── KafkaChannelManagerSettings ───────────────────────────────────────────────
 
 
+@Singleton(priority=-sys.maxsize)
 class KafkaChannelManagerSettings(VarcoSettings):
     """
     Configuration for ``KafkaChannelManager``.

@@ -51,10 +51,12 @@ Async safety:   ✅ No mutable state.
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
+from providify import Singleton
 
 from varco_core.event.config import EventBusSettings
 
@@ -62,6 +64,7 @@ from varco_core.event.config import EventBusSettings
 # ── KafkaEventBusSettings ────────────────────────────────────────────────────
 
 
+@Singleton(priority=-sys.maxsize)
 class KafkaEventBusSettings(EventBusSettings):
     """
     Immutable configuration for ``KafkaEventBus``.

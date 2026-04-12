@@ -1,30 +1,48 @@
 """
 varco_ws.di
 ===========
-Providify DI configuration for ``varco_ws``.
+Providify DI integration for ``varco_ws``.
 
-This module ships two independent ``@Configuration`` classes — one for
-WebSocket push and one for SSE push.  Each creates a singleton adapter that
-wraps the ``AbstractEventBus`` already registered in the container.
+``WebSocketEventBus`` and ``SSEEventBus`` are decorated with ``@Singleton``
+and ``Inject[AbstractEventBus]`` on their constructors.  They self-register
+when ``container.scan("varco_ws", recursive=True)`` is called — no
+``@Configuration`` class or ``install()`` call is needed.
 
-``WebSocketConfiguration``
-    Provides a general-purpose ``WebSocketEventBus`` singleton that subscribes
-    to **all** events on **all** channels of the underlying bus.
+An ``AbstractEventBus`` implementation must already be registered in the
+container before scanning ``varco_ws`` — both adapters inject it.
 
-``SSEConfiguration``
-    Provides a general-purpose ``SSEEventBus`` singleton that subscribes to
-    **all** events on **all** channels of the underlying bus.
+Usage
+-----
+General-purpose DI (all-events, all-channels)::
+
+    from varco_redis.di import bootstrap as redis_bootstrap
+    from varco_ws.di import bootstrap as ws_bootstrap
+
+    redis_bootstrap()               # registers AbstractEventBus
+    ws_bootstrap()                  # scans varco_ws, finds both adapters
+
+    ws_bus  = container.get(WebSocketEventBus)
+    sse_bus = container.get(SSEEventBus)
+
+    # Start adapters in the FastAPI lifespan handler
+    @asynccontextmanager
+    async def lifespan(app):
+        await ws_bus.start()
+        await sse_bus.start()
+        yield
+        await ws_bus.stop()
+        await sse_bus.stop()
+
+Or manually::
+
+    container = DIContainer()
+    container.scan("varco_redis", recursive=True)   # provides AbstractEventBus
+    container.scan("varco_ws", recursive=True)       # finds WebSocket + SSE adapters
 
 Per-channel adapters
 --------------------
-Most real applications need one adapter per resource channel
-(e.g. one for ``"orders"`` and another for ``"inventory"``).  The
-general-purpose singletons provided here suit simple use cases.  For
-per-channel adapters, wire them manually in the FastAPI lifespan handler::
-
-    from contextlib import asynccontextmanager
-    from fastapi import FastAPI
-    from varco_ws import WebSocketEventBus
+The scan-discovered singletons subscribe to all events on all channels.
+For per-channel adapters, wire them manually in the FastAPI lifespan handler::
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -34,243 +52,133 @@ per-channel adapters, wire them manually in the FastAPI lifespan handler::
         yield
         await orders_ws.stop()
 
-Usage — general-purpose DI
---------------------------
-WebSocket only::
-
-    from varco_ws.di import WebSocketConfiguration
-    from varco_core.event import AbstractEventBus
-
-    container = DIContainer()
-    await container.ainstall(KafkaEventBusConfiguration)   # or Redis, etc.
-    container.install(WebSocketConfiguration)
-
-    ws_bus = container.get(WebSocketEventBus)
-    await ws_bus.start()
-
-    @app.websocket("/ws")
-    async def ws_endpoint(websocket: WebSocket):
-        await websocket.accept()
-        async with ws_bus.connect(websocket):
-            await asyncio.sleep(3600)
-
-SSE only::
-
-    from varco_ws.di import SSEConfiguration
-
-    container = DIContainer()
-    await container.ainstall(RedisEventBusConfiguration)
-    container.install(SSEConfiguration)
-
-    sse_bus = container.get(SSEEventBus)
-    await sse_bus.start()
-
-    @app.get("/events")
-    async def sse_endpoint(request: Request):
-        async def generate():
-            async with sse_bus.subscribe() as stream:
-                async for msg in stream:
-                    if await request.is_disconnected():
-                        break
-                    yield msg
-        return StreamingResponse(generate(), media_type="text/event-stream")
-
 Lifecycle
 ---------
-Both ``WebSocketEventBus`` and ``SSEEventBus`` must be explicitly started and
-stopped.  The recommended pattern is to do this in the FastAPI ``lifespan``
-handler::
+Both adapters must be explicitly started and stopped via ``start()``/``stop()``
+in the FastAPI lifespan handler.  They are **not** started by the container.
 
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        ws_bus = container.get(WebSocketEventBus)
-        await ws_bus.start()
-        yield
-        await ws_bus.stop()
-
-DESIGN: synchronous @Configuration.install() over async @Configuration.ainstall()
-    ✅ WebSocketEventBus and SSEEventBus construction is synchronous — they only
-       subscribe to the bus (I/O) in ``start()``, not during ``__init__``.
-    ✅ Keeps the DI module consistent with SAModule / VarcoFastAPIModule which
-       both use synchronous container.install().
-    ❌ If start() must be called before the container is ready, callers must
-       explicitly call it in their lifespan handler — this is the intended pattern.
+DESIGN: @Singleton on adapter classes over @Provider in @Configuration
+    ✅ Scan discovers adapters automatically — no install() call needed.
+    ✅ Eliminates the WebSocketConfiguration / SSEConfiguration classes entirely.
+    ❌ The scan-discovered singleton always uses event_type=Event, channel="*"
+       (all events, all channels) — per-channel adapters still need manual wiring.
 
 Thread safety:  ✅ Safe — DI registration is single-threaded at startup.
-Async safety:   ✅ No I/O at installation time; I/O happens in start().
+Async safety:   ✅ No I/O at scan time; I/O happens in start().
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from providify import Configuration, Inject, Provider
-
-from varco_ws.sse import SSEEventBus
-from varco_ws.websocket import WebSocketEventBus
-
-if TYPE_CHECKING:
-    from varco_core.event.base import AbstractEventBus
+from typing import Any
 
 
-# ── WebSocketConfiguration ────────────────────────────────────────────────────
+# ── Backward-compatibility aliases ────────────────────────────────────────────
+# WebSocketConfiguration and SSEConfiguration are kept as no-op @Configuration
+# markers so existing code that calls container.install(WebSocketConfiguration)
+# does not break.  They no longer register any providers — the @Singleton
+# decorators on WebSocketEventBus and SSEEventBus handle registration via scan.
 
+try:
+    from providify import Configuration  # noqa: PLC0415
 
-@Configuration
-class WebSocketConfiguration:
-    """
-    Providify ``@Configuration`` providing a general-purpose
-    ``WebSocketEventBus`` singleton.
-
-    The adapter subscribes to all events (``event_type=Event``,
-    ``channel="*"``) on the ``AbstractEventBus`` already registered in the
-    container.  For per-channel adapters, wire them manually in the FastAPI
-    lifespan handler instead.
-
-    Prerequisites
-    -------------
-    An ``AbstractEventBus`` implementation must be registered before installing
-    this configuration::
-
-        await container.ainstall(KafkaEventBusConfiguration)
-        container.scan("varco_kafka", recursive=True)
-        container.install(WebSocketConfiguration)  # ← requires bus in container
-
-    Example::
-
-        container.install(WebSocketConfiguration)
-        ws_bus = container.get(WebSocketEventBus)
-        await ws_bus.start()   # call in lifespan handler
-        # ... FastAPI routes use ws_bus directly
-
-    Edge cases:
-        - If ``AbstractEventBus`` is not yet registered, the provider raises
-          ``LookupError`` when ``WebSocketEventBus`` is first resolved.
-        - Calling ``install`` twice replaces the previous binding.
-
-    Thread safety:  ✅ Safe — registration is single-threaded at startup.
-    Async safety:   ✅ No I/O at installation time.
-    """
-
-    @Provider(singleton=True)
-    def websocket_event_bus(
-        self,
-        # DESIGN: Inject[AbstractEventBus] over direct container.get()
-        #   ✅ Relies on providify's dependency resolution — if the bus is not
-        #      registered, the error message names the missing type explicitly.
-        #   ✅ Consistent with how other @Configuration classes declare deps.
-        #   ❌ Cannot accept per-channel config at DI time — use manual wiring
-        #      when you need separate adapters per event type / channel.
-        bus: Inject[AbstractEventBus],  # type: ignore[type-arg]
-    ) -> WebSocketEventBus:
+    @Configuration
+    class WebSocketConfiguration:
         """
-        Create a general-purpose ``WebSocketEventBus`` singleton.
+        Backward-compatibility alias — no longer registers any providers.
 
-        The adapter subscribes to all events on all channels.  It must be
-        started explicitly via ``await ws_bus.start()`` before it can deliver
-        events to clients.
-
-        Args:
-            bus: The ``AbstractEventBus`` resolved from the DI container.
-                 Must already be registered (e.g. via ``KafkaEventBusConfiguration``).
-
-        Returns:
-            A ``WebSocketEventBus`` instance wrapping ``bus``.
-
-        Edge cases:
-            - The returned adapter is **not started** — call ``start()`` in the
-              FastAPI lifespan handler.
-            - Subscribe clients with ``async with ws_bus.connect(websocket):``.
-
-        Thread safety:  ✅ ``WebSocketEventBus.__init__`` has no I/O.
+        ``WebSocketEventBus`` is now ``@Singleton``-decorated and
+        discovered automatically by ``container.scan("varco_ws", recursive=True)``.
+        Calling ``container.install(WebSocketConfiguration)`` is a no-op.
         """
-        # channel="*" and the default event_type=Event subscribe to all events.
-        # This is the "broadcast everything" default — override with manual
-        # wiring for per-channel adapters.
-        return WebSocketEventBus(bus)
+
+    @Configuration
+    class SSEConfiguration:
+        """
+        Backward-compatibility alias — no longer registers any providers.
+
+        ``SSEEventBus`` is now ``@Singleton``-decorated and discovered
+        automatically by ``container.scan("varco_ws", recursive=True)``.
+        Calling ``container.install(SSEConfiguration)`` is a no-op.
+        """
+
+except ImportError:
+    WebSocketConfiguration = None  # type: ignore[assignment,misc]
+    SSEConfiguration = None  # type: ignore[assignment,misc]
 
 
-# ── SSEConfiguration ──────────────────────────────────────────────────────────
+# ── bootstrap ─────────────────────────────────────────────────────────────────
 
 
-@Configuration
-class SSEConfiguration:
+def bootstrap(
+    container: Any = None,
+) -> Any:
     """
-    Providify ``@Configuration`` providing a general-purpose ``SSEEventBus``
-    singleton.
+    Bootstrap ``varco_ws`` into a ``DIContainer``.
 
-    The adapter subscribes to all events (``event_type=Event``,
-    ``channel="*"``) on the ``AbstractEventBus`` already registered in the
-    container.  For per-channel adapters, wire them manually in the FastAPI
-    lifespan handler instead.
+    Calls ``container.scan("varco_ws", recursive=True)`` to discover
+    ``WebSocketEventBus`` and ``SSEEventBus`` (both ``@Singleton``-decorated).
 
-    Prerequisites
-    -------------
-    An ``AbstractEventBus`` implementation must be registered before installing
-    this configuration::
+    An ``AbstractEventBus`` implementation **must** already be registered in
+    the container before calling this function — both adapters inject it::
 
-        await container.ainstall(RedisEventBusConfiguration)
-        container.scan("varco_redis", recursive=True)
-        container.install(SSEConfiguration)   # ← requires bus in container
+        from varco_redis.di import bootstrap as redis_bootstrap
+        from varco_ws.di import bootstrap as ws_bootstrap
 
-    Example::
+        redis_bootstrap()   # scan varco_redis → registers AbstractEventBus
+        ws_bootstrap()      # scan varco_ws → registers WebSocketEventBus + SSEEventBus
 
-        container.install(SSEConfiguration)
+        ws_bus  = container.get(WebSocketEventBus)
         sse_bus = container.get(SSEEventBus)
-        await sse_bus.start()   # call in lifespan handler
 
-        @app.get("/events")
-        async def sse_endpoint(request: Request):
-            async def generate():
-                async with sse_bus.subscribe() as stream:
-                    async for msg in stream:
-                        if await request.is_disconnected():
-                            break
-                        yield msg
-            return StreamingResponse(generate(), media_type="text/event-stream")
+        # Start both in the FastAPI lifespan handler — not here
+        @asynccontextmanager
+        async def lifespan(app):
+            await ws_bus.start()
+            await sse_bus.start()
+            yield
+            await ws_bus.stop()
+            await sse_bus.stop()
+
+    Args:
+        container: An existing ``DIContainer`` to scan into.
+                   When ``None``, ``DIContainer.current()`` is used —
+                   the process-level singleton.
+
+    Returns:
+        The ``DIContainer`` after scanning.
 
     Edge cases:
-        - If ``AbstractEventBus`` is not yet registered, the provider raises
-          ``LookupError`` when ``SSEEventBus`` is first resolved.
-        - SSE connections are per-request — call ``sse_bus.subscribe()`` inside
-          the endpoint handler, not at module level.
+        - Calling twice is safe — scanning is idempotent.
+        - The adapters are **not started** — call ``start()`` in the lifespan
+          handler before serving clients.
+        - ``AbstractEventBus`` must already be registered; otherwise
+          resolution raises ``LookupError`` when an adapter is first resolved.
 
-    Thread safety:  ✅ Safe — registration is single-threaded at startup.
-    Async safety:   ✅ No I/O at installation time.
+    Thread safety:  ✅ Bootstrap is intended for single-threaded startup only.
+    Async safety:   ✅ Scanning is synchronous.  I/O happens in ``start()``.
     """
+    try:
+        from providify import DIContainer  # noqa: PLC0415
+    except ImportError:
+        return None
 
-    @Provider(singleton=True)
-    def sse_event_bus(
-        self,
-        bus: Inject[AbstractEventBus],  # type: ignore[type-arg]
-    ) -> SSEEventBus:
-        """
-        Create a general-purpose ``SSEEventBus`` singleton.
+    if container is None:
+        # Use the process-level singleton so callers don't need to pass it
+        # around — consistent with every other bootstrap() in varco packages.
+        container = DIContainer.current()
 
-        The adapter subscribes to all events on all channels.  It must be
-        started explicitly via ``await sse_bus.start()`` before it can stream
-        events to clients.
+    # Scan discovers WebSocketEventBus and SSEEventBus via their @Singleton
+    # decorators.  Both inject Inject[AbstractEventBus] from the container.
+    container.scan("varco_ws", recursive=True)
 
-        Args:
-            bus: The ``AbstractEventBus`` resolved from the DI container.
-
-        Returns:
-            An ``SSEEventBus`` instance wrapping ``bus``.
-
-        Edge cases:
-            - The returned adapter is **not started** — call ``start()`` in the
-              FastAPI lifespan handler.
-            - Per-client streaming uses ``async with sse_bus.subscribe() as stream:``.
-
-        Thread safety:  ✅ ``SSEEventBus.__init__`` has no I/O.
-        """
-        # channel="*" and the default event_type=Event subscribe to all events.
-        return SSEEventBus(bus)
+    return container
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
 __all__ = [
+    # Backward-compat aliases — kept so existing code doesn't break.
     "WebSocketConfiguration",
     "SSEConfiguration",
+    "bootstrap",
 ]

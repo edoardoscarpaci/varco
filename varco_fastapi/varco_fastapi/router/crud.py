@@ -79,6 +79,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from varco_core.job.task import TaskRegistry
     from varco_core.service import AsyncService
+    from varco_fastapi import AbstractServerAuth
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,12 @@ class VarcoCRUDRouter(VarcoRouter[D, PK, C, R, U]):
     # and the code falls back to DEFAULT_SERIALIZER in that case.
     _task_serializer: ClassVar[Instance[TaskSerializer]]  # type: ignore[assignment]
 
-    def __init__(self, service: Inject[AsyncService[D, PK, C, R, U]] | None = None) -> None:  # type: ignore[override]
+    def __init__(
+        self,
+        service: Inject[AsyncService[D, PK, C, R, U]] | None = None,  # type: ignore[override]
+        *,
+        auth: AbstractServerAuth | None = None,
+    ) -> None:
         """
         Args:
             service: The ``AsyncService`` instance injected by providify.
@@ -193,12 +199,32 @@ class VarcoCRUDRouter(VarcoRouter[D, PK, C, R, U]):
                      the ClassVar value is used instead.  Providify always injects
                      a concrete service via ``Inject[]``; ``None`` is only expected
                      in manual / test-only instantiation.
+            auth:    Optional ``AbstractServerAuth`` instance.  When provided,
+                     it is stored as an instance attribute and takes priority over
+                     the class-level ``_auth`` ClassVar.  Pass ``JwtBearerAuth``
+                     here to authenticate all routes built by this router.
+
+                     Example::
+
+                         router = PostRouter(service=post_service, auth=server_auth)
+                         app.include_router(router.build_router())
+
+        Edge cases:
+            - ``auth=None`` (default) falls through to the ClassVar ``_auth``
+              (which is also ``None`` unless set at class definition time).
+              Routes without auth accept requests without an ``Authorization``
+              header.
         """
         super().__init__()
         if service is not None:
             # DI-injected: store on the instance, takes priority over ClassVar
             self._service = service  # type: ignore[assignment]
         # If service is None, fall back to ClassVar _service (set by test subclasses)
+
+        if auth is not None:
+            # Instance attribute shadows the ClassVar — each router instance can
+            # have its own auth strategy without polluting the class definition.
+            self._auth = auth  # type: ignore[assignment]
 
     def build_router(self) -> Any:
         """

@@ -1,6 +1,6 @@
 [project]
 name          = "varco-fastapi"
-version       = "0.1.0"
+version       = "1.0.6"
 description   = "FastAPI adapter for varco — routing, auth middleware, job running, typed HTTP client, and DI wiring"
 authors       = [{ name = "edoardo.scarpaci", email = "edoardo.scarpaci@gmail.com" }]
 readme        = "README.md"
@@ -28,7 +28,7 @@ dependencies = [
     # pydantic-settings for env-var-based configuration (CORSConfig, TrustStore, etc.)
     "pydantic-settings>=2.0",
     # providify for DI wiring (@Configuration, @Provider, Inject[], DIContainer)
-    "providify>=0.1.4a3",
+    "providify>=0.1.6",
     # python-multipart is required for FastAPI form data parsing (file uploads, etc.)
     "python-multipart>=0.0.9",
 ]

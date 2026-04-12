@@ -66,9 +66,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 from uuid import UUID
+
+from providify import Inject, Singleton
 
 from varco_core.event.base import AbstractEventBus, Event, Subscription
 
@@ -136,6 +139,7 @@ class WebSocketConnection:
 # ── WebSocketEventBus ─────────────────────────────────────────────────────────
 
 
+@Singleton(priority=-sys.maxsize)
 class WebSocketEventBus:
     """
     Push adapter that broadcasts varco events to connected WebSocket clients.
@@ -180,14 +184,16 @@ class WebSocketEventBus:
 
     def __init__(
         self,
-        bus: AbstractEventBus,
+        # DI injects the AbstractEventBus singleton when constructed by scan.
+        # Keyword-only defaults (event_type, channel) remain for manual wiring.
+        bus: Inject[AbstractEventBus],  # type: ignore[type-arg]
         *,
         event_type: type[Event] = Event,
         channel: str = "*",
     ) -> None:
         """
         Args:
-            bus:        Underlying event bus.
+            bus:        Underlying event bus.  Injected by DI when scan-discovered.
             event_type: Event class to subscribe to.  Default: all events.
             channel:    Bus channel to subscribe to.  Default: all channels.
         """
@@ -408,7 +414,11 @@ class WebSocketEventBus:
             return str(obj)
 
         payload = {
-            "event_type": event.__event_type__,
+            # __event_type__ is a ClassVar — access via the class, not the
+            # instance.  Pydantic raises AttributeError on instance access
+            # for ClassVar attributes.  event_type_name() handles the
+            # fallback to cls.__name__ when __event_type__ is not declared.
+            "event_type": type(event).event_type_name(),
             "event_id": str(event.event_id),
             "data": event.model_dump(),
         }

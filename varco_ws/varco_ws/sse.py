@@ -71,9 +71,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 from uuid import UUID
+
+from providify import Inject, Singleton
 
 from varco_core.event.base import AbstractEventBus, Event, Subscription
 
@@ -168,6 +171,7 @@ class SSEConnection:
 # ── SSEEventBus ───────────────────────────────────────────────────────────────
 
 
+@Singleton(priority=-sys.maxsize)
 class SSEEventBus:
     """
     Push adapter that delivers varco events to SSE subscribers.
@@ -203,7 +207,9 @@ class SSEEventBus:
 
     def __init__(
         self,
-        bus: AbstractEventBus,
+        # DI injects the AbstractEventBus singleton when constructed by scan.
+        # Keyword-only defaults (event_type, channel, max_queue_size) remain for manual wiring.
+        bus: Inject[AbstractEventBus],  # type: ignore[type-arg]
         *,
         event_type: type[Event] = Event,
         channel: str = "*",
@@ -211,7 +217,7 @@ class SSEEventBus:
     ) -> None:
         """
         Args:
-            bus:            Underlying event bus.
+            bus:            Underlying event bus.  Injected by DI when scan-discovered.
             event_type:     Event class to subscribe to.
             channel:        Bus channel.
             max_queue_size: Per-subscriber queue depth.
@@ -390,7 +396,11 @@ class SSEEventBus:
 
         payload = json.dumps(
             {
-                "event_type": event.__event_type__,
+                # __event_type__ is a ClassVar — access via the class, not the
+                # instance.  Pydantic raises AttributeError on instance access
+                # for ClassVar attributes.  event_type_name() handles the
+                # fallback to cls.__name__ when __event_type__ is not declared.
+                "event_type": type(event).event_type_name(),
                 "event_id": str(event.event_id),
                 "data": event.model_dump(),
             },

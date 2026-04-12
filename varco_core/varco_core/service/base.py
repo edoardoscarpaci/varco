@@ -88,6 +88,36 @@ Minimal concrete service example::
         def _get_repo(self, uow: AsyncUnitOfWork) -> AsyncRepository[Post, UUID]:
             return uow.posts  # type: ignore[attr-defined]
 
+FOOTGUN — event producer injection in subclasses
+-------------------------------------------------
+Providify resolves injection parameters by introspecting the **concrete
+class's own ``__init__``** — not parent class signatures.  If you override
+``__init__`` without re-declaring ``producer``, the DI container will never
+inject ``AbstractEventProducer`` and all ``_emit()`` calls will silently do
+nothing (``NoopEventProducer`` is used as the fallback).
+
+**Required pattern** for concrete services that publish events::
+
+    class PostService(AsyncService[Post, UUID, ...]):
+        def __init__(
+            self,
+            uow_provider: Inject[IUoWProvider],
+            authorizer:   Inject[AbstractAuthorizer],
+            assembler:    Inject[AbstractDTOAssembler[...]],
+            # ↓ MUST be re-declared here so providify can inject it
+            producer: Annotated[AbstractEventProducer, InjectMeta(optional=True)] = None,
+        ) -> None:
+            super().__init__(
+                uow_provider=uow_provider,
+                authorizer=authorizer,
+                assembler=assembler,
+                producer=producer,   # ← forward to super or NoopEventProducer is used
+            )
+
+A warning is logged at construction time if ``producer`` is missing from
+the subclass ``__init__`` — check the startup logs if events are not being
+published.
+
 DI wiring example (with providify)::
 
     @Provider(singleton=True)
@@ -303,6 +333,36 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
         # Fall back to NoopEventProducer so _produce() calls are always safe
         # even when no bus is configured — Null Object pattern avoids guards.
         self._producer: AbstractEventProducer = producer or NoopEventProducer()
+
+        # FOOTGUN guard: if a subclass declares its own __init__ but does NOT
+        # re-declare ``producer``, providify only introspects the subclass's
+        # own parameter list — it will never inject AbstractEventProducer, so
+        # producer arrives here as None and events are silently discarded.
+        #
+        # This warning fires only when:
+        #   (a) we are a subclass (not AsyncService itself), AND
+        #   (b) producer was not supplied (== None before the "or" above), AND
+        #   (c) the subclass __init__ does NOT declare a ``producer`` parameter
+        #       in its own signature — meaning it was forgotten, not intentional.
+        #
+        # Concrete services that genuinely want NoopEventProducer (e.g. tests)
+        # can silence this by passing ``producer=NoopEventProducer()`` explicitly.
+        if (
+            producer is None
+            and type(self) is not AsyncService
+            and "producer" not in type(self).__init__.__code__.co_varnames
+        ):
+            import logging as _logging  # noqa: PLC0415
+
+            _logging.getLogger(__name__).warning(
+                "%s received producer=None because 'producer' is not declared "
+                "in %s.__init__. Events will be silently discarded. "
+                "Add 'producer: Annotated[AbstractEventProducer, InjectMeta(optional=True)] = None' "
+                "to %s.__init__ and forward it to super().__init__(producer=producer).",
+                type(self).__name__,
+                type(self).__name__,
+                type(self).__name__,
+            )
 
     # ── Protected event-publish helper ────────────────────────────────────────
 
