@@ -4,37 +4,37 @@ varco_fastapi.connection
 ``HttpConnectionSettings`` — structured, env-var loadable configuration for
 an HTTP/REST client connection via httpx.
 
-Environment variables (prefix ``HTTP_``)
-----------------------------------------
+Unlike the other backend connection settings (Postgres, Redis, Kafka) this
+class has **no fixed env-var prefix**.  A service typically talks to many
+different HTTP APIs (payment, notification, inventory …) and a single ``HTTP_``
+prefix would only allow one of them to be configured from env vars.
+
+Instead, supply a prefix when loading from env:
+
+Environment variables — caller-supplied prefix
+----------------------------------------------
 ::
 
-    HTTP_HOST=api.example.com
-    HTTP_PORT=443
-    HTTP_BASE_URL=https://api.example.com/v1   # overrides host/port
-    HTTP_TIMEOUT=30.0
+    # Two independent HTTP client configs in the same process:
+    PAYMENT_API_BASE_URL=https://pay.example.com
+    PAYMENT_API_TIMEOUT=5.0
+    PAYMENT_API_AUTH__TYPE=basic
+    PAYMENT_API_AUTH__USERNAME=svc
+    PAYMENT_API_AUTH__PASSWORD=secret
 
-    # TLS (optional)
-    HTTP_SSL__CA_CERT=/etc/ssl/api-ca.pem
-    HTTP_SSL__VERIFY=true
-
-    # Basic auth (optional)
-    HTTP_AUTH__TYPE=basic
-    HTTP_AUTH__USERNAME=svc-user
-    HTTP_AUTH__PASSWORD=secret
-
-    # OAuth2 static token (optional)
-    HTTP_AUTH__TYPE=oauth2
-    HTTP_AUTH__TOKEN=eyJhbGciOiJSUzI1NiJ9...
+    NOTIF_API_BASE_URL=https://notify.example.com
+    NOTIF_API_SSL__CA_CERT=/etc/ssl/notify-ca.pem
 
 Construction patterns::
 
-    # From env (production)
-    conn = HttpConnectionSettings.from_env()
+    # From env — prefix is REQUIRED (one per client)
+    payment = HttpConnectionSettings.from_env(prefix="PAYMENT_API_")
+    notify  = HttpConnectionSettings.from_env(prefix="NOTIF_API_")
 
-    # Explicit (tests / DI)
+    # Explicit (tests / DI — no env reading)
     conn = HttpConnectionSettings(base_url="https://api.example.com/v1")
 
-    # With SSL
+    # With SSL (no env reading)
     conn = HttpConnectionSettings.with_ssl(
         SSLConfig(ca_cert=Path("/etc/ssl/ca.pem")),
         base_url="https://secure-api.example.com",
@@ -43,6 +43,13 @@ Construction patterns::
     # Build httpx client
     async with httpx.AsyncClient(**conn.to_httpx_kwargs()) as client:
         response = await client.get("/users")
+
+DESIGN: no fixed env_prefix — caller must supply one via from_env(prefix=...)
+    ✅ Multiple HTTP clients can be configured from env vars in the same process.
+    ✅ Explicit prefix at the call site documents which service is being configured.
+    ❌ from_env() now requires a prefix argument — slightly more verbose than the
+       other connection settings.  This is intentional: HTTP is the only backend
+       where multiple independent clients per process is the common case.
 
 DESIGN: HttpConnectionSettings over ClientProfile for structured config
     ✅ Env-var loadable — ClientProfile has no pydantic-settings-based env loading.
@@ -59,6 +66,8 @@ Async safety:   ✅ No I/O; all methods are synchronous.
 📚 Docs
 - 🔍 https://www.python-httpx.org/api/#asyncclient
   httpx.AsyncClient — base_url, timeout, verify, auth
+- 🔍 https://docs.pydantic.dev/latest/concepts/pydantic_settings/#changing-priority
+  pydantic-settings — model_config, env_prefix, how env sources are built
 """
 
 from __future__ import annotations
@@ -82,28 +91,35 @@ class HttpConnectionSettings(ConnectionSettings):
     """
     Immutable HTTP/REST connection configuration for httpx clients.
 
-    Reads from environment variables with the ``HTTP_`` prefix.
+    Unlike Postgres/Redis/Kafka settings, this class has **no fixed env-var
+    prefix**.  A single service often calls multiple HTTP APIs, so a hardcoded
+    ``HTTP_`` prefix would only allow one client to be configured from env vars.
+    Use ``from_env(prefix=...)`` to supply the prefix at the call site::
+
+        payment = HttpConnectionSettings.from_env(prefix="PAYMENT_API_")
+        notify  = HttpConnectionSettings.from_env(prefix="NOTIF_API_")
+
     Nested SSL and auth config use the ``__`` delimiter::
 
-        HTTP_BASE_URL=https://api.example.com
-        HTTP_SSL__CA_CERT=/etc/ssl/ca.pem
-        HTTP_AUTH__TYPE=basic
-        HTTP_AUTH__USERNAME=user
-        HTTP_AUTH__PASSWORD=pass
+        PAYMENT_API_BASE_URL=https://pay.example.com
+        PAYMENT_API_SSL__CA_CERT=/etc/ssl/ca.pem
+        PAYMENT_API_AUTH__TYPE=basic
+        PAYMENT_API_AUTH__USERNAME=user
+        PAYMENT_API_AUTH__PASSWORD=pass
 
     Attributes:
         host:     API hostname (used when ``base_url`` is empty).
-                  Env: ``HTTP_HOST``.
+                  Env: ``{PREFIX}HOST``.
         port:     API port (used when ``base_url`` is empty).
-                  Env: ``HTTP_PORT``.
+                  Env: ``{PREFIX}PORT``.
         base_url: Full base URL.  When set, overrides ``host``/``port``.
-                  Env: ``HTTP_BASE_URL``.
-        timeout:  Default request timeout in seconds.  Env: ``HTTP_TIMEOUT``.
+                  Env: ``{PREFIX}BASE_URL``.
+        timeout:  Default request timeout in seconds.  Env: ``{PREFIX}TIMEOUT``.
         ssl:      Optional ``SSLConfig`` for TLS verification/mTLS.
-                  Populated from ``HTTP_SSL__*`` env vars.
+                  Populated from ``{PREFIX}SSL__*`` env vars.
         auth:     Optional ``BasicAuthConfig`` or ``OAuth2Config``.
                   Discriminated by the ``type`` field.
-                  Populated from ``HTTP_AUTH__TYPE``, etc.
+                  Populated from ``{PREFIX}AUTH__TYPE``, etc.
 
     Thread safety:  ✅ frozen=True — immutable.
     Async safety:   ✅ No I/O.
@@ -116,6 +132,9 @@ class HttpConnectionSettings(ConnectionSettings):
           the caller's responsibility (e.g. a middleware or pre-request hook).
         - ``ssl.verify=False`` → ``verify=False`` in httpx kwargs (disables
           all TLS verification).  Use only in dev/testing.
+        - Calling ``HttpConnectionSettings()`` directly (without ``from_env()``)
+          does NOT read any env vars — all values come from the arguments you pass.
+          Only ``from_env(prefix=...)`` triggers env-var reading.
 
     Example::
 
@@ -128,11 +147,82 @@ class HttpConnectionSettings(ConnectionSettings):
             resp = await client.get("/health")
     """
 
+    # DESIGN: no env_prefix — subclasses or from_env(prefix=...) supply it.
+    # A fixed "HTTP_" prefix would only allow one HTTP client per process to
+    # be configured from env vars, which is the common case for all other
+    # backends but NOT for HTTP (you typically talk to many external services).
     model_config = SettingsConfigDict(
-        env_prefix="HTTP_",
         env_nested_delimiter="__",
         frozen=True,
     )
+
+    # ── from_env override ─────────────────────────────────────────────────────
+
+    @classmethod
+    def from_env(cls, prefix: str) -> "HttpConnectionSettings":  # type: ignore[override]
+        """
+        Load HTTP connection settings from environment variables.
+
+        Unlike other ``ConnectionSettings`` subclasses, ``HttpConnectionSettings``
+        has no fixed env-var prefix.  The ``prefix`` argument is **required** so
+        that multiple HTTP clients can coexist in the same process with different
+        env-var namespaces::
+
+            payment = HttpConnectionSettings.from_env(prefix="PAYMENT_API_")
+            # reads PAYMENT_API_BASE_URL, PAYMENT_API_TIMEOUT, etc.
+
+            notify = HttpConnectionSettings.from_env(prefix="NOTIF_API_")
+            # reads NOTIF_API_BASE_URL, NOTIF_API_SSL__CA_CERT, etc.
+
+        Args:
+            prefix: Env-var prefix including the trailing underscore, e.g.
+                    ``"PAYMENT_API_"``.  Must be non-empty.
+
+        Returns:
+            A fully populated ``HttpConnectionSettings`` instance.
+
+        Raises:
+            ValueError:       If ``prefix`` is empty.
+            ValidationError:  If a required field is missing or invalid.
+
+        Edge cases:
+            - The returned object's type is technically an anonymous subclass
+              (created at call time to carry the prefix in ``model_config``).
+              It is fully interchangeable with ``HttpConnectionSettings`` for all
+              practical purposes — ``isinstance(result, HttpConnectionSettings)``
+              returns ``True``.
+            - Nested fields use ``__`` as the delimiter:
+              ``PAYMENT_API_SSL__CA_CERT`` → ``ssl.ca_cert``.
+        """
+        if not prefix:
+            raise ValueError(
+                "HttpConnectionSettings.from_env() requires a non-empty prefix. "
+                "Example: HttpConnectionSettings.from_env(prefix='PAYMENT_API_'). "
+                "A prefix is required because a service can talk to many HTTP APIs "
+                "simultaneously — each needs its own env-var namespace."
+            )
+
+        # DESIGN: create a temporary subclass that carries the caller-supplied
+        # prefix in its model_config.  We use type() so pydantic-settings'
+        # metaclass processes the new model_config exactly as it would for a
+        # hand-written class, reading {prefix}* env vars on construction.
+        #
+        # ✅ Zero extra state — the subclass is discarded after construction.
+        # ✅ isinstance(result, HttpConnectionSettings) == True.
+        # ❌ The dynamic class has an auto-generated __name__; this is only
+        #    visible in repr() — not a practical problem.
+        prefixed_cls: type[HttpConnectionSettings] = type(
+            cls.__name__,
+            (cls,),
+            {
+                "model_config": SettingsConfigDict(
+                    env_prefix=prefix,
+                    env_nested_delimiter="__",
+                    frozen=True,
+                ),
+            },
+        )
+        return prefixed_cls()
 
     port: int = 443
     """API port (used when ``base_url`` is empty).  Env: ``HTTP_PORT``."""

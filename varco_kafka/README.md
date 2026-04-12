@@ -149,6 +149,168 @@ await container.ashutdown()
 
 ---
 
+## Connection settings
+
+`KafkaConnectionSettings` is a structured, env-var loadable config object
+that produces kwargs for `AIOKafkaProducer` and `AIOKafkaConsumer`.
+
+### Plain connection (PLAINTEXT)
+
+```python
+from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
+from varco_kafka.connection import KafkaConnectionSettings
+
+conn = KafkaConnectionSettings(
+    bootstrap_servers="broker1:9092,broker2:9092",
+    group_id="order-service",
+)
+
+producer = AIOKafkaProducer(**conn.to_aiokafka_kwargs())
+consumer = AIOKafkaConsumer("orders", **conn.to_aiokafka_kwargs())
+
+await producer.start()
+await consumer.start()
+```
+
+### From environment variables
+
+```bash
+KAFKA_BOOTSTRAP_SERVERS=broker1:9092,broker2:9092
+KAFKA_GROUP_ID=order-service
+```
+
+```python
+conn = KafkaConnectionSettings.from_env()
+producer = AIOKafkaProducer(**conn.to_aiokafka_kwargs())
+```
+
+You can also configure a single broker via `KAFKA_HOST` + `KAFKA_PORT` without
+setting `KAFKA_BOOTSTRAP_SERVERS` — the settings synthesise it automatically:
+
+```bash
+KAFKA_HOST=my-broker
+KAFKA_PORT=9093
+# bootstrap_servers → "my-broker:9093"
+```
+
+### With TLS / SSL (no auth)
+
+```python
+from varco_core.connection import SSLConfig
+from pathlib import Path
+
+ssl = SSLConfig(ca_cert=Path("/etc/ssl/kafka-ca.pem"), verify=True)
+conn = KafkaConnectionSettings.with_ssl(
+    ssl,
+    bootstrap_servers="broker:9093",
+    group_id="my-service",
+)
+# security_protocol → "SSL"
+producer = AIOKafkaProducer(**conn.to_aiokafka_kwargs())
+```
+
+Or from env:
+
+```bash
+KAFKA_BOOTSTRAP_SERVERS=broker:9093
+KAFKA_SSL__CA_CERT=/etc/ssl/kafka-ca.pem
+KAFKA_SSL__VERIFY=true
+```
+
+### With SASL authentication (SASL_PLAINTEXT)
+
+```python
+from varco_core.connection import SaslConfig
+
+conn = KafkaConnectionSettings(
+    bootstrap_servers="broker:9092",
+    group_id="my-service",
+    auth=SaslConfig(
+        mechanism="SCRAM-SHA-256",
+        username="alice",
+        password="secret",
+    ),
+)
+# security_protocol → "SASL_PLAINTEXT"
+producer = AIOKafkaProducer(**conn.to_aiokafka_kwargs())
+```
+
+Or from env:
+
+```bash
+KAFKA_AUTH__TYPE=sasl
+KAFKA_AUTH__MECHANISM=SCRAM-SHA-256
+KAFKA_AUTH__USERNAME=alice
+KAFKA_AUTH__PASSWORD=secret
+```
+
+### With SASL + TLS (SASL_SSL)
+
+```python
+ssl = SSLConfig(ca_cert=Path("/etc/ssl/ca.pem"), verify=True)
+conn = KafkaConnectionSettings.with_ssl(
+    ssl,
+    bootstrap_servers="broker:9093",
+    group_id="my-service",
+    auth=SaslConfig(mechanism="SCRAM-SHA-256", username="alice", password="secret"),
+)
+# security_protocol → "SASL_SSL"
+```
+
+### SASL PLAIN via BasicAuthConfig
+
+`BasicAuthConfig` (type `"basic"`) is automatically mapped to SASL PLAIN:
+
+```python
+from varco_core.connection import BasicAuthConfig
+
+conn = KafkaConnectionSettings(
+    bootstrap_servers="broker:9092",
+    auth=BasicAuthConfig(username="alice", password="secret"),
+)
+# sasl_mechanism → "PLAIN"
+```
+
+Or from env:
+
+```bash
+KAFKA_AUTH__TYPE=basic
+KAFKA_AUTH__USERNAME=alice
+KAFKA_AUTH__PASSWORD=secret
+```
+
+### `security_protocol` matrix
+
+| `ssl` | `auth` | `security_protocol` |
+|---|---|---|
+| not set | not set | `PLAINTEXT` |
+| set | not set | `SSL` |
+| not set | set | `SASL_PLAINTEXT` |
+| set | set | `SASL_SSL` |
+
+### Connection settings reference
+
+| Env var | Default | Description |
+|---|---|---|
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Comma-separated broker addresses |
+| `KAFKA_HOST` | `localhost` | Single broker hostname (synthesises `bootstrap_servers`) |
+| `KAFKA_PORT` | `9092` | Single broker port (synthesises `bootstrap_servers`) |
+| `KAFKA_GROUP_ID` | `varco-default` | Consumer group ID |
+| `KAFKA_SSL__CA_CERT` | — | Path to CA certificate |
+| `KAFKA_SSL__CLIENT_CERT` | — | Path to client certificate (mTLS) |
+| `KAFKA_SSL__CLIENT_KEY` | — | Path to client private key (mTLS) |
+| `KAFKA_SSL__VERIFY` | `true` | TLS peer verification |
+| `KAFKA_AUTH__TYPE` | — | `sasl` or `basic` |
+| `KAFKA_AUTH__MECHANISM` | `PLAIN` | SASL mechanism (`PLAIN`, `SCRAM-SHA-256`, etc.) |
+| `KAFKA_AUTH__USERNAME` | — | SASL username |
+| `KAFKA_AUTH__PASSWORD` | — | SASL password |
+
+> **Note:** `KafkaConnectionSettings` is a general-purpose connection config.
+> `KafkaEventBusSettings` (used by `KafkaEventBus`) is a separate, independent
+> class — existing event bus code is unaffected.
+
+---
+
 ## Running tests
 
 ```bash

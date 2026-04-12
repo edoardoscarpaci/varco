@@ -127,21 +127,51 @@ class TestHttpConnectionSettings:
         assert conn.ssl.verify is False
 
     def test_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("HTTP_BASE_URL", "https://env-api.example.com")
-        monkeypatch.setenv("HTTP_TIMEOUT", "15.0")
-        conn = HttpConnectionSettings.from_env()
+        # prefix is caller-supplied — use a realistic service-scoped prefix.
+        monkeypatch.setenv("PAYMENT_API_BASE_URL", "https://env-api.example.com")
+        monkeypatch.setenv("PAYMENT_API_TIMEOUT", "15.0")
+        conn = HttpConnectionSettings.from_env(prefix="PAYMENT_API_")
         assert conn.base_url == "https://env-api.example.com"
         assert conn.timeout == 15.0
 
+    def test_from_env_requires_non_empty_prefix(self) -> None:
+        # An empty prefix would silently read from the global env namespace
+        # with no scoping — it must raise immediately to prevent misconfiguration.
+        with pytest.raises(ValueError, match="requires a non-empty prefix"):
+            HttpConnectionSettings.from_env(prefix="")
+
+    def test_from_env_multiple_clients_independent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Two HTTP clients with different prefixes must not bleed into each other —
+        # the key feature that motivates removing the fixed HTTP_ prefix.
+        monkeypatch.setenv("SVC_A_BASE_URL", "https://a.example.com")
+        monkeypatch.setenv("SVC_B_BASE_URL", "https://b.example.com")
+        conn_a = HttpConnectionSettings.from_env(prefix="SVC_A_")
+        conn_b = HttpConnectionSettings.from_env(prefix="SVC_B_")
+        assert conn_a.base_url == "https://a.example.com"
+        assert conn_b.base_url == "https://b.example.com"
+
     def test_nested_ssl_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("HTTP_SSL__CA_CERT", "/tmp/http-ca.pem")
-        monkeypatch.setenv("HTTP_SSL__VERIFY", "true")
-        conn = HttpConnectionSettings.from_env()
+        monkeypatch.setenv("PAYMENT_API_SSL__CA_CERT", "/tmp/http-ca.pem")
+        monkeypatch.setenv("PAYMENT_API_SSL__VERIFY", "true")
+        conn = HttpConnectionSettings.from_env(prefix="PAYMENT_API_")
         assert conn.ssl is not None
         assert conn.ssl.ca_cert == Path("/tmp/http-ca.pem")
 
-    def test_env_prefix(self) -> None:
-        assert HttpConnectionSettings.env_prefix() == "HTTP_"
+    def test_env_prefix_is_empty_on_base_class(self) -> None:
+        # HttpConnectionSettings has no fixed prefix — it is always supplied
+        # at from_env() call time.  The base class env_prefix() returns "".
+        assert HttpConnectionSettings.env_prefix() == ""
+
+    def test_from_env_result_is_http_connection_settings_instance(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The dynamic subclass created inside from_env() must be transparently
+        # usable wherever HttpConnectionSettings is expected.
+        monkeypatch.setenv("MY_SVC_BASE_URL", "https://svc.example.com")
+        conn = HttpConnectionSettings.from_env(prefix="MY_SVC_")
+        assert isinstance(conn, HttpConnectionSettings)
 
     def test_frozen(self) -> None:
         conn = HttpConnectionSettings.model_validate({})

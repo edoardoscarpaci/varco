@@ -236,6 +236,110 @@ VARCO_RUN_INTEGRATION=1 uv run pytest -m integration
 
 ---
 
+## Connection settings
+
+`RedisConnectionSettings` is a structured, env-var loadable config object
+that produces a URL and kwargs for `redis.asyncio`.
+
+### Plain connection
+
+```python
+import redis.asyncio
+from varco_redis.connection import RedisConnectionSettings
+
+conn = RedisConnectionSettings(host="my-redis", port=6379, db=0)
+
+client = redis.asyncio.from_url(conn.to_url(), **conn.to_redis_kwargs())
+# to_url()  → "redis://my-redis:6379/0"
+```
+
+### From environment variables
+
+```bash
+REDIS_HOST=my-redis
+REDIS_PORT=6379
+REDIS_DB=1
+```
+
+```python
+conn = RedisConnectionSettings.from_env()
+client = redis.asyncio.from_url(conn.to_url(), **conn.to_redis_kwargs())
+```
+
+### With password (AUTH)
+
+```python
+conn = RedisConnectionSettings(host="my-redis", password="s3cret")
+# to_url() → "redis://:s3cret@my-redis:6379/0"
+client = redis.asyncio.from_url(conn.to_url(), **conn.to_redis_kwargs())
+```
+
+### With ACL username + password (Redis 6+)
+
+```python
+conn = RedisConnectionSettings(
+    host="my-redis",
+    username="alice",
+    password="s3cret",
+)
+# to_url() → "redis://alice:s3cret@my-redis:6379/0"
+```
+
+### With TLS / SSL
+
+```python
+from varco_core.connection import SSLConfig
+from pathlib import Path
+
+ssl = SSLConfig(ca_cert=Path("/etc/ssl/redis-ca.pem"), verify=True)
+conn = RedisConnectionSettings.with_ssl(ssl, host="prod-redis")
+# to_url()           → "rediss://prod-redis:6379/0"
+# to_redis_kwargs()  → {"decode_responses": False, "ssl": <SSLContext>}
+
+client = redis.asyncio.from_url(conn.to_url(), **conn.to_redis_kwargs())
+```
+
+Or from env:
+
+```bash
+REDIS_HOST=prod-redis
+REDIS_SSL__CA_CERT=/etc/ssl/redis-ca.pem
+REDIS_SSL__VERIFY=true
+```
+
+### With mTLS (client certificates)
+
+```python
+ssl = SSLConfig(
+    ca_cert=Path("/etc/ssl/ca.pem"),
+    client_cert=Path("/etc/ssl/client.crt"),
+    client_key=Path("/etc/ssl/client.key"),
+)
+conn = RedisConnectionSettings.with_ssl(ssl, host="prod-redis")
+```
+
+### Connection settings reference
+
+| Env var | Default | Description |
+|---|---|---|
+| `REDIS_HOST` | `localhost` | Redis server hostname |
+| `REDIS_PORT` | `6379` | Redis server port |
+| `REDIS_DB` | `0` | Database index (0–15) |
+| `REDIS_PASSWORD` | — | AUTH password |
+| `REDIS_USERNAME` | — | ACL username (Redis 6+) |
+| `REDIS_DECODE_RESPONSES` | `false` | Return strings instead of bytes |
+| `REDIS_SOCKET_TIMEOUT` | — | Socket timeout in seconds |
+| `REDIS_SSL__CA_CERT` | — | Path to CA certificate |
+| `REDIS_SSL__CLIENT_CERT` | — | Path to client certificate (mTLS) |
+| `REDIS_SSL__CLIENT_KEY` | — | Path to client private key (mTLS) |
+| `REDIS_SSL__VERIFY` | `true` | TLS peer verification |
+
+> **Note:** `RedisConnectionSettings` is a general-purpose connection config.
+> `RedisEventBusSettings` (used by `RedisEventBus`) is a separate, independent
+> class — existing code that uses the event bus is unaffected.
+
+---
+
 ## Delivery semantics
 
 Redis Pub/Sub provides **at-most-once** delivery — messages published while
