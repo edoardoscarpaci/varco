@@ -279,6 +279,13 @@ from varco_core.authority import (
     TrustedIssuerRegistry,
     UnknownKidError,
 )
+from varco_core.connection import (
+    BasicAuthConfig,
+    ConnectionSettings,
+    OAuth2Config,
+    SaslConfig,
+    SSLConfig,
+)
 
 __all__ = [
     # ── Domain base ────────────────────────────────────────────────────────────
@@ -473,4 +480,10 @@ __all__ = [
     "UnknownKidError",
     "IssuerNotFoundError",
     "KeyLoadError",
+    # ── Connection abstraction layer ─────────────────────────────────────────────
+    "SSLConfig",
+    "BasicAuthConfig",
+    "OAuth2Config",
+    "SaslConfig",
+    "ConnectionSettings",
 ]

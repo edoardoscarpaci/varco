@@ -30,6 +30,10 @@ import os
 import ssl
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from varco_core.connection.ssl import SSLConfig
 
 
 @dataclass(frozen=True)
@@ -125,6 +129,55 @@ class TrustStore:
             ca_folder=ca_folder,
             client_cert=client_cert,
             client_key=client_key,
+        )
+
+    def to_ssl_config(self) -> "SSLConfig":
+        """
+        Convert this ``TrustStore`` to a ``varco_core.connection.SSLConfig``.
+
+        Useful when integrating code that uses the newer ``SSLConfig``-based
+        connection abstractions with older ``TrustStore``-based HTTP clients.
+
+        Returns:
+            ``SSLConfig`` with equivalent CA/client cert configuration.
+
+        Raises:
+            ImportError: If ``varco_core.connection`` is not available.
+
+        Edge cases:
+            - ``ca_cert`` as ``bytes`` cannot be expressed as a ``Path`` in
+              ``SSLConfig`` — the returned config will have ``ca_cert=None``
+              in that case.  The bytes-based CA is not transferred.
+            - ``include_system_cas=False`` is not representable in ``SSLConfig``
+              (it always uses system CAs when ``verify=True``) — this
+              information is lost in the conversion.
+            - ``verify=True`` and ``check_hostname=True`` are always set in the
+              returned ``SSLConfig`` — ``TrustStore`` always verifies.
+
+        Example::
+
+            ts = TrustStore(ca_cert=Path("/etc/ssl/ca.pem"))
+            ssl_cfg = ts.to_ssl_config()
+            conn = PostgresConnectionSettings.with_ssl(ssl_cfg, host="my-db")
+        """
+        # Deferred import to avoid introducing a top-level circular dependency.
+        # varco_fastapi already depends on varco_core, so this is fine at runtime.
+        from varco_core.connection.ssl import SSLConfig  # noqa: PLC0415
+
+        ca_cert_path: Path | None
+        if isinstance(self.ca_cert, Path):
+            ca_cert_path = self.ca_cert
+        else:
+            # bytes ca_cert has no Path representation — cannot round-trip
+            ca_cert_path = None
+
+        return SSLConfig(
+            ca_cert=ca_cert_path,
+            ca_folder=self.ca_folder,
+            client_cert=self.client_cert,
+            client_key=self.client_key,
+            verify=True,
+            check_hostname=True,
         )
 
     @classmethod

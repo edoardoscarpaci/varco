@@ -117,6 +117,30 @@ class VarcoSettings(BaseSettings):
         return cls()
 
     @classmethod
+    def env_prefix(cls) -> str:
+        """
+        Return the env-var prefix configured for this settings class.
+
+        Reads from ``model_config["env_prefix"]``.  Subclasses that set
+        ``SettingsConfigDict(env_prefix="VARCO_REDIS_", ...)`` return
+        ``"VARCO_REDIS_"``; the base ``VarcoSettings`` returns ``""``.
+
+        Useful when callers need to introspect the prefix at runtime — e.g.
+        to build a ``SSLConfig.from_env(prefix=MySettings.env_prefix())``.
+
+        Returns:
+            The configured env-var prefix string, or ``""`` if not set.
+
+        Example::
+
+            class RedisSettings(VarcoSettings):
+                model_config = SettingsConfigDict(env_prefix="VARCO_REDIS_")
+
+            assert RedisSettings.env_prefix() == "VARCO_REDIS_"
+        """
+        return cls.model_config.get("env_prefix", "")
+
+    @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Self:
         """
         Construct this settings object from a plain dictionary.
