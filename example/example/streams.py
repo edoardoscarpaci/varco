@@ -258,6 +258,13 @@ class StreamsRouter:
                 # Subscribe to the SSE adapter.  The context manager registers this
                 # connection and removes it on exit (even on client disconnect).
                 async with self._sse_bus.subscribe() as conn:
+                    # Send an initial SSE comment immediately so the client
+                    # knows the stream is live.  SSE comments (lines starting
+                    # with ":") are silently discarded by EventSource — they
+                    # are the idiomatic keepalive and readiness mechanism.
+                    # Without this, clients that test for "first byte received"
+                    # will block indefinitely if no events arrive quickly.
+                    yield ": connected\n\n"
                     async for message in conn.stream():
                         # Each message is already formatted as "data: {...}\n\n".
                         yield message

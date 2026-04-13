@@ -16,9 +16,11 @@ Application-level authorization rules for the Post API.
 | editor   | update | ✅ own posts only (``post.author_id == ctx.user_id``) |
 | editor   | delete | ✅ own posts only                                     |
 +----------+--------+-------------------------------------------------------+
-| anonymous| list   | ✅ (read-only public access)                          |
+| anonymous| list   | ✅ (public read access)                               |
 | anonymous| read   | ✅                                                    |
-| anonymous| *      | ❌ 403 Forbidden                                      |
+| anonymous| create | ✅ post created with ``author_id=None``               |
+| anonymous| update | ❌ 403 Forbidden                                      |
+| anonymous| delete | ❌ 403 Forbidden                                      |
 +----------+--------+-------------------------------------------------------+
 
 Registration
@@ -165,6 +167,8 @@ class PostAuthorizer(AbstractAuthorizer):
         Edge cases:
             - ``resource.entity`` is ``None`` for LIST and CREATE — ownership
               checks cannot be applied and are skipped.
+            - Anonymous CREATE is allowed; the post is saved with
+              ``author_id=None`` (no JWT subject to stamp).
             - For UPDATE/DELETE on a post with ``author_id=None``, ownership
               check fails (``None != user_id``) — the editor is denied correctly.
         """
@@ -172,12 +176,19 @@ class PostAuthorizer(AbstractAuthorizer):
         if ctx.has_role(_ROLE_ADMIN):
             return  # ✅ unrestricted
 
-        # ── 2. Anonymous: read-only (list + read) ─────────────────────────────
+        # ── 2. Anonymous: read + create allowed; update/delete require auth ──────
+        # DESIGN: allow anonymous CREATE so the demo works without an auth token.
+        #   ✅ Simplifies the demo — curl POST /v1/posts works out of the box.
+        #   ✅ Post is created with ``author_id=None`` (no JWT → no subject) —
+        #      the absence of an owner is visible and auditable in the response.
+        #   ❌ Anyone can create posts — acceptable for a quickstart demo;
+        #      tighten to require auth in a production deployment.
         if ctx.is_anonymous():
-            if action in (Action.LIST, Action.READ):
-                return  # ✅ public read access
+            if action in (Action.LIST, Action.READ, Action.CREATE):
+                return  # ✅ public read + create access
 
-            # All other actions (create, update, delete) require authentication.
+            # UPDATE and DELETE always require authentication — otherwise anyone
+            # could modify or remove any post authored by an anonymous user.
             raise ServiceAuthorizationError(
                 f"Authentication required to perform '{action}' on posts.  "
                 "Obtain a Bearer token from POST /auth/login.",

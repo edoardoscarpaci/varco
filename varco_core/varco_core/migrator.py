@@ -97,6 +97,34 @@ class DomainMigrator:
 
     steps: ClassVar[list[Callable[[dict[str, Any]], dict[str, Any]]]] = []
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Ensure every subclass owns an independent copy of ``steps``.
+
+        Without this hook, all ``DomainMigrator`` subclasses that do NOT
+        explicitly declare ``steps`` inherit — and share — the *same*
+        empty list from the base class.  If any subclass then does
+        ``self.steps.append(fn)`` instead of a clean reassignment
+        (``self.steps = [fn]``), the mutation would bleed into every
+        sibling migrator.
+
+        The ``"steps" not in cls.__dict__`` guard checks the subclass's
+        own namespace only (no MRO walk), so a subclass that already
+        declared ``steps = [normalise_email]`` is left untouched.
+
+        Edge cases:
+            - Parametrised migrators that assign ``self.steps = [...]``
+              in ``__init__`` shadow the ClassVar with an instance
+              attribute — this hook does not interfere.
+            - Subclasses of subclasses: each level gets its own copy
+              because ``__init_subclass__`` fires once per new class.
+        """
+        super().__init_subclass__(**kwargs)
+        # Shallow-copy the inherited list so future append/extend
+        # on one migrator subclass cannot affect another.
+        if "steps" not in cls.__dict__:
+            cls.steps = list(cls.steps)
+
     def current_version(self) -> int:
         """Current schema version: ``len(self.steps) + 1``."""
         return len(self.steps) + 1

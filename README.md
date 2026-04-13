@@ -8,16 +8,47 @@ A modular Python framework for building expressive, backend-agnostic REST APIs o
 
 | Package | Description |
 |---|---|
-| `varco_core` | Backend-agnostic domain model, service layer, authorization, assembler, query AST, builder, parser, DTOs, event system |
+| `varco_core` | Backend-agnostic domain model, service layer, authorization, assembler, query AST, builder, parser, DTOs, event system, cache framework, resilience patterns, JWT authority, observability, health checks |
+| `varco_fastapi` | FastAPI integration — CRUD router, mixins, JWT auth middleware, job runner, HTTP client utilities |
 | `varco_sa` | SQLAlchemy async backend (ORM generation, repository, schema guard, Alembic helpers) |
 | `varco_beanie` | Beanie (Motor/MongoDB) async backend |
 | `varco_kafka` | Apache Kafka event bus backend (`KafkaEventBus` via aiokafka) |
-| `varco_redis` | Redis Pub/Sub event bus backend (`RedisEventBus` via redis.asyncio) |
+| `varco_redis` | Redis Pub/Sub event bus + cache backend (`RedisEventBus`, `RedisCache` via redis.asyncio) |
+| `varco_ws` | WebSocket and SSE event bus adapters |
+| `varco_memcached` | Memcached cache backend |
+
+---
+
+---
+
+## Quickstart — Example App
+
+The [`example/`](example/) directory contains a **complete, runnable Post API** that wires the full varco stack together:
+
+- FastAPI + `VarcoCRUDRouter` with 6 CRUD mixins
+- JWT auth (RSA-2048, role-based)
+- Redis Streams event bus + Redis cache
+- SQLAlchemy async ORM (PostgreSQL via asyncpg)
+- WebSocket + SSE real-time push
+- Async job runner (background task offload)
+- Providify DI container
+
+**Start in 3 commands:**
+
+```bash
+git clone https://github.com/edoardoscarpaci/varco && cd varco
+uv sync
+cd example && docker compose up -d
+# app at http://localhost:8000/docs
+```
+
+Full setup, API reference, architecture diagram, and extension guide: **[example/README.md](example/README.md)**
 
 ---
 
 ## Table of Contents
 
+- [Quickstart — Example App](#quickstart--example-app)
 - [Domain Model](#domain-model)
   - [Soft Delete](#soft-delete)
   - [Multi-tenancy models](#multi-tenancy-models)
@@ -61,12 +92,52 @@ A modular Python framework for building expressive, backend-agnostic REST APIs o
   - [JsonEventSerializer](#jsoneventserializer)
   - [Kafka backend (varco_kafka)](#kafka-backend-varco_kafka)
   - [Redis backend (varco_redis)](#redis-backend-varco_redis)
+- [Transactional Outbox](#transactional-outbox)
 - [SQLAlchemy Backend](#sqlalchemy-backend)
   - [Bootstrap (one-liner setup)](#bootstrap-one-liner-setup)
   - [Alembic helpers](#alembic-helpers)
   - [Schema Guard](#schema-guard)
 - [Beanie Backend](#beanie-backend)
   - [Bootstrap](#bootstrap-beanie)
+- [Cache System](#cache-system)
+  - [AsyncCache and CacheBackend](#asynccache-and-cachebackend)
+  - [InMemoryCache](#inmemorycache)
+  - [LayeredCache](#layeredcache)
+  - [Invalidation strategies](#invalidation-strategies)
+  - [CacheServiceMixin](#cacheservicemixin)
+  - [@cached decorator](#cached-decorator)
+  - [CachedService wrapper](#cachedservice-wrapper)
+- [Resilience](#resilience)
+  - [retry](#retry)
+  - [circuit_breaker](#circuit_breaker)
+  - [timeout](#timeout)
+  - [rate_limit](#rate_limit)
+  - [bulkhead](#bulkhead)
+  - [hedge](#hedge)
+  - [Composing patterns](#composing-patterns)
+- [JWT / Authority System](#jwt--authority-system)
+  - [JwtAuthority — signing](#jwtauthority--signing)
+  - [MultiKeyAuthority — key rotation](#multikeyauthority--key-rotation)
+  - [TrustedIssuerRegistry — verification](#trustedissuerregistry--verification)
+  - [Key sources](#key-sources)
+- [Connection Settings](#connection-settings)
+  - [SSLConfig](#sslconfig)
+  - [RedisConnectionSettings](#redisconnectionsettings)
+  - [HttpConnectionSettings](#httpconnectionsettings)
+- [FastAPI Integration](#fastapi-integration)
+  - [VarcoRouter and VarcoCRUDRouter](#varcorouter-and-varcoCRUDRouter)
+  - [CRUD mixins](#crud-mixins)
+  - [JWT authentication middleware](#jwt-authentication-middleware)
+  - [Request context](#request-context)
+  - [Middleware stack](#middleware-stack)
+  - [Job runner — async mode](#job-runner--async-mode)
+  - [Bootstrap helpers](#bootstrap-helpers)
+- [Observability](#observability)
+  - [@span — distributed tracing](#span--distributed-tracing)
+  - [@counter and @histogram](#counter-and-histogram)
+  - [TracingServiceMixin](#tracingservicemixin)
+  - [OtelConfig and DI wiring](#otelconfig-and-di-wiring)
+- [Health Checks](#health-checks)
 - [Exception Hierarchy](#exception-hierarchy)
 
 ---
@@ -1324,6 +1395,66 @@ Use `channel_prefix` to scope channels to your service.
 
 ---
 
+## Transactional Outbox
+
+Publishing events directly after a DB commit risks silent loss when the broker is unavailable. The outbox pattern solves this by persisting the event inside the **same DB transaction** as the domain entity, then relaying asynchronously.
+
+```
+DB transaction
+  service.create(entity) ──► repo.save(entity)
+                          ──► outbox_repo.save(OutboxEntry.from_event(event))
+
+Background relay (OutboxRelay)
+  get_pending() → bus.publish() → delete(entry)  ✓
+```
+
+### OutboxEntry
+
+```python
+from varco_core.service.outbox import OutboxEntry
+
+entry = OutboxEntry.from_event(OrderPlacedEvent(order_id="1"), channel="orders")
+# entry.entry_id    — UUID4
+# entry.event_type  — "order.placed"
+# entry.payload     — JSON bytes
+# entry.channel     — "orders"
+# entry.created_at  — UTC timestamp
+```
+
+### OutboxRepository (ABC)
+
+```python
+from varco_core.service.outbox import OutboxRepository
+
+class SAOutboxRepository(OutboxRepository):
+    async def save(self, entry: OutboxEntry) -> None: ...
+    async def get_pending(self, limit: int = 100) -> list[OutboxEntry]: ...
+    async def delete(self, entry_id: UUID) -> None: ...
+```
+
+`varco_sa` and `varco_beanie` each ship a concrete `SAOutboxRepository` / `BeanieOutboxRepository` — use those and skip the manual implementation.
+
+### OutboxRelay
+
+```python
+from varco_core.service.outbox import OutboxRelay
+
+relay = OutboxRelay(
+    outbox_repo=sa_outbox_repo,
+    bus=event_bus,
+    poll_interval=5.0,   # seconds between polls
+)
+
+# Start the background loop (typically in the app lifespan)
+await relay.start()
+# ...
+await relay.stop()
+```
+
+`OutboxRelay` is the **only** place allowed to call `AbstractEventBus` directly — all other application code must go through `AbstractEventProducer`.
+
+---
+
 ## SQLAlchemy Backend
 
 ### Installation
@@ -1557,10 +1688,839 @@ except ServiceValidationError:
 
 ```bash
 # All packages from the root
-python -m pytest
+uv run pytest
 
 # One package at a time
-python -m pytest varco_core/
-python -m pytest varco_sa/
-python -m pytest varco_beanie/
+uv run pytest varco_core/tests/
+uv run pytest varco_sa/tests/
+uv run pytest varco_beanie/tests/
+uv run pytest varco_kafka/tests/
+uv run pytest varco_redis/tests/
+
+# Integration tests (require Docker — Kafka, Redis, or MongoDB)
+uv run pytest varco_kafka/tests/ -m integration
+uv run pytest varco_redis/tests/ -m integration
+```
+
+---
+
+## Cache System
+
+`varco_core.cache` provides a backend-agnostic async cache framework with pluggable invalidation strategies. `varco_redis` ships a Redis-backed implementation.
+
+### AsyncCache and CacheBackend
+
+```
+AsyncCache (Protocol)  ←  structural checks, type hints
+  ↑
+CacheBackend (ABC)     ←  inherit start/stop + async context manager
+  ↑
+InMemoryCache   NoOpCache   RedisCache (varco_redis)   LayeredCache
+```
+
+```python
+from varco_core.cache import AsyncCache, CacheBackend, InMemoryCache, NoOpCache
+```
+
+### InMemoryCache
+
+```python
+from varco_core.cache import InMemoryCache, TTLStrategy
+
+async with InMemoryCache(strategy=TTLStrategy(300)) as cache:
+    await cache.set("user:42", {"name": "Alice"})
+    user = await cache.get("user:42")   # None after 300 s
+    await cache.delete("user:42")
+    await cache.clear()
+```
+
+`NoOpCache` discards all writes silently — useful in tests:
+
+```python
+from varco_core.cache import NoOpCache
+cache = NoOpCache()
+```
+
+### LayeredCache
+
+Promotes L2 hits to L1 on read — reduces network round-trips:
+
+```python
+from varco_core.cache import InMemoryCache, LayeredCache, TTLStrategy
+from varco_redis.cache import RedisCache, RedisCacheSettings
+
+l1 = InMemoryCache(strategy=TTLStrategy(60))
+l2 = RedisCache(RedisCacheSettings(url="redis://localhost:6379/0", key_prefix="app:"))
+
+async with LayeredCache(l1, l2, promote_ttl=60) as cache:
+    await cache.set("product:1", product, ttl=300)
+    result = await cache.get("product:1")  # L2 hit → promoted to L1
+    result = await cache.get("product:1")  # L1 hit (no Redis round-trip)
+```
+
+### Invalidation strategies
+
+```python
+from varco_core.cache import (
+    TTLStrategy,          # time-based expiry
+    ExplicitStrategy,     # manual invalidation via cache.delete()
+    TaggedStrategy,       # bulk invalidation by tag
+    EventDrivenStrategy,  # bus-event-triggered invalidation
+    CompositeStrategy,    # logical OR of multiple strategies
+)
+```
+
+**TTLStrategy** — expire entries after a fixed TTL:
+
+```python
+strategy = TTLStrategy(ttl_seconds=300)
+```
+
+**TaggedStrategy** — invalidate all keys sharing a tag:
+
+```python
+from varco_core.cache import TaggedStrategy
+
+strategy = TaggedStrategy()
+async with InMemoryCache(strategy=strategy) as cache:
+    await cache.set("user:42", user, tags=["user:42", "tenant:acme"])
+    await cache.invalidate_by_tag("tenant:acme")  # evicts every "tenant:acme" key
+```
+
+**EventDrivenStrategy** — listen on an event bus channel and evict on receipt:
+
+```python
+from varco_core.cache import EventDrivenStrategy
+
+strategy = EventDrivenStrategy(bus, channel="cache-invalidations")
+```
+
+**CompositeStrategy** — apply multiple strategies; a key is evicted when any strategy fires:
+
+```python
+from varco_core.cache import CompositeStrategy, TTLStrategy, EventDrivenStrategy
+
+strategy = CompositeStrategy(
+    TTLStrategy(300),
+    EventDrivenStrategy(bus, channel="cache-invalidations"),
+)
+async with InMemoryCache(strategy=strategy) as cache:
+    ...
+```
+
+> **Rule**: never instantiate `InvalidationStrategy` outside its backend's `start()`/`stop()` lifecycle — strategies may hold subscriptions or background tasks.
+
+### CacheServiceMixin
+
+Add transparent look-aside caching to any `AsyncService` subclass:
+
+```python
+from varco_core.cache import CacheServiceMixin
+
+@Singleton
+class PostService(
+    CacheServiceMixin,   # ← LEFT side so caching wraps all CRUD
+    AsyncService[Post, UUID, PostCreate, PostRead, PostUpdate],
+):
+    _cache_backend = Inject[CacheBackend]   # injected from DI
+    _cache_namespace = "posts"
+    _cache_ttl = 300
+
+    def _get_repo(self, uow): return uow.posts
+```
+
+`get()` results are cached automatically; `update()` and `delete()` evict the entry.
+
+### @cached decorator
+
+Cache any async callable independently of the service layer:
+
+```python
+from varco_core.cache import cached, InMemoryCache, TTLStrategy
+
+cache = InMemoryCache(strategy=TTLStrategy(300))
+
+@cached(cache=cache, key_fn=lambda self, user_id: f"profile:{user_id}", ttl=60)
+async def get_user_profile(self, user_id: UUID) -> UserProfile:
+    return await self._repo.find_by_id(user_id)
+```
+
+### CachedService wrapper
+
+Wrap any service in a cache layer without inheritance:
+
+```python
+from varco_core.cache import CachedService
+
+cached_svc = CachedService(
+    post_service,
+    cache,
+    namespace="posts",
+    default_ttl=300,
+    bus=event_bus,                   # publish cross-process invalidation events
+    bus_channel="posts.invalidations",
+)
+
+post = await cached_svc.get(post_id)      # cache miss → fetched, stored
+posts = await cached_svc.list()           # cached list
+await cached_svc.update(post_id, dto)     # evicts + publishes invalidation event
+```
+
+---
+
+## Resilience
+
+`varco_core.resilience` provides six composable resilience decorators for both sync and async callables.
+
+### retry
+
+Retries a failing function with exponential back-off and optional jitter:
+
+```python
+from varco_core.resilience import retry, RetryPolicy, RetryExhaustedError
+
+@retry(RetryPolicy(
+    max_attempts=3,
+    base_delay=0.5,
+    max_delay=10.0,
+    jitter=True,
+    retryable=(httpx.HTTPError, TimeoutError),
+))
+async def call_api() -> Response: ...
+```
+
+| `RetryPolicy` field | Default | Description |
+|---|---|---|
+| `max_attempts` | `3` | Max total attempts (including first) |
+| `base_delay` | `1.0` | Initial back-off in seconds |
+| `max_delay` | `60.0` | Cap on back-off |
+| `jitter` | `True` | Add random ±20 % jitter to delay |
+| `retryable` | `(Exception,)` | Exception types that trigger a retry |
+
+### circuit_breaker
+
+Prevents cascading failures by stopping calls to a broken dependency:
+
+```python
+from varco_core.resilience import CircuitBreaker, CircuitBreakerConfig, circuit_breaker
+
+# Decorator form — one breaker per decorated function
+@circuit_breaker(CircuitBreakerConfig(
+    failure_threshold=5,
+    recovery_timeout=60.0,
+    success_threshold=2,
+))
+async def call_payment_api() -> None: ...
+
+# Shared instance form — one breaker protecting multiple functions
+_breaker = CircuitBreaker(CircuitBreakerConfig(failure_threshold=5))
+
+async def charge(amount: float) -> None:
+    await _breaker.protect(call_payment_api)(amount)
+```
+
+> **Important**: `CircuitBreaker` **must** be a shared instance per external dependency — a per-call instance never accumulates enough failures to open.
+
+States: `CLOSED` (normal) → `OPEN` (failing fast) → `HALF_OPEN` (probing recovery).
+
+### timeout
+
+Cancels an async call if it exceeds a time limit (async-only):
+
+```python
+from varco_core.resilience import timeout, CallTimeoutError
+
+@timeout(10.0)   # seconds
+async def fetch_data() -> bytes: ...
+
+try:
+    data = await fetch_data()
+except CallTimeoutError:
+    # call was cancelled after 10 s
+    ...
+```
+
+### rate_limit
+
+Caps calls per rolling time window (async-only):
+
+```python
+from varco_core.resilience import rate_limit, InMemoryRateLimiter, RateLimitConfig
+
+# Shared limiter — one per external service
+_limiter = InMemoryRateLimiter(RateLimitConfig(rate=100, period=1.0))
+
+@rate_limit(limiter=_limiter)
+async def send_notification(user_id: str) -> None: ...
+```
+
+> **Multi-pod**: `InMemoryRateLimiter` is per-process. Use `varco_redis.RedisRateLimiter` for distributed enforcement.
+
+### bulkhead
+
+Caps maximum concurrent in-flight calls (async-only):
+
+```python
+from varco_core.resilience import Bulkhead, BulkheadConfig, bulkhead, BulkheadFullError
+
+# Shared bulkhead — one per external dependency
+_db_bh = Bulkhead(BulkheadConfig(max_concurrent=10, max_wait=0.5))
+
+@_db_bh.protect
+async def heavy_db_query() -> list[Row]: ...
+
+# Or as a decorator with a new shared instance:
+@bulkhead(BulkheadConfig(max_concurrent=5))
+async def call_slow_api() -> None: ...
+```
+
+> **Important**: same rule as `CircuitBreaker` — `Bulkhead` must be a **shared** instance, not per-call.
+
+### hedge
+
+Issues a speculative duplicate call after a delay to cut tail latency (async-only):
+
+```python
+from varco_core.resilience import hedge, HedgeConfig
+
+@hedge(HedgeConfig(delay=0.1))   # fire second attempt after 100 ms
+async def read_product(product_id: int) -> Product: ...
+```
+
+> **Warning**: Only use `@hedge` for **idempotent reads/upserts** — hedging a write causes duplicate side-effects (double charge, double email, etc.).
+
+### Composing patterns
+
+Decorators compose bottom-to-top (innermost executes first):
+
+```python
+from varco_core.resilience import timeout, retry, circuit_breaker, RetryPolicy, CircuitBreakerConfig
+
+# Execution order: circuit_breaker → retry loop → timeout → actual call
+@timeout(10.0)
+@retry(RetryPolicy(max_attempts=3, base_delay=0.5))
+@circuit_breaker(CircuitBreakerConfig(failure_threshold=5, recovery_timeout=60.0))
+async def call_external_api(payload: dict) -> Response: ...
+```
+
+---
+
+## JWT / Authority System
+
+`varco_core.authority` provides JWT signing, rotation, and multi-issuer verification.
+
+### JwtAuthority — signing
+
+```python
+from varco_core.authority import JwtAuthority
+from datetime import timedelta
+
+# Load from a PEM private key
+authority = JwtAuthority.from_pem(
+    pem_bytes,
+    kid="svc:auth-v1",
+    issuer="my-service",
+    algorithm="RS256",   # RS256, ES256, or HS256
+)
+
+# Build and sign a token
+token_str = authority.sign(
+    authority.token()
+    .subject("usr_42")
+    .expires_in(timedelta(hours=1))
+    .claim("roles", ["editor"])
+    .claim("tenant_id", "acme")
+)
+
+# Verify and decode (same authority — single-issuer setup)
+payload = authority.verify(token_str)
+# payload.sub, payload.iss, payload.exp, payload["roles"], ...
+```
+
+### MultiKeyAuthority — key rotation
+
+Zero-downtime key rotation: new tokens use the new key; old tokens remain valid until expiry.
+
+```python
+from varco_core.authority import JwtAuthority, MultiKeyAuthority
+
+# Initial key
+authority_v1 = JwtAuthority.from_pem(pem_v1, kid="svc:v1", issuer="my-svc", algorithm="RS256")
+multi = MultiKeyAuthority(authority_v1)
+
+# Rotate — start signing with the new key
+authority_v2 = JwtAuthority.from_pem(pem_v2, kid="svc:v2", issuer="my-svc", algorithm="RS256")
+multi.rotate(authority_v2)
+
+# Retire old key only after all tokens signed with svc:v1 have expired
+multi.retire("svc:v1")
+```
+
+### TrustedIssuerRegistry — verification
+
+Verify tokens from multiple trusted issuers (e.g. your own service + an external IdP):
+
+```python
+from varco_core.authority import TrustedIssuerRegistry, AuthorizationConfig
+
+# Load from environment variables
+registry = TrustedIssuerRegistry.from_env()
+await registry.load_all()  # fetches JWKS / PEM files for each issuer
+
+# Verify any token — registry finds the right issuer by `iss` claim
+payload = await registry.verify(raw_token_string)
+# raises IssuerNotFoundError or AuthorityError on failure
+
+# From explicit config
+config = AuthorizationConfig(issuers=[
+    IssuerConfig(issuer="my-svc",    source="pem_file", path="/etc/keys/svc.pub"),
+    IssuerConfig(issuer="google",    source="oidc",     discovery_url="https://accounts.google.com"),
+    IssuerConfig(issuer="corporate", source="jwks_url", jwks_url="https://auth.corp.internal/.well-known/jwks.json"),
+])
+registry = config.to_registry()
+await registry.load_all()
+```
+
+### Key sources
+
+| Source class | Import | Description |
+|---|---|---|
+| `PemFileSource` | `varco_core.authority.sources` | Load public key from a `.pem` file on disk |
+| `PemFolderSource` | `varco_core.authority.sources` | Watch a folder; auto-reload on new files |
+| `JwksUrlSource` | `varco_core.authority.sources` | Fetch JWKS JSON from a URL |
+| `OidcDiscoverySource` | `varco_core.authority.sources` | OIDC discovery endpoint → JWKS |
+
+### Environment variable config
+
+`TrustedIssuerRegistry.from_env()` reads a JSON array from `VARCO_TRUSTED_ISSUERS`:
+
+```bash
+VARCO_TRUSTED_ISSUERS='[
+  {"issuer": "my-svc",  "source": "pem_file",  "path": "/etc/keys/svc.pub"},
+  {"issuer": "google",  "source": "oidc",       "discovery_url": "https://accounts.google.com"}
+]'
+```
+
+---
+
+## Connection Settings
+
+`varco_core.connection` provides structured, env-var-loadable config objects for every backend. `SSLConfig` is shared across all of them.
+
+### SSLConfig
+
+```python
+from varco_core.connection import SSLConfig
+from pathlib import Path
+
+# TLS with custom CA
+ssl = SSLConfig(ca_cert=Path("/etc/ssl/ca.pem"), verify=True)
+
+# mTLS (client certificates)
+ssl = SSLConfig(
+    ca_cert=Path("/etc/ssl/ca.pem"),
+    client_cert=Path("/etc/ssl/client.crt"),
+    client_key=Path("/etc/ssl/client.key"),
+)
+
+# Disable verification (dev / testing only)
+ssl = SSLConfig(verify=False, check_hostname=False)
+```
+
+### RedisConnectionSettings
+
+```python
+from varco_redis.connection import RedisConnectionSettings
+import redis.asyncio
+
+# Plain
+conn = RedisConnectionSettings(host="redis.internal", port=6379, db=0)
+client = redis.asyncio.from_url(conn.to_url(), **conn.to_redis_kwargs())
+
+# With password
+conn = RedisConnectionSettings(host="redis.internal", password="s3cret")
+
+# With TLS — from env: REDIS_HOST, REDIS_SSL__CA_CERT, etc.
+conn = RedisConnectionSettings.from_env()
+```
+
+| Env var | Default | Description |
+|---|---|---|
+| `REDIS_HOST` | `localhost` | Hostname |
+| `REDIS_PORT` | `6379` | Port |
+| `REDIS_PASSWORD` | — | AUTH password |
+| `REDIS_USERNAME` | — | ACL username (Redis 6+) |
+| `REDIS_SSL__CA_CERT` | — | Path to CA certificate |
+| `REDIS_SSL__VERIFY` | `true` | TLS peer verification |
+
+### HttpConnectionSettings
+
+Produces kwargs for `httpx.AsyncClient`. Multiple instances are supported via per-client prefixes.
+
+```python
+from varco_fastapi.connection import HttpConnectionSettings
+import httpx
+
+# Plain
+conn = HttpConnectionSettings(base_url="https://api.example.com/v1", timeout=10.0)
+
+async with httpx.AsyncClient(**conn.to_httpx_kwargs()) as client:
+    response = await client.get("/users")
+
+# With Basic auth
+from varco_core.connection import BasicAuthConfig
+conn = HttpConnectionSettings(
+    base_url="https://api.example.com",
+    auth=BasicAuthConfig(username="svc-user", password="secret"),
+)
+
+# With TLS
+from varco_core.connection import SSLConfig
+conn = HttpConnectionSettings.with_ssl(
+    SSLConfig(ca_cert=Path("/etc/ssl/ca.pem")),
+    base_url="https://secure-api.example.com",
+)
+
+# From env — multi-client via distinct prefixes
+conn = HttpConnectionSettings.from_env(prefix="PAYMENT_API_")
+conn = HttpConnectionSettings.from_env(prefix="NOTIF_API_")
+```
+
+| Env var | Default | Description |
+|---|---|---|
+| `{PREFIX}BASE_URL` | _(empty)_ | Full base URL |
+| `{PREFIX}HOST` | `localhost` | Hostname (used when BASE_URL is empty) |
+| `{PREFIX}PORT` | `443` | Port (used when BASE_URL is empty) |
+| `{PREFIX}TIMEOUT` | `30.0` | Request timeout in seconds |
+| `{PREFIX}AUTH__TYPE` | — | `basic` or `oauth2` |
+| `{PREFIX}SSL__CA_CERT` | — | CA certificate path |
+| `{PREFIX}SSL__VERIFY` | `true` | TLS peer verification |
+
+---
+
+## FastAPI Integration
+
+`varco_fastapi` provides a batteries-included FastAPI integration layer.
+
+### VarcoRouter and VarcoCRUDRouter
+
+`VarcoRouter[D, PK, C, R, U]` is the generic base class. Subclasses compose CRUD mixins via MRO and declare ClassVars for prefix, tags, and auth strategy. `build_router()` materializes all routes into a FastAPI `APIRouter`.
+
+`VarcoCRUDRouter` extends `VarcoRouter` with service injection, CRUD handler dispatch, and named-task auto-registration for recoverable async mode.
+
+```python
+from varco_fastapi.router.crud import VarcoCRUDRouter
+from varco_fastapi.router.mixins import (
+    CreateMixin, ReadMixin, UpdateMixin, PatchMixin, DeleteMixin, ListMixin,
+)
+from providify import Singleton
+
+@Singleton
+class OrderRouter(
+    CreateMixin,
+    ReadMixin,
+    UpdateMixin,
+    PatchMixin,
+    DeleteMixin,
+    ListMixin,
+    VarcoCRUDRouter[Order, UUID, OrderCreate, OrderRead, OrderUpdate],
+):
+    _prefix = "/orders"
+    _tags = ["orders"]
+    _version = "v1"           # adds /v1/orders prefix
+
+router = OrderRouter().build_router()
+app.include_router(router)
+```
+
+**Custom routes** — use `@route` for non-CRUD endpoints on the same router:
+
+```python
+from varco_fastapi.router.endpoint import route
+
+@Singleton
+class OrderRouter(ReadMixin, ListMixin, VarcoCRUDRouter[...]):
+    _prefix = "/orders"
+
+    @route("GET", "/{order_id}/summary")
+    async def get_summary(self, order_id: UUID) -> dict:
+        ctx = get_request_context().auth
+        order = await self._service.get(order_id, ctx)
+        return {"pk": str(order.pk), "status": order.status}
+```
+
+### CRUD mixins
+
+Each mixin contributes exactly one route. All support per-mixin OpenAPI customization via ClassVars.
+
+| Mixin | Route | Method | Auth default |
+|---|---|---|---|
+| `CreateMixin` | `POST /` | `service.create()` | Requires auth |
+| `ReadMixin` | `GET /{pk}` | `service.get()` | Public |
+| `UpdateMixin` | `PUT /{pk}` | `service.update()` | Requires auth |
+| `PatchMixin` | `PATCH /{pk}` | `service.patch()` | Requires auth |
+| `DeleteMixin` | `DELETE /{pk}` | `service.delete()` | Requires auth |
+| `ListMixin` | `GET /` | `service.list()` | Public |
+| `SummaryMixin` | `GET /{pk}/summary` | lightweight projection | Public |
+
+```python
+@Singleton
+class OrderRouter(CreateMixin, ReadMixin, ListMixin, VarcoCRUDRouter[...]):
+    _prefix = "/orders"
+    _create_summary = "Place a new order"
+    _create_status_code = 201
+    _list_max_limit = 200
+    _create_async_capable = True    # allow ?with_async=true
+```
+
+### JWT authentication middleware
+
+`JwtBearerAuth` validates `Authorization: Bearer <token>` headers and populates the `AuthContext` for each request:
+
+```python
+from varco_fastapi.auth.server_auth import JwtBearerAuth
+from varco_core.authority import TrustedIssuerRegistry
+
+registry = TrustedIssuerRegistry.from_env()
+await registry.load_all()
+
+auth = JwtBearerAuth(registry)
+
+# Apply to the whole router
+@Singleton
+class OrderRouter(CreateMixin, VarcoCRUDRouter[...]):
+    _prefix = "/orders"
+    _auth = auth   # ClassVar — all routes use this auth strategy
+```
+
+Or inject via DI (installed automatically by `VarcoFastAPIModule`):
+
+```python
+from varco_fastapi.di import VarcoFastAPIModule
+container.install(VarcoFastAPIModule)
+# AbstractServerAuth → JwtBearerAuth registered automatically
+```
+
+### Request context
+
+`RequestContext` is a per-request `ContextVar` populated by `RequestContextMiddleware`. Access it anywhere in the call stack:
+
+```python
+from varco_fastapi.context import get_request_context
+
+ctx = get_request_context()
+auth = ctx.auth           # AuthContext (user_id, roles, grants)
+jwt  = ctx.jwt            # raw JWT payload dict
+request = ctx.request     # FastAPI Request object
+```
+
+### Middleware stack
+
+Install the full middleware stack in one call:
+
+```python
+from varco_fastapi.middleware import setup_middleware
+from varco_fastapi.middleware.cors import CORSConfig
+from varco_fastapi.middleware.error import ErrorMiddleware
+
+app = FastAPI()
+setup_middleware(app, cors=CORSConfig.from_env())
+# Installs (outermost → innermost):
+#   ErrorMiddleware         — JSON error responses for ServiceException
+#   CORSMiddleware          — CORS headers
+#   RequestContextMiddleware — AuthContext ContextVar per request
+#   LoggingMiddleware        — structured request/response logging
+```
+
+### Job runner — async mode
+
+Append `?with_async=true` to any CRUD endpoint (when `_create_async_capable = True` etc.) to receive `202 Accepted` with a `job_id`:
+
+```bash
+POST /orders?with_async=true
+# → 202 {"job_id": "...", "status": "pending"}
+
+GET /jobs/{job_id}
+# → {"job_id": "...", "status": "completed", "result": {...}}
+```
+
+`VarcoCRUDRouter` auto-registers CRUD closures in `TaskRegistry` at `build_router()` time — named `"ClassName.create"`, `"ClassName.update"`, etc. — so `JobRunner.recover()` can re-submit `PENDING` jobs after a process restart.
+
+```python
+from varco_core.job import AbstractJobRunner, JobRunner
+from varco_core.job.store import InMemoryJobStore
+
+runner = JobRunner(InMemoryJobStore())
+await runner.start()
+
+# After restart — re-submit any jobs that were PENDING when the process died
+await runner.recover()
+```
+
+### Bootstrap helpers
+
+One-liner setup for each backend (also registered by `container.install(VarcoFastAPIModule)`):
+
+```python
+from varco_fastapi.app import (
+    sa_bootstrap,       # SQLAlchemy repo provider + UoW
+    redis_bootstrap,    # Redis event bus
+    ws_bootstrap,       # WebSocket + SSE adapters
+    fastapi_bootstrap,  # FastAPI defaults (auth, CORS, job runner, producer)
+    redis_async_bootstrap,  # Redis cache (async — call inside lifespan)
+)
+from varco_fastapi.lifespan import VarcoLifespan
+
+container = DIContainer()
+sa_bootstrap(container)
+redis_bootstrap(container, streams=True)    # use Redis Streams (at-least-once)
+ws_bootstrap(container)
+fastapi_bootstrap(container, setup_producer=True)
+
+app = FastAPI(lifespan=VarcoLifespan(container))
+```
+
+---
+
+## Observability
+
+`varco_core.observability` provides OpenTelemetry tracing and metrics.
+
+### @span — distributed tracing
+
+```python
+from varco_core.observability import span, SpanConfig
+
+@span                        # auto-named from function name
+async def process_order(order_id: UUID) -> None: ...
+
+@span(SpanConfig(name="orders.process", attributes={"service": "orders"}))
+async def process_order(order_id: UUID) -> None: ...
+
+# Context manager form
+from varco_core.observability import create_span
+
+async def process_order(order_id: UUID) -> None:
+    async with create_span("orders.validate") as s:
+        s.set_attribute("order.id", str(order_id))
+        await validate(order_id)
+```
+
+### @counter and @histogram
+
+```python
+from varco_core.observability import counter, histogram, CounterConfig, HistogramConfig
+
+@counter(CounterConfig(name="orders.created", description="Total orders created"))
+async def create_order(dto: OrderCreate) -> Order: ...
+
+@histogram(HistogramConfig(name="orders.processing_ms", unit="ms"))
+async def process_order(order_id: UUID) -> None: ...
+```
+
+Imperative helpers for more control:
+
+```python
+from varco_core.observability import create_counter, create_histogram
+
+_orders_counter = create_counter("orders.created", "Total orders created")
+_proc_histogram = create_histogram("orders.processing_ms", unit="ms")
+
+_orders_counter.add(1, {"status": "success"})
+_proc_histogram.record(42.5, {"region": "eu-west-1"})
+```
+
+### TracingServiceMixin
+
+Auto-spans every CRUD method on an `AsyncService` with zero boilerplate:
+
+```python
+from varco_core.observability import TracingServiceMixin
+
+@Singleton
+class OrderService(
+    TracingServiceMixin,     # wraps get/list/create/update/delete in OTel spans
+    AsyncService[Order, UUID, OrderCreate, OrderRead, OrderUpdate],
+):
+    def _get_repo(self, uow): return uow.orders
+```
+
+### OtelConfig and DI wiring
+
+```python
+from varco_core.observability import OtelConfig, OtelConfiguration
+from providify import DIContainer
+
+config = OtelConfig(
+    service_name="orders-svc",
+    otlp_endpoint="http://otel-collector:4317",
+    service_version="1.2.0",
+)
+
+container = DIContainer()
+container.install(OtelConfiguration, config=config)
+```
+
+---
+
+## Health Checks
+
+`varco_core.health` provides liveness and readiness probe abstractions. Every backend package ships a concrete `HealthCheck` subclass.
+
+```python
+from varco_core.health import HealthCheck, HealthResult, HealthStatus, CompositeHealthCheck
+```
+
+### HealthCheck (ABC)
+
+```python
+from varco_core.health import HealthCheck, HealthResult, HealthStatus
+
+class RedisHealthCheck(HealthCheck):
+    name = "redis"
+
+    async def check(self) -> HealthResult:
+        try:
+            await self._client.ping()
+            return HealthResult(status=HealthStatus.HEALTHY, component=self.name)
+        except Exception as exc:
+            return HealthResult(
+                status=HealthStatus.UNHEALTHY,
+                component=self.name,
+                detail=str(exc),
+            )
+```
+
+> **Rule**: `check()` must **never raise** — return `UNHEALTHY` instead. A probe that raises crashes the health endpoint.
+
+### CompositeHealthCheck
+
+Runs all probes concurrently and reduces to the worst-case status:
+
+```python
+from varco_core.health import CompositeHealthCheck
+
+composite = CompositeHealthCheck([
+    redis_health,
+    postgres_health,
+    kafka_health,
+])
+
+result = await composite.check()
+# result.status → HealthStatus.UNHEALTHY if any probe is unhealthy
+```
+
+| `HealthStatus` | Meaning |
+|---|---|
+| `HEALTHY` | Component is fully operational |
+| `DEGRADED` | Component is operational but with reduced capacity |
+| `UNHEALTHY` | Component is unavailable |
+
+### FastAPI health endpoint
+
+```python
+from varco_fastapi.router.health import health_router
+
+app.include_router(health_router)
+# GET /health → {"status": "healthy", "components": [...]}
 ```

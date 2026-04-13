@@ -221,6 +221,12 @@ def create_app() -> FastAPI:
     # scanner does not self-bind it.  Explicit bind() makes it resolvable.
     container.bind(PostRouter, PostRouter)
 
+    # PostService extends AsyncService (abstract) and CacheServiceMixin (abstract).
+    # The scanner binds PostService to those ABCs but does NOT self-bind it, so
+    # container.aget(PostService) would raise LookupError without this explicit
+    # self-bind.  Same root cause as PostRouter above.
+    container.bind(PostService, PostService)
+
     # ── 6. Per-entity repository bindings ─────────────────────────────────────
     bind_repositories(container, Post)
 

@@ -160,9 +160,18 @@ class PostService(
         """
         Return the ``AsyncRepository[Post]`` from the open unit-of-work.
 
-        ``uow.get_repository(Post)`` is the canonical way to obtain a
-        repository — it delegates to the ``RepositoryProvider`` singleton
-        which constructs a fresh ``AsyncSession``-backed repository.
+        ``SQLAlchemyUnitOfWork`` exposes repositories as attributes derived
+        from the entity class name: ``Post → uow.posts``.  The attribute is
+        set by ``SQLAlchemyUnitOfWork._begin()`` using the ``repo_factories``
+        dict populated by ``RepositoryProvider.make_uow()``.
+
+        DESIGN: attribute access over ``uow.get_repository(Post)``
+            ✅ Matches the ``SQLAlchemyUnitOfWork`` API — no ``get_repository``
+               method exists on the UoW; only on ``RepositoryProvider`` directly.
+            ✅ Type-safe at the call site — IDE can infer the repo type from
+               the attribute declaration in ``SQLAlchemyUnitOfWork``.
+            ❌ Attribute name must match the lowercased plural derived name —
+               ``Post → posts``, ``UserRole → userroles``.
 
         Args:
             uow: The open ``AsyncUnitOfWork`` for this request.
@@ -170,7 +179,10 @@ class PostService(
         Returns:
             ``AsyncRepository[Post]`` backed by the current session.
         """
-        return uow.get_repository(Post)
+        # ``uow.posts`` is set by SQLAlchemyUnitOfWork._begin() from the
+        # repo_factories dict.  ``Post`` → attribute name ``"posts"``
+        # (lowercased class name + "s") per RepositoryProvider.make_uow() docs.
+        return uow.posts  # type: ignore[attr-defined]
 
     def _prepare_for_create(self, entity: Post, ctx: AuthContext) -> Post:
         """

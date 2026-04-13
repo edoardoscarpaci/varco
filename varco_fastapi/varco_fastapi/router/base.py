@@ -392,18 +392,47 @@ class VarcoRouter(Generic[D, PK, C, R, U]):
     _prefix: ClassVar[str] = ""
     _tags: ClassVar[list[str]] = []
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Ensure every subclass owns an independent copy of ``_tags``.
+
+        Without this hook, all subclasses that do NOT declare ``_tags``
+        share the *same* list object inherited from ``VarcoRouter``.
+        A mutating call (e.g. ``SomeRouter._tags.append("foo")``) would
+        silently contaminate every router that inherits the default.
+
+        The ``"_tags" not in cls.__dict__`` guard is intentional:
+        - ``cls.__dict__`` checks the subclass's own namespace only —
+          it does NOT walk the MRO, unlike ``hasattr``.
+        - If the subclass already declared ``_tags = ["foo"]`` we must
+          leave that declaration untouched; only the inherited case needs
+          a fresh copy.
+
+        Edge cases:
+            - ``_tags`` declared on an intermediate mixin and not on the
+              concrete subclass → the mixin's copy is safe because it was
+              already isolated by a previous ``__init_subclass__`` call.
+            - Multiple inheritance → Python calls ``__init_subclass__``
+              once per class, so each class in the MRO gets its own copy
+              the first time it is defined.
+        """
+        super().__init_subclass__(**kwargs)
+        # Copy the inherited list so mutations on one subclass do not
+        # bleed into sibling subclasses or the base class default.
+        if "_tags" not in cls.__dict__:
+            cls._tags = list(cls._tags)
+
     # API version prefix — when set, prepended to _prefix.
     # e.g. _prefix="/orders", _version="v2" → effective prefix="/v2/orders"
     _version: ClassVar[str | None] = None
 
-    # Job runner — declared as Instance[] so it can be resolved lazily and
-    # .is_resolvable() can be checked before use.  Not every VarcoRouter subclass
-    # needs a job runner, so we don't want a hard injection failure when it's absent.
-    # VarcoCRUDRouter (crud.py) inherits this and uses it for async offload.
-    _job_runner: ClassVar[Instance[AbstractJobRunner]]
-
     # Server auth strategy — set directly at class definition time.
     # None means no auth dependency is injected into route handlers.
+    # DESIGN: ClassVar (not __init__ param) for _auth because it is the common case to
+    # declare the auth strategy once for the whole router type at class definition:
+    #   class PostRouter(VarcoCRUDRouter): _auth = JwtBearerAuth(...)
+    # Per-instance override is still possible via __init__(auth=...) in VarcoCRUDRouter,
+    # which writes self._auth as an instance attribute that shadows this ClassVar.
     _auth: ClassVar[AbstractServerAuth | None]
 
     def __repr__(self) -> str:
@@ -413,14 +442,48 @@ class VarcoRouter(Generic[D, PK, C, R, U]):
             f"tags={self._tags!r})"
         )
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        job_runner: Instance[AbstractJobRunner] | None = None,
+    ) -> None:
         """
         Base ``VarcoRouter`` constructor.
 
         ``VarcoRouter`` itself has no service injection — it is pure routing
         infrastructure.  For service-backed CRUD routes, subclass
         ``VarcoCRUDRouter`` instead, which adds the service injection.
+
+        Args:
+            job_runner: Optional ``AbstractJobRunner`` for async route offload
+                        (``?with_async=true``).  When ``None``, async mode falls
+                        through to synchronous execution.  Injected by DI when
+                        ``VarcoFastAPIModule`` is installed; pass directly in
+                        tests or DI-less setups.
+
+        Edge cases:
+            - ``job_runner=None`` → ``?with_async=true`` is silently ignored;
+              the handler executes synchronously.
+
+        Thread safety:  ✅ Instance attribute set once at construction.
+        Async safety:   ✅ Safe — no shared mutable state.
+
+        DESIGN: instance attribute (not ClassVar) for _job_runner
+            ✅ DI injects reliably via __init__ kwargs — avoids the broken
+               ClassVar injection path (get_type_hints fails on forward refs
+               with ``from __future__ import annotations``, silently skipped).
+            ✅ Each router instance owns its proxy — no cross-subclass sharing.
+            ✅ getattr(self, ...) correctly finds instance state before MRO.
+            ❌ Cannot be set declaratively at class-definition time; use
+               __init__(job_runner=...) or a class-level assignment that will
+               still be found via MRO when no instance attribute exists.
         """
+        # Only write the instance attribute when a value is actually provided.
+        # If job_runner=None (default, no DI), we leave the class namespace alone so
+        # that a class-level ``_job_runner = runner`` assignment (common in tests) is
+        # still found by getattr(self, "_job_runner") via normal MRO lookup.
+        if job_runner is not None:
+            self._job_runner = job_runner
 
     def _effective_prefix(self) -> str:
         """
@@ -582,8 +645,10 @@ class VarcoRouter(Generic[D, PK, C, R, U]):
         # Resolve auth and job_runner — use getattr with None fallback so subclasses
         # that don't set these ClassVars don't crash during introspection.
         server_auth = getattr(self, "_auth", None)
-        # Resolve Instance[AbstractJobRunner] lazily — check if DI can provide it
-        _jr_proxy = getattr(type(self), "_job_runner", None)
+        # Resolve job_runner — instance attribute (set in __init__) takes priority;
+        # falls back to a class-level assignment via MRO (used in tests).
+        # Instance[...] proxy is resolved lazily here, not at construction time.
+        _jr_proxy = getattr(self, "_job_runner", None)
         job_runner: AbstractJobRunner | None = None
         if (
             _jr_proxy is not None
@@ -592,7 +657,7 @@ class VarcoRouter(Generic[D, PK, C, R, U]):
         ):
             job_runner = _jr_proxy.get()
         elif _jr_proxy is not None and not hasattr(_jr_proxy, "is_resolvable"):
-            # Directly assigned (not an Instance proxy) — use as-is
+            # Directly assigned runner (test setup or class-level) — use as-is
             job_runner = _jr_proxy
 
         crud_action = route.crud_action

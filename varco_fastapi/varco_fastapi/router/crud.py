@@ -42,12 +42,19 @@ DESIGN: CRUD tasks named "ClassName.action" (e.g. "OrderRouter.create")
     ✅ Stable across restarts as long as the class name does not change
     ❌ Class renaming breaks recovery of in-flight jobs — document this constraint
 
-DESIGN: _task_registry as ClassVar[Instance[TaskRegistry]]
-    ✅ Lazy resolution — the registry may not be in the DI container for tests
-    ✅ ``is_resolvable()`` guard prevents crashes in DI-less setups
-    ❌ Indirect — accessing the registry requires ``.get()`` not direct attribute access
+DESIGN: _task_registry / _task_serializer / _job_runner as __init__ params (not ClassVars)
+    ✅ DI injects via constructor kwargs — the ClassVar injection path was silently
+       broken: ``get_type_hints`` fails on forward refs (``from __future__ import
+       annotations`` + TYPE_CHECKING imports), so the ``try/except`` in
+       ``_inject_class_vars_sync`` swallowed the error and never injected anything.
+    ✅ Each router instance owns its own proxy — PostRouter and CommentRouter
+       instances are fully independent, no cross-subclass contamination.
+    ✅ ``getattr(self, ...)`` reads instance state directly; class-level test
+       assignments still found via MRO fallback when the param is not provided.
+    ❌ Cannot be declared at class-definition time with a plain ``cls.attr = value``
+       assignment anymore — use ``__init__(task_registry=...)`` instead.
 
-Thread safety:  ✅ ClassVars are read-only after class definition.
+Thread safety:  ✅ Instance attributes set once at construction.
                    ``build_router()`` is called once at startup (single-threaded).
 Async safety:   ✅ ``build_router()`` is synchronous; closures are async-safe.
 
@@ -129,18 +136,21 @@ class VarcoCRUDRouter(VarcoRouter[D, PK, C, R, U]):
         R:   Read DTO
         U:   Update / Patch DTO
 
-    ClassVars (set at class definition time):
-        _prefix:           URL prefix for all routes (e.g. ``"/orders"``).
-        _tags:             OpenAPI tags (e.g. ``["orders"]``).
-        _version:          API version prefix (e.g. ``"v2"``).
-        _auth:             ``AbstractServerAuth`` instance for all routes.
-        _job_runner:       ``Instance[AbstractJobRunner]`` for async offload.
-        _task_registry:    ``Instance[TaskRegistry]`` for named-task recovery.
-                           Auto-populated from DI if ``VarcoFastAPIModule`` is installed.
-        _task_serializer:  ``Instance[TaskSerializer]`` injected by DI.
-                           Passed to every ``VarcoTask`` created in
-                           ``_register_crud_tasks()``.  Falls back to
-                           ``DEFAULT_SERIALIZER`` when DI is unavailable.
+    ClassVars (declarative, set at class-definition time):
+        _prefix:    URL prefix for all routes (e.g. ``"/orders"``).
+        _tags:      OpenAPI tags (e.g. ``["orders"]``).
+        _version:   API version prefix (e.g. ``"v2"``).
+        _auth:      ``AbstractServerAuth`` instance for all routes.  Can also be
+                    overridden per-instance via ``__init__(auth=...)``.
+        _service:   ``AsyncService`` instance — set as a ClassVar in tests;
+                    normally injected per-instance by DI via ``__init__``.
+
+    __init__ params (injected by DI or passed directly):
+        job_runner:      ``AbstractJobRunner`` for ``?with_async=true`` offload.
+        task_registry:   ``TaskRegistry`` for named-task recovery after restart.
+                         When not resolvable, CRUD tasks are not registered.
+        task_serializer: ``TaskSerializer`` for CRUD task payloads.
+                         Falls back to ``DEFAULT_SERIALIZER`` when not provided.
 
     CRUD action tasks are registered in ``_task_registry`` under the names
     ``"ClassName.create"``, ``"ClassName.read"``, etc. at ``build_router()`` time.
@@ -154,11 +164,11 @@ class VarcoCRUDRouter(VarcoRouter[D, PK, C, R, U]):
 
         # With DI:
         container.install(VarcoFastAPIModule)
-        # VarcoCRUDRouter picks up AbstractJobRunner and TaskRegistry from the container.
-        router = OrderRouter().build_router()
-        app.include_router(router)
+        # DI injects service, job_runner, task_registry, task_serializer via __init__.
+        router = container.get(OrderRouter)
+        app.include_router(router.build_router())
 
-    Thread safety:  ✅ ClassVars read-only after class definition.
+    Thread safety:  ✅ Instance attributes set once at construction.
     Async safety:   ✅ build_router() is synchronous; handlers are async-safe.
 
     Edge cases:
@@ -172,59 +182,76 @@ class VarcoCRUDRouter(VarcoRouter[D, PK, C, R, U]):
 
     # ── ClassVar configuration ────────────────────────────────────────────────
 
-    # Injected service — set via Inject[] at class definition or by VarcoCRUDRouter.__init__
-    _service: ClassVar[AsyncService | None]  # type: ignore[type-arg]
-
-    # Task registry for named-task registration and recovery.
-    # Instance[] makes this a lazy proxy — resolved from DI on first .get() call.
-    # None / unresolvable → CRUD tasks not registered; async mode falls back to bare coro.
-    _task_registry: ClassVar[Instance[TaskRegistry]]  # type: ignore[assignment]
-
-    # Serializer injected from DI (bound to TaskSerializer in VarcoFastAPIModule).
-    # Instance[] is used (not Inject[]) so that DI-less test setups don't crash —
-    # is_resolvable() returns False when the container has no TaskSerializer binding,
-    # and the code falls back to DEFAULT_SERIALIZER in that case.
-    _task_serializer: ClassVar[Instance[TaskSerializer]]  # type: ignore[assignment]
+    # Injected service — set via Inject[] in __init__ by providify, or as a
+    # ClassVar directly in tests (e.g. _service = MockService()).  The ClassVar
+    # annotation without a default value acts as a documentation-only type hint;
+    # the actual value is always an instance attribute after construction.
+    _service: ClassVar[AsyncService[D, PK, C, R, U] | None]  # type: ignore[type-arg]
 
     def __init__(
         self,
         service: Inject[AsyncService[D, PK, C, R, U]] | None = None,  # type: ignore[override]
         *,
         auth: AbstractServerAuth | None = None,
+        task_registry: Instance[TaskRegistry] | None = None,
+        task_serializer: Instance[TaskSerializer] | None = None,
+        job_runner: Instance[AbstractJobRunner] | None = None,
     ) -> None:
         """
         Args:
-            service: The ``AsyncService`` instance injected by providify.
-                     When ``None`` (e.g. in tests that set ``_service`` as a ClassVar),
-                     the ClassVar value is used instead.  Providify always injects
-                     a concrete service via ``Inject[]``; ``None`` is only expected
-                     in manual / test-only instantiation.
-            auth:    Optional ``AbstractServerAuth`` instance.  When provided,
-                     it is stored as an instance attribute and takes priority over
-                     the class-level ``_auth`` ClassVar.  Pass ``JwtBearerAuth``
-                     here to authenticate all routes built by this router.
-
-                     Example::
-
-                         router = PostRouter(service=post_service, auth=server_auth)
-                         app.include_router(router.build_router())
+            service:        The ``AsyncService`` instance injected by providify.
+                            When ``None`` (e.g. tests that set ``_service`` as a
+                            ClassVar), the ClassVar value is used instead.
+            auth:           Optional ``AbstractServerAuth`` for all routes built
+                            by this router.  Shadows the class-level ``_auth``
+                            ClassVar when provided.
+            task_registry:  ``TaskRegistry`` proxy for named-task registration and
+                            recovery.  Injected lazily — ``is_resolvable()``
+                            returns ``False`` if not in the DI container, causing
+                            ``build_router()`` to skip task registration gracefully.
+            task_serializer: ``TaskSerializer`` proxy for CRUD task payloads.
+                            Falls back to ``DEFAULT_SERIALIZER`` when not resolvable.
+            job_runner:     ``AbstractJobRunner`` proxy for async route offload.
+                            Passed to ``super().__init__()``; see ``VarcoRouter``.
 
         Edge cases:
-            - ``auth=None`` (default) falls through to the ClassVar ``_auth``
-              (which is also ``None`` unless set at class definition time).
-              Routes without auth accept requests without an ``Authorization``
-              header.
+            - ``auth=None`` → falls through to the ClassVar ``_auth`` (set at
+              class definition time, or also ``None`` if never set).
+            - ``task_registry=None`` → CRUD tasks not registered; async mode
+              still works via the bare coroutine fallback.
+            - ``task_serializer=None`` → falls back to ``DEFAULT_SERIALIZER``.
+
+        DESIGN: _task_registry and _task_serializer as __init__ params (not ClassVars)
+            ✅ DI injects via constructor kwargs — avoids the silent ClassVar
+               injection failure caused by get_type_hints failing on forward refs
+               (``from __future__ import annotations`` + TYPE_CHECKING imports).
+            ✅ Each instance owns its own proxy — PostRouter and CommentRouter
+               instances are completely independent.
+            ✅ ``getattr(self, ...)`` correctly finds instance state.
+            ❌ Cannot be declared at class-definition time; use __init__ params
+               or assign directly to the class for test convenience.
         """
-        super().__init__()
+        # Pass job_runner up to VarcoRouter.__init__ so self._job_runner is set.
+        super().__init__(job_runner=job_runner)
+
         if service is not None:
-            # DI-injected: store on the instance, takes priority over ClassVar
+            # DI-injected: store on the instance, takes priority over ClassVar.
             self._service = service  # type: ignore[assignment]
-        # If service is None, fall back to ClassVar _service (set by test subclasses)
+        # If service is None, fall back to ClassVar _service (test-only pattern).
 
         if auth is not None:
             # Instance attribute shadows the ClassVar — each router instance can
-            # have its own auth strategy without polluting the class definition.
+            # carry its own auth strategy without touching the class definition.
             self._auth = auth  # type: ignore[assignment]
+
+        # Only write instance attributes when values are provided — same rationale as
+        # _job_runner in VarcoRouter.__init__: if the param is None (default, no DI),
+        # leaving the class namespace untouched lets a class-level assignment
+        # ``_task_registry = registry`` (test-only pattern) survive via MRO lookup.
+        if task_registry is not None:
+            self._task_registry = task_registry
+        if task_serializer is not None:
+            self._task_serializer = task_serializer
 
     def build_router(self) -> Any:
         """
@@ -255,21 +282,23 @@ class VarcoCRUDRouter(VarcoRouter[D, PK, C, R, U]):
         # ── Register CRUD tasks ───────────────────────────────────────────────
         # Try to resolve the task registry from DI.
         registry: _TaskRegistry | None = None
-        _tr_proxy = getattr(type(self), "_task_registry", None)
+        # Read from instance — set by __init__ (DI-injected proxy or direct test value).
+        # Falls back via MRO to a class-level assignment for backward compat.
+        _tr_proxy = getattr(self, "_task_registry", None)
         if _tr_proxy is not None:
             if hasattr(_tr_proxy, "is_resolvable") and _tr_proxy.is_resolvable():
                 registry = _tr_proxy.get()
             elif not hasattr(_tr_proxy, "is_resolvable") and isinstance(
                 _tr_proxy, _TaskRegistry
             ):
-                # Directly assigned (not a proxy) — use as-is
+                # Directly assigned TaskRegistry (test setup) — use as-is
                 registry = _tr_proxy
 
         if registry is not None:
             # Resolve the DI-provided serializer, falling back to the module-level
             # DEFAULT_SERIALIZER for DI-less setups (tests, standalone scripts).
             serializer: TaskSerializer = DEFAULT_SERIALIZER
-            _ts_proxy = getattr(type(self), "_task_serializer", None)
+            _ts_proxy = getattr(self, "_task_serializer", None)
             if (
                 _ts_proxy is not None
                 and hasattr(_ts_proxy, "is_resolvable")
@@ -470,9 +499,10 @@ class VarcoCRUDRouter(VarcoRouter[D, PK, C, R, U]):
             # Not a CRUD action — delegate to base class (custom @route handling)
             return super()._make_http_handler(route, type_args)
 
-        # Resolve server auth and job runner — same pattern as base class
+        # Resolve server auth and job runner — instance attribute (set by __init__),
+        # with MRO fallback for test subclasses that assign these at class level.
         server_auth = getattr(self, "_auth", None)
-        _jr_proxy = getattr(type(self), "_job_runner", None)
+        _jr_proxy = getattr(self, "_job_runner", None)
         job_runner: AbstractJobRunner | None = None
         if (
             _jr_proxy is not None
