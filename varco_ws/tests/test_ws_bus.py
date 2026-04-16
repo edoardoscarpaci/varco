@@ -21,7 +21,11 @@ from varco_core.event.base import Event
 from varco_core.event.memory import InMemoryEventBus
 
 from varco_ws.sse import SSEEventBus
-from varco_ws.websocket import WebSocketEventBus, WebSocketConnection
+from varco_ws.websocket import (
+    BackpressurePolicy,
+    WebSocketEventBus,
+    WebSocketConnection,
+)
 
 
 # ── Test event ─────────────────────────────────────────────────────────────────
@@ -215,10 +219,219 @@ async def test_ws_connection_send_forwards_to_websocket() -> None:
 
 
 def test_ws_connection_repr() -> None:
-    """WebSocketConnection repr is non-empty."""
+    """WebSocketConnection repr includes id, queue_size, and policy."""
     mock_ws = MockWebSocket()
     conn = WebSocketConnection(mock_ws, connection_id="conn-1")
-    assert "conn-1" in repr(conn)
+    r = repr(conn)
+    assert "conn-1" in r
+    assert "policy" in r
+
+
+# ── BackpressurePolicy tests ──────────────────────────────────────────────────
+
+
+async def test_backpressure_drop_newest_discards_incoming() -> None:
+    """
+    DROP_NEWEST: when the queue is full, the incoming message is discarded.
+    Messages already in the queue are preserved.
+    """
+    mock_ws = MockWebSocket()
+    conn = WebSocketConnection(
+        mock_ws,
+        max_queue_size=2,
+        backpressure_policy=BackpressurePolicy.DROP_NEWEST,
+    )
+    # Fill the queue manually without a drain task running.
+    conn._queue.put_nowait("msg-1")
+    conn._queue.put_nowait("msg-2")
+
+    # Queue full — incoming message should be silently dropped.
+    result = await conn._enqueue("msg-3")
+
+    assert result is True  # DROP_NEWEST never requests disconnect
+    assert conn._queue.qsize() == 2
+    # msg-3 must NOT be in the queue.
+    items = [conn._queue.get_nowait(), conn._queue.get_nowait()]
+    assert "msg-3" not in items
+
+
+async def test_backpressure_drop_oldest_evicts_front() -> None:
+    """
+    DROP_OLDEST: when the queue is full, the oldest message is evicted to make
+    room for the new one.
+    """
+    mock_ws = MockWebSocket()
+    conn = WebSocketConnection(
+        mock_ws,
+        max_queue_size=2,
+        backpressure_policy=BackpressurePolicy.DROP_OLDEST,
+    )
+    conn._queue.put_nowait("msg-1")
+    conn._queue.put_nowait("msg-2")
+
+    result = await conn._enqueue("msg-3")
+
+    assert result is True
+    assert conn._queue.qsize() == 2
+    # "msg-1" (oldest) should have been evicted; "msg-2" and "msg-3" remain.
+    items = [conn._queue.get_nowait(), conn._queue.get_nowait()]
+    assert "msg-1" not in items
+    assert "msg-3" in items
+
+
+async def test_backpressure_disconnect_returns_false() -> None:
+    """
+    DISCONNECT: when the queue is full, _enqueue returns False to signal
+    the bus should remove this client.
+    """
+    mock_ws = MockWebSocket()
+    conn = WebSocketConnection(
+        mock_ws,
+        max_queue_size=1,
+        backpressure_policy=BackpressurePolicy.DISCONNECT,
+    )
+    conn._queue.put_nowait("msg-1")
+
+    result = await conn._enqueue("msg-2")
+
+    assert result is False  # caller should disconnect
+
+
+async def test_backpressure_block_enqueues_when_space_frees() -> None:
+    """
+    BLOCK: _enqueue suspends until the queue drains — message is eventually
+    delivered.
+    """
+    mock_ws = MockWebSocket()
+    conn = WebSocketConnection(
+        mock_ws,
+        max_queue_size=1,
+        backpressure_policy=BackpressurePolicy.BLOCK,
+    )
+    conn._queue.put_nowait("msg-1")
+
+    # Free space asynchronously (simulate a consumer running concurrently).
+    async def _free_space() -> None:
+        await asyncio.sleep(0)
+        conn._queue.get_nowait()
+
+    await asyncio.gather(_free_space(), conn._enqueue("msg-2"))
+
+    assert conn._queue.qsize() == 1
+    assert conn._queue.get_nowait() == "msg-2"
+
+
+async def test_ws_bus_disconnect_policy_removes_client() -> None:
+    """
+    DISCONNECT policy: a client with a full queue is removed from the bus
+    on the next event delivery.
+    """
+    underlying_bus = InMemoryEventBus()
+    ws_bus = WebSocketEventBus(
+        underlying_bus,
+        max_queue_size=1,
+        backpressure_policy=BackpressurePolicy.DISCONNECT,
+    )
+    await ws_bus.start()
+
+    slow_ws = MockWebSocket()
+    # Connect and immediately fill the client's queue from the outside.
+    async with ws_bus.connect(slow_ws):
+        # Manually saturate the single connection's queue.
+        conn = next(iter(ws_bus._connections))
+        conn._queue.put_nowait("prefill")
+        assert ws_bus.connected_count == 1
+
+        # Publish: _handle_event will see a full queue + DISCONNECT policy.
+        await underlying_bus.publish(SampleEvent(value=1))
+        await asyncio.sleep(0)
+
+        # The client should have been removed.
+        assert ws_bus.connected_count == 0
+
+    await ws_bus.stop()
+
+
+async def test_drain_task_delivers_messages() -> None:
+    """
+    The drain task must dequeue messages and call send_text in order.
+    """
+    underlying_bus = InMemoryEventBus()
+    ws_bus = WebSocketEventBus(underlying_bus)
+    await ws_bus.start()
+
+    mock_ws = MockWebSocket()
+    async with ws_bus.connect(mock_ws):
+        await underlying_bus.publish(SampleEvent(value=10))
+        await underlying_bus.publish(SampleEvent(value=20))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    import json as _json
+
+    assert len(mock_ws.sent) == 2
+    assert _json.loads(mock_ws.sent[0])["data"]["value"] == 10
+    assert _json.loads(mock_ws.sent[1])["data"]["value"] == 20
+
+    await ws_bus.stop()
+
+
+async def test_drain_task_removes_client_on_send_error() -> None:
+    """
+    When send_text raises inside the drain task, the client is removed
+    from the bus connection set.
+    """
+    underlying_bus = InMemoryEventBus()
+    ws_bus = WebSocketEventBus(underlying_bus)
+    await ws_bus.start()
+
+    bad_ws = MockWebSocket()
+    bad_ws.make_fail()  # send_text will raise immediately
+
+    good_ws = MockWebSocket()
+
+    async with ws_bus.connect(bad_ws):
+        async with ws_bus.connect(good_ws):
+            await underlying_bus.publish(SampleEvent(value=5))
+            # Allow drain tasks to process.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+    # bad_ws's drain task should have removed it; good_ws received the event.
+    assert len(good_ws.sent) == 1
+
+    await ws_bus.stop()
+
+
+async def test_ws_bus_per_connection_policy_override() -> None:
+    """
+    connect() accepts per-connection backpressure policy overrides.
+    """
+    underlying_bus = InMemoryEventBus()
+    ws_bus = WebSocketEventBus(
+        underlying_bus, backpressure_policy=BackpressurePolicy.BLOCK
+    )
+    await ws_bus.start()
+
+    mock_ws = MockWebSocket()
+    async with ws_bus.connect(
+        mock_ws,
+        backpressure_policy=BackpressurePolicy.DROP_NEWEST,
+    ):
+        conn = next(iter(ws_bus._connections))
+        assert conn._policy == BackpressurePolicy.DROP_NEWEST
+
+    await ws_bus.stop()
+
+
+async def test_ws_bus_repr_includes_policy() -> None:
+    """repr includes the default backpressure policy."""
+    underlying_bus = InMemoryEventBus()
+    ws_bus = WebSocketEventBus(
+        underlying_bus, backpressure_policy=BackpressurePolicy.DROP_OLDEST
+    )
+    r = repr(ws_bus)
+    assert "drop_oldest" in r
 
 
 # ── SSEEventBus tests ──────────────────────────────────────────────────────────

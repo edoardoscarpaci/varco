@@ -71,7 +71,8 @@ from typing import Annotated, Any
 # aiokafka is a hard dependency of this package — imported at module level so
 # unit tests can patch varco_kafka.bus.AIOKafkaProducer etc. without needing
 # to reach into the aiokafka namespace directly.
-from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
+from aiokafka.structs import OffsetAndMetadata
 
 from providify import Inject, Instance, InjectMeta, PostConstruct, PreDestroy, Singleton
 
@@ -87,7 +88,7 @@ from varco_core.event.base import (
 )
 from varco_core.event.serializer import EventSerializer, JsonEventSerializer
 
-from varco_kafka.config import KafkaEventBusSettings
+from varco_kafka.config import KafkaDeliverySemantics, KafkaEventBusSettings
 
 _logger = logging.getLogger(__name__)
 
@@ -100,6 +101,31 @@ class KafkaEventBus(AbstractEventBus):
     Published events are serialized to JSON and sent to a Kafka topic
     named after the channel.  A background consumer task reads from all
     subscribed topics and dispatches to locally registered handlers.
+
+    Delivery semantics
+    ------------------
+    Controlled by ``KafkaEventBusSettings.delivery_semantics``:
+
+    ``AT_LEAST_ONCE`` (default)
+        Auto-commit enabled.  Offsets committed after dispatch.  On crash,
+        the message is redelivered — handlers may see duplicates.
+
+    ``AT_MOST_ONCE``
+        Offsets committed manually **before** dispatch.  A crash between
+        commit and dispatch loses the message permanently.  No duplicates.
+
+    ``EXACTLY_ONCE``
+        Transactional producer (``transactional_id`` required in settings).
+        Consumer uses ``isolation_level=read_committed``.  After dispatch,
+        offsets are committed inside the same Kafka transaction via
+        ``send_offsets_to_transaction`` — atomically with any produced
+        output events.  No duplicates, no message loss.  Throughput is lower
+        than the other modes (transaction round-trips add latency).
+
+    DESIGN: semantics-aware publish / consume over always-transactional
+        ✅ AT_LEAST_ONCE has zero transaction overhead (default path).
+        ✅ EXACTLY_ONCE is opt-in — only services that need it pay the cost.
+        ❌ EXACTLY_ONCE requires a stable ``transactional_id`` per process.
 
     Args:
         config:        Kafka connection and routing configuration.
@@ -130,6 +156,8 @@ class KafkaEventBus(AbstractEventBus):
           sent to Kafka (other services may consume them).
         - Consumer errors (deserialization, handler exceptions) are logged
           but do NOT stop the consumer loop.
+        - ``EXACTLY_ONCE`` without ``transactional_id`` set raises
+          ``ValueError`` at ``start()`` time.
     """
 
     def __init__(
@@ -210,24 +238,61 @@ class KafkaEventBus(AbstractEventBus):
         if self._started:
             return
 
-        self._producer = AIOKafkaProducer(
-            bootstrap_servers=self._config.bootstrap_servers,
-            **self._config.producer_kwargs,
-        )
+        semantics = self._config.delivery_semantics
+
+        if semantics == KafkaDeliverySemantics.EXACTLY_ONCE:
+            txn_id = self._config.transactional_id
+            if not txn_id:
+                raise ValueError(
+                    "KafkaEventBus: delivery_semantics=EXACTLY_ONCE requires "
+                    "'transactional_id' to be set in KafkaEventBusSettings.  "
+                    "Set a stable, per-process unique ID "
+                    "(e.g. 'my-service-{hostname}-{partition}')."
+                )
+            self._producer = AIOKafkaProducer(
+                bootstrap_servers=self._config.bootstrap_servers,
+                transactional_id=txn_id,
+                enable_idempotence=True,
+                **self._config.producer_kwargs,
+            )
+        else:
+            self._producer = AIOKafkaProducer(
+                bootstrap_servers=self._config.bootstrap_servers,
+                **self._config.producer_kwargs,
+            )
         await self._producer.start()
 
-        # Build consumer — subscribed topics are updated dynamically.
-        # Subscribing to an empty list is valid; update_topics() adds more.
+        # Consumer options differ per semantics:
+        #   AT_MOST_ONCE  → auto_commit=False (we commit manually before dispatch)
+        #   AT_LEAST_ONCE → auto_commit per settings (default True)
+        #   EXACTLY_ONCE  → auto_commit=False + read_committed isolation
+        if semantics == KafkaDeliverySemantics.EXACTLY_ONCE:
+            consumer_kwargs = {
+                "isolation_level": "read_committed",
+                "enable_auto_commit": False,
+                **self._config.consumer_kwargs,
+            }
+        elif semantics == KafkaDeliverySemantics.AT_MOST_ONCE:
+            consumer_kwargs = {
+                "enable_auto_commit": False,
+                **self._config.consumer_kwargs,
+            }
+        else:
+            # AT_LEAST_ONCE — honour the config value (default True).
+            consumer_kwargs = {
+                "enable_auto_commit": self._config.enable_auto_commit,
+                **self._config.consumer_kwargs,
+            }
+
         self._consumer = AIOKafkaConsumer(
             bootstrap_servers=self._config.bootstrap_servers,
             group_id=self._config.group_id,
             auto_offset_reset=self._config.auto_offset_reset,
-            enable_auto_commit=self._config.enable_auto_commit,
-            **self._config.consumer_kwargs,
+            **consumer_kwargs,
         )
         await self._consumer.start()
 
-        # Subscribe to any topics already queued by subscribe() calls before start()
+        # Subscribe to any topics already queued by subscribe() calls before start().
         if self._subscribed_topics:
             self._consumer.subscribe(list(self._subscribed_topics))
 
@@ -237,9 +302,10 @@ class KafkaEventBus(AbstractEventBus):
         )
         self._started = True
         _logger.info(
-            "KafkaEventBus started (brokers=%s, group=%s)",
+            "KafkaEventBus started (brokers=%s, group=%s, semantics=%s)",
             self._config.bootstrap_servers,
             self._config.group_id,
+            semantics.value,
         )
 
     @PreDestroy
@@ -320,7 +386,17 @@ class KafkaEventBus(AbstractEventBus):
 
         topic = self._config.topic_name(channel)
         value = self._serializer.serialize(event)
-        await self._producer.send_and_wait(topic, value=value)
+
+        if self._config.delivery_semantics == KafkaDeliverySemantics.EXACTLY_ONCE:
+            # Each standalone publish is wrapped in its own transaction.
+            # For atomic multi-event publishes, callers should use the
+            # producer's transaction() context manager directly via
+            # ``bus._producer.transaction()``.
+            async with self._producer.transaction():
+                await self._producer.send_and_wait(topic, value=value)
+        else:
+            await self._producer.send_and_wait(topic, value=value)
+
         _logger.debug("Published %s to topic %s", type(event).__name__, topic)
         # Return None — Kafka delivery is always async (broker-side), no local Task.
         return None
@@ -393,25 +469,60 @@ class KafkaEventBus(AbstractEventBus):
         processing are logged but never stop the loop — a single bad message
         should not bring down the consumer.
 
+        Semantics-specific behaviour:
+
+        ``AT_LEAST_ONCE`` (default)
+            Auto-commit handles offset progression.  On error, the message
+            is logged and skipped (no retry at the bus level).
+
+        ``AT_MOST_ONCE``
+            Offset committed manually **before** dispatch via
+            ``consumer.commit()``.  A crash after the commit but before
+            dispatch loses the event permanently.
+
+        ``EXACTLY_ONCE``
+            Dispatch is wrapped in ``producer.transaction()``.  Offsets are
+            committed inside the transaction via ``send_offsets_to_transaction``
+            so dispatch and offset commit are atomic.  An exception during
+            dispatch aborts the transaction — the offset is not committed and
+            the message is redelivered.
+
         Edge cases:
-            - ``asyncio.CancelledError`` is not caught — it propagates cleanly
-              to the task, which is expected behaviour on shutdown.
-            - ``JsonEventSerializer.deserialize()`` raises ``KeyError`` if the
-              event type is unknown (class not imported) — logged as WARNING,
-              message is skipped.
+            - ``asyncio.CancelledError`` is not caught — it propagates cleanly.
+            - Deserialization errors are logged and the message is skipped
+              (offset still advances — bad payloads are not infinitely retried).
         """
         assert self._consumer is not None
+        assert self._producer is not None
 
-        _logger.debug("Kafka consumer loop started.")
+        semantics = self._config.delivery_semantics
+        _logger.debug("Kafka consumer loop started (semantics=%s).", semantics.value)
         try:
             async for msg in self._consumer:
                 try:
                     event = self._serializer.deserialize(msg.value)
-                    # Topic name → channel: strip the prefix to recover the channel
                     channel = msg.topic.removeprefix(self._config.channel_prefix)
-                    await self._chain(event, channel)
+
+                    if semantics == KafkaDeliverySemantics.AT_MOST_ONCE:
+                        # Commit offset BEFORE dispatch — message may be lost on crash.
+                        await self._consumer.commit()
+                        await self._chain(event, channel)
+
+                    elif semantics == KafkaDeliverySemantics.EXACTLY_ONCE:
+                        # Wrap dispatch + offset commit in one atomic transaction.
+                        async with self._producer.transaction():
+                            await self._chain(event, channel)
+                            tp = TopicPartition(msg.topic, msg.partition)
+                            await self._producer.send_offsets_to_transaction(
+                                {tp: OffsetAndMetadata(msg.offset + 1, "")},
+                                self._config.group_id,
+                            )
+
+                    else:
+                        # AT_LEAST_ONCE — auto-commit handles progression.
+                        await self._chain(event, channel)
+
                 except asyncio.CancelledError:
-                    # Re-raise — CancelledError must propagate so the task ends.
                     raise
                 except Exception as exc:  # noqa: BLE001
                     _logger.warning(
@@ -518,6 +629,7 @@ class KafkaEventBus(AbstractEventBus):
             f"KafkaEventBus("
             f"brokers={self._config.bootstrap_servers!r}, "
             f"group={self._config.group_id!r}, "
+            f"semantics={self._config.delivery_semantics.value!r}, "
             f"subscriptions={active}, "
             f"started={self._started})"
         )

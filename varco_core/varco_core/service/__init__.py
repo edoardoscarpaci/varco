@@ -5,6 +5,11 @@ Async service base, tenant-aware service variant, and outbox pattern.
 """
 
 from varco_core.service.base import AsyncService, IUoWProvider
+from varco_core.service.conversation import (
+    AbstractConversationStore,
+    ConversationTurn,
+    InMemoryConversationStore,
+)
 from varco_core.service.mixin import ServiceMixin
 from varco_core.service.outbox import OutboxEntry, OutboxRelay, OutboxRepository
 from varco_core.service.tenant import (
@@ -20,6 +25,10 @@ __all__ = [
     "AsyncService",
     "IUoWProvider",
     "ServiceMixin",
+    # ── Conversation store ────────────────────────────────────────────────────
+    "AbstractConversationStore",
+    "ConversationTurn",
+    "InMemoryConversationStore",
     # ── Outbox pattern ────────────────────────────────────────────────────────
     "OutboxEntry",
     "OutboxRepository",

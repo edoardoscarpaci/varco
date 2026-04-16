@@ -32,9 +32,14 @@ Quick start::
 
 from varco_ws.di import SSEConfiguration, WebSocketConfiguration
 from varco_ws.sse import SSEEventBus, SSEConnection
-from varco_ws.websocket import WebSocketEventBus, WebSocketConnection
+from varco_ws.websocket import (
+    BackpressurePolicy,
+    WebSocketEventBus,
+    WebSocketConnection,
+)
 
 __all__ = [
+    "BackpressurePolicy",
     "WebSocketEventBus",
     "WebSocketConnection",
     "SSEEventBus",

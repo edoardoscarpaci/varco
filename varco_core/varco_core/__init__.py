@@ -51,7 +51,12 @@ from __future__ import annotations
 # ── Domain layer ───────────────────────────────────────────────────────────────
 from varco_core.exception.repository import StaleEntityError
 from varco_core.mapper import AbstractMapper
-from varco_core.migrator import DomainMigrator, MigrationError
+from varco_core.migrator import (
+    DomainMigrator,
+    MigrationError,
+    MigrationPlan,  # noqa: F401
+    StepSpec,  # noqa: F401
+)
 from varco_core.model import (
     AuditedDomainModel,
     DomainModel,

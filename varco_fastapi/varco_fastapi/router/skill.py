@@ -41,11 +41,12 @@ DESIGN: adapter delegates execution to AsyncVarcoClient
     ✅ Skill protocol translation is pure I/O transformation (JSON in → JSON out)
     ❌ One extra HTTP hop vs. direct service call — negligible in agentic workflows
 
-DESIGN: tasks are handled synchronously in v1 (no background polling)
-    ✅ Simpler — no task store or background job needed for synchronous ops
-    ✅ Works for all CRUD operations that complete in < 30s
-    ❌ Long-running operations (file processing, ML inference) need async tasks
-       — extend by integrating AbstractJobRunner in a future version
+DESIGN: synchronous v1 + optional async v2 via AbstractJobRunner
+    ✅ Backward-compatible — no runner = same synchronous behaviour as v1.
+    ✅ With a runner, POST /tasks/send returns immediately with "working" state;
+       clients poll GET /tasks/{task_id} for completion.
+    ✅ JobRunner handles crash recovery — PENDING jobs are re-submitted on restart.
+    ❌ The task result is stored as opaque bytes; callers must know the schema.
 
 Thread safety:  ✅ SkillAdapter is constructed once and read-only after construction.
 Async safety:   ✅ handle_task() is async; agent_card() has no I/O.
@@ -53,12 +54,14 @@ Async safety:   ✅ handle_task() is async; agent_card() has no I/O.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from varco_fastapi.router.introspection import ResolvedRoute, introspect_routes
 
@@ -68,6 +71,8 @@ from fastapi.responses import JSONResponse
 if TYPE_CHECKING:
     from fastapi import FastAPI
     from varco_fastapi.client.base import AsyncVarcoClient
+    from varco_core.job.base import AbstractJobRunner, AbstractJobStore
+    from varco_core.service.conversation import AbstractConversationStore
 
 _logger = logging.getLogger(__name__)
 
@@ -77,9 +82,13 @@ _DEFAULT_INPUT_MODES: tuple[str, ...] = ("application/json",)
 _DEFAULT_OUTPUT_MODES: tuple[str, ...] = ("application/json",)
 
 # ── A2A response shape constants ───────────────────────────────────────────────
-# Task states from the A2A spec
+# Task states from the A2A spec — https://google.github.io/A2A/
 _STATE_COMPLETED = "completed"
 _STATE_FAILED = "failed"
+# "working" is the A2A state for tasks that are in-flight (PENDING or RUNNING).
+# v1 never returned this — it only appears when a JobRunner is wired in.
+_STATE_WORKING = "working"
+_STATE_SUBMITTED = "submitted"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -252,12 +261,56 @@ class SkillAdapter:
         client: AsyncVarcoClient | None = None,
         base_url: str | None = None,
         enabled_routes: set[str] | None = None,
+        job_runner: AbstractJobRunner | None = None,
+        job_store: AbstractJobStore | None = None,
+        conversation_store: AbstractConversationStore | None = None,
     ) -> None:
+        """
+        Args:
+            router_cls:          The ``VarcoRouter`` subclass to expose.
+            agent_name:          Agent display name in the Agent Card.
+            agent_description:   Agent description in the Agent Card.
+            agent_version:       Semantic version string (default: ``"1.0.0"``).
+            client:              ``AsyncVarcoClient`` instance for execution.
+                                 If ``None``, ``handle_task()`` raises ``RuntimeError``.
+            base_url:            Shortcut — bare client constructed if ``client`` is ``None``.
+            enabled_routes:      Explicit allowlist of route names (``None`` = all skill_enabled).
+            job_runner:          Optional ``AbstractJobRunner`` for async (long-running) tasks.
+                                 When provided, ``POST /tasks/send`` returns immediately with
+                                 ``state: working`` and the client polls ``GET /tasks/{task_id}``.
+                                 When ``None``, tasks execute synchronously (v1 behaviour).
+            job_store:           Optional ``AbstractJobStore`` used to look up task status.
+                                 Required when ``job_runner`` is set; otherwise polling always
+                                 returns 404.
+            conversation_store:  Optional ``AbstractConversationStore`` for multi-turn context.
+                                 When set, every user message and agent response is recorded,
+                                 the Agent Card advertises ``multiTurnConversation: True``,
+                                 and ``GET /tasks/{task_id}/history`` returns the full turn list.
+                                 When ``None``, single-turn mode (default, no history stored).
+
+        Edge cases:
+            - ``job_runner`` without ``job_store``: async submission works but polling
+              always returns 404 (store not queryable).
+            - ``job_store`` without ``job_runner``: behaves like sync mode; store is
+              not written to during task execution.
+            - ``conversation_store`` failures (e.g. DB write error) are logged and
+              suppressed — they must never fail the primary task execution.
+        """
         self._router_cls = router_cls
         self._agent_name = agent_name
         self._agent_description = agent_description
         self._agent_version = agent_version
         self._resource = _resource_name(router_cls)
+
+        # Async job infrastructure — both are optional for backward compatibility.
+        # When job_runner is set, tasks are submitted asynchronously (at-least-once
+        # delivery guaranteed by JobRunner's store + recovery mechanism).
+        self._job_runner = job_runner
+        self._job_store = job_store
+
+        # Multi-turn conversation history — optional.
+        # When set, user messages and agent responses are stored per task_id.
+        self._conversation_store = conversation_store
 
         # Resolve client — prefer explicit instance, then build from base_url
         self._client = client
@@ -341,6 +394,11 @@ class SkillAdapter:
 
         Async safety:   ✅ Pure — no I/O.
         """
+        # DESIGN: advertise stateTransitionHistory when async runner is wired in.
+        # This signals to A2A clients that they can poll GET /tasks/{id} for status.
+        # "streaming" stays False — we use polling (not push) for async mode.
+        async_mode = self._job_runner is not None
+        multi_turn = self._conversation_store is not None
         return {
             "name": self._agent_name,
             "description": self._agent_description,
@@ -348,10 +406,16 @@ class SkillAdapter:
             # Full URL where other agents POST tasks/send requests
             "url": f"{base_url.rstrip('/')}/tasks/send",
             "capabilities": {
-                # v1 is synchronous only — no streaming push updates
+                # Streaming push not implemented — clients poll GET /tasks/{task_id}
                 "streaming": False,
+                # Push notifications not implemented
                 "pushNotifications": False,
-                "stateTransitionHistory": False,
+                # True when job_runner is wired: clients can poll for state updates
+                "stateTransitionHistory": async_mode,
+                # Expose async flag so clients can adjust their polling strategy
+                "asyncTaskExecution": async_mode,
+                # True when conversation_store is wired: history endpoint available
+                "multiTurnConversation": multi_turn,
             },
             "skills": [
                 {
@@ -371,9 +435,14 @@ class SkillAdapter:
         """
         Handle a ``POST /tasks/send`` request body.
 
-        Extracts ``skill_id`` and ``message.parts[0].data`` from the A2A task
-        request, dispatches to ``AsyncVarcoClient``, and wraps the result in an
-        A2A ``TaskResponse`` with a completed ``artifact``.
+        **Synchronous mode** (no ``job_runner``):
+            Dispatches immediately via ``AsyncVarcoClient`` and returns a
+            ``completed`` or ``failed`` ``TaskResponse`` in the same HTTP response.
+
+        **Async mode** (``job_runner`` wired in):
+            Submits the dispatch coroutine to the ``JobRunner`` and returns a
+            ``working`` ``TaskResponse`` immediately.  The caller must poll
+            ``GET /tasks/{task_id}`` to obtain the final result.
 
         Args:
             task_request: Parsed JSON body of the ``POST /tasks/send`` request.
@@ -389,33 +458,27 @@ class SkillAdapter:
                               }
 
         Returns:
-            A2A ``TaskResponse`` dict::
-
-                {
-                    "id": "task-uuid",
-                    "status": {"state": "completed"},
-                    "artifacts": [{"parts": [{"type": "data", "data": {...}}]}]
-                }
+            A2A ``TaskResponse`` dict.  In sync mode: ``state: completed|failed``.
+            In async mode: ``state: working`` (poll ``/tasks/{id}`` for final state).
 
         Raises:
             RuntimeError: If the adapter has no ``client``.
 
         Edge cases:
-            - Unknown ``skill_id`` → returns a ``failed`` TaskResponse (not a 4xx)
-              so the calling agent can retry or escalate.
-            - Missing ``message.parts`` → treated as empty body (``{}``) for the
-              underlying client call.
-            - Execution errors → wrapped in a ``failed`` TaskResponse with the
-              error string in ``status.message``.
+            - Unknown ``skill_id`` → always returns a ``failed`` TaskResponse (not 4xx).
+            - Missing ``message.parts`` → treated as empty body ``{}``.
+            - In async mode, a failed ``store.save()`` causes an immediate ``failed``
+              response — the task was never submitted.
 
-        Async safety:   ✅ Delegates to async client methods.
+        Async safety:   ✅ Delegates to async client methods and JobRunner.
         """
         if self._client is None:
             raise RuntimeError(
                 "SkillAdapter has no client — pass client= or base_url= at construction."
             )
 
-        # Generate a stable task ID (or reuse one if the caller provided it)
+        # Generate a stable task ID (or reuse one if the caller provided it).
+        # In async mode, task_id doubles as the Job UUID for store lookups.
         task_id = task_request.get("id") or str(uuid.uuid4())
         skill_id = task_request.get("skill_id", "")
 
@@ -428,7 +491,7 @@ class SkillAdapter:
                 "Did you forget to set skill=True on the route?",
             )
 
-        # Extract the body from the first message part
+        # Extract the body from the first message part.
         # A2A messages have role + parts array; data is in parts[0].data
         body: dict[str, Any] = {}
         try:
@@ -440,14 +503,139 @@ class SkillAdapter:
         except Exception:  # noqa: BLE001
             body = {}
 
+        # ── Record user turn ───────────────────────────────────────────────────
+        # Store the incoming message before dispatch so that even failed tasks
+        # have their user turns recorded.  Failures are suppressed — a store
+        # write error must never prevent task execution.
+        if self._conversation_store is not None:
+            await self._record_turn(task_id, "user", task_request.get("message"))
+
+        # ── Async mode: submit to JobRunner and return "working" immediately ──
+        if self._job_runner is not None:
+            return await self._handle_task_async(task_id, skill, body)
+
+        # ── Sync mode (v1): dispatch inline and return final state ─────────────
         try:
             result = await self._dispatch(skill.route, body)
+            # Record agent response turn on success
+            if self._conversation_store is not None:
+                try:
+                    serialised = (
+                        result.model_dump(mode="json")
+                        if hasattr(result, "model_dump")
+                        else result
+                    )
+                except Exception:  # noqa: BLE001
+                    serialised = str(result)
+                await self._record_turn(task_id, "agent", serialised)
             return _completed_response(task_id, result)
         except Exception as exc:  # noqa: BLE001
             _logger.warning(
                 "SkillAdapter task %s failed: %s", task_id, exc, exc_info=True
             )
             return _failed_response(task_id, str(exc))
+
+    async def _handle_task_async(
+        self,
+        task_id: str,
+        skill: SkillDefinition,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Submit a skill execution to the ``JobRunner`` for background processing.
+
+        Creates a ``Job`` with ``job_id`` derived from ``task_id``, enqueues the
+        dispatch coroutine, and returns a ``working`` TaskResponse immediately.
+        The coroutine result is stored by the runner in ``job.result`` as JSON bytes.
+
+        Args:
+            task_id: The A2A task identifier (doubles as job_id).
+            skill:   The resolved ``SkillDefinition`` to execute.
+            body:    Extracted request body from the A2A message parts.
+
+        Returns:
+            A2A ``TaskResponse`` with ``state: working`` on success.
+            A2A ``TaskResponse`` with ``state: failed`` if store.save() raises.
+
+        Edge cases:
+            - If ``task_id`` is not a valid UUID string, a new UUID is generated
+              and used as the job_id.  The A2A task_id is unchanged.
+            - The dispatch result is JSON-serialized by ``JobRunner._run_job()``.
+              Pydantic models are automatically serialized via ``model_dump()``.
+
+        Async safety:   ✅ Returns after scheduling; does not block on task completion.
+        """
+        # Import lazily — varco_core.job is not a hard dependency at module level
+        from varco_core.job.base import Job  # noqa: PLC0415
+
+        # Safely derive a UUID from task_id; fall back to a new UUID if invalid
+        try:
+            job_id = UUID(task_id)
+        except (ValueError, AttributeError):
+            job_id = uuid.uuid4()
+
+        job = Job(job_id=job_id)
+
+        # Build the dispatch coroutine — captures skill.route and body by closure.
+        # DESIGN: capture body here, not inside JobRunner
+        #   ✅ The coro holds a reference to body until execution completes.
+        #   ❌ body is not serialized to the store — non-recoverable after restart.
+        #      Use enqueue_task() with a VarcoTask for full crash recovery.
+        coro = self._dispatch(skill.route, dict(body))  # copy to avoid mutation
+
+        try:
+            await self._job_runner.enqueue(job, coro)  # type: ignore[union-attr]
+        except Exception as exc:  # noqa: BLE001
+            _logger.error(
+                "SkillAdapter: failed to enqueue async task %s: %s",
+                task_id,
+                exc,
+                exc_info=True,
+            )
+            return _failed_response(task_id, f"Failed to submit task: {exc}")
+
+        _logger.info(
+            "SkillAdapter: task %s submitted for async execution (skill=%s)",
+            task_id,
+            skill.id,
+        )
+        return _working_response(task_id)
+
+    async def _record_turn(
+        self,
+        task_id: str,
+        role: str,
+        content: Any,
+    ) -> None:
+        """
+        Append a conversation turn to the store — suppresses all errors.
+
+        The store contract requires that a write failure must never surface to
+        the caller.  Errors are logged at WARNING level and swallowed so the
+        primary task execution is unaffected.
+
+        Args:
+            task_id: A2A task identifier.
+            role:    ``"user"`` or ``"agent"``.
+            content: The message content to record.
+
+        Async safety:   ✅ All store methods are async.
+        """
+        if self._conversation_store is None:
+            return
+        # Import lazily — keeps module-level imports clean
+        from varco_core.service.conversation import ConversationTurn  # noqa: PLC0415
+
+        try:
+            turn = ConversationTurn(role=role, content=content)
+            await self._conversation_store.append(task_id, turn)
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "SkillAdapter: failed to record %s turn for task %s: %s",
+                role,
+                task_id,
+                exc,
+            )
 
     async def _dispatch(self, route: ResolvedRoute, body: dict[str, Any]) -> Any:
         """
@@ -564,22 +752,96 @@ class SkillAdapter:
             return JSONResponse(result)
 
         # ── GET /tasks/{task_id} ─────────────────────────────────────────────
-        # v1: synchronous tasks are completed immediately; this endpoint simply
-        # returns a "not found" response since we don't persist task history.
-        # Extend this with AbstractJobStore integration when async tasks land.
+        # When a job_store is wired, look up the job and map its status to the
+        # A2A state machine.  In sync mode (no store), return 404 — the result
+        # was already in the POST /tasks/send response.
+        _store = self._job_store
+
         @app.get(f"{tasks_prefix}/{{task_id}}", include_in_schema=False)
         async def _tasks_get_endpoint(task_id: str) -> JSONResponse:
             """
             Poll task status.
 
-            v1 note: tasks are synchronous — no history is stored.  Returns
-            ``404`` for all task IDs (the task result was in the ``/send`` response).
+            When a ``job_store`` is wired, returns the current A2A task state
+            mapped from the ``JobStatus``:
+            - PENDING / RUNNING  → ``state: working``
+            - COMPLETED          → ``state: completed`` with artifact
+            - FAILED / CANCELLED → ``state: failed``
+
+            Without a store (sync mode), returns 404 — results are in the
+            ``POST /tasks/send`` response.
             """
+            if _store is None:
+                return JSONResponse(
+                    _failed_response(
+                        task_id,
+                        "Task history not available — no job_store configured. "
+                        "Wire job_store= to enable polling.",
+                    ),
+                    status_code=404,
+                )
+
+            # Safely parse task_id as UUID; reject obviously invalid IDs early
+            try:
+                job_id = UUID(task_id)
+            except (ValueError, AttributeError):
+                return JSONResponse(
+                    _failed_response(task_id, f"Invalid task ID format: {task_id!r}"),
+                    status_code=400,
+                )
+
+            job = await _store.get(job_id)
+            if job is None:
+                return JSONResponse(
+                    _failed_response(task_id, f"Task '{task_id}' not found."),
+                    status_code=404,
+                )
+
+            return JSONResponse(_job_to_task_response(task_id, job))
+
+        # ── GET /tasks/{task_id}/history ──────────────────────────────────────
+        # Available only when a conversation_store is wired.
+        # Returns the full ordered turn list for a given task_id.
+        _conv_store = self._conversation_store
+
+        @app.get(f"{tasks_prefix}/{{task_id}}/history", include_in_schema=False)
+        async def _tasks_history_endpoint(task_id: str) -> JSONResponse:
+            """
+            Return the multi-turn conversation history for a task.
+
+            Requires ``conversation_store`` to be wired at adapter construction.
+            Returns 404 when no store is configured.
+
+            Response shape::
+
+                {
+                    "task_id": "...",
+                    "turns": [
+                        {"role": "user",  "content": {...}, "timestamp": "..."},
+                        {"role": "agent", "content": {...}, "timestamp": "..."},
+                    ]
+                }
+            """
+            if _conv_store is None:
+                return JSONResponse(
+                    {
+                        "error": "Conversation history not available — no conversation_store configured."
+                    },
+                    status_code=404,
+                )
+            turns = await _conv_store.get(task_id)
             return JSONResponse(
-                _failed_response(
-                    task_id, "Task history not available in synchronous mode."
-                ),
-                status_code=404,
+                {
+                    "task_id": task_id,
+                    "turns": [
+                        {
+                            "role": t.role,
+                            "content": t.content,
+                            "timestamp": t.timestamp.isoformat(),
+                        }
+                        for t in turns
+                    ],
+                }
             )
 
         _logger.info(
@@ -660,6 +922,76 @@ def _failed_response(task_id: str, message: str) -> dict[str, Any]:
     }
 
 
+def _working_response(task_id: str) -> dict[str, Any]:
+    """
+    Build an A2A ``TaskResponse`` for a task that has been submitted
+    to the job runner and is now executing in the background.
+
+    Clients should poll ``GET /tasks/{task_id}`` to obtain the final result.
+
+    Args:
+        task_id: The task identifier.
+
+    Returns:
+        A2A-conformant ``TaskResponse`` dict with ``state: working``.
+    """
+    return {
+        "id": task_id,
+        "status": {
+            "state": _STATE_WORKING,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+        "artifacts": [],
+    }
+
+
+def _job_to_task_response(task_id: str, job: Any) -> dict[str, Any]:
+    """
+    Map a ``Job`` (from ``AbstractJobStore``) to an A2A ``TaskResponse``.
+
+    Maps ``JobStatus`` → A2A state:
+
+    - ``PENDING``  / ``RUNNING``   → ``working``
+    - ``COMPLETED``                → ``completed`` (with decoded artifact)
+    - ``FAILED``   / ``CANCELLED`` → ``failed``
+
+    Args:
+        task_id: The original A2A task identifier string.
+        job:     The ``Job`` instance from the store.
+
+    Returns:
+        A2A-conformant ``TaskResponse`` dict.
+
+    Edge cases:
+        - ``job.result`` is JSON bytes encoded by ``JobRunner``.  Decoding
+          failures fall back to the raw bytes decoded as UTF-8.
+        - Pydantic models in the result are already serialized to dicts by
+          ``JobRunner._run_job()`` before the bytes are stored.
+    """
+    # Import lazily to keep module-level imports clean
+    from varco_core.job.base import JobStatus  # noqa: PLC0415
+
+    status = job.status
+
+    if status in (JobStatus.PENDING, JobStatus.RUNNING):
+        return _working_response(task_id)
+
+    if status == JobStatus.COMPLETED:
+        # Decode the result stored by JobRunner as JSON bytes
+        result_data: Any = None
+        if job.result:
+            try:
+                result_data = json.loads(job.result.decode("utf-8"))
+            except Exception:  # noqa: BLE001
+                # Non-JSON result — return raw string
+                result_data = job.result.decode("utf-8", errors="replace")
+        return _completed_response(task_id, result_data)
+
+    # FAILED or CANCELLED
+    error_msg = job.error or f"Task ended with status: {status}"
+    return _failed_response(task_id, error_msg)
+
+
 # ── DI helper ─────────────────────────────────────────────────────────────────
 
 
@@ -673,6 +1005,9 @@ def bind_skill_adapter(
     client_cls: type | None = None,
     base_url: str | None = None,
     enabled_routes: set[str] | None = None,
+    job_runner_cls: type | None = None,
+    job_store_cls: type | None = None,
+    conversation_store_cls: type | None = None,
 ) -> None:
     """
     Register a ``SkillAdapter`` singleton in a providify ``DIContainer``.
@@ -681,19 +1016,28 @@ def bind_skill_adapter(
     ``router_cls``.
 
     Args:
-        container:          ``DIContainer`` instance.
-        router_cls:         The ``VarcoRouter`` subclass to expose as A2A skills.
-        agent_name:         Agent display name in the Agent Card.
-        agent_description:  Agent description in the Agent Card.
-        agent_version:      Semantic version string (default: ``"1.0.0"``).
-        client_cls:         ``AsyncVarcoClient`` subclass for execution.
-                            Resolved from the container if registered.
-        base_url:           Fallback base URL if ``client_cls`` is absent.
-        enabled_routes:     Explicit route allowlist (``None`` = all skill_enabled).
+        container:               ``DIContainer`` instance.
+        router_cls:              The ``VarcoRouter`` subclass to expose as A2A skills.
+        agent_name:              Agent display name in the Agent Card.
+        agent_description:       Agent description in the Agent Card.
+        agent_version:           Semantic version string (default: ``"1.0.0"``).
+        client_cls:              ``AsyncVarcoClient`` subclass for execution.
+                                 Resolved from the container if registered.
+        base_url:                Fallback base URL if ``client_cls`` is absent.
+        enabled_routes:          Explicit route allowlist (``None`` = all skill_enabled).
+        job_runner_cls:          Optional ``AbstractJobRunner`` subclass for async tasks.
+                                 Resolved from the container.  When provided, skills are
+                                 executed in the background and clients poll for results.
+        job_store_cls:           Optional ``AbstractJobStore`` subclass for status polling.
+                                 Resolved from the container.  Required for polling to work.
+        conversation_store_cls:  Optional ``AbstractConversationStore`` subclass for
+                                 multi-turn conversation history.  Resolved from the container.
 
     Edge cases:
         - Calling twice replaces the previous binding.
         - If providify is not installed, logs a warning and returns.
+        - ``job_runner_cls`` without ``job_store_cls``: async submission works but
+          ``GET /tasks/{id}`` always returns 404.
 
     Thread safety:  ✅ Registration at bootstrap (single-threaded).
     Async safety:   ✅ No I/O during registration.
@@ -714,6 +1058,9 @@ def bind_skill_adapter(
     _client_cls = client_cls
     _base_url = base_url
     _enabled = enabled_routes
+    _runner_cls = job_runner_cls
+    _store_cls = job_store_cls
+    _conv_store_cls = conversation_store_cls
 
     @Provider(singleton=True)
     def _skill_adapter_factory() -> SkillAdapter:
@@ -724,6 +1071,41 @@ def bind_skill_adapter(
                 client = container.get(_client_cls)
             except Exception:  # noqa: BLE001
                 client = _client_cls(base_url=_base_url)
+
+        # Resolve optional async job runner and store from the DI container
+        runner = None
+        if _runner_cls is not None:
+            try:
+                runner = container.get(_runner_cls)
+            except Exception:  # noqa: BLE001
+                _logger.warning(
+                    "bind_skill_adapter: could not resolve job_runner_cls=%r from container "
+                    "— async tasks disabled.",
+                    _runner_cls,
+                )
+
+        store = None
+        if _store_cls is not None:
+            try:
+                store = container.get(_store_cls)
+            except Exception:  # noqa: BLE001
+                _logger.warning(
+                    "bind_skill_adapter: could not resolve job_store_cls=%r from container "
+                    "— task polling disabled.",
+                    _store_cls,
+                )
+
+        conv_store = None
+        if _conv_store_cls is not None:
+            try:
+                conv_store = container.get(_conv_store_cls)
+            except Exception:  # noqa: BLE001
+                _logger.warning(
+                    "bind_skill_adapter: could not resolve conversation_store_cls=%r from "
+                    "container — multi-turn history disabled.",
+                    _conv_store_cls,
+                )
+
         return SkillAdapter(
             _router_cls,
             agent_name=_agent_name,
@@ -732,6 +1114,9 @@ def bind_skill_adapter(
             client=client,
             base_url=_base_url,
             enabled_routes=_enabled,
+            job_runner=runner,
+            job_store=store,
+            conversation_store=conv_store,
         )
 
     _skill_adapter_factory.__annotations__["return"] = SkillAdapter
@@ -744,4 +1129,6 @@ __all__ = [
     "SkillAdapter",
     "SkillDefinition",
     "bind_skill_adapter",
+    "_working_response",
+    "_job_to_task_response",
 ]

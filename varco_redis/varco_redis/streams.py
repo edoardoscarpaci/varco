@@ -78,6 +78,7 @@ import asyncio
 import logging
 import socket
 from collections.abc import Awaitable, Callable, Coroutine
+from datetime import datetime, timezone
 from typing import Annotated, Any
 
 import redis.asyncio as aioredis
@@ -94,6 +95,7 @@ from varco_core.event.base import (
     Subscription,
     _SubscriptionEntry,
 )
+from varco_core.event.dlq import AbstractDeadLetterQueue, DeadLetterEntry
 from varco_core.event.serializer import EventSerializer, JsonEventSerializer
 
 from varco_redis.config import RedisEventBusSettings
@@ -137,20 +139,38 @@ class RedisStreamEventBus(AbstractEventBus):
     acknowledged (``XACK``) only after all local handlers succeed, enabling
     at-least-once redelivery on failure or crash.
 
+    DLQ integration
+    ---------------
+    When ``dlq`` and ``max_delivery_count`` are both set, messages that fail
+    dispatch more than ``max_delivery_count`` times are routed to the DLQ and
+    acknowledged (so they leave the PEL and are never redelivered again).  If
+    ``dlq`` is ``None`` but ``max_delivery_count > 0``, exhausted messages are
+    acknowledged and discarded (logged at ERROR level).
+
+    DESIGN: in-memory delivery counter dict over persistent Redis counter
+        ✅ No extra Redis round-trip per message — counter is O(1) dict lookup.
+        ✅ No new failure mode from counter write errors.
+        ❌ Counters reset on process restart — a crashing consumer can retry a
+           message more than ``max_delivery_count`` times across restarts.
+           For strict cross-restart limits, use a Redis key per message instead.
+
     Args:
-        config:         Redis connection and channel configuration.
-        consumer_group: Consumer group name.  All instances with the same
-                        group share load (load-balanced).  Use distinct
-                        group names for independent fan-out.
-                        Defaults to ``"varco"``.
-        consumer_name:  This consumer's name within the group.  Defaults to
-                        ``"{hostname}-{pid}"`` — unique per process.
-        batch_size:     Max messages fetched per ``XREADGROUP`` call.
-                        Default ``10``.
-        error_policy:   Handler error policy.  Defaults to ``COLLECT_ALL``.
-        middleware:     Optional ``EventMiddleware`` list.
-        serializer:     Pluggable event serializer.  Defaults to
-                        ``JsonEventSerializer()``.
+        config:             Redis connection and channel configuration.
+        consumer_group:     Consumer group name.  Instances sharing the same
+                            group load-balance.  Use distinct names for fan-out.
+                            Defaults to ``"varco"``.
+        consumer_name:      Per-consumer identity within the group.  Defaults to
+                            ``"{hostname}-{pid}"`` — unique per process.
+        batch_size:         Max messages per ``XREADGROUP`` call.  Default ``10``.
+        max_delivery_count: Maximum delivery attempts per message before routing
+                            to the DLQ (or discarding when ``dlq=None``).
+                            ``0`` = unlimited retries (default, DLQ never used).
+        dlq:                Optional ``AbstractDeadLetterQueue``.  When set,
+                            exhausted messages are pushed here before XACK.
+        error_policy:       Handler error policy.  Defaults to ``COLLECT_ALL``.
+        middleware:         Optional ``EventMiddleware`` list.
+        serializer:         Pluggable event serializer.  Defaults to
+                            ``JsonEventSerializer()``.
 
     Thread safety:  ❌  Not thread-safe.  Entire bus must run on one event loop.
     Async safety:   ✅  ``publish``, ``start``, and ``stop`` are ``async def``.
@@ -181,23 +201,30 @@ class RedisStreamEventBus(AbstractEventBus):
         consumer_group: str = _DEFAULT_GROUP,
         consumer_name: str | None = None,
         batch_size: int = _BATCH_SIZE,
+        max_delivery_count: int = 0,
+        dlq: AbstractDeadLetterQueue | None = None,
         error_policy: ErrorPolicy = ErrorPolicy.COLLECT_ALL,
         middleware: Instance[EventMiddleware] | list[EventMiddleware] | None = None,
         serializer: Annotated[EventSerializer, InjectMeta(optional=True)] = None,
     ) -> None:
         """
         Args:
-            config:         Redis settings injected from the container.
-            consumer_group: Group name for ``XREADGROUP``.  Instances sharing
-                            the same group load-balance consumption.
-            consumer_name:  Per-consumer identity within the group.  Must be
-                            unique per running instance.  Defaults to
-                            ``"{hostname}-{pid}"`` which is unique per process.
-            batch_size:     Max entries to read per XREADGROUP call.
-            error_policy:   Handler error policy.
-            middleware:     DI instance handle for ``EventMiddleware`` bindings.
-            serializer:     Pluggable event serializer.  Defaults to
-                            ``JsonEventSerializer()``.
+            config:             Redis settings injected from the container.
+            consumer_group:     Group name for ``XREADGROUP``.  Instances sharing
+                                the same group load-balance consumption.
+            consumer_name:      Per-consumer identity within the group.  Must be
+                                unique per running instance.  Defaults to
+                                ``"{hostname}-{pid}"`` which is unique per process.
+            batch_size:         Max entries to read per XREADGROUP call.
+            max_delivery_count: Max delivery attempts per message.  ``0`` = unlimited.
+                                When exhausted, messages are routed to ``dlq`` (or
+                                discarded if ``dlq`` is ``None``).
+            dlq:                Optional dead-letter queue.  Receives messages that
+                                exhaust ``max_delivery_count`` attempts.
+            error_policy:       Handler error policy.
+            middleware:         DI instance handle for ``EventMiddleware`` bindings.
+            serializer:         Pluggable event serializer.  Defaults to
+                                ``JsonEventSerializer()``.
         """
         import os  # deferred — only needed once at construction time
 
@@ -207,6 +234,8 @@ class RedisStreamEventBus(AbstractEventBus):
         # survives restarts with a recognisable identity for redis-cli XPENDING.
         self._consumer_name = consumer_name or f"{socket.gethostname()}-{os.getpid()}"
         self._batch_size = batch_size
+        self._max_delivery_count = max_delivery_count
+        self._dlq = dlq
         self._error_policy = error_policy
         # Support both DI-injected Instance[EventMiddleware] and direct list
         # construction (used in tests and non-DI usage patterns).
@@ -234,6 +263,12 @@ class RedisStreamEventBus(AbstractEventBus):
         self._redis: Any | None = None
         self._listener_task: asyncio.Task[None] | None = None
         self._started: bool = False
+
+        # Per-message delivery counters keyed by msg_id (bytes).
+        # Resets on process restart — see class docstring for the trade-off.
+        self._delivery_counts: dict[bytes, int] = {}
+        # UTC timestamp of the first dispatch failure per msg_id.
+        self._first_failure_times: dict[bytes, datetime] = {}
 
         self._chain: Callable[[Event, str], Coroutine[Any, Any, None]] = (
             self._build_chain()
@@ -608,7 +643,51 @@ class RedisStreamEventBus(AbstractEventBus):
             # Task cancelled — do NOT acknowledge; message stays in PEL.
             raise
         except Exception as exc:  # noqa: BLE001
-            # Dispatch failed — do NOT acknowledge; message redelivered next tick.
+            await self._handle_dispatch_failure(
+                stream_key, msg_id, event, logical_channel, exc
+            )
+            return
+
+        # All handlers ran without error — acknowledge the message.
+        # Clean up any stale delivery-count bookkeeping for this msg_id.
+        self._delivery_counts.pop(msg_id, None)
+        self._first_failure_times.pop(msg_id, None)
+        await self._redis.xack(stream_key, self._consumer_group, msg_id)
+
+    async def _handle_dispatch_failure(
+        self,
+        stream_key: str,
+        msg_id: bytes,
+        event: Event,
+        logical_channel: str,
+        exc: Exception,
+    ) -> None:
+        """
+        Handle a failed dispatch attempt: update delivery counter and optionally
+        route to the DLQ when ``max_delivery_count`` is exhausted.
+
+        DESIGN: in-memory counter over Redis counter
+            ✅ No extra round-trip per message.
+            ❌ Counter resets on restart; messages may be delivered more than
+               ``max_delivery_count`` times across process restarts.
+
+        Args:
+            stream_key:      Full Redis stream key (with prefix).
+            msg_id:          Redis Streams message ID bytes.
+            event:           Deserialized event (for DLQ entry).
+            logical_channel: Channel name (prefix stripped).
+            exc:             Exception raised by the dispatch chain.
+
+        Edge cases:
+            - ``max_delivery_count == 0``: no limit — message stays in PEL
+              forever until dispatch succeeds (original at-least-once behaviour).
+            - When DLQ push itself fails, the error is logged but the message
+              is still XACK'd — we do NOT re-queue a DLQ write failure.
+        """
+        assert self._redis is not None
+
+        if self._max_delivery_count == 0:
+            # No limit configured — leave in PEL for retry (default behaviour).
             _logger.warning(
                 "RedisStreamEventBus: dispatch failed for message %s "
                 "(type=%s, channel=%s): %s — message stays in PEL for retry.",
@@ -620,8 +699,66 @@ class RedisStreamEventBus(AbstractEventBus):
             )
             return
 
-        # All handlers ran without error — acknowledge the message.
+        # Increment delivery counter.
+        count = self._delivery_counts.get(msg_id, 0) + 1
+        self._delivery_counts[msg_id] = count
+        if msg_id not in self._first_failure_times:
+            self._first_failure_times[msg_id] = datetime.now(tz=timezone.utc)
+
+        if count < self._max_delivery_count:
+            # Still under the limit — leave in PEL for retry.
+            _logger.warning(
+                "RedisStreamEventBus: dispatch failed for message %s "
+                "(type=%s, channel=%s): %s — attempt %d/%d, retrying.",
+                msg_id,
+                type(event).__name__,
+                logical_channel,
+                exc,
+                count,
+                self._max_delivery_count,
+            )
+            return
+
+        # Delivery count exhausted — route to DLQ (or discard).
+        _logger.error(
+            "RedisStreamEventBus: message %s (type=%s, channel=%s) exhausted "
+            "%d delivery attempt(s): %s — %s.",
+            msg_id,
+            type(event).__name__,
+            logical_channel,
+            count,
+            exc,
+            "routing to DLQ" if self._dlq is not None else "discarding",
+        )
+
+        if self._dlq is not None:
+            entry = DeadLetterEntry.from_failure(
+                event=event,
+                channel=logical_channel,
+                handler_name="RedisStreamEventBus",
+                last_exc=exc,
+                attempts=count,
+                first_failed_at=self._first_failure_times[msg_id],
+            )
+            try:
+                await self._dlq.push(entry)
+            except Exception as dlq_exc:  # noqa: BLE001
+                # DLQ contract: push() must not raise.  If it does, log and
+                # continue — we still XACK to remove from PEL.
+                _logger.error(
+                    "RedisStreamEventBus: DLQ push failed for message %s: %s",
+                    msg_id,
+                    dlq_exc,
+                    exc_info=True,
+                )
+
+        # XACK: remove from PEL regardless of DLQ outcome so the message is
+        # never redelivered again.
         await self._redis.xack(stream_key, self._consumer_group, msg_id)
+
+        # Clean up in-memory tracking.
+        self._delivery_counts.pop(msg_id, None)
+        self._first_failure_times.pop(msg_id, None)
 
     # ── Consumer group management ─────────────────────────────────────────────
 
@@ -757,6 +894,12 @@ class RedisStreamEventBus(AbstractEventBus):
 
     def __repr__(self) -> str:
         active = sum(1 for s in self._subscriptions if not s.cancelled)
+        dlq_info = (
+            f"dlq={type(self._dlq).__name__!r}, "
+            f"max_delivery={self._max_delivery_count}"
+            if self._dlq is not None or self._max_delivery_count > 0
+            else "dlq=None"
+        )
         return (
             f"RedisStreamEventBus("
             f"url={self._config.url!r}, "
@@ -764,7 +907,8 @@ class RedisStreamEventBus(AbstractEventBus):
             f"consumer={self._consumer_name!r}, "
             f"streams={len(self._tracked_streams)}, "
             f"subscriptions={active}, "
-            f"started={self._started})"
+            f"started={self._started}, "
+            f"{dlq_info})"
         )
 
 

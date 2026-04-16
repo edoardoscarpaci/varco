@@ -52,15 +52,18 @@ Async safety:   ✅ execute() is async; tools is a pure property with no I/O.
 
 from __future__ import annotations
 
+import json as _json
 import logging
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from fastapi import HTTPException
 from varco_fastapi.router.introspection import ResolvedRoute, introspect_routes
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
+    from varco_fastapi.auth.server_auth import AbstractServerAuth
     from varco_fastapi.client.base import AsyncVarcoClient
 
 _logger = logging.getLogger(__name__)
@@ -265,6 +268,157 @@ def _build_input_schema(route: ResolvedRoute) -> dict[str, Any]:
         # Include $defs so LLMs that resolve $ref pointers can follow them
         schema["$defs"] = defs
     return schema
+
+
+# ── MCPAuthMiddleware ──────────────────────────────────────────────────────────
+
+
+async def _send_http_error(send: Any, status_code: int, detail: str) -> None:
+    """
+    Send a minimal JSON HTTP error response over the ASGI ``send`` channel.
+
+    Args:
+        send:        ASGI send callable.
+        status_code: HTTP status code (e.g. 401, 403, 500).
+        detail:      Human-readable error detail string.
+
+    Async safety:   ✅ Sends two ASGI messages and returns.
+    """
+    body = _json.dumps({"detail": detail}).encode("utf-8")
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status_code,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body, "more_body": False})
+
+
+class MCPAuthMiddleware:
+    """
+    Pure-ASGI middleware that protects a mounted MCP endpoint with an auth strategy.
+
+    Intercepts requests whose path starts with ``mount_path`` and applies an
+    ``AbstractServerAuth`` check before forwarding them to the wrapped ASGI app.
+    Requests to other paths pass through unchanged.
+
+    This middleware is independent of the main ``RequestContextMiddleware`` —
+    MCP clients can authenticate with a different credential strategy (e.g. an
+    API key) while the rest of the application uses JWT Bearer tokens.
+
+    Usage::
+
+        app = FastAPI()
+        auth = ApiKeyAuth(keys={"secret-key": AuthContext(user_id="mcp-client")})
+        adapter = MCPAdapter(OrderRouter, client=...)
+        adapter.mount(app, server_auth=auth)   # convenience — adds middleware + mounts
+
+        # Or add the middleware manually:
+        app.add_middleware(MCPAuthMiddleware, server_auth=auth, mount_path="/mcp")
+        adapter.mount(app)
+
+    Args:
+        app:         The ASGI application to wrap.
+        server_auth: ``AbstractServerAuth`` instance for credential verification.
+                     Any ``AbstractServerAuth`` subclass is accepted — ``ApiKeyAuth``,
+                     ``JwtBearerAuth``, ``CompositeServerAuth``, etc.
+        mount_path:  Only requests whose path starts with this prefix are auth-checked.
+                     Default: ``"/mcp"``.
+
+    DESIGN: pure ASGI over ``BaseHTTPMiddleware``
+        ✅ Works correctly with SSE streaming responses used by MCP — ``BaseHTTPMiddleware``
+           buffers the full response body, which breaks streaming.
+        ✅ Zero additional dependencies beyond ``fastapi`` / ``starlette``.
+        ❌ Slightly more boilerplate than ``BaseHTTPMiddleware``.
+
+    Thread safety:  ✅ Stateless per-call; ``server_auth`` must be thread-safe.
+    Async safety:   ✅ All methods are ``async def``.
+
+    Edge cases:
+        - Requests to paths outside ``mount_path`` always pass through (never auth-checked).
+        - ``HTTPException`` from ``server_auth`` is forwarded as a JSON HTTP response.
+        - Unexpected non-HTTP exceptions from ``server_auth`` are logged and
+          return a 500 response — they must never propagate to the ASGI server.
+        - Lifespan scope and other non-http/non-websocket scopes pass through unchanged.
+    """
+
+    def __init__(
+        self,
+        app: Any,
+        *,
+        server_auth: AbstractServerAuth,
+        mount_path: str = "/mcp",
+    ) -> None:
+        """
+        Args:
+            app:         ASGI application to wrap.
+            server_auth: Auth strategy; applied only to requests under ``mount_path``.
+            mount_path:  URL path prefix to protect.  Default: ``"/mcp"``.
+        """
+        self._app = app
+        self._server_auth = server_auth
+        # Normalize: strip trailing slash so "/mcp" and "/mcp/" are equivalent
+        self._mount_path = mount_path.rstrip("/") or "/"
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        """
+        ASGI entry point.
+
+        Auth is applied only to ``http`` and ``websocket`` connection scopes
+        whose path starts with ``mount_path``.  All other scopes (lifespan,
+        etc.) pass through unconditionally.
+
+        Args:
+            scope:   ASGI connection scope dict.
+            receive: ASGI receive channel.
+            send:    ASGI send channel.
+        """
+        # Non-HTTP scopes (lifespan, etc.) always pass through
+        if scope.get("type") not in ("http", "websocket"):
+            await self._app(scope, receive, send)
+            return
+
+        path: str = scope.get("path", "")
+        if not path.startswith(self._mount_path):
+            # Outside the protected path — pass through unchanged
+            await self._app(scope, receive, send)
+            return
+
+        # Import inside the method to keep module-level imports minimal and
+        # to avoid any potential circular import issues at startup.
+        from fastapi import Request  # noqa: PLC0415
+
+        request = Request(scope, receive)
+        try:
+            await self._server_auth(request)
+        except HTTPException as exc:
+            # Auth strategy rejected the request — return the appropriate error
+            await _send_http_error(send, exc.status_code, str(exc.detail))
+            return
+        except Exception as exc:  # noqa: BLE001
+            # Unexpected error in the auth strategy itself — return 500 and log
+            _logger.error(
+                "MCPAuthMiddleware: unexpected auth error on %s: %s",
+                path,
+                exc,
+                exc_info=True,
+            )
+            await _send_http_error(send, 500, "Internal authentication error")
+            return
+
+        # Auth passed — forward to the wrapped app unchanged
+        await self._app(scope, receive, send)
+
+    def __repr__(self) -> str:
+        return (
+            f"MCPAuthMiddleware("
+            f"server_auth={self._server_auth!r}, "
+            f"mount_path={self._mount_path!r})"
+        )
 
 
 # ── MCPAdapter ─────────────────────────────────────────────────────────────────
@@ -549,15 +703,25 @@ class MCPAdapter:
 
         return server
 
-    def mount(self, app: FastAPI, *, path: str = "/mcp") -> None:
+    def mount(
+        self,
+        app: FastAPI,
+        *,
+        path: str = "/mcp",
+        server_auth: AbstractServerAuth | None = None,
+    ) -> None:
         """
         Mount the MCP adapter as an HTTP+SSE endpoint on a FastAPI application.
 
         Requires the ``mcp`` SDK (``pip install varco-fastapi[mcp]``).
 
         Args:
-            app:  The ``FastAPI`` application to mount onto.
-            path: URL path prefix for the MCP endpoint.  Default: ``"/mcp"``.
+            app:         The ``FastAPI`` application to mount onto.
+            path:        URL path prefix for the MCP endpoint.  Default: ``"/mcp"``.
+            server_auth: Optional ``AbstractServerAuth`` instance.  When provided,
+                         ``MCPAuthMiddleware`` is added to ``app`` to protect all
+                         requests under ``path``.  If ``None``, no auth is applied
+                         to the MCP endpoint (only suitable for internal networks).
 
         Raises:
             ImportError: If the ``mcp`` package is not installed.
@@ -565,11 +729,22 @@ class MCPAdapter:
         Usage::
 
             app = FastAPI()
-            adapter.mount(app)     # registers POST /mcp + GET /mcp/sse
+            auth = ApiKeyAuth(keys={"secret": AuthContext(user_id="agent")})
+            adapter.mount(app, server_auth=auth)   # MCP endpoint requires auth
+            adapter.mount(app)                     # MCP endpoint is open (no auth)
 
         Thread safety:  ✅ Called once at startup before requests arrive.
         Async safety:   ✅ No I/O — only FastAPI route registration.
         """
+        # Wire authentication middleware BEFORE mounting the MCP app so the
+        # middleware stack executes in the correct order: auth → mcp app.
+        if server_auth is not None:
+            app.add_middleware(
+                MCPAuthMiddleware,
+                server_auth=server_auth,
+                mount_path=path,
+            )
+
         server = self.to_mcp_server()
         # mcp SDK provides an ASGI app we can mount
         try:
@@ -579,10 +754,11 @@ class MCPAdapter:
             mcp_app = server.asgi_app()  # type: ignore[attr-defined]
         app.mount(path, mcp_app)
         _logger.info(
-            "MCPAdapter: mounted %d tools at %s for %s",
+            "MCPAdapter: mounted %d tools at %s for %s%s",
             len(self._tools),
             path,
             self._router_cls.__name__,
+            " (auth=enabled)" if server_auth is not None else "",
         )
 
     def __repr__(self) -> str:
@@ -680,6 +856,7 @@ def bind_mcp_adapter(
 
 __all__ = [
     "MCPAdapter",
+    "MCPAuthMiddleware",
     "MCPToolDefinition",
     "bind_mcp_adapter",
 ]

@@ -77,13 +77,14 @@ from __future__ import annotations
 
 from varco_kafka.bus import KafkaEventBus
 from varco_kafka.channel import KafkaChannelManager, KafkaChannelManagerSettings
-from varco_kafka.config import KafkaEventBusSettings
+from varco_kafka.config import KafkaDeliverySemantics, KafkaEventBusSettings
 from varco_kafka.di import KafkaChannelManagerConfiguration, KafkaEventBusConfiguration
 from varco_kafka.dlq import KafkaDLQ, KafkaDLQConfiguration
 
 __all__ = [
     # ── Bus ────────────────────────────────────────────────────────────────────
     "KafkaEventBus",
+    "KafkaDeliverySemantics",
     "KafkaEventBusSettings",
     # ── Channel management ─────────────────────────────────────────────────────
     "KafkaChannelManager",

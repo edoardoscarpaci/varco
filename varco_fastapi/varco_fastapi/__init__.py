@@ -203,7 +203,12 @@ from varco_fastapi.validation import (
 )
 
 # ── MCP adapter ───────────────────────────────────────────────────────────────
-from varco_fastapi.router.mcp import MCPAdapter, MCPToolDefinition, bind_mcp_adapter
+from varco_fastapi.router.mcp import (
+    MCPAdapter,
+    MCPAuthMiddleware,
+    MCPToolDefinition,
+    bind_mcp_adapter,
+)
 
 # ── Skill / A2A adapter ───────────────────────────────────────────────────────
 from varco_fastapi.router.skill import SkillAdapter, SkillDefinition, bind_skill_adapter
@@ -306,6 +311,7 @@ __all__ = [
     "validate_container_bindings",
     # MCP adapter
     "MCPAdapter",
+    "MCPAuthMiddleware",
     "MCPToolDefinition",
     "bind_mcp_adapter",
     # Skill / A2A adapter

@@ -51,6 +51,7 @@ Async safety:   ✅ No mutable state.
 
 from __future__ import annotations
 
+import enum
 import sys
 from typing import Any
 
@@ -59,6 +60,43 @@ from pydantic_settings import SettingsConfigDict
 from providify import Singleton
 
 from varco_core.event.config import EventBusSettings
+
+
+# ── KafkaDeliverySemantics ────────────────────────────────────────────────────
+
+
+class KafkaDeliverySemantics(str, enum.Enum):
+    """
+    Delivery guarantee level for ``KafkaEventBus``.
+
+    AT_MOST_ONCE  — Offsets committed before dispatch.  A consumer crash after
+                    the commit but before the handler runs loses the message.
+                    Lowest overhead; no duplicates, possible message loss.
+
+    AT_LEAST_ONCE — Offsets committed after successful dispatch (default).
+                    A crash between dispatch and commit causes re-delivery.
+                    Standard Kafka behavior; duplicates possible.
+
+    EXACTLY_ONCE  — Dispatch and offset commit are wrapped in a Kafka
+                    transaction (``send_offsets_to_transaction``).  Requires a
+                    ``transactional_id`` in the settings.  The consumer uses
+                    ``isolation_level=read_committed`` so it never sees
+                    uncommitted (in-flight) messages from other transactional
+                    producers.  Highest overhead; no duplicates, no message loss.
+
+    DESIGN: str + enum.Enum
+        ✅ Values are plain strings — JSON-serialisable for config / logging.
+        ✅ env var readable: ``VARCO_KAFKA_DELIVERY_SEMANTICS=exactly_once``.
+
+    Trade-offs documented in ARCHITECTURE.md:
+        AT_MOST_ONCE  → throughput ↑↑, correctness ↓
+        AT_LEAST_ONCE → throughput ↑,  correctness ~ (default)
+        EXACTLY_ONCE  → throughput ↓,  correctness ↑↑
+    """
+
+    AT_MOST_ONCE = "at_most_once"
+    AT_LEAST_ONCE = "at_least_once"
+    EXACTLY_ONCE = "exactly_once"
 
 
 # ── KafkaEventBusSettings ────────────────────────────────────────────────────
@@ -76,27 +114,40 @@ class KafkaEventBusSettings(EventBusSettings):
         bus = KafkaEventBus(KafkaEventBusSettings())  # connects to localhost:9092
 
     Attributes:
-        bootstrap_servers:  Comma-separated Kafka broker addresses.
-                            Env var: ``VARCO_KAFKA_BOOTSTRAP_SERVERS``.
-        group_id:           Consumer group ID.  All instances sharing the same
-                            ``group_id`` form a consumer group — each message is
-                            delivered to exactly ONE instance.
-                            Env var: ``VARCO_KAFKA_GROUP_ID``.
-        topic_prefix:       Prefix prepended to every topic name.
-                            Alias for ``channel_prefix`` (inherited) but exposed
-                            under the Kafka-idiomatic name via ``topic_name()``.
-                            Env var: ``VARCO_KAFKA_TOPIC_PREFIX``.
-        auto_offset_reset:  Offset policy for new consumer groups.
-                            ``"earliest"`` replays from the start; ``"latest"``
-                            (default) skips past messages already in the topic.
-                            Env var: ``VARCO_KAFKA_AUTO_OFFSET_RESET``.
-        enable_auto_commit: Auto-commit offsets after delivery.
-                            ``True`` (default) → at-least-once delivery.
-                            Env var: ``VARCO_KAFKA_ENABLE_AUTO_COMMIT``.
-        producer_kwargs:    Extra kwargs forwarded to ``AIOKafkaProducer``.
-                            **Not env-readable** — use kwargs or ``from_dict()``.
-        consumer_kwargs:    Extra kwargs forwarded to ``AIOKafkaConsumer``.
-                            **Not env-readable** — use kwargs or ``from_dict()``.
+        bootstrap_servers:    Comma-separated Kafka broker addresses.
+                              Env var: ``VARCO_KAFKA_BOOTSTRAP_SERVERS``.
+        group_id:             Consumer group ID.  All instances sharing the same
+                              ``group_id`` form a consumer group — each message is
+                              delivered to exactly ONE instance.
+                              Env var: ``VARCO_KAFKA_GROUP_ID``.
+        topic_prefix:         Prefix prepended to every topic name.
+                              Alias for ``channel_prefix`` (inherited) but exposed
+                              under the Kafka-idiomatic name via ``topic_name()``.
+                              Env var: ``VARCO_KAFKA_TOPIC_PREFIX``.
+        auto_offset_reset:    Offset policy for new consumer groups.
+                              ``"earliest"`` replays from the start; ``"latest"``
+                              (default) skips past messages already in the topic.
+                              Env var: ``VARCO_KAFKA_AUTO_OFFSET_RESET``.
+        enable_auto_commit:   Auto-commit offsets after delivery.
+                              Ignored when ``delivery_semantics`` is not
+                              ``AT_LEAST_ONCE`` — the bus overrides commit
+                              behaviour for the other two modes.
+                              Env var: ``VARCO_KAFKA_ENABLE_AUTO_COMMIT``.
+        delivery_semantics:   Delivery guarantee level.  Default
+                              ``AT_LEAST_ONCE``.  Set to ``EXACTLY_ONCE`` for
+                              transactional producer semantics (requires
+                              ``transactional_id``).
+                              Env var: ``VARCO_KAFKA_DELIVERY_SEMANTICS``.
+        transactional_id:     Unique producer identity for Kafka transactions.
+                              **Required** when ``delivery_semantics`` is
+                              ``EXACTLY_ONCE``.  Must be stable across restarts
+                              (same value every time) so the broker can recover
+                              incomplete transactions.
+                              Env var: ``VARCO_KAFKA_TRANSACTIONAL_ID``.
+        producer_kwargs:      Extra kwargs forwarded to ``AIOKafkaProducer``.
+                              **Not env-readable** — use kwargs or ``from_dict()``.
+        consumer_kwargs:      Extra kwargs forwarded to ``AIOKafkaConsumer``.
+                              **Not env-readable** — use kwargs or ``from_dict()``.
 
     Thread safety:  ✅ Immutable — frozen=True.
     Async safety:   ✅ No mutable state.
@@ -121,7 +172,13 @@ class KafkaEventBusSettings(EventBusSettings):
     """New consumer group offset policy: ``"earliest"`` or ``"latest"``."""
 
     enable_auto_commit: bool = True
-    """Auto-commit offsets.  True = at-least-once delivery."""
+    """Auto-commit offsets.  True = at-least-once delivery.  Ignored for AT_MOST_ONCE / EXACTLY_ONCE."""
+
+    delivery_semantics: KafkaDeliverySemantics = KafkaDeliverySemantics.AT_LEAST_ONCE
+    """Delivery guarantee level.  Env var: ``VARCO_KAFKA_DELIVERY_SEMANTICS``."""
+
+    transactional_id: str | None = None
+    """Unique producer transactional ID.  Required for EXACTLY_ONCE.  Env var: ``VARCO_KAFKA_TRANSACTIONAL_ID``."""
 
     # Extra kwargs forwarded verbatim to aiokafka — use for SSL / SASL.
     # Cannot be set from a plain env var — set via keyword args or from_dict().
@@ -154,5 +211,6 @@ class KafkaEventBusSettings(EventBusSettings):
 
 
 __all__ = [
+    "KafkaDeliverySemantics",
     "KafkaEventBusSettings",
 ]
