@@ -1,199 +1,200 @@
-# CI — integration tests that require live broker services (Kafka, Redis, MongoDB).
-#
-# DESIGN: separated from test.yml
-#   ✅ Unit tests remain fast (< 2 min) and don't require Docker service startup.
-#   ✅ Integration tests can be scheduled nightly or triggered manually without
-#      blocking every PR.
-#   ✅ Service containers are only spun up for packages that need them — no
-#      unnecessary Kafka container for a Redis-only test run.
-#   ❌ Two workflows to maintain — accepted because the separation is principled.
-#
-# Trigger: push to main, pull_request touching backend packages, or manual dispatch.
+# For now just disable the integration actions it runs only locally
+# # CI — integration tests that require live broker services (Kafka, Redis, MongoDB).
+# #
+# # DESIGN: separated from test.yml
+# #   ✅ Unit tests remain fast (< 2 min) and don't require Docker service startup.
+# #   ✅ Integration tests can be scheduled nightly or triggered manually without
+# #      blocking every PR.
+# #   ✅ Service containers are only spun up for packages that need them — no
+# #      unnecessary Kafka container for a Redis-only test run.
+# #   ❌ Two workflows to maintain — accepted because the separation is principled.
+# #
+# # Trigger: push to main, pull_request touching backend packages, or manual dispatch.
 
-name: Integration Tests
+# name: Integration Tests
 
-on:
-  push:
-    branches: ["main"]
-    paths:
-      - "varco_kafka/**"
-      - "varco_redis/**"
-      - "varco_beanie/**"
-      - "varco_sa/**"
-  pull_request:
-    branches: ["main"]
-    paths:
-      - "varco_kafka/**"
-      - "varco_redis/**"
-      - "varco_beanie/**"
-      - "varco_sa/**"
-  # Allow manual trigger from the Actions tab — useful for pre-release smoke tests.
-  workflow_dispatch:
+# on:
+#   push:
+#     branches: ["main"]
+#     paths:
+#       - "varco_kafka/**"
+#       - "varco_redis/**"
+#       - "varco_beanie/**"
+#       - "varco_sa/**"
+#   pull_request:
+#     branches: ["main"]
+#     paths:
+#       - "varco_kafka/**"
+#       - "varco_redis/**"
+#       - "varco_beanie/**"
+#       - "varco_sa/**"
+#   # Allow manual trigger from the Actions tab — useful for pre-release smoke tests.
+#   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+# concurrency:
+#   group: ${{ github.workflow }}-${{ github.ref }}
+#   cancel-in-progress: true
 
-jobs:
-  # ── Kafka integration ──────────────────────────────────────────────────────
-  kafka:
-    name: "integration · varco_kafka"
-    runs-on: ubuntu-latest
+# jobs:
+#   # ── Kafka integration ──────────────────────────────────────────────────────
+#   kafka:
+#     name: "integration · varco_kafka"
+#     runs-on: ubuntu-latest
 
-    # Kafka requires ZooKeeper in older setups, but KRaft mode (Kafka ≥ 3.3)
-    # removes that dependency. We use the bitnami image which supports KRaft.
-    services:
-      kafka:
-        image: bitnami/kafka:3.7
-        ports:
-          - "9092:9092"
-        env:
-          # KRaft mode — no ZooKeeper needed.
-          KAFKA_CFG_NODE_ID: "1"
-          KAFKA_CFG_PROCESS_ROLES: "broker,controller"
-          KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@localhost:9093"
-          KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
-          KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:9092"
-          KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-          ALLOW_PLAINTEXT_LISTENER: "yes"
+#     # Kafka requires ZooKeeper in older setups, but KRaft mode (Kafka ≥ 3.3)
+#     # removes that dependency. We use the bitnami image which supports KRaft.
+#     services:
+#       kafka:
+#         image: bitnami/kafka:3.7
+#         ports:
+#           - "9092:9092"
+#         env:
+#           # KRaft mode — no ZooKeeper needed.
+#           KAFKA_CFG_NODE_ID: "1"
+#           KAFKA_CFG_PROCESS_ROLES: "broker,controller"
+#           KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@localhost:9093"
+#           KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+#           KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:9092"
+#           KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+#           ALLOW_PLAINTEXT_LISTENER: "yes"
 
-    steps:
-      - uses: actions/checkout@v4
+#     steps:
+#       - uses: actions/checkout@v4
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
+#       - name: Set up uv
+#         uses: astral-sh/setup-uv@v4
+#         with:
+#           enable-cache: true
+#           cache-dependency-glob: "uv.lock"
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+#       - name: Set up Python 3.12
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: "3.12"
 
-      - name: Install workspace dependencies
-        run: uv sync --all-extras
+#       - name: Install workspace dependencies
+#         run: uv sync --all-extras
 
-      - name: Run Kafka integration tests
-        run: uv run pytest varco_kafka/tests/ -m integration -v --tb=short
-        env:
-          KAFKA_BOOTSTRAP_SERVERS: "localhost:9092"
+#       - name: Run Kafka integration tests
+#         run: uv run pytest varco_kafka/tests/ -m integration -v --tb=short
+#         env:
+#           KAFKA_BOOTSTRAP_SERVERS: "localhost:9092"
 
-  # ── Redis integration ──────────────────────────────────────────────────────
-  redis:
-    name: "integration · varco_redis"
-    runs-on: ubuntu-latest
+#   # ── Redis integration ──────────────────────────────────────────────────────
+#   redis:
+#     name: "integration · varco_redis"
+#     runs-on: ubuntu-latest
 
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - "6379:6379"
-        # Health check — wait until Redis is ready before running tests.
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
+#     services:
+#       redis:
+#         image: redis:7-alpine
+#         ports:
+#           - "6379:6379"
+#         # Health check — wait until Redis is ready before running tests.
+#         options: >-
+#           --health-cmd "redis-cli ping"
+#           --health-interval 5s
+#           --health-timeout 3s
+#           --health-retries 10
 
-    steps:
-      - uses: actions/checkout@v4
+#     steps:
+#       - uses: actions/checkout@v4
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
+#       - name: Set up uv
+#         uses: astral-sh/setup-uv@v4
+#         with:
+#           enable-cache: true
+#           cache-dependency-glob: "uv.lock"
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+#       - name: Set up Python 3.12
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: "3.12"
 
-      - name: Install workspace dependencies
-        run: uv sync --all-extras
+#       - name: Install workspace dependencies
+#         run: uv sync --all-extras
 
-      - name: Run Redis integration tests
-        run: uv run pytest varco_redis/tests/ -m integration -v --tb=short
-        env:
-          REDIS_URL: "redis://localhost:6379"
+#       - name: Run Redis integration tests
+#         run: uv run pytest varco_redis/tests/ -m integration -v --tb=short
+#         env:
+#           REDIS_URL: "redis://localhost:6379"
 
-  # ── MongoDB / Beanie integration ───────────────────────────────────────────
-  beanie:
-    name: "integration · varco_beanie"
-    runs-on: ubuntu-latest
+#   # ── MongoDB / Beanie integration ───────────────────────────────────────────
+#   beanie:
+#     name: "integration · varco_beanie"
+#     runs-on: ubuntu-latest
 
-    services:
-      mongo:
-        image: mongo:7
-        ports:
-          - "27017:27017"
-        options: >-
-          --health-cmd "mongosh --eval 'db.adminCommand({ping: 1})'"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
+#     services:
+#       mongo:
+#         image: mongo:7
+#         ports:
+#           - "27017:27017"
+#         options: >-
+#           --health-cmd "mongosh --eval 'db.adminCommand({ping: 1})'"
+#           --health-interval 5s
+#           --health-timeout 3s
+#           --health-retries 10
 
-    steps:
-      - uses: actions/checkout@v4
+#     steps:
+#       - uses: actions/checkout@v4
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
+#       - name: Set up uv
+#         uses: astral-sh/setup-uv@v4
+#         with:
+#           enable-cache: true
+#           cache-dependency-glob: "uv.lock"
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+#       - name: Set up Python 3.12
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: "3.12"
 
-      - name: Install workspace dependencies
-        run: uv sync --all-extras
+#       - name: Install workspace dependencies
+#         run: uv sync --all-extras
 
-      - name: Run Beanie integration tests
-        run: uv run pytest varco_beanie/tests/ -m integration -v --tb=short
-        env:
-          MONGODB_URL: "mongodb://localhost:27017"
+#       - name: Run Beanie integration tests
+#         run: uv run pytest varco_beanie/tests/ -m integration -v --tb=short
+#         env:
+#           MONGODB_URL: "mongodb://localhost:27017"
 
-  # ── SQLAlchemy / PostgreSQL integration ───────────────────────────────────
-  sa:
-    name: "integration · varco_sa"
-    runs-on: ubuntu-latest
+#   # ── SQLAlchemy / PostgreSQL integration ───────────────────────────────────
+#   sa:
+#     name: "integration · varco_sa"
+#     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres:16-alpine
-        ports:
-          - "5432:5432"
-        env:
-          POSTGRES_USER: varco
-          POSTGRES_PASSWORD: varco
-          POSTGRES_DB: varco_test
-        options: >-
-          --health-cmd "pg_isready -U varco"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
+#     services:
+#       postgres:
+#         image: postgres:16-alpine
+#         ports:
+#           - "5432:5432"
+#         env:
+#           POSTGRES_USER: varco
+#           POSTGRES_PASSWORD: varco
+#           POSTGRES_DB: varco_test
+#         options: >-
+#           --health-cmd "pg_isready -U varco"
+#           --health-interval 5s
+#           --health-timeout 3s
+#           --health-retries 10
 
-    steps:
-      - uses: actions/checkout@v4
+#     steps:
+#       - uses: actions/checkout@v4
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
+#       - name: Set up uv
+#         uses: astral-sh/setup-uv@v4
+#         with:
+#           enable-cache: true
+#           cache-dependency-glob: "uv.lock"
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+#       - name: Set up Python 3.12
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: "3.12"
 
-      - name: Install workspace dependencies
-        run: uv sync --all-extras
+#       - name: Install workspace dependencies
+#         run: uv sync --all-extras
 
-      - name: Run SQLAlchemy integration tests
-        run: uv run pytest varco_sa/tests/ -m integration -v --tb=short
-        env:
-          DATABASE_URL: "postgresql+asyncpg://varco:varco@localhost:5432/varco_test"
+#       - name: Run SQLAlchemy integration tests
+#         run: uv run pytest varco_sa/tests/ -m integration -v --tb=short
+#         env:
+#           DATABASE_URL: "postgresql+asyncpg://varco:varco@localhost:5432/varco_test"

@@ -90,6 +90,23 @@ class OtelConfig:
             collector (milliseconds).  Lower values → more real-time
             dashboards but higher network overhead.  Default is 60 000 ms
             (60 s), which matches the Prometheus scrape default.
+        prometheus_enabled:
+            When ``True``, ``OtelConfiguration.meter_provider()`` attaches a
+            ``PrometheusMetricReader`` to the ``MeterProvider``.  The reader
+            registers itself with ``prometheus_client.REGISTRY`` at
+            construction time, so ``MetricsRouter``'s ``GET /metrics``
+            endpoint can call ``generate_latest()`` to serve Prometheus text
+            format.  Both OTLP push and Prometheus pull can coexist — set
+            ``otlp_endpoint`` and ``prometheus_enabled=True`` simultaneously
+            for dual export.
+
+            Requires ``opentelemetry-exporter-prometheus`` — install via::
+
+                pip install 'varco-fastapi[prometheus]'
+
+            If the package is missing, ``OtelConfiguration`` logs an ``ERROR``
+            at startup but does not raise — the app continues without
+            Prometheus metrics.  Default: ``False``.
         extra_resource_attrs:
             Additional OTel resource attributes stamped on every span and
             metric produced by this process.  Use this to inject
@@ -153,6 +170,17 @@ class OtelConfig:
     # 60 000 ms matches the Prometheus default scrape interval — a sensible
     # starting point that balances freshness against collector load.
     export_interval_ms: int = 60_000
+
+    # When True, OtelConfiguration.meter_provider() attaches a
+    # PrometheusMetricReader to the MeterProvider.  The reader registers with
+    # prometheus_client.REGISTRY at construction time so that MetricsRouter's
+    # generate_latest() call picks up all OTel metrics automatically.
+    # Requires the opentelemetry-exporter-prometheus package — install via
+    # the ``prometheus`` optional extra of varco-fastapi:
+    #   pip install 'varco-fastapi[prometheus]'
+    # If the package is missing and this flag is True, OtelConfiguration logs
+    # an ERROR at startup but does not crash — metrics are silently lost.
+    prometheus_enabled: bool = False
 
     # Pod/node identity and any other infrastructure attributes the OTel SDK
     # cannot discover automatically from the environment.

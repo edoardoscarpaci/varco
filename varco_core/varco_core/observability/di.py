@@ -86,6 +86,7 @@ Async safety:   ✅ All providers are synchronous — no async setup needed.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from opentelemetry import metrics as otel_metrics
 from opentelemetry import trace
@@ -234,10 +235,27 @@ class OtelConfiguration:
         """
         Build, configure, and globally register the OTel ``MeterProvider``.
 
-        Attaches a ``PeriodicExportingMetricReader`` with an OTLP gRPC metric
-        exporter when ``config.otlp_endpoint`` is set.  The reader pushes
-        metrics every ``config.export_interval_ms`` milliseconds — no scrape
-        endpoint needed, suitable for ephemeral/autoscaling pods.
+        Supports two export modes simultaneously — both can be active at once:
+
+        **OTLP push** (``config.otlp_endpoint`` set):
+            Attaches a ``PeriodicExportingMetricReader`` that pushes metrics to
+            the OTLP collector every ``config.export_interval_ms`` ms.  No
+            scrape endpoint needed — suitable for ephemeral/autoscaling pods.
+
+        **Prometheus pull** (``config.prometheus_enabled=True``):
+            Attaches a ``PrometheusMetricReader`` that registers with
+            ``prometheus_client.REGISTRY`` at construction time.  Any code
+            that calls ``prometheus_client.generate_latest()`` — including
+            ``MetricsRouter``'s ``GET /metrics`` endpoint — will serve all
+            OTel metrics as Prometheus text format.
+
+        DESIGN: list-based readers instead of single reader
+            ✅ OTLP push and Prometheus pull coexist — both readers active.
+            ✅ Either reader can be None without affecting the other.
+            ✅ MeterProvider accepts a list natively — no wrapping needed.
+            ❌ Readers are immutable post-construction — cannot add
+               PrometheusMetricReader retroactively without restart.
+               This is an OTel SDK constraint, not a varco limitation.
 
         Calling ``otel_metrics.set_meter_provider()`` makes this the process-
         global provider so all ``@counter`` and ``@histogram`` decorators pick
@@ -254,16 +272,28 @@ class OtelConfiguration:
                           installed and ``config.otlp_endpoint`` is set.
 
         Edge cases:
-            - ``config.otlp_endpoint=None`` → metrics are recorded locally but
-              never exported.  Use ``InMemoryMetricReader`` in tests.
-            - ``config.export_interval_ms`` too low → excessive network traffic.
+            - ``config.otlp_endpoint=None`` and ``prometheus_enabled=False``
+              → metrics are recorded in-memory only; use ``InMemoryMetricReader``
+              in tests to inspect them.
+            - ``config.prometheus_enabled=True`` but ``opentelemetry-exporter-
+              prometheus`` not installed → logs an ERROR, skips the reader.
+              The app starts normally; Prometheus metrics are silently lost.
+            - Both ``otlp_endpoint`` and ``prometheus_enabled=True`` → both
+              readers are attached; metrics flow to both destinations.
+            - ``config.export_interval_ms`` too low → excessive OTLP traffic.
               Default 60 000 ms matches the Prometheus scrape default.
 
         Thread safety:  ✅ Created once by the Providify singleton mechanism.
         """
         resource = _build_resource(config)
 
+        # Accumulate readers so OTLP push and Prometheus pull can coexist.
+        # MeterProvider accepts an empty list — zero readers = in-memory only.
+        readers: list[Any] = []
+
         if config.otlp_endpoint:
+            # Lazy import — the OTLP exporter is an optional extra package.
+            # Fails with a clear ImportError if not installed.
             from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
                 OTLPMetricExporter,
             )
@@ -271,21 +301,48 @@ class OtelConfiguration:
             exporter = OTLPMetricExporter(endpoint=config.otlp_endpoint)
             # PeriodicExportingMetricReader pushes metrics on a background timer —
             # no scrape endpoint needed.  Compatible with ephemeral pods.
-            reader = PeriodicExportingMetricReader(
-                exporter,
-                export_interval_millis=config.export_interval_ms,
+            readers.append(
+                PeriodicExportingMetricReader(
+                    exporter,
+                    export_interval_millis=config.export_interval_ms,
+                )
             )
-            provider = MeterProvider(resource=resource, metric_readers=[reader])
             _logger.info(
-                "OTel metrics configured: service=%r endpoint=%r interval_ms=%d",
+                "OTel metrics OTLP configured: service=%r endpoint=%r interval_ms=%d",
                 config.service_name,
                 config.otlp_endpoint,
                 config.export_interval_ms,
             )
-        else:
-            provider = MeterProvider(resource=resource)
+
+        if config.prometheus_enabled:
+            # PrometheusMetricReader auto-registers with prometheus_client.REGISTRY
+            # at construction time — generate_latest() in MetricsRouter picks it up
+            # automatically without needing a direct reference to this reader.
+            try:
+                from opentelemetry.exporter.prometheus import PrometheusMetricReader
+
+                readers.append(PrometheusMetricReader())
+                _logger.info(
+                    "OTel metrics Prometheus configured: service=%r — /metrics enabled",
+                    config.service_name,
+                )
+            except ImportError:
+                # Missing optional dependency — degrade gracefully rather than
+                # crashing the entire app.  The user can install the extra:
+                #   pip install 'varco-fastapi[prometheus]'
+                _logger.error(
+                    "OtelConfiguration: prometheus_enabled=True but "
+                    "'opentelemetry-exporter-prometheus' is not installed. "
+                    "Prometheus /metrics will return no OTel data. "
+                    "Fix: pip install 'varco-fastapi[prometheus]'"
+                )
+
+        provider = MeterProvider(resource=resource, metric_readers=readers)
+
+        if not config.otlp_endpoint and not config.prometheus_enabled:
             _logger.info(
-                "OTel metrics configured: service=%r (no export — no otlp_endpoint set)",
+                "OTel metrics configured: service=%r (in-memory only — "
+                "no otlp_endpoint and prometheus_enabled=False)",
                 config.service_name,
             )
 

@@ -12,8 +12,9 @@ One-call application factory for varco-powered FastAPI services.
 4. Creates a ``FastAPI`` instance with the standard middleware stack.
 5. Mounts routers — either an explicit list or auto-scanned from the container.
 6. Optionally mounts ``MCPAdapter`` and/or ``SkillAdapter``.
-7. Always mounts ``HealthRouter``.
-8. Returns the fully configured ``FastAPI`` app.
+7. Optionally mounts ``MetricsRouter`` (``enable_metrics=True``).
+8. Always mounts ``HealthRouter``.
+9. Returns the fully configured ``FastAPI`` app.
 
 Minimal usage::
 
@@ -63,6 +64,7 @@ DESIGN: middleware stack applied via add_middleware() (Starlette reverse order)
 
     Execution order (request in → response out):
         CORSMiddleware → ErrorMiddleware → TracingMiddleware →
+        MetricsMiddleware (optional) → RequestLoggingMiddleware →
         RequestContextMiddleware → SessionMiddleware → route handler
 
 Thread safety:  ✅ Intended to be called once at module import or startup.
@@ -99,6 +101,7 @@ def create_varco_app(
     enable_tracing: bool = True,
     enable_logging: bool = True,
     enable_error_middleware: bool = True,
+    enable_metrics: bool = False,
     mcp_adapter: MCPAdapter | None = None,
     mcp_path: str = "/mcp",
     skill_adapter: SkillAdapter | None = None,
@@ -123,12 +126,14 @@ def create_varco_app(
     4. Build ``VarcoLifespan`` from container lifecycle objects + extra hooks.
     5. Create ``FastAPI`` instance with the lifespan.
     6. Register exception handlers.
-    7. Apply middleware stack (CORS → Error → Tracing → RequestContext → Session).
+    7. Apply middleware stack (CORS → Error → Tracing → Metrics → Logging →
+       RequestContext → Session).
     8. Apply any ``extra_middleware`` layers.
     9. Mount each router via ``build_router()`` + ``app.include_router()``.
     10. Mount ``MCPAdapter`` if provided.
     11. Mount ``SkillAdapter`` if provided.
     12. Always mount ``HealthRouter``.
+    12.5. Mount ``MetricsRouter`` (``GET /metrics``) if ``enable_metrics=True``.
     13. Return the ``FastAPI`` instance.
 
     Args:
@@ -151,6 +156,13 @@ def create_varco_app(
         enable_tracing:             Add ``TracingMiddleware`` (correlation ID + OTel).
         enable_logging:             Add ``RequestLoggingMiddleware``.
         enable_error_middleware:    Add ``ErrorMiddleware`` (exception → JSON response).
+        enable_metrics:             Add ``MetricsMiddleware`` and mount ``MetricsRouter``
+                                    at ``GET /metrics``.  Default: ``False``.  Requires
+                                    ``OtelConfig(prometheus_enabled=True)`` in the DI
+                                    container to populate the Prometheus registry with OTel
+                                    metrics; without it, ``/metrics`` returns Python process
+                                    metrics only.  Install the ``prometheus`` optional extra:
+                                    ``pip install 'varco-fastapi[prometheus]'``.
         mcp_adapter:                If provided, mount the MCP endpoint at ``mcp_path``.
         mcp_path:                   URL path for the MCP endpoint.  Default: ``"/mcp"``.
         skill_adapter:              If provided, mount the A2A endpoints.
@@ -269,6 +281,24 @@ def create_varco_app(
     if enable_tracing:
         app.add_middleware(TracingMiddleware)
 
+    # Metrics — sits INSIDE TracingMiddleware so OTel context is already active
+    # when instruments are recorded.  Sits OUTSIDE RequestContextMiddleware so
+    # it does not depend on auth ContextVars.
+    # add_middleware() prepends, so this ends up between Tracing and Logging
+    # in the final execution order.
+    if enable_metrics:
+        try:
+            from varco_fastapi.middleware.metrics import (  # noqa: PLC0415
+                MetricsMiddleware,
+            )
+
+            app.add_middleware(MetricsMiddleware)
+        except ImportError:
+            _logger.warning(
+                "create_varco_app: enable_metrics=True but MetricsMiddleware "
+                "could not be imported — metrics middleware skipped."
+            )
+
     # Logging (structured request/response log)
     if enable_logging:
         try:
@@ -318,6 +348,14 @@ def create_varco_app(
 
     # ── Step 12: Always mount HealthRouter ────────────────────────────────────
     _mount_health_router(app, container)
+
+    # ── Step 12.5: Optionally mount MetricsRouter (GET /metrics) ─────────────
+    # Mounted after HealthRouter to preserve the existing route order.
+    # MetricsMiddleware is registered separately above (step 7) — both the
+    # middleware and the router are needed: the middleware records metrics,
+    # the router serves them.
+    if enable_metrics:
+        _mount_metrics_router(app)
 
     _logger.info(
         "create_varco_app: created '%s' v%s with %d router(s), " "mcp=%s, skill=%s",
@@ -623,6 +661,41 @@ def _mount_health_router(app: Any, container: Any | None) -> None:
         _logger.debug("_mount_health_router: HealthRouter mounted.")
     except Exception as exc:  # noqa: BLE001
         _logger.warning("_mount_health_router: could not mount HealthRouter: %s", exc)
+
+
+def _mount_metrics_router(app: Any) -> None:
+    """
+    Mount ``MetricsRouter`` (``GET /metrics``) on the app.
+
+    Silently skipped if ``MetricsRouter`` cannot be imported or mounted —
+    consistent with the defensive pattern used by ``_mount_health_router``.
+
+    For the ``/metrics`` endpoint to serve OTel metrics, ``OtelConfiguration``
+    must have been installed with ``OtelConfig(prometheus_enabled=True)`` so
+    that a ``PrometheusMetricReader`` was attached to the ``MeterProvider`` at
+    startup.  Without it, ``/metrics`` returns Python process metrics only.
+
+    Args:
+        app: The ``FastAPI`` instance.
+
+    Edge cases:
+        - ``MetricsRouter`` not importable (e.g. package missing) → logs
+          a warning and skips.  Does not raise.
+        - Duplicate route ``/metrics`` already mounted → FastAPI raises at
+          mount time; error is logged and re-raised so the misconfiguration
+          surfaces immediately rather than silently failing.
+    """
+    try:
+        from varco_fastapi.router.metrics import MetricsRouter  # noqa: PLC0415
+
+        app.include_router(MetricsRouter().build_router())
+        _logger.debug("_mount_metrics_router: MetricsRouter mounted at /metrics.")
+    except ImportError as exc:
+        _logger.warning(
+            "_mount_metrics_router: could not import MetricsRouter: %s", exc
+        )
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("_mount_metrics_router: could not mount MetricsRouter: %s", exc)
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────

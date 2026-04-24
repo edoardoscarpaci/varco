@@ -49,6 +49,13 @@ otel = [
     "opentelemetry-sdk>=1.20",
     "opentelemetry-instrumentation-fastapi>=0.42b0",
 ]
+# Prometheus scrape endpoint support (GET /metrics in Prometheus text / OpenMetrics format)
+# Enables MetricsRouter and OtelConfiguration PrometheusMetricReader.
+# Both OTLP push and Prometheus pull can be active simultaneously when combined
+# with OtelConfig(prometheus_enabled=True, otlp_endpoint="http://...").
+prometheus = [
+    "opentelemetry-exporter-prometheus>=0.43b0",
+]
 
 [project.urls]
 Homepage   = "https://github.com/edoardoscarpaci/varco"

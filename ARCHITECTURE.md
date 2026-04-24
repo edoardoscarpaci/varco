@@ -673,6 +673,99 @@ filtered_query = transformer.transform(base_query, params, User)
 - **Typed HTTP clients**: `AsyncVarcoClient` / `SyncVarcoClient` with retry, circuit breaker, and JWT injection.
 - **DI wiring**: `VarcoFastAPIModule` + `bind_clients()`.
 
+#### HTTP Metrics — `MetricsMiddleware` + `MetricsRouter`
+
+Varco FastAPI ships two complementary observability components:
+
+**`MetricsMiddleware`** (`varco_fastapi.middleware.metrics`) — ASGI middleware that records
+three OTel instruments following the [HTTP semantic conventions](https://opentelemetry.io/docs/specs/semconv/http/http-metrics/):
+
+| Instrument | Type | Unit | Attributes |
+|---|---|---|---|
+| `http.server.request.duration` | Histogram | `s` | `http.request.method`, `http.route`, `http.response.status_code` |
+| `http.server.active_requests` | UpDownCounter | `{request}` | `http.request.method` only |
+| `http.server.request.body.size` | Histogram | `By` | `http.request.method`, `http.route` |
+
+From `http.server.request.duration` alone, Grafana/Prometheus can derive RPS, latency
+percentiles (p50/p95/p99), and error rates — no separate counter needed.
+
+**Cardinality guard**: `http.route` uses the route *template* (`/orders/{order_id}`), not
+the concrete URL (`/orders/123`).  This is extracted from `request.scope["route"].path`
+in the `finally` block after `call_next()` completes (routing must finish first).
+Unmatched paths (404s) use `http.route="unknown"` to group all scanner traffic.
+
+**`MetricsRouter`** (`varco_fastapi.router.metrics`) — standalone router that serves
+`GET /metrics` in Prometheus text or OpenMetrics format:
+- Default: Prometheus text v0.0.4 via `prometheus_client.generate_latest()`
+- `Accept: application/openmetrics-text` → OpenMetrics format with exemplar support
+  (Prometheus ≥ 2.26 sends this header automatically)
+- `prometheus_client` not installed → 503 with install instructions (graceful degradation)
+
+**Middleware execution order** (outermost → innermost):
+```
+CORS → ErrorMiddleware → TracingMiddleware → MetricsMiddleware → RequestLoggingMiddleware → RequestContextMiddleware → route
+```
+`MetricsMiddleware` sits inside `TracingMiddleware` so trace context is active when metrics
+are recorded, and outside `RequestLoggingMiddleware` so skipped paths (`/metrics`, `/health`)
+don't generate access log noise.
+
+**Skip paths**: `MetricsMiddleware` skips `/metrics` and `/health` by default to exclude
+Prometheus scrape traffic and Kubernetes health probe noise from latency histograms.
+
+**Wiring via `create_varco_app`**:
+
+```python
+# Auto-mounts MetricsMiddleware + MetricsRouter at /metrics
+app = create_varco_app(container, enable_metrics=True, validate=False)
+
+# Custom skip paths:
+app.add_middleware(MetricsMiddleware, skip_paths=frozenset({"/metrics", "/health", "/readyz"}))
+```
+
+**End-to-end Prometheus pull flow**:
+```
+OtelConfig(service_name="myapp", prometheus_enabled=True)
+  → OtelConfiguration.meter_provider()
+  → PrometheusMetricReader() registered with prometheus_client.REGISTRY
+  → MeterProvider(metric_readers=[prometheus_reader])
+
+create_varco_app(enable_metrics=True)
+  → add_middleware(MetricsMiddleware)    # records OTel instruments per request
+  → include_router(MetricsRouter)       # serves GET /metrics
+
+GET /orders/123
+  → MetricsMiddleware: active_requests.add(+1, {method="GET"})
+  → route handler returns 200
+  → finally: route="/orders/{order_id}", duration=0.042s, status="200"
+    duration.record(0.042, {method, route, status})
+    active_requests.add(-1, {method="GET"})
+
+GET /metrics  ← Prometheus scraper
+  → MetricsMiddleware: skip (starts with /metrics)
+  → MetricsRouter._handle(): generate_latest() from REGISTRY
+  → Returns text/plain Prometheus exposition format
+```
+
+**OTLP push + Prometheus pull simultaneously**: both readers can be active:
+
+```python
+OtelConfig(
+    service_name="myapp",
+    otlp_endpoint="http://otel-collector:4317",  # push to Grafana Cloud / Datadog
+    prometheus_enabled=True,                      # pull from /metrics
+)
+```
+
+**Optional extra**: `pip install varco-fastapi[prometheus]` adds `opentelemetry-exporter-prometheus`
+which provides `PrometheusMetricReader` and `prometheus_client`. The `MetricsRouter` endpoint
+returns 503 when `prometheus_client` is absent; the `OtelConfiguration` logs an ERROR when
+`prometheus_enabled=True` but the exporter is not installed.
+
+**Lazy instrument creation**: instruments are created on the first request (not at import or
+`__init__` time) using a module-level `_instruments: dict[str, Any]` cache. This ensures they
+are bound to the live `MeterProvider` set by `OtelConfiguration`, not the no-op provider
+active at import time.
+
 #### SkillAdapter — Google A2A protocol
 
 `SkillAdapter` converts any `VarcoRouter` class into a Google A2A (Agent-to-Agent) agent.

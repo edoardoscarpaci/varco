@@ -113,6 +113,7 @@ from varco_fastapi.auth.trust_store import TrustStore
 
 # ── Middleware ────────────────────────────────────────────────────────────────
 from varco_fastapi.middleware.error import ErrorMiddleware
+from varco_fastapi.middleware.metrics import MetricsMiddleware
 from varco_fastapi.middleware.request_context import RequestContextMiddleware
 from varco_fastapi.middleware.logging import RequestLoggingMiddleware
 from varco_fastapi.middleware.tracing import TracingMiddleware
@@ -143,6 +144,7 @@ from varco_fastapi.router.presets import (
 )
 from varco_fastapi.router.endpoint import route, ws_route, sse_route
 from varco_fastapi.router.health import HealthRouter
+from varco_fastapi.router.metrics import MetricsRouter
 from varco_fastapi.router.introspection import ResolvedRoute, introspect_routes
 from varco_fastapi.router.pagination import (
     PagedReadDTO,
@@ -238,6 +240,7 @@ __all__ = [
     "TrustStore",
     # Middleware
     "ErrorMiddleware",
+    "MetricsMiddleware",
     "RequestContextMiddleware",
     "RequestLoggingMiddleware",
     "TracingMiddleware",
@@ -261,6 +264,7 @@ __all__ = [
     "HttpQueryParams",
     "AsyncModeParams",
     "HealthRouter",
+    "MetricsRouter",
     "route",
     "ws_route",
     "sse_route",

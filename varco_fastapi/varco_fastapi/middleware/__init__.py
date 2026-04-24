@@ -16,13 +16,18 @@ Recommended middleware order (outermost to innermost)::
     # 3. Tracing — wraps requests in OTel spans (optional)
     app.add_middleware(TracingMiddleware)
 
-    # 4. Logging — logs after tracing sets up correlation ID
+    # 4. Metrics — records OTel HTTP instruments (optional, enable_metrics=True)
+    #    Sits inside Tracing so OTel context is active; outside RequestContext
+    #    so auth ContextVars are not required.
+    app.add_middleware(MetricsMiddleware)
+
+    # 5. Logging — logs after tracing sets up correlation ID
     app.add_middleware(RequestLoggingMiddleware, skip_paths={"/health"})
 
-    # 5. Request context — sets auth + tenant ContextVars
+    # 6. Request context — sets auth + tenant ContextVars
     app.add_middleware(RequestContextMiddleware, server_auth=my_auth)
 
-    # 6. Session — DI container per request (optional, advanced)
+    # 7. Session — DI container per request (optional, advanced)
     app.add_middleware(SessionMiddleware, container=my_container)
 
 The low-level ``app.add_middleware`` API is a **stack** — each call inserts
@@ -46,6 +51,7 @@ from typing import Any
 from varco_fastapi.middleware.cors import CORSConfig, install_cors
 from varco_fastapi.middleware.error import ErrorMiddleware
 from varco_fastapi.middleware.logging import RequestLoggingMiddleware
+from varco_fastapi.middleware.metrics import MetricsMiddleware
 from varco_fastapi.middleware.request_context import RequestContextMiddleware
 from varco_fastapi.middleware.session import (
     SessionMiddleware,
@@ -150,6 +156,7 @@ def install_middleware_stack(
 
 __all__ = [
     "ErrorMiddleware",
+    "MetricsMiddleware",
     "RequestContextMiddleware",
     "TracingMiddleware",
     "RequestLoggingMiddleware",
