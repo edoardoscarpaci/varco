@@ -11,6 +11,11 @@ Import directly::
     from varco_beanie.query.compiler import BeanieQueryCompiler
 """
 
+from varco_beanie.query.aggregation import BeanieAggregationApplicator, Pipeline
 from varco_beanie.query.compiler import BeanieQueryCompiler
 
-__all__ = ["BeanieQueryCompiler"]
+__all__ = [
+    "BeanieQueryCompiler",
+    "BeanieAggregationApplicator",
+    "Pipeline",
+]

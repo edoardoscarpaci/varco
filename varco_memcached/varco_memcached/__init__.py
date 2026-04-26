@@ -33,9 +33,11 @@ from varco_memcached.cache import (
     MemcachedCacheConfiguration,
     MemcachedCacheSettings,
 )
+from varco_memcached.health import MemcachedHealthCheck
 
 __all__ = [
     "MemcachedCacheSettings",
     "MemcachedCache",
     "MemcachedCacheConfiguration",
+    "MemcachedHealthCheck",
 ]

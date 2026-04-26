@@ -75,6 +75,8 @@ from varco_redis.di import (
     RedisStreamConfiguration,
 )
 from varco_redis.dlq import RedisDLQ, RedisDLQConfiguration
+from varco_redis.conversation import RedisConversationStore
+from varco_redis.job_store import RedisJobStore
 from varco_redis.rate_limit import RedisRateLimiter
 from varco_redis.streams import RedisStreamEventBus
 
@@ -94,6 +96,10 @@ __all__ = [
     # ── Dead Letter Queue ──────────────────────────────────────────────────────
     "RedisDLQ",
     "RedisDLQConfiguration",
+    # ── Conversation store ─────────────────────────────────────────────────────
+    "RedisConversationStore",
+    # ── Job store ──────────────────────────────────────────────────────────────
+    "RedisJobStore",
     # ── Rate limiting ──────────────────────────────────────────────────────────
     "RedisRateLimiter",
     # ── DI configurations ──────────────────────────────────────────────────────

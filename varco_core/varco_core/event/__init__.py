@@ -102,6 +102,7 @@ from varco_core.event.middleware import (
     CorrelationMiddleware,
     LoggingMiddleware,
     RetryMiddleware,
+    TracingEventMiddleware,
 )
 
 __all__ = [
@@ -147,4 +148,5 @@ __all__ = [
     "LoggingMiddleware",
     "CorrelationMiddleware",
     "RetryMiddleware",
+    "TracingEventMiddleware",
 ]

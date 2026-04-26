@@ -3,7 +3,7 @@ varco_core.event.middleware
 ============================
 Built-in ``EventMiddleware`` implementations.
 
-All three classes implement the ``EventMiddleware`` ABC from ``event.base``
+All four classes implement the ``EventMiddleware`` ABC from ``event.base``
 using the ASGI-style ``(event, channel, next)`` signature.
 
 ``LoggingMiddleware``
@@ -19,18 +19,25 @@ using the ASGI-style ``(event, channel, next)`` signature.
     Wraps the ``next`` call in a retry loop with exponential back-off.
     Uses ``RetryPolicy`` from ``varco_core.resilience`` for configuration.
 
+``TracingEventMiddleware``
+    Wraps each event dispatch in an OTel span.  Span name is
+    ``"event.{EventTypeName}"``; channel and correlation_id are set as
+    span attributes.
+
 Wiring example::
 
     from varco_core.event import InMemoryEventBus
     from varco_core.event.middleware import (
-        LoggingMiddleware,
         CorrelationMiddleware,
+        LoggingMiddleware,
         RetryMiddleware,
+        TracingEventMiddleware,
     )
     from varco_core.resilience import RetryPolicy
 
     bus = InMemoryEventBus(middleware=[
         CorrelationMiddleware(),
+        TracingEventMiddleware(),
         LoggingMiddleware(),
         RetryMiddleware(RetryPolicy(max_attempts=3, base_delay=0.1)),
     ])
@@ -68,7 +75,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 from uuid import uuid4
 
 from varco_core.event.base import Event, EventMiddleware
@@ -395,8 +402,151 @@ class RetryMiddleware(EventMiddleware):
         )
 
 
+# ── TracingEventMiddleware ─────────────────────────────────────────────────────
+
+
+class TracingEventMiddleware(EventMiddleware):
+    """
+    Wraps each event dispatch in an OpenTelemetry span.
+
+    The span name is ``"event.{EventTypeName}"`` by default — e.g.
+    ``"event.OrderPlacedEvent"``.  The channel and correlation_id are added
+    as span attributes so traces can be filtered by topic and correlated
+    across services.
+
+    Args:
+        tracer_name:      OTel tracer name used for ``get_tracer()``.
+                          Defaults to ``"varco"``.
+        record_exception: Whether to call ``span.record_exception(exc)`` on
+                          failure.  Defaults to ``True``.
+        set_status_on_error: Whether to set ``StatusCode.ERROR`` on failure.
+                             Defaults to ``True``.
+        attributes:       Static span attributes applied to every span
+                          (e.g. ``{"messaging.system": "internal"}``).
+
+    DESIGN: span name as ``"event.{EventTypeName}"``
+        ✅ Consistent naming convention — easy to find in trace dashboards.
+        ✅ No per-class configuration needed; the event class name is available
+           at dispatch time.
+        ✅ Prefix ``"event."`` distinguishes event spans from service/repo spans.
+        ❌ Renaming an event class silently changes span names in dashboards —
+           pin a static ``span_name`` kwarg if stability is required (not added
+           here to keep the API simple).
+
+    DESIGN: places correctly in the middleware chain
+        ``TracingEventMiddleware`` should be placed after ``CorrelationMiddleware``
+        in the middleware list so the correlation ID is already set in the
+        ContextVar when the span is opened.  This lets the middleware read
+        the ID from ``CorrelationMiddleware.current_id()`` and stamp it on
+        the span.
+
+    Thread safety:  ✅ Stateless — safe to share across buses and tasks.
+    Async safety:   ✅ ``__call__`` is ``async def``.
+
+    Example::
+
+        bus = InMemoryEventBus(middleware=[
+            CorrelationMiddleware(),   # sets correlation ID first
+            TracingEventMiddleware(),  # reads it for the span
+        ])
+    """
+
+    def __init__(
+        self,
+        *,
+        tracer_name: str = "varco",
+        record_exception: bool = True,
+        set_status_on_error: bool = True,
+        attributes: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Args:
+            tracer_name:         OTel tracer name.
+            record_exception:    Call ``span.record_exception(exc)`` on error.
+            set_status_on_error: Set ``StatusCode.ERROR`` on error.
+            attributes:          Static attributes added to every span.
+        """
+        self._tracer_name = tracer_name
+        self._record_exception = record_exception
+        self._set_status_on_error = set_status_on_error
+        self._attributes: dict[str, Any] = attributes or {}
+
+    async def __call__(
+        self,
+        event: Event,
+        channel: str,
+        next: Callable[[Event, str], Awaitable[None]],
+    ) -> None:
+        """
+        Open a span, call ``next(event, channel)``, then close the span.
+
+        Span attributes:
+            ``messaging.channel``   — The target channel string.
+            ``event.type``          — The event class name.
+            ``correlation_id``      — From ``CorrelationMiddleware.current_id()``
+                                      or ``event.correlation_id`` if present.
+                                      Omitted when neither source has a value.
+
+        Args:
+            event:   The event being dispatched.
+            channel: The target channel.
+            next:    Continuation to the next middleware or handler(s).
+
+        Raises:
+            Any exception raised by ``next()`` — always re-raised after the
+            span is closed (exception recorded when ``record_exception=True``).
+        """
+        try:
+            from opentelemetry import trace  # noqa: PLC0415
+            from opentelemetry.trace import StatusCode  # noqa: PLC0415
+        except ImportError:
+            # opentelemetry not installed — fall back to no-op dispatch
+            await next(event, channel)
+            return
+
+        span_name = f"event.{type(event).__name__}"
+        tracer = trace.get_tracer(self._tracer_name)
+
+        with tracer.start_as_current_span(
+            span_name, record_exception=False, set_status_on_exception=False
+        ) as current_span:
+            # Static attributes (e.g. {"messaging.system": "internal"})
+            for k, v in self._attributes.items():
+                current_span.set_attribute(k, v)
+
+            # Dynamic attributes — channel and event type
+            current_span.set_attribute("messaging.channel", channel)
+            current_span.set_attribute("event.type", type(event).__name__)
+
+            # Correlation ID: prefer CorrelationMiddleware's ContextVar, fall
+            # back to the event attribute if present (e.g. domain events stamp it).
+            cid: str | None = CorrelationMiddleware.current_id() or getattr(
+                event, "correlation_id", None
+            )
+            if cid:
+                current_span.set_attribute("correlation_id", cid)
+
+            try:
+                await next(event, channel)
+            except Exception as exc:
+                if self._record_exception:
+                    current_span.record_exception(exc)
+                if self._set_status_on_error:
+                    current_span.set_status(StatusCode.ERROR, str(exc))
+                raise
+
+    def __repr__(self) -> str:
+        return (
+            f"TracingEventMiddleware("
+            f"tracer_name={self._tracer_name!r}, "
+            f"record_exception={self._record_exception}, "
+            f"set_status_on_error={self._set_status_on_error})"
+        )
+
+
 __all__ = [
     "LoggingMiddleware",
     "CorrelationMiddleware",
     "RetryMiddleware",
+    "TracingEventMiddleware",
 ]

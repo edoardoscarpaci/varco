@@ -19,12 +19,15 @@ from varco_core.service.tenant import (
     tenant_context,
 )
 from varco_core.service.async_validation import AsyncValidatorServiceMixin
+from varco_core.service.bulk import BulkServiceMixin
 from varco_core.service.validation import ValidatorServiceMixin
 
 __all__ = [
     "AsyncService",
     "IUoWProvider",
     "ServiceMixin",
+    # ── Bulk operations ───────────────────────────────────────────────────────
+    "BulkServiceMixin",
     # ── Conversation store ────────────────────────────────────────────────────
     "AbstractConversationStore",
     "ConversationTurn",

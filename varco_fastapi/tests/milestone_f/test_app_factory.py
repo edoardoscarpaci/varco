@@ -16,6 +16,7 @@ Covers:
 - ``_scan_routers``: returns empty list when container.get_all raises
 - ``_scan_routers``: calls container.scan() for each package in scan_packages
 - ``_scan_routers``: deduplicates same class from multiple bindings
+- ``_collect_lifecycle_components``: collects WebSocketEventBus and SSEEventBus
 """
 
 from __future__ import annotations
@@ -320,3 +321,132 @@ def test_scan_routers_continues_on_scan_error():
     )
     assert call_count == 2  # both packages attempted
     assert result == [ItemRouter]  # good package's routers still found
+
+
+# ── _collect_lifecycle_components: varco_ws adapters ─────────────────────────
+
+
+def test_collect_lifecycle_includes_websocket_event_bus(monkeypatch):
+    """
+    When ``WebSocketEventBus`` is resolvable from the container,
+    ``_collect_lifecycle_components`` includes it in the returned list.
+
+    Uses ``monkeypatch`` to stub ``importlib.import_module`` so the test
+    does not require the real ``varco_ws`` package to be importable in all
+    environments.  Only the module/class used by ``_try_resolve_component``
+    needs to be patched.
+    """
+    from varco_fastapi.app import _collect_lifecycle_components
+
+    ws_instance = MagicMock(name="WebSocketEventBus")
+
+    class _FakeWsModule:
+        WebSocketEventBus = type("WebSocketEventBus", (), {})
+
+    class _FakeSseModule:
+        SSEEventBus = type("SSEEventBus", (), {})
+
+    def _fake_import(name):
+        if name == "varco_ws.websocket":
+            return _FakeWsModule
+        if name == "varco_ws.sse":
+            return _FakeSseModule
+        # varco_core modules go through the real import
+        import importlib
+
+        return importlib.__import__(name)
+
+    container = MagicMock()
+    container.scan = MagicMock()
+
+    def _is_resolvable(cls):
+        return cls is _FakeWsModule.WebSocketEventBus
+
+    def _get(cls):
+        if cls is _FakeWsModule.WebSocketEventBus:
+            return ws_instance
+        raise LookupError("not bound")
+
+    container.is_resolvable = MagicMock(side_effect=_is_resolvable)
+    container.get = MagicMock(side_effect=_get)
+
+    import importlib as _importlib
+
+    monkeypatch.setattr(_importlib, "import_module", _fake_import)
+
+    components = _collect_lifecycle_components(container)
+    assert ws_instance in components
+
+
+def test_collect_lifecycle_includes_sse_event_bus(monkeypatch):
+    """
+    When ``SSEEventBus`` is resolvable from the container,
+    ``_collect_lifecycle_components`` includes it in the returned list.
+    """
+    from varco_fastapi.app import _collect_lifecycle_components
+
+    sse_instance = MagicMock(name="SSEEventBus")
+
+    class _FakeWsModule:
+        WebSocketEventBus = type("WebSocketEventBus", (), {})
+
+    class _FakeSseModule:
+        SSEEventBus = type("SSEEventBus", (), {})
+
+    def _fake_import(name):
+        if name == "varco_ws.websocket":
+            return _FakeWsModule
+        if name == "varco_ws.sse":
+            return _FakeSseModule
+        import importlib
+
+        return importlib.__import__(name)
+
+    container = MagicMock()
+    container.scan = MagicMock()
+
+    def _is_resolvable(cls):
+        return cls is _FakeSseModule.SSEEventBus
+
+    def _get(cls):
+        if cls is _FakeSseModule.SSEEventBus:
+            return sse_instance
+        raise LookupError("not bound")
+
+    container.is_resolvable = MagicMock(side_effect=_is_resolvable)
+    container.get = MagicMock(side_effect=_get)
+
+    import importlib as _importlib
+
+    monkeypatch.setattr(_importlib, "import_module", _fake_import)
+
+    components = _collect_lifecycle_components(container)
+    assert sse_instance in components
+
+
+def test_collect_lifecycle_skips_ws_when_varco_ws_not_installed(monkeypatch):
+    """
+    If ``varco_ws`` is not installed (``ModuleNotFoundError``), the lifecycle
+    collection does not raise and simply omits the ws adapters.
+    """
+    from varco_fastapi.app import _collect_lifecycle_components
+
+    def _fake_import(name):
+        if name in ("varco_ws.websocket", "varco_ws.sse"):
+            raise ModuleNotFoundError(f"No module named '{name}'")
+        import importlib
+
+        return importlib.__import__(name)
+
+    container = MagicMock()
+    container.scan = MagicMock(side_effect=lambda *a, **kw: None)
+    container.is_resolvable = MagicMock(return_value=False)
+    container.get = MagicMock(side_effect=LookupError)
+
+    import importlib as _importlib
+
+    monkeypatch.setattr(_importlib, "import_module", _fake_import)
+
+    # Must not raise
+    components = _collect_lifecycle_components(container)
+    assert isinstance(components, list)

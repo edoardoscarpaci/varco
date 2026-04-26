@@ -42,6 +42,16 @@ from varco_sa.bootstrap import SAConfig, SAFastrestApp
 from varco_sa.di import SAModule, bind_repositories
 from varco_sa.factory import SAModelFactory, SAModelRegistry
 from varco_sa.models import BaseDatabaseModel
+from varco_sa.inbox import (
+    InboxEntryModel,
+    SAInboxRepository,
+    SAPollerInboxRepository,
+    inbox_metadata,
+)
+from varco_sa.job_store import SAJobStore, jobs_metadata
+from varco_sa.advisory_lock import SAAdvisoryLock
+from varco_sa.conversation import SAConversationStore, conversation_metadata
+from varco_sa.saga import SASagaRepository, sagas_metadata
 from varco_sa.outbox import (
     OutboxEntryModel,
     SAOutboxRepository,
@@ -90,4 +100,20 @@ __all__ = [
     "outbox_metadata",
     "SAOutboxRepository",
     "SARelayOutboxRepository",
+    # ── Inbox pattern ─────────────────────────────────────────────────────────
+    "InboxEntryModel",
+    "inbox_metadata",
+    "SAInboxRepository",
+    "SAPollerInboxRepository",
+    # ── Job store ─────────────────────────────────────────────────────────────
+    "SAJobStore",
+    "jobs_metadata",
+    # ── Saga repository ───────────────────────────────────────────────────────
+    "SASagaRepository",
+    "sagas_metadata",
+    # ── Conversation store ────────────────────────────────────────────────────
+    "SAConversationStore",
+    "conversation_metadata",
+    # ── Advisory lock ─────────────────────────────────────────────────────────
+    "SAAdvisoryLock",
 ]

@@ -463,6 +463,38 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
         # Base: no extra checks — entity passes through.
         return
 
+    async def _async_check_entity(self, entity: D, ctx: AuthContext) -> None:
+        """
+        Async counterpart of ``_check_entity`` for I/O-bound cross-concern gates.
+
+        Called immediately after ``_check_entity`` in ``get``, ``update``, and
+        ``delete``.  Use this hook when the check requires an async operation
+        such as an additional DB query, an HTTP call, or a cache lookup.
+
+        **Chaining contract**: always end with
+        ``await super()._async_check_entity(entity, ctx)`` so multiple mixins
+        in the MRO each run their own check.
+
+        Args:
+            entity: The entity fetched from the repository.
+            ctx:    Caller's identity.
+
+        Raises:
+            ServiceNotFoundError: Entity should be treated as non-existent
+                from the caller's perspective (e.g. wrong group membership,
+                soft-deleted via async lookup, tenant verified via cache).
+
+        Edge cases:
+            - As with ``_check_entity``, raise ``ServiceNotFoundError`` (not
+              ``ServiceAuthorizationError``) to prevent existence oracles.
+            - If the check is synchronous and stateless, prefer
+              ``_check_entity`` — it has zero async overhead.
+
+        Async safety: ✅ Hook is ``async def``.
+        """
+        # Base: no extra checks — entity passes through.
+        return
+
     def _prepare_for_create(self, entity: D, ctx: AuthContext) -> D:
         """
         Stamp or transform a freshly assembled entity before it is saved.
@@ -743,6 +775,7 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
             # (not 403) to prevent existence oracles.  Checks before auth ensures
             # cross-concern blocking (tenant, soft-delete) runs first.
             self._check_entity(entity, ctx)
+            await self._async_check_entity(entity, ctx)
 
             # Authorization after fetching so the authorizer can perform
             # ownership checks (e.g. entity.owner_id == ctx.user_id).
@@ -1139,6 +1172,7 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
 
             # Cross-concern check before authorizer (see get() for rationale).
             self._check_entity(entity, ctx)
+            await self._async_check_entity(entity, ctx)
 
             # Authorize with the current entity state so ownership checks work
             await self._authorizer.authorize(
@@ -1234,6 +1268,7 @@ class AsyncService(ABC, Generic[D, PK, C, R, U]):
 
             # Cross-concern check before authorizer (see get() for rationale).
             self._check_entity(entity, ctx)
+            await self._async_check_entity(entity, ctx)
 
             # Authorize with the current entity so ownership checks work
             await self._authorizer.authorize(

@@ -482,6 +482,12 @@ def _collect_lifecycle_components(container: Any) -> list[Any]:
     _try_resolve_component(
         container, components, "varco_core.job.base", "AbstractJobRunner"
     )
+    # varco_ws push adapters — discovered when container.scan("varco_ws") was called.
+    # Only added when the caller explicitly registered them; silently skipped otherwise.
+    _try_resolve_component(
+        container, components, "varco_ws.websocket", "WebSocketEventBus"
+    )
+    _try_resolve_component(container, components, "varco_ws.sse", "SSEEventBus")
 
     return components
 

@@ -47,6 +47,7 @@ from varco_core.observability.metrics import (
 )
 from varco_core.observability.metric import Metric, MetricKind, register_gauge
 from varco_core.observability.mixin import TracingServiceMixin
+from varco_core.observability.repository_mixin import TracingRepositoryMixin
 from varco_core.observability.span import SpanConfig, span
 
 __all__ = [
@@ -69,6 +70,8 @@ __all__ = [
     "create_histogram",
     # Service mixin
     "TracingServiceMixin",
+    # Repository mixin
+    "TracingRepositoryMixin",
     # Custom named metrics
     "Metric",
     "MetricKind",

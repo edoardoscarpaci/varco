@@ -49,14 +49,33 @@ varco_sa/                — SQLAlchemy async ORM backend
   ├── __init__.py        — SAConfig, SAModelFactory, bind_repositories()
   ├── bootstrap.py       — SAFastrestApp.pool_metrics() → SAPoolMetrics
   ├── pool_metrics.py    — SAPoolMetrics frozen dataclass, pool_metrics(engine) helper
-  ├── outbox.py          — OutboxRepository impl for SQLAlchemy
-  ├── di.py              — SAConfiguration (@Configuration)
+  ├── outbox.py          — SAOutboxRepository, SARelayOutboxRepository
+  ├── inbox.py           — SAInboxRepository, SAPollerInboxRepository (dedup table: varco_inbox)
+  ├── job_store.py       — SAJobStore (at-most-once jobs table: varco_jobs)
+  ├── saga.py            — SASagaRepository (saga state table: varco_sagas)
+  ├── conversation.py    — SAConversationStore (turn-per-row table: varco_conversation_turns)
+  ├── advisory_lock.py   — SAAdvisoryLock (PostgreSQL pg_try_advisory_lock / pg_advisory_unlock)
+  ├── schema_guard.py    — SchemaGuard, SchemaDrift, SchemaDriftReport
+  ├── encryption_store.py — SAEncryptionKeyStore (varco_encryption_keys table)
+  ├── health.py          — SAHealthCheck (SELECT 1 probe)
+  ├── di.py              — SAModule (@Configuration)
   └── (auto-generated)   — ORM models created from DomainModel subclasses at import time
 
 varco_beanie/            — Beanie/MongoDB async ODM backend
   ├── __init__.py        — BeanieConfig, BeanieModelFactory
-  ├── outbox.py          — OutboxRepository impl for Beanie
+  ├── outbox.py          — BeanieOutboxRepository (OutboxDocument)
+  ├── inbox.py           — BeanieInboxRepository (InboxDocument, dedup via unique index)
+  ├── job_store.py       — BeanieJobStore (JobDocument; at-most-once jobs collection: varco_jobs)
+  ├── saga.py            — BeanieSagaRepository (SagaDocument, varco_sagas collection)
+  ├── query/aggregation.py — BeanieAggregationApplicator (MongoDB aggregation pipeline)
+  ├── index_guard.py     — BeanieIndexGuard, IndexDrift, IndexDriftReport
+  ├── health.py          — BeanieHealthCheck (server_info() probe)
   └── di.py              — BeanieConfiguration (@Configuration)
+
+varco_memcached/         — Memcached cache backend (aiomcache)
+  ├── cache.py           — MemcachedCache(CacheBackend), MemcachedCacheSettings
+  │                        MemcachedCacheConfiguration (@Configuration)
+  └── health.py          — MemcachedHealthCheck (stats() probe)
 
 varco_ws/                — WebSocket and SSE push adapters (browser real-time events)
   ├── websocket.py       — WebSocketEventBus (push adapter), WebSocketConnection
@@ -86,6 +105,15 @@ AbstractDeadLetterQueue (ABC)
   ├── InMemoryDeadLetterQueue (tests)
   ├── KafkaDLQ                (varco_kafka)
   └── RedisDLQ                (varco_redis)
+
+EventMiddleware (Callable[[Event, str, next] → Awaitable[None]])
+  ├── CorrelationMiddleware   — propagates correlation_id across the event chain
+  ├── LoggingEventMiddleware  — structured log per dispatched event
+  └── TracingEventMiddleware  — opens one OTel span per event dispatch
+      ├── span name: "event.{EventTypeName}"
+      ├── attributes: messaging.channel, event.type, correlation_id
+      ├── records exception + sets ERROR status on failure
+      └── graceful fallback: no-op if opentelemetry is not installed
 ```
 
 ### Service Layer
@@ -95,7 +123,8 @@ AsyncService[D, PK, C, R, U] (ABC)
   ├── Abstract: _get_repo(uow) → AsyncRepository[D, PK]
   ├── Hooks (chainable via super()):
   │   ├── _scoped_params(user, ...) → dict  (tenant, authorization)
-  │   ├── _check_entity(entity)             (authorization checks)
+  │   ├── _check_entity(entity, ctx)        (sync cross-concern gate: soft-delete, tenant, etc.)
+  │   ├── _async_check_entity(entity, ctx)  (async I/O-bound gate; runs after _check_entity)
   │   └── _prepare_for_create(data)         (normalization)
   │
   └── Methods:
@@ -110,7 +139,11 @@ Mixins (MRO-composable):
   ├── TenantAwareService            — injects tenant_id into scope
   ├── SoftDeleteService             — filters deleted entities by default
   ├── CacheServiceMixin             — caches read/list results
+  ├── BulkServiceMixin              — adds create_many(dtos) + delete_many(pks); single UoW per batch
   └── EventConsumer                 — listens to events, composes via register_to()
+
+Rule: _async_check_entity runs after _check_entity in get(), update(), delete(), and BulkServiceMixin.delete_many()
+Rule: BulkServiceMixin.create_many() authorizes once (type-level); delete_many() authorizes per entity (ownership may differ)
 ```
 
 ### Cache System
@@ -294,6 +327,13 @@ RedisLock (varco_redis) — SET key NX PX ttl; release via Lua script (token che
   └── Rule: release uses Lua script to atomically check token before DEL
             — prevents a slow holder from releasing a new owner's lock after TTL expiry
 
+SAAdvisoryLock (varco_sa) — PostgreSQL pg_try_advisory_lock(int8) / pg_advisory_unlock(int8)
+  ├── One pinned connection per held lock — connection closed on release()
+  ├── String keys hashed to int64 via MD5 (first 8 bytes masked to 63 bits)
+  ├── TTL accepted for API compatibility but NOT enforced at DB level
+  │   (session-level lock lasts until connection closes)
+  └── Rule: NOT compatible with SQLite — PostgreSQL-specific advisory lock functions
+
 LockNotAcquiredError(Exception)
   └── Raised by acquire() when timeout expires before the lock is free
 ```
@@ -319,7 +359,10 @@ AbstractSagaRepository (ABC)
   ├── save(state: SagaState) → None
   └── load(saga_id: UUID) → SagaState | None
 
-InMemorySagaRepository — dict-backed; for unit tests
+AbstractSagaRepository implementations:
+  ├── InMemorySagaRepository (varco_core)  — dict-backed; for unit tests
+  ├── SASagaRepository (varco_sa)          — varco_sagas table; DELETE+INSERT upsert; SQLite-compatible
+  └── BeanieSagaRepository (varco_beanie)  — varco_sagas collection; SagaDocument (Beanie Document)
 
 SagaOrchestrator(steps, repository)
   ├── run(initial_context, *, saga_id=None) → SagaState
@@ -332,6 +375,85 @@ SagaOrchestrator(steps, repository)
 
 Rule: compensation runs in reverse — each step must be idempotent (safe to re-run)
 Rule: SagaOrchestrator persists state after every step — crash-safe resume is possible
+```
+
+### Inbox Pattern
+
+```
+AbstractInboxRepository (ABC) — varco_core.service.inbox
+  ├── is_duplicate(message_id: str) → bool   (idempotency check)
+  └── record(message_id: str) → None          (mark as processed)
+
+Implementations:
+  ├── InMemoryInboxRepository (varco_core) — set-backed; for unit tests
+  ├── SAInboxRepository (varco_sa)         — varco_inbox table; INSERT OR IGNORE pattern
+  ├── SAPollerInboxRepository (varco_sa)   — extends SAInboxRepository with TTL cleanup
+  └── BeanieInboxRepository (varco_beanie) — InboxDocument; dedup via unique compound index
+
+Table schema (varco_inbox): message_id (PK), received_at
+Collection schema: message_id (unique), received_at
+
+Rule: Always check is_duplicate() before processing — idempotency guard for at-least-once delivery
+Rule: record() inside the same DB transaction as the business operation to avoid partial commits
+```
+
+### Job Store
+
+```
+AbstractJobStore (ABC) — varco_core.job.base
+  ├── save(job: Job) → None              (upsert semantics — replaces existing job)
+  ├── get(job_id: UUID) → Job | None
+  ├── list_by_status(status, *, limit=100) → list[Job]  (ordered created_at ASC)
+  ├── delete(job_id: UUID) → None        (silent no-op for unknown IDs)
+  └── try_claim(job_id: UUID) → Job | None  (PENDING → RUNNING; atomic; None on failure)
+
+Job (frozen dataclass): job_id, status, created_at, started_at, completed_at,
+                        result (bytes), error, callback_url, auth_snapshot, request_token,
+                        metadata, task_payload (TaskPayload | None)
+  └── Transition helpers: as_running(), as_completed(result), as_failed(error), as_cancelled()
+
+JobStatus (StrEnum): PENDING, RUNNING, COMPLETED, FAILED, CANCELLED
+
+TaskPayload (dataclass): task_name, args, kwargs  — for recoverable background jobs
+
+Implementations:
+  ├── SAJobStore (varco_sa)
+  │   ├── varco_jobs table (Core, not ORM — own MetaData: jobs_metadata)
+  │   ├── save(): DELETE + INSERT (upsert, compatible with SQLite and PostgreSQL)
+  │   ├── try_claim(): SELECT FOR UPDATE SKIP LOCKED on PostgreSQL (dialect-detected)
+  │   │   └── plain SELECT + UPDATE on SQLite and other dialects (single-process safe)
+  │   └── ensure_table() / jobs_metadata for Alembic integration
+  └── BeanieJobStore (varco_beanie)
+      ├── varco_jobs collection (JobDocument, UUID primary key)
+      ├── save(): find().delete() + doc.insert() (upsert via two round-trips)
+      └── try_claim(): find_one(...).update_one(Set(...), response_type=NEW_DOCUMENT)
+          └── MongoDB findAndModify — atomic PENDING → RUNNING in one server-side op
+
+Rule: try_claim() must be atomic — SAJobStore uses SELECT FOR UPDATE SKIP LOCKED;
+      BeanieJobStore uses MongoDB findAndModify — both prevent double-claiming across replicas
+Rule: include jobs_metadata (SAJobStore) or JobDocument (BeanieJobStore) in your init call
+Rule: save() has upsert semantics — always safe to call on terminal jobs (COMPLETED, FAILED)
+```
+
+### Conversation Store
+
+```
+AbstractConversationStore (ABC) — varco_core.service.conversation
+  ├── append(task_id: str, turn: ConversationTurn) → None
+  ├── get(task_id: str) → list[ConversationTurn]
+  ├── delete(task_id: str) → None
+  └── turn_count(task_id: str) → int
+
+ConversationTurn (frozen dataclass): role: str, content: Any, timestamp: datetime
+
+Implementations:
+  ├── RedisConversationStore (varco_redis) — Redis List per task_id; RPUSH / LRANGE / LLEN
+  │   ├── key_prefix: str (default "varco:conv:")
+  │   └── ttl_seconds: int | None (refreshed on each append)
+  └── SAConversationStore (varco_sa) — varco_conversation_turns table; turn_id (UUID) PK
+      └── turn_count uses COUNT(*) — O(1) via index on task_id
+
+Table schema (varco_conversation_turns): turn_id (PK), task_id (indexed), role, content (JSON), turn_ts
 ```
 
 ### Connection Pool Metrics (varco_sa)
@@ -599,10 +721,16 @@ filtered_query = transformer.transform(base_query, params, User)
 
 - **ORM generation**: `SAModelFactory` reads `DomainModel.fields` and creates SQLAlchemy models at import
 - **Repository impl**: Standard async SQLAlchemy queries
-- **Outbox impl**: SQL table-based `OutboxRepository`
+- **Outbox impl**: `SAOutboxRepository`, `SARelayOutboxRepository` (SQL table-based)
+- **Inbox impl**: `SAInboxRepository`, `SAPollerInboxRepository` — `varco_inbox` table; `InboxEntryModel`
+- **Job store**: `SAJobStore` — `varco_jobs` table; `try_claim()` uses `SELECT FOR UPDATE SKIP LOCKED` on PostgreSQL, plain SELECT+UPDATE on other dialects
+- **Saga impl**: `SASagaRepository` — `varco_sagas` table; DELETE+INSERT dialect-agnostic upsert
+- **Conversation impl**: `SAConversationStore` — `varco_conversation_turns` table, turn-per-row
+- **Advisory lock**: `SAAdvisoryLock` — `pg_try_advisory_lock` / `pg_advisory_unlock`; one pinned connection per held lock
 - **Query applicator**: `SQLAlchemyFilterVisitor` converts AST → WHERE clause
 - **Pool metrics**: `pool_metrics(engine)` returns `SAPoolMetrics` snapshot; `SAFastrestApp.pool_metrics()` for convenience
-- **DI**: `SAConfiguration` with engine, declarative base, entity classes
+- **Health check**: `SAHealthCheck` — `SELECT 1` probe against the engine
+- **DI**: `SAModule` with engine, declarative base, entity classes
 - **Encryption key store**: `SAEncryptionKeyStore` — stores encryption keys in a dedicated
   `varco_encryption_keys` table using SQLAlchemy Core (no `SAModelFactory` dependency).
   Call `await store.ensure_table()` at startup or add a manual Alembic migration.
@@ -620,6 +748,28 @@ filtered_query = transformer.transform(base_query, params, User)
   registry = await manager.build_tenant_registry()
   ```
 
+### varco_beanie (MongoDB / Beanie)
+
+- **ODM generation**: `BeanieModelFactory` creates Beanie Document classes from `DomainModel` subclasses
+- **Repository impl**: Async Beanie Document queries
+- **Outbox impl**: `BeanieOutboxRepository` — `OutboxDocument` Beanie model
+- **Inbox impl**: `BeanieInboxRepository` — `InboxDocument`; unique compound index for dedup
+- **Job store impl**: `BeanieJobStore` — `JobDocument`; `varco_jobs` collection; `try_claim()` uses MongoDB `findAndModify` (atomic PENDING → RUNNING)
+- **Saga impl**: `BeanieSagaRepository` — `SagaDocument`; `varco_sagas` collection
+- **Aggregation**: `BeanieAggregationApplicator` — builds MongoDB aggregation pipeline (`$match`, `$sort`, `$skip`, `$limit`)
+- **Index guard**: `BeanieIndexGuard` — detects drift between defined and actual MongoDB indexes
+- **Health check**: `BeanieHealthCheck` — `server_info()` probe against the MongoClient
+- **DI**: `BeanieConfiguration`
+
+### varco_memcached (Memcached)
+
+- **Cache impl**: `MemcachedCache(CacheBackend)` — `aiomcache` async client; TTL via Memcached-native `exptime`
+- **Settings**: `MemcachedCacheSettings` — host, port, pool_size, key_prefix; reads `VARCO_MEMCACHED_CACHE_*` env vars
+- **Key handling**: Keys encoded as bytes (`aiomcache` requirement); prefix applied via `memcached_key()`
+- **clear()**: Registry-based (in-process `set[str]`) — no native SCAN equivalent in Memcached
+- **Health check**: `MemcachedHealthCheck` — `stats()` probe (Memcached has no PING command)
+- **DI**: `MemcachedCacheConfiguration`
+
 ### varco_kafka (Kafka)
 
 - **Bus impl**: `KafkaEventBus` — uses `aiokafka.AIOKafkaProducer` / `AIOKafkaConsumer`
@@ -632,9 +782,12 @@ filtered_query = transformer.transform(base_query, params, User)
 - **Bus impl**: `RedisEventBus` — uses Redis Pub/Sub or Streams
 - **Cache impl**: `RedisCache` — async redis.asyncio, lazy connection pooling
 - **Lock impl**: `RedisLock` — SET NX PX for acquisition; Lua script for token-guarded release
+- **Conversation impl**: `RedisConversationStore` — Redis List per task_id; RPUSH/LRANGE; optional TTL
+- **Rate limiter**: `RedisRateLimiter` — distributed sliding window via sorted set + Lua (multi-pod)
 - **Channel routing**: Redis pubsub channels or streams
 - **DLQ impl**: Dedicated Redis stream for dead letters
 - **Invalidation**: `EventDrivenStrategy` can subscribe to events and invalidate cache keys
+- **Health check**: `RedisHealthCheck` — PING probe (throw-away connection per check)
 - **Config**: `RedisConfig` with host/port; `CacheConfig` with TTL, strategy
 
 ### varco_ws (WebSocket / SSE)
@@ -670,6 +823,10 @@ filtered_query = transformer.transform(base_query, params, User)
 - **Router mixins**: `CreateMixin`, `ReadMixin`, `UpdateMixin`, `DeleteMixin`, `ListMixin`,
   `StreamMixin` — compose standard HTTP endpoints without boilerplate.
 - **Auth middleware**: `AuthMiddleware` validates JWT bearer tokens using `TrustedIssuerRegistry`.
+- **Lifecycle auto-discovery**: `create_varco_app` calls `_collect_lifecycle_components()` which
+  discovers `AbstractEventBus`, `AbstractDistributedLock`, `CacheBackend`, and — if `varco_ws`
+  is installed and registered — `WebSocketEventBus` and `SSEEventBus` from the DI container.
+  All discovered components are started/stopped as part of the app lifespan.
 - **Typed HTTP clients**: `AsyncVarcoClient` / `SyncVarcoClient` with retry, circuit breaker, and JWT injection.
 - **DI wiring**: `VarcoFastAPIModule` + `bind_clients()`.
 

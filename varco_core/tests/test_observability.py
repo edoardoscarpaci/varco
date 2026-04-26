@@ -55,6 +55,7 @@ from varco_core.observability import (
     Metric,
     OtelConfig,
     SpanConfig,
+    TracingRepositoryMixin,
     TracingServiceMixin,
     counter,
     create_counter,
@@ -557,6 +558,386 @@ class TestTracingServiceMixin:
         assert len(spans) == 1
 
 
+# ── TracingRepositoryMixin ────────────────────────────────────────────────────
+
+
+class TestTracingRepositoryMixin:
+    """
+    Test that TracingRepositoryMixin wraps each repository method in a span.
+
+    Uses a minimal stub backend that implements all AsyncRepository abstract
+    methods as no-ops.  Tests call ``_run_in_span`` directly or exercise the
+    full override path to verify span creation without a real DB.
+    """
+
+    def _make_repo(self) -> TracingRepositoryMixin:
+        """Build a minimal TracingRepositoryMixin instance for testing."""
+        from varco_core.repository import AsyncRepository
+
+        class _StubBackend(AsyncRepository):  # type: ignore[type-arg]
+            async def find_by_id(self, pk: Any) -> Any:
+                return None
+
+            async def find_all(self) -> list:
+                return []
+
+            async def save(self, entity: Any) -> Any:
+                return entity
+
+            async def delete(self, entity: Any) -> None:
+                pass
+
+            async def find_by_query(self, params: Any) -> list:
+                return []
+
+            async def count(self, params: Any = None) -> int:
+                return 0
+
+            async def exists(self, pk: Any) -> bool:
+                return False
+
+            async def save_many(self, entities: Any) -> list:
+                return list(entities)
+
+            async def delete_many(self, entities: Any) -> None:
+                pass
+
+            async def update_many_by_query(self, params: Any, update: Any) -> int:
+                return 0
+
+            async def stream_by_query(self, params: Any):  # type: ignore[override]
+                return
+                yield  # make this an async generator
+
+        class _TracedRepo(TracingRepositoryMixin, _StubBackend):  # type: ignore[type-arg]
+            _tracing_config = SpanConfig()
+
+        return _TracedRepo()
+
+    async def _run(self, repo: Any, operation: str, *args: Any) -> None:
+        """Call _run_in_span with a no-op stub coroutine."""
+
+        async def _noop(*a: Any, **kw: Any) -> Any:
+            return None
+
+        await repo._run_in_span(operation, _noop, *args)
+
+    # ── Span name tests ───────────────────────────────────────────────────────
+
+    async def test_find_by_id_creates_span(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        repo = self._make_repo()
+        await self._run(repo, "find_by_id")
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert "find_by_id" in spans[0].name
+
+    async def test_save_creates_span(self, span_exporter: InMemorySpanExporter) -> None:
+        repo = self._make_repo()
+        await self._run(repo, "save")
+        spans = span_exporter.get_finished_spans()
+        assert any("save" in s.name for s in spans)
+
+    async def test_delete_creates_span(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        repo = self._make_repo()
+        await self._run(repo, "delete")
+        spans = span_exporter.get_finished_spans()
+        assert any("delete" in s.name for s in spans)
+
+    async def test_find_by_query_creates_span(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        repo = self._make_repo()
+        await self._run(repo, "find_by_query")
+        spans = span_exporter.get_finished_spans()
+        assert any("find_by_query" in s.name for s in spans)
+
+    async def test_count_creates_span(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        repo = self._make_repo()
+        await self._run(repo, "count")
+        spans = span_exporter.get_finished_spans()
+        assert any("count" in s.name for s in spans)
+
+    async def test_exists_creates_span(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        repo = self._make_repo()
+        await self._run(repo, "exists")
+        spans = span_exporter.get_finished_spans()
+        assert any("exists" in s.name for s in spans)
+
+    async def test_save_many_creates_span(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        repo = self._make_repo()
+        await self._run(repo, "save_many")
+        spans = span_exporter.get_finished_spans()
+        assert any("save_many" in s.name for s in spans)
+
+    async def test_delete_many_creates_span(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        repo = self._make_repo()
+        await self._run(repo, "delete_many")
+        spans = span_exporter.get_finished_spans()
+        assert any("delete_many" in s.name for s in spans)
+
+    async def test_update_many_by_query_creates_span(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        repo = self._make_repo()
+        await self._run(repo, "update_many_by_query")
+        spans = span_exporter.get_finished_spans()
+        assert any("update_many_by_query" in s.name for s in spans)
+
+    # ── Span name includes class name ─────────────────────────────────────────
+
+    async def test_span_name_includes_class_name(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        repo = self._make_repo()
+        await self._run(repo, "save")
+        spans = span_exporter.get_finished_spans()
+        # Span name is "{ClassName}.{operation}"
+        assert any("TracedRepo" in s.name or "_TracedRepo" in s.name for s in spans)
+
+    # ── Exception recording ───────────────────────────────────────────────────
+
+    async def test_exception_recorded_on_span(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        repo = self._make_repo()
+
+        async def _raise(*a: Any, **kw: Any) -> None:
+            raise ValueError("db error")
+
+        with pytest.raises(ValueError):
+            await repo._run_in_span("save", _raise)
+
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].status.status_code == StatusCode.ERROR
+
+    async def test_exception_re_raised(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        repo = self._make_repo()
+
+        async def _raise(*a: Any, **kw: Any) -> None:
+            raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await repo._run_in_span("find_by_id", _raise)
+
+    # ── No exception recording when disabled ──────────────────────────────────
+
+    async def test_exception_not_recorded_when_disabled(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        from varco_core.repository import AsyncRepository
+
+        class _StubBackend(AsyncRepository):  # type: ignore[type-arg]
+            async def find_by_id(self, pk: Any) -> Any:
+                return None
+
+            async def find_all(self) -> list:
+                return []
+
+            async def save(self, entity: Any) -> Any:
+                return entity
+
+            async def delete(self, entity: Any) -> None:
+                pass
+
+            async def find_by_query(self, params: Any) -> list:
+                return []
+
+            async def count(self, params: Any = None) -> int:
+                return 0
+
+            async def exists(self, pk: Any) -> bool:
+                return False
+
+            async def save_many(self, entities: Any) -> list:
+                return []
+
+            async def delete_many(self, entities: Any) -> None:
+                pass
+
+            async def update_many_by_query(self, params: Any, update: Any) -> int:
+                return 0
+
+            async def stream_by_query(self, params: Any):  # type: ignore[override]
+                return
+                yield
+
+        class _NoRecord(TracingRepositoryMixin, _StubBackend):  # type: ignore[type-arg]
+            _tracing_config = SpanConfig(
+                record_exception=False, set_status_on_error=False
+            )
+
+        repo = _NoRecord()
+
+        async def _raise(*a: Any, **kw: Any) -> None:
+            raise ValueError("silent")
+
+        with pytest.raises(ValueError):
+            await repo._run_in_span("save", _raise)
+
+        spans = span_exporter.get_finished_spans()
+        assert spans[0].status.status_code != StatusCode.ERROR
+
+    # ── Correlation ID bridge ─────────────────────────────────────────────────
+
+    async def test_correlation_id_set_as_span_attribute(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        repo = self._make_repo()
+
+        async with correlation_context("test-cid-repo-123"):
+            await self._run(repo, "save")
+
+        spans = span_exporter.get_finished_spans()
+        assert spans[0].attributes.get("correlation_id") == "test-cid-repo-123"
+
+    async def test_no_correlation_id_attribute_when_not_set(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        repo = self._make_repo()
+        await self._run(repo, "save")
+        spans = span_exporter.get_finished_spans()
+        assert "correlation_id" not in (spans[0].attributes or {})
+
+    # ── stream_by_query ───────────────────────────────────────────────────────
+
+    async def test_stream_by_query_creates_span(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        """stream_by_query span is created and closed after full iteration."""
+        repo = self._make_repo()
+
+        async for _ in repo.stream_by_query(MagicMock()):
+            pass
+
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert "stream_by_query" in spans[0].name
+
+    async def test_stream_by_query_exception_recorded(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        """Exceptions inside the generator body are recorded on the span."""
+        from varco_core.repository import AsyncRepository
+
+        class _StubBackend(AsyncRepository):  # type: ignore[type-arg]
+            async def find_by_id(self, pk: Any) -> Any:
+                return None
+
+            async def find_all(self) -> list:
+                return []
+
+            async def save(self, entity: Any) -> Any:
+                return entity
+
+            async def delete(self, entity: Any) -> None:
+                pass
+
+            async def find_by_query(self, params: Any) -> list:
+                return []
+
+            async def count(self, params: Any = None) -> int:
+                return 0
+
+            async def exists(self, pk: Any) -> bool:
+                return False
+
+            async def save_many(self, entities: Any) -> list:
+                return []
+
+            async def delete_many(self, entities: Any) -> None:
+                pass
+
+            async def update_many_by_query(self, params: Any, update: Any) -> int:
+                return 0
+
+            async def stream_by_query(self, params: Any):  # type: ignore[override]
+                yield MagicMock()
+                raise RuntimeError("stream error")
+
+        class _TracedRepo(TracingRepositoryMixin, _StubBackend):  # type: ignore[type-arg]
+            _tracing_config = SpanConfig()
+
+        repo = _TracedRepo()
+
+        with pytest.raises(RuntimeError, match="stream error"):
+            async for _ in repo.stream_by_query(MagicMock()):
+                pass
+
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].status.status_code == StatusCode.ERROR
+
+    # ── Static attributes ─────────────────────────────────────────────────────
+
+    async def test_static_attributes_set_on_span(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        from varco_core.repository import AsyncRepository
+
+        class _StubBackend(AsyncRepository):  # type: ignore[type-arg]
+            async def find_by_id(self, pk: Any) -> Any:
+                return None
+
+            async def find_all(self) -> list:
+                return []
+
+            async def save(self, entity: Any) -> Any:
+                return entity
+
+            async def delete(self, entity: Any) -> None:
+                pass
+
+            async def find_by_query(self, params: Any) -> list:
+                return []
+
+            async def count(self, params: Any = None) -> int:
+                return 0
+
+            async def exists(self, pk: Any) -> bool:
+                return False
+
+            async def save_many(self, entities: Any) -> list:
+                return []
+
+            async def delete_many(self, entities: Any) -> None:
+                pass
+
+            async def update_many_by_query(self, params: Any, update: Any) -> int:
+                return 0
+
+            async def stream_by_query(self, params: Any):  # type: ignore[override]
+                return
+                yield
+
+        class _WithAttrs(TracingRepositoryMixin, _StubBackend):  # type: ignore[type-arg]
+            _tracing_config = SpanConfig(attributes={"db.system": "postgresql"})
+
+        repo = _WithAttrs()
+
+        async def _noop(*a: Any, **kw: Any) -> Any:
+            return None
+
+        await repo._run_in_span("save", _noop)
+
+        spans = span_exporter.get_finished_spans()
+        assert spans[0].attributes.get("db.system") == "postgresql"
+
+
 # ── OtelConfig ────────────────────────────────────────────────────────────────
 
 
@@ -942,3 +1323,259 @@ class TestRegisterGauge:
         point = next(m for m in metrics if m.name == "test.gauge.dynamic")
         # callback was called at least once → counter_box[0] >= 1
         assert point.data.data_points[0].value >= 1
+
+
+# ── TracingEventMiddleware ─────────────────────────────────────────────────────
+
+
+class TestTracingEventMiddleware:
+    """
+    Tests for ``TracingEventMiddleware``.
+
+    Uses the same ``span_exporter`` fixture as the rest of the file — each
+    test gets a fresh ``InMemorySpanExporter`` with no cross-test pollution.
+
+    The middleware is exercised by wiring it into ``InMemoryEventBus`` and
+    publishing events, then inspecting the recorded spans.
+    """
+
+    async def test_span_created_on_dispatch(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        from varco_core.event import InMemoryEventBus
+        from varco_core.event.base import Event
+        from varco_core.event.middleware import TracingEventMiddleware
+
+        class PingEvent(Event):
+            __event_type__ = "test.ping"
+
+        bus = InMemoryEventBus(middleware=[TracingEventMiddleware()])
+        bus.subscribe(PingEvent, lambda e: None)
+        await bus.publish(PingEvent())
+
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+
+    async def test_span_name_is_event_type_name(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        from varco_core.event import InMemoryEventBus
+        from varco_core.event.base import Event
+        from varco_core.event.middleware import TracingEventMiddleware
+
+        class MySpecialEvent(Event):
+            __event_type__ = "test.special"
+
+        bus = InMemoryEventBus(middleware=[TracingEventMiddleware()])
+        bus.subscribe(MySpecialEvent, lambda e: None)
+        await bus.publish(MySpecialEvent())
+
+        spans = span_exporter.get_finished_spans()
+        assert spans[0].name == "event.MySpecialEvent"
+
+    async def test_channel_attribute_set(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        from varco_core.event import InMemoryEventBus
+        from varco_core.event.base import Event
+        from varco_core.event.middleware import TracingEventMiddleware
+
+        class OrderEvent(Event):
+            __event_type__ = "test.order"
+
+        bus = InMemoryEventBus(middleware=[TracingEventMiddleware()])
+        bus.subscribe(OrderEvent, lambda e: None, channel="orders")
+        await bus.publish(OrderEvent(), channel="orders")
+
+        spans = span_exporter.get_finished_spans()
+        assert spans[0].attributes.get("messaging.channel") == "orders"
+
+    async def test_event_type_attribute_set(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        from varco_core.event import InMemoryEventBus
+        from varco_core.event.base import Event
+        from varco_core.event.middleware import TracingEventMiddleware
+
+        class SomeEvent(Event):
+            __event_type__ = "test.some"
+
+        bus = InMemoryEventBus(middleware=[TracingEventMiddleware()])
+        bus.subscribe(SomeEvent, lambda e: None)
+        await bus.publish(SomeEvent())
+
+        spans = span_exporter.get_finished_spans()
+        assert spans[0].attributes.get("event.type") == "SomeEvent"
+
+    async def test_correlation_id_from_correlation_middleware(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        from varco_core.event import InMemoryEventBus
+        from varco_core.event.base import Event
+        from varco_core.event.middleware import (
+            CorrelationMiddleware,
+            TracingEventMiddleware,
+        )
+
+        class PongEvent(Event):
+            __event_type__ = "test.pong"
+
+        # CorrelationMiddleware sets the ContextVar before TracingEventMiddleware reads it
+        bus = InMemoryEventBus(
+            middleware=[CorrelationMiddleware(), TracingEventMiddleware()]
+        )
+        bus.subscribe(PongEvent, lambda e: None)
+        await bus.publish(PongEvent())
+
+        spans = span_exporter.get_finished_spans()
+        cid = spans[0].attributes.get("correlation_id")
+        assert cid is not None
+        assert isinstance(cid, str)
+
+    async def test_correlation_id_from_event_attribute(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        from varco_core.event import InMemoryEventBus
+        from varco_core.event.domain import EntityCreatedEvent
+        from varco_core.event.middleware import TracingEventMiddleware
+
+        bus = InMemoryEventBus(middleware=[TracingEventMiddleware()])
+        bus.subscribe(EntityCreatedEvent, lambda e: None)
+        await bus.publish(
+            EntityCreatedEvent(
+                entity_type="Order",
+                pk="o-1",
+                correlation_id="cid-xyz",
+                payload={},
+            )
+        )
+
+        spans = span_exporter.get_finished_spans()
+        assert spans[0].attributes.get("correlation_id") == "cid-xyz"
+
+    async def test_exception_recorded_on_handler_failure(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        from varco_core.event import InMemoryEventBus
+        from varco_core.event.base import Event
+        from varco_core.event.middleware import TracingEventMiddleware
+
+        class FailEvent(Event):
+            __event_type__ = "test.fail"
+
+        async def bad_handler(event: Event) -> None:
+            raise RuntimeError("boom")
+
+        bus = InMemoryEventBus(
+            middleware=[TracingEventMiddleware(record_exception=True)]
+        )
+        bus.subscribe(FailEvent, bad_handler)
+
+        with pytest.raises(RuntimeError):
+            await bus.publish(FailEvent())
+
+        spans = span_exporter.get_finished_spans()
+        assert len(spans[0].events) > 0
+        assert any("exception" in e.name.lower() for e in spans[0].events)
+
+    async def test_exception_re_raised_after_span(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        from varco_core.event import InMemoryEventBus
+        from varco_core.event.base import Event
+        from varco_core.event.middleware import TracingEventMiddleware
+
+        class BombEvent(Event):
+            __event_type__ = "test.bomb"
+
+        async def explode(event: Event) -> None:
+            raise ValueError("detonated")
+
+        bus = InMemoryEventBus(middleware=[TracingEventMiddleware()])
+        bus.subscribe(BombEvent, explode)
+
+        with pytest.raises(ValueError, match="detonated"):
+            await bus.publish(BombEvent())
+
+    async def test_error_status_set_on_failure(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        from opentelemetry.trace import StatusCode as OTelStatusCode
+
+        from varco_core.event import InMemoryEventBus
+        from varco_core.event.base import Event
+        from varco_core.event.middleware import TracingEventMiddleware
+
+        class ErrorEvent(Event):
+            __event_type__ = "test.error_event"
+
+        async def bad(e: Event) -> None:
+            raise RuntimeError("bad")
+
+        bus = InMemoryEventBus(
+            middleware=[TracingEventMiddleware(set_status_on_error=True)]
+        )
+        bus.subscribe(ErrorEvent, bad)
+
+        with pytest.raises(RuntimeError):
+            await bus.publish(ErrorEvent())
+
+        spans = span_exporter.get_finished_spans()
+        assert spans[0].status.status_code == OTelStatusCode.ERROR
+
+    async def test_no_error_status_when_disabled(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        from opentelemetry.trace import StatusCode as OTelStatusCode
+
+        from varco_core.event import InMemoryEventBus
+        from varco_core.event.base import Event
+        from varco_core.event.middleware import TracingEventMiddleware
+
+        class SilentError(Event):
+            __event_type__ = "test.silent_error"
+
+        async def bad(e: Event) -> None:
+            raise RuntimeError("silent")
+
+        bus = InMemoryEventBus(
+            middleware=[
+                TracingEventMiddleware(
+                    set_status_on_error=False, record_exception=False
+                )
+            ]
+        )
+        bus.subscribe(SilentError, bad)
+
+        with pytest.raises(RuntimeError):
+            await bus.publish(SilentError())
+
+        spans = span_exporter.get_finished_spans()
+        assert spans[0].status.status_code != OTelStatusCode.ERROR
+
+    async def test_static_attributes_applied(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        from varco_core.event import InMemoryEventBus
+        from varco_core.event.base import Event
+        from varco_core.event.middleware import TracingEventMiddleware
+
+        class AttrEvent(Event):
+            __event_type__ = "test.attr"
+
+        bus = InMemoryEventBus(
+            middleware=[
+                TracingEventMiddleware(attributes={"messaging.system": "internal"})
+            ]
+        )
+        bus.subscribe(AttrEvent, lambda e: None)
+        await bus.publish(AttrEvent())
+
+        spans = span_exporter.get_finished_spans()
+        assert spans[0].attributes.get("messaging.system") == "internal"
+
+    def test_repr_contains_class_name(self) -> None:
+        from varco_core.event.middleware import TracingEventMiddleware
+
+        mw = TracingEventMiddleware()
+        assert "TracingEventMiddleware" in repr(mw)

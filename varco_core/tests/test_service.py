@@ -1160,3 +1160,168 @@ class TestAsyncValidatorServiceMixin:
         )
         read_dto = await svc.create(CreatePostDTO(title="no validator"), AuthContext())
         assert read_dto.title == "no validator"
+
+
+# ── TestAsyncCheckEntity ──────────────────────────────────────────────────────
+
+
+class TestAsyncCheckEntity:
+    """
+    Tests for the ``_async_check_entity`` async hook on ``AsyncService``.
+
+    Uses a ``CheckingPostService`` that overrides ``_async_check_entity`` to
+    either record calls (happy path) or raise ``ServiceNotFoundError``
+    (blocking path).  The hook must be called by ``get``, ``update``, and
+    ``delete`` after ``_check_entity`` and before the authorizer.
+
+    DESIGN: separate class over new methods in existing test classes
+        Keeping these tests together in one class makes the contract of the
+        new hook explicit.  The single-responsibility principle also avoids
+        muddying the existing tests with async hook concerns.
+    """
+
+    def _make_svc(
+        self,
+        uow_provider: FakeUoWProvider,
+        assembler: PostAssembler,
+        hook_fn=None,
+    ) -> ConcretePostService:
+        """Build a service whose ``_async_check_entity`` calls ``hook_fn``."""
+
+        class CheckingPostService(ConcretePostService):
+            async def _async_check_entity(self, entity: Post, ctx: AuthContext) -> None:
+                if hook_fn is not None:
+                    await hook_fn(entity, ctx)
+                await super()._async_check_entity(entity, ctx)
+
+        return CheckingPostService(
+            uow_provider=uow_provider,
+            authorizer=BaseAuthorizer(),
+            assembler=assembler,
+        )
+
+    async def test_hook_called_on_get(
+        self, uow_provider: FakeUoWProvider, assembler: PostAssembler
+    ) -> None:
+        """``_async_check_entity`` is called by ``get()``."""
+        calls: list[Post] = []
+
+        async def record(entity: Post, ctx: AuthContext) -> None:
+            calls.append(entity)
+
+        svc = self._make_svc(uow_provider, assembler, record)
+        uow_provider.repo._store["p1"] = Post(pk="p1", title="X")
+        await svc.get("p1", AuthContext())
+
+        assert len(calls) == 1
+        assert calls[0].pk == "p1"
+
+    async def test_hook_called_on_update(
+        self, uow_provider: FakeUoWProvider, assembler: PostAssembler
+    ) -> None:
+        """``_async_check_entity`` is called by ``update()``."""
+        calls: list[Post] = []
+
+        async def record(entity: Post, ctx: AuthContext) -> None:
+            calls.append(entity)
+
+        svc = self._make_svc(uow_provider, assembler, record)
+        uow_provider.repo._store["p1"] = Post(pk="p1", title="Old")
+        await svc.update("p1", UpdatePostDTO(title="New"), AuthContext())
+
+        assert len(calls) == 1
+
+    async def test_hook_called_on_delete(
+        self, uow_provider: FakeUoWProvider, assembler: PostAssembler
+    ) -> None:
+        """``_async_check_entity`` is called by ``delete()``."""
+        calls: list[Post] = []
+
+        async def record(entity: Post, ctx: AuthContext) -> None:
+            calls.append(entity)
+
+        svc = self._make_svc(uow_provider, assembler, record)
+        uow_provider.repo._store["p1"] = Post(pk="p1", title="X")
+        await svc.delete("p1", AuthContext())
+
+        assert len(calls) == 1
+
+    async def test_hook_raising_not_found_blocks_get(
+        self, uow_provider: FakeUoWProvider, assembler: PostAssembler
+    ) -> None:
+        """A ``ServiceNotFoundError`` raised in the hook is propagated by ``get()``."""
+
+        async def deny(entity: Post, ctx: AuthContext) -> None:
+            raise ServiceNotFoundError(entity.pk, Post)
+
+        svc = self._make_svc(uow_provider, assembler, deny)
+        uow_provider.repo._store["p1"] = Post(pk="p1", title="X")
+
+        with pytest.raises(ServiceNotFoundError):
+            await svc.get("p1", AuthContext())
+
+    async def test_hook_raising_not_found_blocks_update(
+        self, uow_provider: FakeUoWProvider, assembler: PostAssembler
+    ) -> None:
+        """``ServiceNotFoundError`` from hook is propagated by ``update()``."""
+
+        async def deny(entity: Post, ctx: AuthContext) -> None:
+            raise ServiceNotFoundError(entity.pk, Post)
+
+        svc = self._make_svc(uow_provider, assembler, deny)
+        uow_provider.repo._store["p1"] = Post(pk="p1", title="X")
+
+        with pytest.raises(ServiceNotFoundError):
+            await svc.update("p1", UpdatePostDTO(title="Y"), AuthContext())
+
+    async def test_hook_raising_not_found_blocks_delete(
+        self, uow_provider: FakeUoWProvider, assembler: PostAssembler
+    ) -> None:
+        """``ServiceNotFoundError`` from hook is propagated by ``delete()``."""
+
+        async def deny(entity: Post, ctx: AuthContext) -> None:
+            raise ServiceNotFoundError(entity.pk, Post)
+
+        svc = self._make_svc(uow_provider, assembler, deny)
+        uow_provider.repo._store["p1"] = Post(pk="p1", title="X")
+
+        with pytest.raises(ServiceNotFoundError):
+            await svc.delete("p1", AuthContext())
+
+    async def test_base_hook_is_noop(
+        self, uow_provider: FakeUoWProvider, assembler: PostAssembler
+    ) -> None:
+        """The base implementation does nothing — ``get`` succeeds without override."""
+        svc = ConcretePostService(
+            uow_provider=uow_provider,
+            authorizer=BaseAuthorizer(),
+            assembler=assembler,
+        )
+        uow_provider.repo._store["p1"] = Post(pk="p1", title="X")
+        result = await svc.get("p1", AuthContext())
+        assert result.pk == "p1"
+
+    async def test_hook_called_after_check_entity(
+        self, uow_provider: FakeUoWProvider, assembler: PostAssembler
+    ) -> None:
+        """``_async_check_entity`` is called after ``_check_entity``."""
+        order: list[str] = []
+
+        class OrderedPostService(ConcretePostService):
+            def _check_entity(self, entity: Post, ctx: AuthContext) -> None:
+                order.append("sync")
+                super()._check_entity(entity, ctx)
+
+            async def _async_check_entity(self, entity: Post, ctx: AuthContext) -> None:
+                order.append("async")
+                await super()._async_check_entity(entity, ctx)
+
+        svc = OrderedPostService(
+            uow_provider=uow_provider,
+            authorizer=BaseAuthorizer(),
+            assembler=assembler,
+        )
+        uow_provider.repo._store["p1"] = Post(pk="p1", title="X")
+        await svc.get("p1", AuthContext())
+
+        assert order == ["sync", "async"]
