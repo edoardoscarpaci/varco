@@ -180,7 +180,7 @@ mapping = ClaimMapping(
     ),
 )
 
-token = JwtParser.parse(raw, secret, transformer=MappingClaimTransformer(mapping))
+token = JwtParser.parse(raw, secret, algorithms=["HS256"], transformer=MappingClaimTransformer(mapping))
 token.auth_ctx.roles  # -> frozenset({"editor", ...})  (ROLE_ prefix stripped)
 ```
 
@@ -199,7 +199,7 @@ transformer lazily from the environment on first use:
 ```python
 from varco_core.jwt import JwtParser
 
-token = JwtParser.parse(raw_token, secret)
+token = JwtParser.parse(raw_token, secret, algorithms=["HS256"])
 token.auth_ctx.roles  # populated from "sofy-roles"/"realm_access.roles"
 token.auth_ctx.metadata["tenant_id"]  # populated from "org.id"
 token.extra_claims["sofy-roles"]  # still visible — non-destructive transform

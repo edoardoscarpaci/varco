@@ -64,6 +64,7 @@ _TARGET_FIELD_PREFIX: dict[CanonicalClaim, str] = {
     CanonicalClaim.TENANT_ID: "tenant",
     CanonicalClaim.ACTOR: "actor",
     CanonicalClaim.TOKEN_TYPE: "token_type",
+    CanonicalClaim.TENANTS: "tenants",
 }
 
 # Default fallback sources appended last per D-7 ("canonical fallback is
@@ -78,6 +79,7 @@ _DEFAULT_CANONICAL_SOURCE: dict[CanonicalClaim, str] = {
     CanonicalClaim.TENANT_ID: "tenant_id",
     CanonicalClaim.ACTOR: "act",
     CanonicalClaim.TOKEN_TYPE: "token_type",
+    CanonicalClaim.TENANTS: "tenants",
 }
 
 
@@ -110,6 +112,7 @@ class JwtTransformSettings(VarcoSettings):
     tenant_field: str | None = None
     actor_field: str | None = None
     token_type_field: str | None = None
+    tenants_field: str | None = None
     metadata_fields: str | None = None
 
     roles_shape: str = "auto"
@@ -119,6 +122,7 @@ class JwtTransformSettings(VarcoSettings):
     tenant_shape: str = "auto"
     actor_shape: str = "auto"
     token_type_shape: str = "auto"
+    tenants_shape: str = "auto"
 
     roles_strip_prefix: str | None = None
     scopes_strip_prefix: str | None = None
@@ -127,6 +131,7 @@ class JwtTransformSettings(VarcoSettings):
     tenant_strip_prefix: str | None = None
     actor_strip_prefix: str | None = None
     token_type_strip_prefix: str | None = None
+    tenants_strip_prefix: str | None = None
 
     roles_required: bool = False
     scopes_required: bool = False
@@ -135,6 +140,7 @@ class JwtTransformSettings(VarcoSettings):
     tenant_required: bool = False
     actor_required: bool = False
     token_type_required: bool = False
+    tenants_required: bool = False
 
     merge_sources: bool = False
     path_separator: str = "."

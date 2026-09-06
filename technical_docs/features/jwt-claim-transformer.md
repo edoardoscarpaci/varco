@@ -91,7 +91,7 @@ class MyDirectoryTransformer:
         return claims
 
 
-token = JwtParser.parse(raw, secret, transformer=MyDirectoryTransformer())
+token = JwtParser.parse(raw, secret, algorithms=["HS256"], transformer=MyDirectoryTransformer())
 ```
 
 ---
@@ -141,6 +141,7 @@ those are verified by PyJWT before this layer runs, and `iss` is the mapping
 | `TENANT_ID` | `AuthContext.metadata["tenant_id"]` |
 | `ACTOR` | `AuthContext.metadata["actor"]` (RFC 8693 `act`) |
 | `TOKEN_TYPE` | `JsonWebToken.token_type` |
+| `TENANTS` | `AuthContext.metadata["tenants"]`, a **list** — the tenant↔subject membership claim consumed by `varco_core.tenancy.membership.ClaimTenantMembership` (Plan 033 / S5). Env: `VARCO_JWT_TRANSFORM_TENANTS_FIELD` / `VARCO_JWT_TRANSFORM__<LABEL>__TENANTS_FIELD`; default source `tenants` |
 
 **Fallback chains, always canonical-last**: a rule's `sources` is tried in order,
 first-non-empty wins by default (`merge=True` unions the whole chain instead). The

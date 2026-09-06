@@ -23,7 +23,8 @@ Exception hierarchy for the varco_core domain, query, and service layers.
     ├── ServiceValidationError                 → HTTP 422
     │   └── IdempotencyFingerprintMismatchError → HTTP 422 (Plan 029 / D1)
     ├── IdempotencyKeyInvalidError              → HTTP 400 (Plan 029 / D1)
-    └── RequestBodyTooLargeError                → HTTP 413 (Plan 035 / S8)
+    ├── RequestBodyTooLargeError                → HTTP 413 (Plan 035 / S8)
+    └── RateLimitExceededError                  → HTTP 429 (Plan 035 drift fix)
 """
 
 from varco_core.exception.body_limit import RequestBodyTooLargeError
@@ -39,6 +40,7 @@ from varco_core.exception.query import (
     QueryException,
     WrongNodeVisited,
 )
+from varco_core.exception.rate_limit import RateLimitExceededError
 from varco_core.exception.repository import (
     EntityNotFound,
     FieldNotFound,
@@ -79,4 +81,6 @@ __all__ = [
     "IdempotencyKeyInvalidError",
     # Body limit exceptions (Plan 035 / S8)
     "RequestBodyTooLargeError",
+    # Rate limit exceptions (Plan 035 drift fix — §D-order position 11)
+    "RateLimitExceededError",
 ]

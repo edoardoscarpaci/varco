@@ -12,7 +12,7 @@ Hierarchy::
 
     AbstractServerAuth (ABC)
       ├── JwtBearerAuth          — verify Bearer JWT via TrustedIssuerRegistry
-      ├── ApiKeyAuth             — verify X-API-Key header or ?api_key= param
+      ├── ApiKeyAuth             — verify X-API-Key header (query param opt-in via param=)
       ├── PassthroughAuth        — decode JWT claims WITHOUT verifying signature
       ├── AnonymousAuth          — always returns anonymous AuthContext
       ├── CompositeServerAuth    — try each strategy in order; first success wins
@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException, Request, status
@@ -281,8 +282,37 @@ class JwtBearerAuth(AbstractServerAuth):
         if self._leeway:
             verify_kwargs["leeway"] = self._leeway
 
+        from varco_core.authority.exceptions import (
+            RevocationStoreUnavailableError,
+            TokenRevokedError,
+        )
+
         try:
             jwt = await self._registry.verify(raw_token, **verify_kwargs)
+        except RevocationStoreUnavailableError as exc:
+            # Plan 034 / S13, §D-S13-error: a store outage is an outage, not
+            # a bad credential — 503, never 401, and never the raw
+            # exception message (which may carry backend internals).
+            _logger.error("JwtBearerAuth: revocation store unavailable: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Token verification is temporarily unavailable.",
+            ) from exc
+        except TokenRevokedError as exc:
+            # §D-S13-error: str(exc) is already the fixed "Token has been
+            # revoked." string — never interpolate exc.scope/.key/.reason,
+            # which are for the log only.
+            _logger.warning(
+                "JwtBearerAuth: token revoked (scope=%s key=%s reason=%s)",
+                exc.scope,
+                exc.key,
+                exc.reason,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=str(exc),
+                headers={"WWW-Authenticate": "Bearer"},
+            ) from exc
         except Exception as exc:
             _logger.debug("JwtBearerAuth: token verification failed: %s", exc)
             raise HTTPException(
@@ -305,43 +335,134 @@ class JwtBearerAuth(AbstractServerAuth):
 
 class ApiKeyAuth(AbstractServerAuth):
     """
-    Verify an API key from the ``X-API-Key`` header or ``?api_key=`` query param.
+    Verify an API key from the ``X-API-Key`` header, or optionally a query
+    parameter.
 
-    The ``keys`` mapping maps each API key string to its associated ``AuthContext``
-    (which carries identity, roles, and grants for that key).
+    Callers may configure either plaintext keys (``keys=``, hashed at
+    construction time) or pre-hashed digests (``hashed_keys=``, the
+    production path — see ``varco_core.auth.api_key.hash_api_key``).
+    Exactly one of the two must be given.
 
     Args:
-        keys:     Dict mapping API key strings to their ``AuthContext``.
-        header:   Header name to check.  Default: ``"X-API-Key"``.
-        param:    Query parameter name as fallback.  Default: ``"api_key"``.
-        required: Raise 401 if no key is provided.  Default: ``True``.
+        keys:        Plaintext ``dict``/``Mapping`` of API key string ->
+                     ``AuthContext``. Hashed immediately at construction
+                     (§D-S14-hash) — no raw key is retained past
+                     ``__init__``. Mutually exclusive with ``hashed_keys``.
+        hashed_keys: Pre-hashed ``dict``/``Mapping`` of digest (as produced
+                     by ``hash_api_key()``) -> ``AuthContext``. The
+                     production path: the plaintext key never enters this
+                     process at all. Mutually exclusive with ``keys``.
+        pepper:      Optional pepper (bytes or str) applied to ``keys=``
+                     hashing and to verifying a presented key against
+                     either mapping. ``None`` (default) reads
+                     ``VARCO_API_KEY_PEPPER``. Must be identical to
+                     whatever pepper produced any digest in ``hashed_keys``,
+                     or every key silently 401s (Pitfalls table).
+        header:      Header name to check. Default: ``"X-API-Key"``.
+        param:       Query parameter name fallback. **Default: ``None`` —
+                     the fallback is off.** Naming a parameter (e.g.
+                     ``param="api_key"``) re-enables it (§D-S2-param). A
+                     credential in a URL query string is already in the
+                     access log, the proxy log, and the ``Referer`` header
+                     by the time anything can warn about it (brief 006 §5)
+                     — prefer the header.
+        required:    Raise 401 if no key is provided. Default: ``True``.
+
+    Raises:
+        ValueError: Both ``keys`` and ``hashed_keys`` given, or neither;
+                    ``param=""`` (an empty string is a typo, not a way to
+                    disable the fallback — use ``param=None``, the
+                    default); a digest in ``hashed_keys`` carries an
+                    unrecognized scheme prefix.
 
     DESIGN: static dict over DB lookup per request
-        ✅ Zero latency — no I/O per request
-        ✅ Trivially testable — inject a plain dict in tests
-        ❌ Keys must be loaded at startup; not suitable for dynamic key issuance
-           (use JwtBearerAuth for dynamic auth)
+        ✅ Zero latency — no I/O per request.
+        ✅ Trivially testable — inject a plain dict in tests.
+        ❌ Keys must be loaded at startup; not suitable for dynamic key
+           issuance (use ``JwtBearerAuth`` for dynamic auth).
 
-    Thread safety:  ✅ ``keys`` dict is read-only after construction.
+    DESIGN: ``param: str | None`` over a separate ``allow_query_param: bool``
+    (§D-S2-param, full argument in the plan's design section)
+        ✅ One knob cannot disagree with itself — ``allow_query_param=False,
+           param="api_key"`` would be a readable-but-meaningless state.
+        ✅ Every caller that already named ``param=`` explicitly keeps
+           working unchanged; only the population that never opted in
+           loses the fallback — exactly the row's intent.
+        Rejected — keep the fallback and log a warning: ❌ the credential is
+          already leaked into three logs by the time anything is logged.
+        Rejected — an env var to re-enable it globally: ❌ a
+          security-weakening default an operator could flip without a code
+          review, invisible at any call site.
+
+    Thread safety:  ✅ The hashed-key dict is read-only after construction.
     Async safety:   ✅ ``__call__`` is ``async def`` but does no I/O.
 
     Edge cases:
         - API key lookup is case-sensitive.
-        - Header check takes priority over query param.
+        - Header takes priority over query param when both are present and
+          ``param=`` is set (unchanged from before this plan).
+        - ``keys={}``/``hashed_keys={}`` remains legal — every presented
+          key 401s.
     """
 
     def __init__(
         self,
-        keys: dict[str, AuthContext],
+        keys: Mapping[str, AuthContext] | None = None,
         *,
+        hashed_keys: Mapping[str, AuthContext] | None = None,
+        pepper: bytes | str | None = None,
         header: str = "X-API-Key",
-        param: str = "api_key",
+        param: str | None = None,
         required: bool = True,
     ) -> None:
-        self._keys = keys
+        if (keys is None) == (hashed_keys is None):
+            raise ValueError(
+                "ApiKeyAuth: exactly one of keys= or hashed_keys= must be given "
+                f"(keys={'given' if keys is not None else 'omitted'}, "
+                f"hashed_keys={'given' if hashed_keys is not None else 'omitted'})"
+            )
+        if param == "":
+            raise ValueError(
+                "ApiKeyAuth: param='' is not a way to disable the query "
+                "fallback — omit param (the default, None) instead"
+            )
+
+        import os
+
+        from varco_core.auth.api_key import hash_api_key
+
+        self._pepper: bytes | str | None = (
+            pepper if pepper is not None else os.environ.get("VARCO_API_KEY_PEPPER")
+        )
+
+        digest_map: dict[str, AuthContext]
+        if keys is not None:
+            # §D-S14-hash: hash every plaintext key immediately; nothing
+            # keeps a reference to `keys` or any raw key past this line.
+            digest_map = {hash_api_key(raw, pepper=self._pepper): ctx for raw, ctx in keys.items()}
+        else:
+            assert hashed_keys is not None  # narrowed by the XOR check above
+            # Validate every digest's scheme prefix up front so a
+            # misconfigured store fails loudly at construction, not on the
+            # first request that happens to hit the bad entry.
+            digest_map = dict(hashed_keys)
+            for digest in digest_map:
+                scheme, sep, _ = digest.partition("$")
+                if not sep or scheme not in ("sha256", "hmac-sha256"):
+                    raise ValueError(
+                        f"ApiKeyAuth: hashed_keys contains an unrecognized digest "
+                        f"scheme {scheme!r} (expected 'sha256' or 'hmac-sha256')"
+                    )
+
+        self._digest_keys = digest_map
         self._header = header
         self._param = param
         self._required = required
+        # Which constructor path populated _digest_keys — surfaced read-only
+        # via inspect_auth_posture()'s api_key_plaintext_source field
+        # (Plan 034 / Phase 4). Never used for any auth decision; the
+        # already-hashed _digest_keys dict is the only thing __call__ reads.
+        self._constructed_from_plaintext = keys is not None
 
     async def __call__(self, request: Request) -> AuthContext:
         """
@@ -354,25 +475,45 @@ class ApiKeyAuth(AbstractServerAuth):
         Raises:
             HTTPException 401: Key is missing (when required) or not recognized.
         """
-        # Header takes priority
-        api_key = request.headers.get(self._header) or request.query_params.get(self._param)
+        from varco_core.auth.api_key import hash_api_key
+
+        # Header takes priority; the query param is only ever consulted
+        # when a fallback name was explicitly configured (§D-S2-param).
+        api_key = request.headers.get(self._header)
+        if not api_key and self._param is not None:
+            api_key = request.query_params.get(self._param)
 
         if not api_key:
             if self._required:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=f"Missing API key (header: {self._header!r} or "
-                    f"query param: {self._param!r})",
-                )
+                detail = f"Missing API key (header: {self._header!r}"
+                detail += f" or query param: {self._param!r})" if self._param else ")"
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
             return _ANONYMOUS
 
-        ctx = self._keys.get(api_key)
+        # §D-S14-compare: dict lookup selects the O(1) candidate, then
+        # hmac.compare_digest (inside hash_api_key's deterministic digest
+        # equality) is the actual accept decision — never a raw `==` on a
+        # credential.
+        digest = hash_api_key(api_key, pepper=self._pepper)
+        ctx = self._digest_keys.get(digest)
         if ctx is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid API key",
             )
         return ctx
+
+
+# Restore a *real* union-type object (rather than the PEP 563-stringified
+# "str | None") on ApiKeyAuth.__init__'s `param` annotation. `from __future__
+# import annotations` at the top of this module stringifies every annotation
+# at class-definition time; that is fine for static tools (mypy resolves
+# strings against imports) but means `inspect.signature(...).annotation` at
+# runtime is the literal string, not a type — and the §D-034-gate regression
+# guard (`test_param_default_is_none_by_signature`) needs a real
+# `types.UnionType` to walk `.__args__` and assert `None` is a member,
+# exactly the way `api_surface.py --check` cannot for a class member.
+ApiKeyAuth.__init__.__annotations__["param"] = str | None
 
 
 # ── PassthroughAuth ───────────────────────────────────────────────────────────
@@ -553,7 +694,8 @@ class WebSocketAuth(AbstractServerAuth):
     2. ``Sec-WebSocket-Protocol`` sub-protocol with ``protocol_prefix`` (browser
        workaround — JS WebSocket API cannot set custom headers).
        Example: ``Sec-WebSocket-Protocol: bearer.eyJhbGciOi...``
-    3. Query parameter ``?token=<jwt>`` (last resort — visible in server logs).
+    3. Query parameter ``?token=<jwt>`` (last resort — visible in server logs;
+       **off unless ``token_query_param=`` names it**, see below).
 
     Once extracted, the raw token is injected as a synthetic ``Authorization:
     Bearer`` header and delegated to the ``inner`` auth strategy for verification.
@@ -562,7 +704,14 @@ class WebSocketAuth(AbstractServerAuth):
         inner:               The auth strategy to delegate to after extraction.
                              Typically ``JwtBearerAuth`` or ``ApiKeyAuth``.
         token_query_param:   Query param name for the token fallback.
-                             Default: ``"token"``.
+                             **Default: ``None`` — the fallback is off**
+                             (§D-S2-ws, mirrors ``ApiKeyAuth``'s ``param=``).
+                             Naming a parameter (e.g. ``"token"``) re-enables
+                             it and logs a ``warning`` (not ``debug``) on
+                             every use — the credential is in the URL, and a
+                             browser client should prefer the
+                             ``Sec-WebSocket-Protocol: bearer.<token>`` path
+                             below instead.
         protocol_prefix:     Sub-protocol prefix for the token.
                              Default: ``"bearer."``.
 
@@ -570,7 +719,10 @@ class WebSocketAuth(AbstractServerAuth):
         ✅ Reuses existing JwtBearerAuth/ApiKeyAuth for verification — no duplication
         ✅ All three browser-compatible auth patterns in one place
         ✅ Works for both ws:// (dev) and wss:// (prod)
-        ❌ Query param token is visible in server access logs — warn in docs
+        ❌ The query-param fallback, once opted into, is still visible in
+           server access logs — hence off by default and logged at
+           ``warning`` (not ``debug``, corrected per BACKLOG correction 1)
+           whenever it fires.
 
     Thread safety:  ✅ Delegates to inner strategy; no mutable state.
     Async safety:   ✅ Delegates to ``inner.__call__``.
@@ -580,13 +732,16 @@ class WebSocketAuth(AbstractServerAuth):
         - The sub-protocol token is NOT included in the ``Sec-WebSocket-Protocol``
           response header — use ``websocket.accept(subprotocol=...)`` if the
           client expects sub-protocol echo.
+        - ``token_query_param=None`` (the default) means the query source is
+          never consulted at all — the browser sub-protocol path above is
+          the supported alternative for clients that cannot set headers.
     """
 
     def __init__(
         self,
         inner: AbstractServerAuth,
         *,
-        token_query_param: str = "token",
+        token_query_param: str | None = None,
         protocol_prefix: str = "bearer.",
     ) -> None:
         self._inner = inner
@@ -622,14 +777,19 @@ class WebSocketAuth(AbstractServerAuth):
                         _RequestWithBearerOverride(request, raw_token)  # type: ignore[arg-type]
                     )
 
-        # 3. Query parameter fallback
-        query_token = request.query_params.get(self._token_query_param)
-        if query_token:
-            _logger.debug(
-                "WebSocketAuth: using query param token — visible in logs; "
-                "prefer Authorization header or sub-protocol for production."
-            )
-            return await self._inner(_RequestWithBearerOverride(request, query_token))  # type: ignore[arg-type]
+        # 3. Query parameter fallback — only ever consulted when a param
+        # name was explicitly configured (§D-S2-ws mirrors ApiKeyAuth's
+        # param=None-by-default rule).
+        if self._token_query_param is not None:
+            query_token = request.query_params.get(self._token_query_param)
+            if query_token:
+                _logger.warning(
+                    "WebSocketAuth: using query param token — visible in "
+                    "server access logs; prefer the Authorization header or "
+                    "the Sec-WebSocket-Protocol sub-protocol path for "
+                    "production."
+                )
+                return await self._inner(_RequestWithBearerOverride(request, query_token))  # type: ignore[arg-type]
 
         # All extraction methods failed
         raise HTTPException(

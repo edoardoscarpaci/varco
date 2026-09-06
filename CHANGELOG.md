@@ -55,6 +55,116 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `_internal_error_response()`'s already-sanitized 500 body. No toggle; not called out in Plan 035
   as an explicit change — see the sync report's Drift section.
 
+### BREAKING — required `algorithms=`, `?api_key=`/`?token=` off by default (Plan 034, S1/S2)
+
+- **`JwtParser.parse()` now requires `algorithms=`** as a keyword-only argument — the previous
+  silent `["HS256"]` default is gone, and there is no environment-variable escape hatch (never
+  will be). Omitting it raises `TypeError` at the call site, caught by mypy `strict = true` before
+  a test runs. **Measured blast radius: zero varco production call sites and zero examples** —
+  `JwtBearerAuth` (via `TrustedIssuerRegistry.verify()`, which derives algorithms from the
+  resolved key) and `PassthroughAuth` (via `parse_unverified()`, which has no `algorithms`
+  parameter) are structurally unaffected. **The fix**: `JwtParser.parse(raw, secret,
+  algorithms=["HS256"])` — one line, at every direct call site.
+- **`ApiKeyAuth`'s `?api_key=` query-parameter fallback is now off by default** — `param` defaults
+  to `None` instead of `"api_key"`. **Measured blast radius: zero in-repo consumers.** **The
+  fix**: `ApiKeyAuth(..., param="api_key")` to opt back in; prefer moving clients to the
+  `X-API-Key` header — the query param is otherwise in every access log, proxy log, and `Referer`
+  header.
+- **`WebSocketAuth`'s `?token=` query-parameter fallback is now off by default** — same treatment,
+  `token_query_param` defaults to `None`. **The fix**: `WebSocketAuth(inner, token_query_param="token")`
+  to opt back in; prefer the existing `Sec-WebSocket-Protocol: bearer.<token>` sub-protocol path
+  for browser clients that cannot set headers.
+
+⚠️ **`scripts/api_surface.py --check` does not catch either flip** — it records `inspect.signature()`
+only for top-level `function`-kind exports; `JwtParser.parse` is a `classmethod` and
+`ApiKeyAuth.__init__` is a class constructor, both outside its documented scope. Out-of-tree
+callers must read this entry; the guard against regression is a dedicated `inspect.signature()`
+test in each owning package's own suite (`varco_core/tests/test_jwt.py`,
+`varco_fastapi/tests/milestone_a/test_server_auth.py`), not the snapshot gate.
+
+### Added — token revocation, hashed API keys (Plan 034, S13/S14)
+
+- **`varco_core.revocation`** — `AbstractTokenRevocationStore` (`TOKEN`/`SUBJECT`/`TENANT`/
+  `ISSUER` scopes), `RevocationEntry`/`RevocationVerdict`, `NullTokenRevocationStore` (the scanned
+  DI default — off by default, zero cost), `InMemoryTokenRevocationStore`, and
+  `varco_redis.revocation.RedisTokenRevocationStore` (the production backend, one `MGET` per
+  verification). `TrustedIssuerRegistry(revocation_store=...)` wires it in; the default
+  (`None`) is byte-identical to before this feature existed. `varco_core.jwt.config
+  .JwtVerificationSettings` gained four `VARCO_JWT_REVOCATION_*` fields (failure mode, `jti`
+  requirement, clock-skew, master enable). Two new exceptions,
+  `varco_core.authority.TokenRevokedError`/`RevocationStoreUnavailableError`, map to 401/503
+  respectively in `JwtBearerAuth` without ever leaking the revocation reason to a client.
+- **`varco_core.auth.api_key.hash_api_key()`/`verify_api_key()`** — stdlib-only (`hashlib`,
+  `hmac`) SHA-256/HMAC-SHA-256 API-key hashing with `hmac.compare_digest` comparison.
+  `ApiKeyAuth` gained `hashed_keys=`/`pepper=` — `keys=` (plaintext) is now hashed immediately at
+  construction, so no raw key survives past `__init__`; all 21 existing in-repo
+  `ApiKeyAuth(keys=...)` call sites keep working unchanged.
+- **`inspect_auth_posture()`/`inspect_revocation_posture()`** (Plan 034 / Phase 4, §D-034-seam) —
+  pure, read-only introspection functions (`varco_fastapi.auth.posture` /
+  `varco_core.revocation.posture`) reporting facts about an auth tree's and a registry's
+  revocation wiring. Definitions only — Plan 036 owns the judgement and any startup wiring built
+  on top of them.
+
+### Security — the two-tenant-setter finding (Plan 033 / S6, Correction 1)
+
+- **Finding, not fixed by default in 3.2**: `RequestContextMiddleware` (on by default,
+  `enable_tenant_context=True`) has always entered `tenant_context()` from a JWT's `tenant_id`
+  claim with **no catalog-status check and no `pool.ensure()`** — the exact check
+  `TenantResolutionMiddleware` performs. A token issued for a suspended or deleted tenant
+  therefore still activates that tenant's context on any app using `create_varco_app` with a
+  container. This is not new in 3.2 and the default is not changed by 3.2 (flipping it would be a
+  silent fleet-wide 403 on upgrade, forbidden by the locked blast-radius rule). Fix: adopt a
+  `varco_core.tenancy.source.TenantSourceChain` — `TenantResolutionMiddleware` becomes the single
+  tenant decision point and `RequestContextMiddleware` defers to it (see Added, below). The
+  unchained path is removed in 4.0 (see Deprecated). Full detail:
+  `technical_docs/features/tenant-provenance.md`.
+
+### Added — tenant identity provenance, membership binding, act-as (Plan 033, S6/S5/S16)
+
+- **`varco_core.tenancy.source`** — `TenantSource` (ABC: sync, pure, never raises),
+  `TenantTrust` (`LOW`/`MEDIUM`/`HIGH`/`HIGHEST`), `TenantRequest`/`TenantClaim`,
+  `TenantSourceChain` (+ `CrossCheckMode.LENIENT`/`STRICT`), and the `TenantProvenance` verdict
+  object. `varco_core.tenancy.sources` ships three sources —
+  `JwtClaimTenantSource`/`SubdomainTenantSource`/`LegacyTenantSource` — plus, for S16 below,
+  `ActAsTenantSource`. `varco_core.tenancy.provenance` adds a dedicated `AmbientVar`
+  (`current_tenant_provenance()`/`provenance_context()`) — `current_tenant()` remains the single
+  source of truth for *who* the tenant is; this is a separate answer to *how it was decided*.
+- **`varco_fastapi.middleware.tenant_resolution.TenantResolutionMiddleware`** gained `chain=`,
+  `server_auth=`, `membership=`, `reject_status=` keywords — with `chain=` given, it becomes the
+  one tenant decision point: verify (`server_auth`) → resolve (`chain`) → check membership → the
+  existing catalog-status + `pool.ensure()` gate, unchanged. `chain=None` (the default) is
+  byte-identical to pre-3.2 behaviour, now routed through an internally-built
+  `LegacyTenantSource` (one `DeprecationWarning` at construction, never per request).
+  `varco_fastapi.middleware.request_context.RequestContextMiddleware` defers to an upstream
+  chain's verdict — it no longer re-derives the tenant from a token claim once
+  `current_tenant_provenance()` is set (Correction 2's fix; no new constructor keyword).
+- **`varco_core.tenancy.membership`** — `AbstractTenantMembership`, `NullTenantMembership` (the
+  scanned DI default — always allows), `ClaimTenantMembership` (opt-in via
+  `varco_core.tenancy.di.enable_tenant_membership()`), `MissingClaimPolicy`
+  (`ALLOW`, the 3.2 default; `DENY`, the 4.0 default), `MembershipDecision`,
+  `TenantMembershipError`. `CanonicalClaim.TENANTS` (`varco_core.jwt.transform`) reuses the
+  existing per-issuer claim-mapping mechanism to get a foreign `tenants`/`orgs`/`organizations`
+  claim into `AuthContext.metadata["tenants"]`.
+- **The two Plan-036 seams** — `assert_tenant_matches()`/`CrossTenantAccessError`
+  (`varco_core.tenancy.provenance`) for S4's cross-tenant admin guard, and
+  `inspect_tenant_provenance()`/`TenantProvenancePosture` (`varco_core.tenancy.posture`) for S9's
+  preflight. Definitions only — this plan builds neither the guard nor the preflight.
+- **`varco_core.auth.delegation`** (S16 — act-as / RFC 8693) — `ActorContext`,
+  `DelegationPolicy`/`AllowlistDelegationPolicy` (deny-by-default), `DelegationRecord`. varco
+  consumes an already-verified `act` claim; it never issues a token-exchange token. Every
+  delegation decision — allow *and* deny — is logged at INFO with both principal and actor and
+  attached to `TenantProvenance.delegation` (motivated by CVE-2025-55241's unlogged-impersonation
+  finding).
+
+### Deprecated
+
+- **`TenantResolutionMiddleware(chain=None)`** (Plan 033 / S6, §D-S6-blast) — the implicit
+  `LegacyTenantSource` fallback (today's `X-Tenant-Id`-header-only behaviour) is scheduled for
+  removal in 4.0.0, at which point omitting `chain=` becomes a `TypeError`. Escape hatch: name the
+  source explicitly — `TenantSourceChain(sources=(LegacyTenantSource(),))` — which warns not at
+  all, or migrate onto a signed-claim source per `technical_docs/features/tenant-provenance.md`'s
+  upgrade note.
+
 ## [3.1.0] — 2026-09-05
 
 ### BREAKING (optional extra) — MCP Python SDK bumped to v2 (Plan 029 / N1)

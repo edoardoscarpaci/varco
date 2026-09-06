@@ -6,11 +6,16 @@ Server-side and client-side authentication for FastAPI.
 Server-side (incoming requests):
     ``AbstractServerAuth``    — base ABC for FastAPI callable dependencies
     ``JwtBearerAuth``         — verify Bearer JWT via TrustedIssuerRegistry
-    ``ApiKeyAuth``            — verify X-API-Key header or ?api_key= param
+    ``ApiKeyAuth``            — verify X-API-Key header (query param opt-in via param=)
     ``PassthroughAuth``       — decode JWT claims WITHOUT verifying signature
     ``AnonymousAuth``         — always returns anonymous AuthContext
     ``CompositeServerAuth``   — try each strategy in order; first success wins
     ``WebSocketAuth``         — auth for WebSocket upgrade (header/protocol/query)
+
+Posture introspection (Plan 034 / Phase 4, §D-034-seam — facts only, Plan
+036 owns the judgement):
+    ``AuthPostureReport``     — frozen report walked from an auth tree
+    ``inspect_auth_posture``  — pure function producing that report
 
 Route-level authorization guards (service-free routers):
     ``RouteGuard``            — immutable declarative guard for @route handlers
@@ -50,6 +55,7 @@ from varco_fastapi.auth.guard import (
     require_scopes,
     require_token_profile,
 )
+from varco_fastapi.auth.posture import AuthPostureReport, inspect_auth_posture
 from varco_fastapi.auth.server_auth import (
     AbstractServerAuth,
     AnonymousAuth,
@@ -70,6 +76,9 @@ __all__ = [
     "AnonymousAuth",
     "CompositeServerAuth",
     "WebSocketAuth",
+    # Posture introspection (Plan 034 / Phase 4, §D-034-seam)
+    "AuthPostureReport",
+    "inspect_auth_posture",
     # Route-level authorization guards
     "RouteGuard",
     "require_scopes",

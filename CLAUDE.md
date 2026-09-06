@@ -338,7 +338,7 @@ System". Usage: README's "Consumer — EventConsumer + @listen".
 
 **`@listen` is declarative / `register_to` is imperative.** The decorator stores metadata on the function object at class-definition time. No subscription is created until `consumer.register_to(bus)` is called (typically in a `@PostConstruct` method). This separation makes the consumer bus-agnostic and testable.
 
-**`ChannelManager` implementations must satisfy `declare_channel(c)` ⟹ `channel_exists(c)` is `True` until `delete_channel(c)`** — declared-or-present, not "carries data". Enforced by `testkit/varco_conformance/channel_manager.py`, one of **five** conformance modules (Plan 019 / RT2-C — see §Test Conventions' conformance paragraph).
+**`ChannelManager` implementations must satisfy `declare_channel(c)` ⟹ `channel_exists(c)` is `True` until `delete_channel(c)`** — declared-or-present, not "carries data". Enforced by `testkit/varco_conformance/channel_manager.py`, one of **eight** conformance modules (Plan 019 / RT2-C — see §Test Conventions' conformance paragraph).
 
 ### Service layer (varco_core.service)
 
@@ -373,7 +373,7 @@ function's own docstring for the "why".
 | `bootstrap(container=None, ...)` | sync, returns container or `None` | one per package; wraps `container.scan(pkg)`; returns `None` if providify is absent | `varco_kafka.di.bootstrap` |
 | `async_bootstrap(...)` | async, returns container | `bootstrap()` + an `await container.ainstall(SomeConfiguration)` step, only where an async connection must open before the singleton is usable | `varco_redis.di.async_bootstrap(setup_cache=True)`, `varco_memcached.di.async_bootstrap` |
 | `bind_*(container, ...)` | sync, mutates container | registers N *typed, per-item* generic bindings unknowable before app startup | `varco_sa.di.bind_repositories`, `varco_fastapi.client.bind_clients_from`, `varco_ws.di.bind_websocket_adapter` |
-| `enable_*(container)` | sync, mutates container | flips on an opt-in DI **binding** that would shadow an app default if auto-registered | `varco_casbin.di.enable_policy_authorizer` |
+| `enable_*(container)` | sync, mutates container | flips on an opt-in DI **binding** that would shadow an app default if auto-registered | `varco_casbin.di.enable_policy_authorizer`, `varco_core.tenancy.di.enable_tenant_membership` |
 | `mount_*(app, ...)` | sync, mutates the ASGI app | flips on an opt-in privileged **HTTP surface**, always behind an explicit acknowledgement kwarg | `varco_fastapi.tenancy.mount_tenant_admin`, `varco_fastapi.admin.mount_reliability_admin` |
 | `install_*(...)` | sync, **container-free**; **two shapes** | ⚠️ one verb, two shapes (Plan 022 / AB-3). **(a)** a process-global side effect (OTel instrument registration), taking no argument at all; **(b)** an ASGI-app mutation, taking and modifying an `app`. Neither takes a container — both are unrelated to `container.install(SomeConfiguration)` | (a) `install_cache_metrics`, `install_reliability_metrics` · (b) `install_middleware_stack`, `install_cors` |
 
@@ -860,6 +860,38 @@ detail: `technical_docs/features/jwt-claim-transformer.md` and
 enforced by default (`VARCO_JWT_ENFORCE_ISS=true`). Full `VARCO_JWT_*` env-var reference:
 README's "Verification hardening (VARCO_JWT_*)" subsection.
 
+**A third BREAKING security default (Plan 034 / S1)**: `JwtParser.parse()` requires
+`algorithms=` — there is no silent `["HS256"]` default any more, and never will be (no env-var
+escape hatch). `JwtBearerAuth`/`PassthroughAuth`/`TrustedIssuerRegistry.verify()` are structurally
+unaffected (they never went through the default). Fix: `algorithms=["HS256"]` (or whatever you
+sign with) at the call site.
+
+#### Credential and token lifecycle (Plan 034 — required `algorithms=`, `?api_key=` off by
+default, token revocation, hashed API keys)
+
+`varco_core.revocation` (`AbstractTokenRevocationStore`, `RevocationScope`/`RevocationEntry`) lets
+an app invalidate a JWT before its `exp` — per token/subject/tenant/issuer —
+through one ABC with three in-tree implementations (`NullTokenRevocationStore` the scanned DI
+default, `InMemoryTokenRevocationStore`, `varco_redis.revocation.RedisTokenRevocationStore` the
+production backend). `varco_core.auth.api_key.hash_api_key()`/`verify_api_key()` are the
+stdlib-only (`hashlib`/`hmac`) primitives behind `ApiKeyAuth`'s `hashed_keys=` path. Full design,
+the revocation scope table, and a Pitfalls table:
+`technical_docs/features/credential-and-token-lifecycle.md`.
+
+**Rule**: revoke a credential before its natural expiry → `varco_core.revocation`, never a second
+verification path. Store an API key → `varco_core.auth.api_key.hash_api_key()`, never a raw dict.
+
+**Rule**: binding a revocation store in DI (`enable_token_revocation`/
+`enable_redis_token_revocation`) does **not** by itself turn checking on — the store must also be
+passed to `TrustedIssuerRegistry(revocation_store=...)`. This two-step is the single most likely
+way to think revocation is on when it is not (`inspect_revocation_posture()`'s
+`registry_wired` field exists specifically to surface it).
+
+**Rule**: `ApiKeyAuth`'s `?api_key=` query fallback and `WebSocketAuth`'s `?token=` fallback are
+both **off by default** — a credential in a URL is already in the access/proxy/`Referer` log by
+the time anything could warn about it. Name `param="api_key"` / `token_query_param="token"`
+explicitly to re-enable either, one line, greppable.
+
 ### Authorization — policy engine (varco_core.auth.policy + varco_casbin)
 
 Two layers of authorization coexist: static, token-derived (`varco_core.auth.base`) and
@@ -945,6 +977,21 @@ registers nothing.
 **Rule**: `mount_tenant_admin(app, control_service, acknowledge_bundled_admin=True,
 server_auth=..., admin_role="tenant-admin")` is the **only** way to expose the admin
 surface — there is deliberately **no** `VARCO_TENANCY_MOUNT_ADMIN` env var, ever.
+
+### Tenant identity provenance & delegation (varco_core.tenancy.source, Plan 033 / S6, S5, S16)
+
+**Rule**: tenant provenance — *where a request's tenant identity is allowed to come from* — is
+`varco_core.tenancy.source` (`TenantSource`/`TenantSourceChain`/`TenantProvenance`).
+`current_tenant()` stays the single source of truth for *who* the tenant is; this plan changes
+only what feeds it. `TenantProvenance` is its own `AmbientVar`
+(`varco_core.tenancy.provenance`) and must never move into `RequestContext` — same rule as
+`current_tenant()` itself never living there.
+
+**Rule**: `TenantResolutionMiddleware(chain=None)` is byte-identical to pre-3.2 header-only
+behaviour (one `DeprecationWarning` at construction) — nothing flips by default. Full design
+(trust ranking, cross-check modes, the subdomain algorithm, membership binding, act-as
+delegation, the 4.0 flip list, a Pitfalls table): `technical_docs/features/tenant-provenance.md`.
+Usage: README's "Tenant identity provenance" section.
 
 ---
 
@@ -1109,8 +1156,9 @@ occasional red run is a BACKLOG/operator-triage signal, not a merge blocker.
 
 **Conformance suite opt-in** (`testkit/varco_conformance`, Plan 012 / RT6, plus
 `channel_manager.py` added by Plan 019 / RT2-C) — a shared, never-packaged suite of behavioral
-contract tests, **five** modules, one per `varco_core` ABC (`event_bus.py`, `cache.py`,
-`job_store.py`, `dlq.py`, `channel_manager.py`). Reached via one `pythonpath =
+contract tests, **eight** modules, one per `varco_core` ABC (`event_bus.py`, `cache.py`,
+`job_store.py`, `dlq.py`, `channel_manager.py`, `idempotency_store.py`, `webhook_subscription.py`,
+`token_revocation.py` — the last added by Plan 034 / S13b). Reached via one `pythonpath =
 ["../testkit"]` line in a package's `[tool.pytest.ini_options]`; a backend opts in with a thin
 subclass overriding the abstract fixture:
 
@@ -1290,6 +1338,14 @@ Am I adding a new capability?
 ├─ Named internal/system token recognition (replacing SYSTEM_ISSUER)?
 │  └─ → varco_core.jwt.profile (TokenProfile / TokenProfileRegistry) + varco_fastapi's require_token_profile
 │
+├─ Revoke a credential before its natural expiry (logout, compromise, kill switch)?
+│  └─ → varco_core.revocation (AbstractTokenRevocationStore) — never a second
+│         verification path; wire the store into TrustedIssuerRegistry(revocation_store=...)
+│
+├─ Store an API key (in-memory dict, config, DB column)?
+│  └─ → varco_core.auth.api_key.hash_api_key() / ApiKeyAuth(hashed_keys=...) —
+│         never a raw dict of plaintext keys
+│
 ├─ Service layer feature (mixin, hook, outbox)?
 │  └─ → varco_core.service (ABC + mixin) + varco_sa/beanie (repository impl)
 │
@@ -1317,6 +1373,12 @@ Am I adding a new capability?
 │                            (never a create_varco_app kwarg — RD-9)
 │       ↳ New global/shared entity? → Meta.tenant_scope = TenantScope.GLOBAL,
 │                            never a new mixin (validate_service_scope() guards it)
+│     ↳ Where may a tenant come from (header/subdomain/JWT claim, and what
+│       if two disagree)? → varco_core.tenancy.source (TenantSourceChain)
+│     ↳ Is this subject allowed that tenant? → varco_core.tenancy.membership
+│     ↳ May this service act for that tenant (RFC 8693 act claim)?
+│                            → varco_core.auth.delegation
+│     ↳ Is my deployment still header-only? → inspect_tenant_provenance()
 │
 ├─ Cross-repo service integration (calling a peer whose Python package is
 │  not importable from this repo)?

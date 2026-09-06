@@ -320,6 +320,18 @@ class ErrorMiddleware(BaseHTTPMiddleware):
         retry_after = getattr(exc, "retry_after_seconds", None)
         if retry_after is not None:
             response.headers["Retry-After"] = str(retry_after)
+
+        # Plan 035 drift fix (§D-S10-headers): RateLimitExceededError's
+        # optional draft-11 RateLimit-Policy value, read the same
+        # getattr-duck-typed way as retry_after_seconds above — see
+        # varco_core.exception.rate_limit's DESIGN block for why this
+        # narrow, precedented hook was chosen over a generic headers dict
+        # on ServiceException, and why wrapping RateLimitMiddleware's own
+        # `send` cannot work here (it is a synthetic, in-memory stream
+        # under BaseHTTPMiddleware, discarded on this exception path).
+        rate_limit_policy = getattr(exc, "rate_limit_policy", None)
+        if rate_limit_policy is not None:
+            response.headers["RateLimit-Policy"] = str(rate_limit_policy)
         return response
 
     def _internal_error_response(self, exc: Exception) -> JSONResponse:

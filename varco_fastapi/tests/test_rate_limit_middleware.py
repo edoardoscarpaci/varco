@@ -354,6 +354,89 @@ async def test_no_rate_limit_or_x_rate_limit_headers_ever_emitted() -> None:
         assert not name.startswith("X-RateLimit-")
 
 
+# ── Envelope rendering (drift fix — the 429 must render through ────────────
+# ErrorMiddleware, not a middleware-local JSONResponse, so it gets
+# error_message_for()'s i18n/Content-Language handling for free) ───────────
+
+
+async def test_429_renders_through_error_envelope_when_error_middleware_present() -> None:
+    """
+    The 429's code/message must come from the registered ``ErrorCode`` for
+    ``RateLimitExceededError`` (``VARCO_RATE_LIMIT_001``) — i.e. from
+    ``ErrorMiddleware``'s ``error_message_for()`` path, not from
+    ``RateLimitMiddleware``'s own ad-hoc ``"RATE_LIMIT_EXCEEDED"`` string —
+    while ``Retry-After``/``correlation_id`` still survive.
+    """
+    rule = RateLimitRule(scope=RateLimitScope.GLOBAL, limiter=_limiter(rate=1), name="g")
+    app = FastAPI()
+    app.add_middleware(RateLimitMiddleware, rules=(rule,), stage=RateLimitStage.PRE_AUTH)
+    app.add_middleware(ErrorMiddleware)
+
+    @app.get("/ok")
+    async def ok():
+        return {"ok": True}
+
+    await _get(app)
+    response = await _get(app)
+    assert response.status_code == 429
+    body = response.json()
+    assert body["code"] == "VARCO_RATE_LIMIT_001"
+    assert "correlation_id" in body
+    assert "Retry-After" in response.headers
+    assert int(response.headers["Retry-After"]) >= 1
+
+
+async def test_429_rate_limit_policy_header_survives_envelope_rendering() -> None:
+    rule = RateLimitRule(scope=RateLimitScope.GLOBAL, limiter=_limiter(rate=1), name="g")
+    app = FastAPI()
+    app.add_middleware(
+        RateLimitMiddleware,
+        rules=(rule,),
+        stage=RateLimitStage.PRE_AUTH,
+        settings=RateLimitSettings(emit_draft_headers=True),
+    )
+    app.add_middleware(ErrorMiddleware)
+
+    @app.get("/ok")
+    async def ok():
+        return {"ok": True}
+
+    await _get(app)
+    response = await _get(app)
+    assert response.status_code == 429
+    assert "RateLimit-Policy" in response.headers
+
+
+async def test_429_self_renders_with_retry_after_when_error_middleware_absent() -> None:
+    """
+    ``has_error_middleware=False`` (the ``enable_error_middleware=False``
+    edge case) must keep the prior self-render behaviour — no
+    ``ErrorMiddleware`` in the stack to catch a raised
+    ``RateLimitExceededError``, so the middleware must self-render rather
+    than let an uncaught raise become an unhandled 500.
+    """
+    rule = RateLimitRule(scope=RateLimitScope.GLOBAL, limiter=_limiter(rate=1), name="g")
+    app = FastAPI()
+    app.add_middleware(
+        RateLimitMiddleware,
+        rules=(rule,),
+        stage=RateLimitStage.PRE_AUTH,
+        has_error_middleware=False,
+    )
+
+    @app.get("/ok")
+    async def ok():
+        return {"ok": True}
+
+    await _get(app)
+    response = await _get(app)
+    assert response.status_code == 429
+    assert "Retry-After" in response.headers
+    assert int(response.headers["Retry-After"]) >= 1
+    body = response.json()
+    assert "correlation_id" in body
+
+
 # ── Failure handling ─────────────────────────────────────────────────────────
 
 

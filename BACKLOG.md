@@ -67,7 +67,7 @@ Ordered by severity, then complexity ascending.
 | ID | Feature | Severity | Complexity | Rationale | Evidence |
 |----|---------|----------|------------|-----------|----------|
 | `S1` | ✅ **planned → [`plans/034-credential-and-token-lifecycle.md`](plans/034-credential-and-token-lifecycle.md)** — **Require `algorithms=` on `JwtParser.parse()`** — no silent default | 🔴 must | S | `parser.py:137-139` defaults to `["HS256"]` when the caller passes nothing, with a comment reading "always pass algorithms explicitly in production". An HMAC default reachable by an unaware caller is the classic algorithm-confusion setup. Making the argument required is a one-line caller fix, so it flips under the blast-radius rule | `varco_core/varco_core/jwt/parser.py:137` |
-| `S2` | ✅ **planned → [`plans/034-credential-and-token-lifecycle.md`](plans/034-credential-and-token-lifecycle.md)** — **`?api_key=` query fallback off by default** | 🔴 must | S | `ApiKeyAuth` accepts the key as a query parameter with no warning and no toggle (`server_auth.py:358`), so keys land in access logs, proxy logs, and `Referer` headers. `WebSocketAuth`'s `?token=` fallback (`:626`) at least warns — align both on off-by-default with explicit opt-in | brief §5 (input handling); `varco_fastapi/varco_fastapi/auth/server_auth.py:358` |
+| `S2` | ✅ **planned → [`plans/034-credential-and-token-lifecycle.md`](plans/034-credential-and-token-lifecycle.md)** — **`?api_key=` query fallback off by default** | 🔴 must | S | `ApiKeyAuth` accepts the key as a query parameter with no warning and no toggle (`server_auth.py:358`), so keys land in access logs, proxy logs, and `Referer` headers. ⚠️ **Correction (Plan 034 verified against source): `WebSocketAuth`'s `?token=` fallback (`:626-632`) does NOT "at least warn"** — it logs at `_logger.debug`, invisible under any default logging config. Both are now off by default with explicit opt-in (`param=`/`token_query_param=`), and `WebSocketAuth`'s fallback now logs at `warning` when used | brief §5 (input handling); `varco_fastapi/varco_fastapi/auth/server_auth.py:358` |
 | `S3` | ✅ **planned → [`plans/035-http-edge-hardening.md`](plans/035-http-edge-hardening.md)** — **Close the error-response information leak** | 🔴 must | S | `error.py:283` — when `error_message_for()` cannot map an exception, the fallback returns `str(exc)` to the client. For an unmapped `DBAPIError` or `OSError` that is a schema fragment or a filesystem path. Return an opaque message plus the existing `correlation_id`; log the detail server-side | `varco_fastapi/varco_fastapi/middleware/error.py:283` |
 | `S4` | ✅ **planned → [`plans/036-authorization-surface-and-posture.md`](plans/036-authorization-surface-and-posture.md)** — **Cross-tenant write guard on the three admin surfaces** | 🔴 must | S | `webhook/router.py:134` trusts `X-Tenant-Id` for reads *independently of the middleware*, and `create_subscription` takes `tenant_id` from the **request body**, unchecked — a direct cross-tenant write. Bind admin routes to the resolved tenant unless the caller holds an explicit cross-tenant role. Applies to all three `mount_*` surfaces | brief §2 (BOLA); `varco_fastapi/varco_fastapi/webhook/router.py:134-160` |
 | `S5` | ✅ **planned → [`plans/033-tenant-identity-provenance.md`](plans/033-tenant-identity-provenance.md)** — **Tenant↔subject membership binding** — `AbstractTenantMembership`, signed-claim default | 🔴 must | M | Stops a *legitimately authenticated* user of tenant A acting as tenant B. Default implementation checks the requested tenant against a `tenants`/`orgs` list claim — no external lookup, no per-request query, trust anchored in the signature. Depends on `S6` | brief §2 (explicit binding required; no ambient selection without re-verification) |
@@ -108,6 +108,8 @@ Ordered by severity, then complexity ascending.
 | **Token-bucket rate limiter** (Plan 035 / S10, §D-S10-algorithm) | varco already ships two sliding-window implementations (in-memory + Redis sorted-set); a third algorithm is its own row | Burst intolerance is reported as a real problem by a consumer |
 | **JSON nesting/complexity limits** (Plan 035 / S8) | Brief 008 §2: no framework middleware can enforce nesting depth without the schema; it belongs in Pydantic validators, not this row (S8 is renamed "Request body size limits" accordingly) | A standardized middleware-level approach appears, or varco grows a schema-aware deserialization layer |
 | **Per-route body ceilings and per-route CSP** (Plan 035 / S7, S8) | `exempt_paths` covers the real cases without a decorator API; no authoritative per-route-CSP-in-FastAPI pattern exists (brief 008 Evidence Gap 1) | Two consumers need genuinely different ceilings/CSP on two routes of one app |
+| **`SATokenRevocationStore` / `BeanieTokenRevocationStore`** (Plan 034 / S13, §D-S13-backends) | Brief 009 §5's TTL model is native to Redis and would need a hand-rolled sweep job in SQL/Mongo — both are additive out-of-tree implementations of the shipped `AbstractTokenRevocationStore` ABC | A consumer needs a revocation denylist that survives a cache flush, or `delete_expired()` needs to be driven by the existing `AbstractJobRunner` |
+| **`RevocationFailureMode.FAIL_OPEN_WITHIN_GRACE`** (Plan 034 / S13, §D-S13-fail, brief 009 §4 row 3) | Brief 009's own Evidence Gap 2: the cache-miss-rate/Redis-latency data that would size the grace window does not exist — a tunable whose only honest default is a guess is worse than shipping two modes that mean exactly what they say | A performance brief measures cache-miss rates and Redis latency at realistic QPS, per that evidence gap's own suggestion |
 
 ## Open questions for `/plan`
 
@@ -134,6 +136,19 @@ Ordered by severity, then complexity ascending.
    Deriving the tenant from `tenant.example.com` requires knowing where the registrable domain
    ends; getting this wrong on a multi-level TLD is a tenant-confusion bug. Explicit base-domain
    config avoids a `publicsuffix2` dependency — confirm that is acceptable.
+**4.0 flip list (Plan 033 / S6, S5)** — recorded here, not relitigated, per the same
+answered-not-deleted style as open question 1's `§D-S9-flip` pointer:
+
+| # | 4.0 change | 3.2 signal |
+|---|---|---|
+| 1 | `TenantResolutionMiddleware(chain=None)` → `TypeError`; the implicit `LegacyTenantSource` fallback is removed. Conditional on `S16` having shipped first — see `S16`'s row above | `DeprecationWarning` at construction + posture finding `tenant.legacy_source_implicit` |
+| 2 | `ClaimTenantMembership.on_missing_claim` default `ALLOW` → `DENY` | one `WARNING` per process + `reason="claim_absent"` on every decision |
+| 3 | `RequestContextMiddleware.enable_tenant_context` defaults `True` → `False`; the unchained claim-tenant-setter path is removed | posture finding `tenant.unchained_claim_tenant_setter` |
+| 4 | `CrossCheckMode.STRICT` becomes the default | posture finding `tenant.cross_check_lenient` |
+
+Full reasoning: `plans/033-tenant-identity-provenance.md` §D-S6-blast;
+`technical_docs/features/tenant-provenance.md`'s own flip-list table.
+
 4. ✅ **ANSWERED** in [`plans/037`](plans/037-data-layer-tenant-enforcement.md) §D-S12-oq4.
    **Does `S12` (RLS-by-default) change existing generated DDL?** **No** — RLS is structurally
    additive, no existing DDL is rewritten. But the migration story is **still mandatory**, because

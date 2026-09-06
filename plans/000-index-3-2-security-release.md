@@ -83,6 +83,45 @@ Briefs are in `design/research/`: **006** multi-tenant identity and hardening (b
 defines and exports its check or seam; **none of them builds the preflight**. That is 036's
 sole ownership, and it is why 036 is planned and built last.
 
+**034's exported seam, verbatim (§D-034-seam) — so 036's planner can consume it without opening
+`plans/034-credential-and-token-lifecycle.md`:**
+
+```python
+# varco_fastapi.auth.posture
+@dataclass(frozen=True)
+class AuthPostureReport:
+    components: tuple[str, ...]
+    api_key_query_fallback_enabled: bool
+    api_key_query_param_name: str | None
+    api_key_plaintext_source: bool
+    api_key_pepper_configured: bool
+    websocket_token_query_fallback_enabled: bool
+    passthrough_auth_bound: bool
+
+def inspect_auth_posture(auth: AbstractServerAuth) -> AuthPostureReport: ...
+
+# varco_core.revocation.posture
+@dataclass(frozen=True)
+class RevocationPostureReport:
+    store_bound: bool
+    store_kind: str
+    registry_wired: bool
+    failure_mode: str
+    require_jti: bool
+    token_scope_usable: bool
+
+def inspect_revocation_posture(
+    registry: TrustedIssuerRegistry | None = None,
+    store: AbstractTokenRevocationStore | None = None,
+    settings: JwtVerificationSettings | None = None,
+) -> RevocationPostureReport: ...
+```
+
+Both are pure, read-only, never raise, never log. `inspect_auth_posture()` recurses into
+`CompositeServerAuth.strategies` and `WebSocketAuth.inner` (identity-set-guarded against a
+cyclic composite). `passthrough_auth_bound` reports presence, not publicness — 036 owns the
+"is this app public" judgement.
+
 ---
 
 ## Build order
@@ -109,8 +148,15 @@ sole ownership, and it is why 036 is planned and built last.
       (S15 in 037, S16 in 033).
 - [ ] `make lint`, `make type-check`, `make test` green; `make integration-test-clean` green
       (RLS and rate-limit rows have real-broker/real-Postgres tests).
-- [ ] `scripts/api_surface.py` regenerated and committed — **034 narrows a function signature
-      and is the hard-gate case**; 033/035/037 add public names.
+- [ ] `scripts/api_surface.py` regenerated and committed. ⚠️ **Corrected (034 §D-034-gate,
+      verified against `scripts/api_surface.py:6-8` and the committed snapshot): the gate is
+      structurally blind to both of 034's flips** — `JwtParser.parse` is a `classmethod` and
+      `ApiKeyAuth.__init__` is a class constructor, and `--check` only records
+      `inspect.signature()` for top-level `function`-kind exports. `--check` passes on 034's two
+      flips silently; the real regression guard is a dedicated `inspect.signature()` test in each
+      owning package's own suite (`varco_core/tests/test_jwt.py`,
+      `varco_fastapi/tests/milestone_a/test_server_auth.py`). 033/034/035/037 all add public
+      names, which `--check` **does** catch as additive notes.
 - [ ] Every new subsystem has a `technical_docs/features/*.md` with a **Pitfalls** table, a
       README usage section with an env-var table, a one-line CLAUDE.md pointer, and a CHANGELOG
       entry — in the same commit, never a follow-up.

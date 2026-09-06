@@ -190,6 +190,12 @@ def test_module_defines_the_pep_562_hooks() -> None:
 
 
 def test_all_list_is_unchanged_in_length() -> None:
-    # Non-goal #2: "Not one name is added or removed by P1."
-    assert len(varco_core.__all__) == 235
+    # Non-goal #2 (as of Plan 028 / P1): "Not one name is added or removed
+    # by P1." That plan is long done; the pinned count below simply tracks
+    # the current, deliberate size of the public surface — Plan 033 / S6+S5
+    # added 25 names (TenantTrust ... inspect_tenant_provenance), taking it
+    # from 235 to 260; drift-repair Decision 4 added one more
+    # (TenantMembershipSettings), taking it to 261. Bump this number (with
+    # a reason) whenever a plan legitimately adds/removes a top-level export.
+    assert len(varco_core.__all__) == 261
     assert len(set(varco_core.__all__)) == len(varco_core.__all__)

@@ -42,6 +42,7 @@ Async safety:   ✅ Safe — asyncio.Lock serialises concurrent verify() calls.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from dataclasses import dataclass, field
@@ -68,12 +69,18 @@ if TYPE_CHECKING:
 from varco_core.authority.exceptions import (
     IssuerNotFoundError,
     KeyLoadError,
+    RevocationStoreUnavailableError,
+    TokenRevokedError,
     UnknownKidError,
 )
 from varco_core.authority.sources.protocol import IssuerSource
 from varco_core.jwk.model import JsonWebKey, JsonWebKeySet
-from varco_core.jwt.model import JsonWebToken
+from varco_core.jwt.model import JsonWebToken, _from_utc_timestamp
 from varco_core.jwt.parser import JwtParser
+from varco_core.revocation.base import AbstractTokenRevocationStore
+from varco_core.revocation.model import RevocationFailureMode, RevocationScope
+
+_registry_logger = logging.getLogger(__name__)
 
 # ── TrustedIssuerEntry ────────────────────────────────────────────────────────
 
@@ -148,6 +155,7 @@ class TrustedIssuerRegistry:
         "_min_refresh_interval",
         "_ttl_seconds",
         "_loaded_at",
+        "_revocation_store",
     )
 
     # ── DI injection handles ───────────────────────────────────────────────────
@@ -176,6 +184,7 @@ class TrustedIssuerRegistry:
         *,
         min_refresh_interval: float | None = None,
         ttl_seconds: float | None = None,
+        revocation_store: AbstractTokenRevocationStore | None = None,
     ) -> None:
         """
         Args:
@@ -190,6 +199,15 @@ class TrustedIssuerRegistry:
                 ``VARCO_JWKS_TTL_SECONDS`` (default ``0.0`` — disabled,
                 identical to pre-Plan-002 behaviour: only kid-miss triggers
                 a refresh).
+            revocation_store: Optional ``AbstractTokenRevocationStore``
+                (Plan 034 / S13, §D-S13-hook). ``None`` (the default) means
+                **no check, no await, no cost** — zero-config ``verify()``
+                behaviour is byte-identical to before this parameter
+                existed. Binding a store in DI (``enable_token_revocation``/
+                ``enable_redis_token_revocation``) does NOT by itself wire
+                it here — that binding must be passed to this constructor
+                explicitly (§D-S13-di's two-step; ``varco_core`` never
+                reaches for ``DIContainer.current()``).
         """
         # label → TrustedIssuerEntry
         self._entries: dict[str, TrustedIssuerEntry] = {}
@@ -215,6 +233,9 @@ class TrustedIssuerRegistry:
         # 0.0 sentinel = "never loaded" — _should_proactively_reload() never
         # fires from the initial (unloaded) state.
         self._loaded_at: float = 0.0
+
+        # Plan 034 / S13 — None means "no check, no await, no cost".
+        self._revocation_store = revocation_store
 
     def _get_lock(self) -> asyncio.Lock:
         """
@@ -538,6 +559,9 @@ class TrustedIssuerRegistry:
         audience: str | list[str] | None = None,
         leeway: float | None = None,
         enforce_issuer: bool | None = None,
+        check_revocation: bool | None = None,
+        revocation_require_jti: bool | None = None,
+        revocation_failure_mode: RevocationFailureMode | str | None = None,
     ) -> JsonWebToken:
         """
         Verify a JWT string against all registered issuers' public keys.
@@ -566,6 +590,23 @@ class TrustedIssuerRegistry:
                             (env ``VARCO_JWT_ENFORCE_ISS``, default ``True``).
                             Pass ``False`` (or set the env var to ``false``)
                             to restore the pre-Phase-2 behaviour.
+            check_revocation: Whether to consult ``self._revocation_store``
+                            (Plan 034 / S13, §D-S13-hook). ``None`` (default)
+                            reads ``JwtVerificationSettings.revocation_enabled``
+                            (default ``True``). Has no effect at all when no
+                            store is bound — pass ``False`` as an explicit,
+                            per-call bypass (e.g. for an internal health
+                            check route).
+            revocation_require_jti: Per-call override of
+                            ``JwtVerificationSettings.revocation_require_jti``
+                            (§D-S13-jti). ``None`` (default) reads the
+                            setting (default ``False`` — Auth0/Keycloak/
+                            Cognito do not emit ``jti`` by default, brief
+                            009 §2).
+            revocation_failure_mode: Per-call override of
+                            ``JwtVerificationSettings.revocation_failure_mode``
+                            (§D-S13-fail). ``None`` (default) reads the
+                            setting (default ``FAIL_CLOSED``).
 
         Returns:
             ``JsonWebToken`` with all claims populated.
@@ -576,6 +617,18 @@ class TrustedIssuerRegistry:
             jwt.ExpiredSignatureError:  Token has passed its ``exp`` time.
             jwt.InvalidSignatureError:  Signature verification failed.
             jwt.DecodeError:            Token is malformed.
+            TokenRevokedError:          The resolved revocation store reports
+                                        the token as revoked (``jti``
+                                        denylist, or a ``SUBJECT``/``TENANT``/
+                                        ``ISSUER`` watermark), or
+                                        ``revocation_require_jti`` is in
+                                        effect and the token has no ``jti``.
+            RevocationStoreUnavailableError: The bound store raised during
+                                        ``is_revoked()`` and
+                                        ``RevocationFailureMode.FAIL_CLOSED``
+                                        is in effect. Mapped to HTTP 503 by
+                                        ``JwtBearerAuth`` — an outage, not a
+                                        bad credential.
             jwt.InvalidAudienceError:   ``aud`` mismatch when ``audience``
                                         is provided.
             jwt.InvalidIssuerError:     ``iss`` claim does not match the
@@ -639,6 +692,14 @@ class TrustedIssuerRegistry:
 
             leeway = JwtVerificationSettings.from_env().leeway_seconds
 
+        # verify_iat=False (PyJWT >= 2.10 added this check, default True):
+        # varco's own revocation watermark rule (§D-S13-nvb) deliberately
+        # allows a future `iat` (clock skew between issuer and verifier —
+        # "not revoked" is the documented Edge case) and interprets it
+        # itself; PyJWT's blanket ImmatureSignatureError would reject such
+        # a token before it ever reaches that logic, which is stricter than
+        # any behaviour varco has ever documented for `iat`.
+        decode_options: dict[str, Any] = {"verify_iat": False}
         decode_kwargs: dict[str, Any] = {
             "algorithms": [pyjwk.algorithm_name],
             "leeway": leeway,
@@ -652,7 +713,8 @@ class TrustedIssuerRegistry:
             # means NOT enforced") requires explicitly disabling aud
             # verification in this case — otherwise "not enforced" would
             # only be true for tokens that happen to omit "aud" entirely.
-            decode_kwargs["options"] = {"verify_aud": False}
+            decode_options["verify_aud"] = False
+        decode_kwargs["options"] = decode_options
 
         # Delegate to PyJWT for the actual signature + claims verification.
         # Any jwt.exceptions.* propagates unchanged — callers may catch them.
@@ -678,8 +740,119 @@ class TrustedIssuerRegistry:
                     f"VARCO_JWT_ENFORCE_ISS=false to opt out."
                 )
 
+        # Plan 034 / S13, §D-S13-hook — revocation check, AFTER iss
+        # enforcement (§D-S13-order): a forged/misrouted token must fail on
+        # its signature/issuer, never reach the store. This also means an
+        # unauthenticated request never costs a store round trip.
+        if self._revocation_store is not None:
+            effective_check_revocation = check_revocation
+            if effective_check_revocation is None:
+                from varco_core.jwt.config import JwtVerificationSettings
+
+                effective_check_revocation = JwtVerificationSettings.from_env().revocation_enabled
+
+            if effective_check_revocation:
+                await self._check_revocation(
+                    raw,
+                    require_jti=revocation_require_jti,
+                    failure_mode=revocation_failure_mode,
+                )
+
         # Reuse JwtParser's claim reconstruction — AuthContext, timestamps, etc.
         return JwtParser._from_raw_claims(raw)
+
+    async def _check_revocation(
+        self,
+        raw: dict[str, Any],
+        *,
+        require_jti: bool | None,
+        failure_mode: RevocationFailureMode | str | None,
+    ) -> None:
+        """
+        Consult ``self._revocation_store`` for the already-verified claims.
+
+        Called only after signature + ``iss`` enforcement have both
+        succeeded (§D-S13-order) and only when a store is actually bound
+        (§D-S13-hook) — callers never pay this cost otherwise.
+
+        Args:
+            raw:          The raw, verified claim dict from ``_jwt.decode()``.
+            require_jti:  Per-call override of
+                          ``JwtVerificationSettings.revocation_require_jti``.
+            failure_mode: Per-call override of
+                          ``JwtVerificationSettings.revocation_failure_mode``.
+
+        Raises:
+            TokenRevokedError:               The store reports the token
+                                              revoked, or ``require_jti`` is
+                                              in effect and the token has no
+                                              ``jti``.
+            RevocationStoreUnavailableError: The store raised and
+                                              ``FAIL_CLOSED`` is in effect.
+
+        Edge cases:
+            - ``tenant_id`` is read from the token's own ``tenant_id``
+              claim, **never** ``current_tenant()`` (§D-S13-scope) — this
+              runs before any ambient tenant is necessarily resolved, and a
+              compromised token must not be able to dodge a tenant kill
+              switch by being presented on a request that resolves a
+              different ambient tenant.
+        """
+        from varco_core.jwt.config import JwtVerificationSettings
+
+        settings = JwtVerificationSettings.from_env()
+        effective_require_jti = (
+            require_jti if require_jti is not None else settings.revocation_require_jti
+        )
+        effective_failure_mode = (
+            RevocationFailureMode(failure_mode)
+            if failure_mode is not None
+            else settings.revocation_failure_mode
+        )
+
+        jti = raw.get("jti")
+        if effective_require_jti and jti is None:
+            raise TokenRevokedError(
+                scope=RevocationScope.TOKEN,
+                key="<no-jti>",
+                reason="revocation_require_jti=True and token has no jti claim",
+            )
+
+        iss = raw.get("iss")
+        sub = raw.get("sub")
+        subject_key = f"{iss}|{sub}" if iss is not None and sub is not None else None
+        tenant_id = raw.get("tenant_id")
+        iat_ts = raw.get("iat")
+        issued_at = _from_utc_timestamp(iat_ts) if iat_ts is not None else None
+
+        assert self._revocation_store is not None  # narrowed by caller
+        try:
+            verdict = await self._revocation_store.is_revoked(
+                jti=jti,
+                subject=subject_key,
+                issuer=iss,
+                tenant_id=tenant_id,
+                issued_at=issued_at,
+            )
+        except Exception as exc:
+            if effective_failure_mode == RevocationFailureMode.FAIL_OPEN:
+                _registry_logger.error(
+                    "TrustedIssuerRegistry: revocation store %s raised during "
+                    "is_revoked() — FAIL_OPEN in effect, verification proceeds: %s",
+                    type(self._revocation_store).__name__,
+                    exc,
+                )
+                return
+            raise RevocationStoreUnavailableError(
+                "Token verification is temporarily unavailable (revocation store error)."
+            ) from exc
+
+        if verdict.revoked:
+            raise TokenRevokedError(
+                scope=verdict.scope,  # type: ignore[arg-type]
+                key=verdict.key or "",
+                reason=verdict.reason,
+            )
 
     # ── JWKS exposure ──────────────────────────────────────────────────────────
 
@@ -768,7 +941,9 @@ class TrustedIssuerRegistry:
     )
 
     @classmethod
-    def from_env(cls) -> TrustedIssuerRegistry:
+    def from_env(
+        cls, *, revocation_store: AbstractTokenRevocationStore | None = None
+    ) -> TrustedIssuerRegistry:
         """
         Construct a ``TrustedIssuerRegistry`` from environment variables.
 
@@ -793,6 +968,14 @@ class TrustedIssuerRegistry:
             FASTREST_AUTHORIZATION__SYSTEM_SVC__ISS = system-svc
             FASTREST_AUTHORIZATION__GOOGLE__URL = https://accounts.google.com
             FASTREST_AUTHORIZATION__GOOGLE__ISS = https://accounts.google.com
+
+        Args:
+            revocation_store: Optional ``AbstractTokenRevocationStore``
+                (Plan 034 / S13). **No env var constructs a store** — a
+                store is an object with a connection, not a string; pass
+                an already-constructed one explicitly, e.g. one obtained
+                from DI (``enable_token_revocation``/
+                ``enable_redis_token_revocation``).
         """
         from varco_core.authority.config import AuthorizationConfig
         from varco_core.tls.store import TrustStore
@@ -801,7 +984,9 @@ class TrustedIssuerRegistry:
         if any(os.environ.get(name) for name in cls._CA_TRIGGER_ENV_VARS):
             ssl_context = TrustStore.from_env().build_ssl_context()
 
-        return AuthorizationConfig.from_env().to_registry(ssl_context=ssl_context)
+        registry = AuthorizationConfig.from_env().to_registry(ssl_context=ssl_context)
+        registry._revocation_store = revocation_store
+        return registry
 
     @classmethod
     async def from_container(

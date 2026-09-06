@@ -32,6 +32,17 @@ flowchart TD
 `varco_sa`, `varco_beanie`, `sqlalchemy`, or `pymongo` (enforced by an
 import-guard test). Same seam rule as `AbstractEventBus`/`AbstractMigrator`.
 
+## Where the tenant comes from
+
+Everything above assumes the tenant id is already known and trustworthy. Plan 033 / S6 answers
+the separate, upstream question — *which of the request's signals (a header, a subdomain, a JWT
+claim) is allowed to name the tenant, and what happens when two of them disagree* — via
+`varco_core.tenancy.source.TenantSourceChain` and
+`varco_fastapi.middleware.tenant_resolution.TenantResolutionMiddleware(chain=...)`. Full design,
+the trust-ranking table, the two cross-check modes, membership binding, and act-as delegation:
+`technical_docs/features/tenant-provenance.md`. Nothing here changes: `TenantResolutionMiddleware
+(chain=None)` — the only shape that existed before Plan 033 — is byte-identical to today.
+
 ## The six strategies
 
 | # | Backend | Strategy |
@@ -902,6 +913,7 @@ pressure fails open; isolation never does.
 
 | Pitfall | Symptom | Root Cause | Fix |
 |---|---|---|---|
+| **A token's `tenant_id` claim silently activates a suspended/deleted tenant's context** | With `create_varco_app` + a container, `RequestContextMiddleware` (on by default) enters `tenant_context()` from the claim with no catalog-status check and no `pool.ensure()` — the exact check `TenantResolutionMiddleware` performs | Two independent tenant setters existed pre-Plan-033 (the header-reading `TenantResolutionMiddleware` and the claim-reading `RequestContextMiddleware`), with no cross-check between them | Adopt a `TenantSourceChain` (Plan 033 / S6) — `TenantResolutionMiddleware` becomes the single decision point and `RequestContextMiddleware` defers to it; full design: `technical_docs/features/tenant-provenance.md` |
 | **Raw `text()` SQL under `TenantIsolation.SCHEMA`** | A hand-written query returns rows from the wrong tenant's schema, or errors on a missing table | `schema_translate_map` rewrites schema references at SQL-compile time — it never touches raw `text()` SQL | Self-qualify the schema in the raw SQL, or route the query through the ORM so it carries the symbolic `"tenant"` token |
 | **`SET` used instead of `SET LOCAL`/`set_config(..., true)` for schema routing** | Under a transaction-mode pooler, one tenant's schema routing leaks into the next logical caller's session | Session-scoped `SET` survives past the transaction on a pooled connection — same defect class as `SAAdvisoryLock`'s U-16 finding | Use `SASchemaRouter`'s default `mechanism="translate_map"`; if you must use the `"search_path"` escape hatch, it already emits `set_config(..., true)`, never a bare `SET` |
 | **Per-tenant engine/binding never `dispose()`d** | Connections/clients accumulate until the pool or the process runs out | A caller evicts a tenant outside `TenantResourcePool`/`SAEngineRegistry`/`BeanieTenantPool`, bypassing their `closer` | Always go through the pool's `evict()`/`aclose()` — never hold a raw engine/client reference past eviction |

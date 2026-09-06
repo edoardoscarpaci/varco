@@ -570,6 +570,33 @@ raw JWT → PyJWT decode → raw claims
    → JsonWebToken
 ```
 
+#### Token revocation (varco_core.revocation, Plan 034 / S13)
+
+```
+AbstractTokenRevocationStore (ABC)
+  ├── revoke(entry: RevocationEntry) -> None
+  ├── unrevoke(scope, key) -> bool
+  ├── is_revoked(*, jti, subject, issuer, tenant_id, issued_at) -> RevocationVerdict
+  ├── list_entries(scope=None) -> Sequence[RevocationEntry]
+  └── delete_expired() -> int
+
+  ├── NullTokenRevocationStore   (varco_core, scanned @Singleton default — no I/O, never revokes)
+  ├── InMemoryTokenRevocationStore (varco_core — dev/test/single-process)
+  └── RedisTokenRevocationStore  (varco_redis — production; one MGET per verification)
+```
+
+Four independent `RevocationScope` members (`TOKEN`/`SUBJECT`/`TENANT`/`ISSUER`) so a kill switch
+never depends on a `jti` claim some issuers (Auth0, Keycloak, Cognito) do not emit.
+`TrustedIssuerRegistry.verify()` is the single hook point — it consults
+`self._revocation_store` (default `None`, zero cost) *after* `iss` enforcement and *before*
+returning the parsed token. Binding a store via DI (`enable_token_revocation()` /
+`varco_redis.di.enable_redis_token_revocation()`) does not by itself wire the registry — the
+store must also be passed to `TrustedIssuerRegistry(revocation_store=...)` explicitly.
+`varco_fastapi.auth.posture.inspect_auth_posture()` and
+`varco_core.revocation.posture.inspect_revocation_posture()` are pure, read-only introspection
+functions Plan 036 aggregates — no warning/raise/lifespan hook lives in either. Full design:
+`technical_docs/features/credential-and-token-lifecycle.md`.
+
 ### Authorization — policy engine (varco_core.auth.policy)
 
 ```
@@ -1486,6 +1513,8 @@ unresolvable return annotation) and `varco_core/tests/test_observability_di.py`.
 | `webhook/` | D4 (Plan 031) — outbound webhook subscription, signing, SSRF guard, dispatcher | `WebhookSubscription`, `WebhookDelivery`, `WebhookSubscriptionRepository`, `InMemoryWebhookSubscriptionRepository`, `WebhookSigner`, `StandardWebhooksSigner`, `Rfc9421Signer`, `validate_target()`, `WebhookDispatcher`, `WebhookSettings`, `install_webhook_metrics()` |
 | `flags/` | D7 (Plan 032) — feature-flag evaluation seam, varco-shaped (not OpenFeature-shaped); OpenFeature provider deferred | `AbstractFeatureFlags`, `FlagEvaluationContext`, `FlagResolution`, `InMemoryFeatureFlags`, `NullFeatureFlags`, `enable_feature_flags()` |
 | `schedule/` | D6 (Plan 032) — recurring cron `Schedule` → `Job` materialization, zero new dependencies | `Schedule`, `CatchUpPolicy`, `parse_cron()`, `CronSchedule`, `ScheduleMaterializer`, `AbstractScheduleRepository`, `InMemoryScheduleRepository` |
+| `revocation/` | S13 (Plan 034) — invalidate a JWT before its `exp`, per token/subject/tenant/issuer | `AbstractTokenRevocationStore`, `RevocationScope`, `RevocationEntry`, `RevocationVerdict`, `RevocationFailureMode`, `NullTokenRevocationStore`, `InMemoryTokenRevocationStore`, `enable_token_revocation()`, `inspect_revocation_posture()` |
+| `auth/api_key.py` | S14 (Plan 034) — stdlib-only (`hashlib`/`hmac`) offline API-key hashing behind `ApiKeyAuth`'s `hashed_keys=` path | `hash_api_key()`, `verify_api_key()` |
 
 ---
 
@@ -1689,6 +1718,15 @@ filtered_query = transformer.transform(base_query, params, User)
   see `technical_docs/features/token-profiles.md`) between the role check and the
   grant check.  Evaluated against `AuthContext` before the handler runs; denial → HTTP 403.
 - **Auth middleware**: `AuthMiddleware` validates JWT bearer tokens using `TrustedIssuerRegistry`.
+- **`ApiKeyAuth`** (`varco_fastapi.auth.server_auth`) hashes plaintext `keys=` at construction via
+  `varco_core.auth.api_key.hash_api_key()` and accepts pre-hashed `hashed_keys=` directly (Plan
+  034 / S14); its `?api_key=` query-parameter fallback (and `WebSocketAuth`'s `?token=` fallback)
+  are off by default — name `param=`/`token_query_param=` explicitly to re-enable either.
+- **`inspect_auth_posture()`** (`varco_fastapi.auth.posture`, Plan 034 / Phase 4) is a pure,
+  read-only introspection function walking an `AbstractServerAuth` tree (including nested
+  `CompositeServerAuth`/`WebSocketAuth` wrappers) to report facts — API-key query-fallback state,
+  plaintext-vs-hashed key source, `PassthroughAuth` presence. Reports facts only; Plan 036 owns
+  any judgement built on top.
 - **Lifecycle auto-discovery**: `create_varco_app` calls `_collect_lifecycle_components()` which
   discovers `AbstractEventBus`, `AbstractDistributedLock`, `CacheBackend`, and — if `varco_ws`
   is installed and registered — `WebSocketEventBus` and `SSEEventBus` from the DI container.

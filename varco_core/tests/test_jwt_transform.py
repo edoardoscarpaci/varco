@@ -395,7 +395,7 @@ class TestParserIntegrationWithExplicitTransformer:
         tf = MappingClaimTransformer(mapping)
 
         signed = JwtBuilder().subject("usr_1").claim("sofy-roles", ["editor"]).encode(_SECRET)
-        token = JwtParser.parse(signed, _SECRET, transformer=tf)
+        token = JwtParser.parse(signed, _SECRET, transformer=tf, algorithms=["HS256"])
 
         assert token.auth_ctx is not None
         assert token.auth_ctx.roles == frozenset({"editor"})
@@ -424,7 +424,7 @@ class TestParserIntegrationWithExplicitTransformer:
         tf = MappingClaimTransformer(mapping)
 
         signed = JwtBuilder().subject("usr_1").claim("org", {"id": "t_1"}).encode(_SECRET)
-        token = JwtParser.parse(signed, _SECRET, transformer=tf)
+        token = JwtParser.parse(signed, _SECRET, transformer=tf, algorithms=["HS256"])
 
         assert token.auth_ctx is not None
         assert token.auth_ctx.metadata["tenant_id"] == "t_1"
@@ -449,7 +449,7 @@ class TestParserIntegrationWithExplicitTransformer:
         tf = MappingClaimTransformer(mapping)
 
         signed = JwtBuilder().subject("usr_1").claim("act", {"sub": "svc_admin"}).encode(_SECRET)
-        token = JwtParser.parse(signed, _SECRET, transformer=tf)
+        token = JwtParser.parse(signed, _SECRET, transformer=tf, algorithms=["HS256"])
 
         assert token.auth_ctx is not None
         assert token.auth_ctx.metadata["actor"] == "svc_admin"
@@ -469,7 +469,7 @@ class TestParserIntegrationWithExplicitTransformer:
             algorithm="HS256",
         )
         with pytest.raises(ClaimTransformError):
-            JwtParser.parse(signed, _SECRET)
+            JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
 
 
 class TestByteIdenticalRegression:
@@ -498,7 +498,7 @@ class TestByteIdenticalRegression:
             .encode(_SECRET)
         )
 
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
 
         expected = JsonWebToken(
             sub="usr_123",

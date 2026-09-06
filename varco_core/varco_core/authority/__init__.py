@@ -78,6 +78,8 @@ from varco_core.authority.exceptions import (
     AuthorityError,
     IssuerNotFoundError,
     KeyLoadError,
+    RevocationStoreUnavailableError,
+    TokenRevokedError,
     UnknownKidError,
 )
 from varco_core.authority.jwt_authority import JwtAuthority
@@ -102,4 +104,6 @@ __all__ = [
     "UnknownKidError",
     "IssuerNotFoundError",
     "KeyLoadError",
+    "TokenRevokedError",
+    "RevocationStoreUnavailableError",
 ]

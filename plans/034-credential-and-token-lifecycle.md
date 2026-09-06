@@ -609,28 +609,28 @@ knowable from an auth object — it is a deployment fact. 036 owns that judgemen
 
 ### Phase 0 — S1: require `algorithms=` on `JwtParser.parse()` (🔴 must, S)
 
-1. [ ] `rg -n "JwtParser\.parse\(" --glob '**/*.py'` and `rg -n "parse\(\*args|parse\(\*\*" varco_*/ examples/`
+1. [x] `rg -n "JwtParser\.parse\(" --glob '**/*.py'` and `rg -n "parse\(\*args|parse\(\*\*" varco_*/ examples/`
        — confirm the measured blast-radius table above (0 production, 0 examples, 46 test call
        sites) and that no caller invokes `parse()` through `*args`/`**kwargs` (§D-S1-required's ❌).
        Record both results in the commit message.
-2. [ ] `varco_core/tests/test_jwt.py` (extend, **failing first**) — `JwtParser.parse(signed, secret)`
+2. [x] `varco_core/tests/test_jwt.py` (extend, **failing first**) — `JwtParser.parse(signed, secret)`
        with no `algorithms` raises `TypeError` whose message contains `"algorithms"`; a dedicated
        signature test asserts `inspect.signature(JwtParser.parse).parameters["algorithms"].default
        is inspect.Parameter.empty` and `.kind is KEYWORD_ONLY` — **this is the §D-034-gate test**,
        covering what `api_surface.py --check` structurally cannot see. Its docstring says so and
        cites §D-034-gate.
-3. [ ] `varco_core/varco_core/jwt/parser.py:60-71` — make `algorithms: list[str]` a required
+3. [x] `varco_core/varco_core/jwt/parser.py:60-71` — make `algorithms: list[str]` a required
        keyword-only parameter; delete the `if algorithms is None:` block (`:136-138`). Rewrite the
        `algorithms:` docstring entry (`:80-82`) from advice to contract, and add a `DESIGN:` block
        per §D-S1-required naming algorithm confusion and the rejected alternatives.
-4. [ ] `varco_core/tests/` — add `algorithms=["HS256"]` to the 45 call sites that lack it
+4. [x] `varco_core/tests/` — add `algorithms=["HS256"]` to the 45 call sites that lack it
        (`test_jwt.py` 16, `test_jwt_transform_config.py` 21, `test_jwt_transform.py` 5,
        `test_jwt_profiles.py` 3). **Mechanical, no assertion changes.** Every one of these tests
        signs with HS256 already, so the value is correct by construction.
-5. [ ] `varco_core/varco_core/jwt/util.py:56`, `jwt/parser.py:132`, `jwt/transform/runtime.py:26`
+5. [x] `varco_core/varco_core/jwt/util.py:56`, `jwt/parser.py:132`, `jwt/transform/runtime.py:26`
        — update the docstring examples to the new call shape. (`util.py:79` and `:195` are prose
        references, not call shapes; leave them.)
-6. [ ] `varco_core/tests/test_jwt.py` (extend) — a **regression guard**: `parse_unverified()` still
+6. [x] `varco_core/tests/test_jwt.py` (extend) — a **regression guard**: `parse_unverified()` still
        accepts no `algorithms` argument and its signature is unchanged (asserted via
        `inspect.signature`), so a future refactor cannot "helpfully" propagate the requirement into
        the one method for which it is meaningless.
@@ -640,7 +640,7 @@ clean. P0 is independently mergeable here.
 
 ### Phase 1 — S2 + S14: one `ApiKeyAuth` constructor change (🔴 must, S)
 
-7. [ ] `varco_core/varco_core/auth/api_key.py` (**new**, `varco_core` — not `varco_fastapi`) —
+7. [x] `varco_core/varco_core/auth/api_key.py` (**new**, `varco_core` — not `varco_fastapi`) —
        `hash_api_key(raw: str, *, pepper: bytes | str | None = None) -> str` returning
        `"sha256$<hex>"` / `"hmac-sha256$<hex>"`, and `verify_api_key(raw, digest, *, pepper) -> bool`
        using `hmac.compare_digest`. Stdlib only (`hashlib`, `hmac`). Full docstring with a `DESIGN:`
@@ -648,14 +648,14 @@ clean. P0 is independently mergeable here.
        ≥112-bit look-up secrets), §7 (why the prefix-index pattern does not transfer here) and §9
        (`hmac.compare_digest`, never `==`). It lives in `varco_core` so a non-FastAPI caller can
        pre-hash keys offline without importing a web framework.
-8. [ ] `rg -n "token_query_param|\"token\"" varco_fastapi/tests/` — enumerate any test relying on
+8. [x] `rg -n "token_query_param|\"token\"" varco_fastapi/tests/` — enumerate any test relying on
        `WebSocketAuth`'s `?token=` default and record the count; each gets `token_query_param="token"`
        added in Step 11 (the named escape hatch, exercised by the tests that need it).
-9. [ ] `varco_core/tests/test_api_key_hash.py` (**new**, failing first) — `hash_api_key` is
+9. [x] `varco_core/tests/test_api_key_hash.py` (**new**, failing first) — `hash_api_key` is
        deterministic; differs with and without a pepper; the scheme prefix is present; `verify_api_key`
        is `True` for a match and `False` for a one-character difference; a wrong pepper never
        verifies; empty string raises `ValueError`.
-10. [ ] `varco_fastapi/tests/milestone_a/test_server_auth.py` (extend, **failing first**) —
+10. [x] `varco_fastapi/tests/milestone_a/test_server_auth.py` (extend, **failing first**) —
         (a) a key in `?api_key=` is **rejected** by default (`ApiKeyAuth(keys={"k": ctx})` + query
         `?api_key=k` → 401); (b) `param="api_key"` re-enables it; (c) `hashed_keys=` accepts the
         matching raw key and rejects a near-miss; (d) `keys=` and `hashed_keys=` together →
@@ -664,7 +664,7 @@ clean. P0 is independently mergeable here.
         present in any value; (g) the **§D-034-gate signature test**: `param`'s default is `None` and
         its annotation includes `None`, asserted via `inspect.signature`, with a docstring citing
         §D-034-gate; (h) the four existing `ApiKeyAuth` tests (`:73-105`) still pass **unchanged**.
-11. [ ] `varco_fastapi/varco_fastapi/auth/server_auth.py:306-375` — implement §D-S2S14-ctor:
+11. [x] `varco_fastapi/varco_fastapi/auth/server_auth.py:306-375` — implement §D-S2S14-ctor:
         the new signature; `ValueError` on both/neither; hash `keys=` at construction via
         `hash_api_key`; store one `dict[digest, AuthContext]`; `pepper` falls back to
         `VARCO_API_KEY_PEPPER`; `__call__` reads the header, and the query param **only when
@@ -673,14 +673,14 @@ clean. P0 is independently mergeable here.
         over DB lookup"), and Edge cases (`"Header check takes priority over query param"` becomes
         `"The query fallback is disabled unless param= names it"`). Delete the `?api_key=` claim from
         the module header (`:15`) and from `auth/__init__.py:9`.
-12. [ ] `varco_fastapi/varco_fastapi/auth/server_auth.py:585-632` — `WebSocketAuth.token_query_param`
+12. [x] `varco_fastapi/varco_fastapi/auth/server_auth.py:585-632` — `WebSocketAuth.token_query_param`
         becomes `str | None = None`; the fallback branch (`:626-632`) is skipped when `None` and
         promotes `_logger.debug` → `_logger.warning` when used (§D-S2-ws, backlog correction 1).
         Update the class docstring's Args (`:564-565`) and its `❌ Query param token is visible in
         server access logs — warn in docs` DESIGN line to say the fallback is now opt-in, and point
         browser clients at the existing sub-protocol path.
-13. [ ] `varco_fastapi/tests/` — add `token_query_param="token"` to whichever tests Step 8 found.
-14. [ ] `varco_fastapi/tests/milestone_a/test_server_auth.py` (extend) — `WebSocketAuth`: the
+13. [x] `varco_fastapi/tests/` — add `token_query_param="token"` to whichever tests Step 8 found.
+14. [x] `varco_fastapi/tests/milestone_a/test_server_auth.py` (extend) — `WebSocketAuth`: the
         `?token=` fallback is off by default (401 with no header and no sub-protocol); the
         sub-protocol path still works untouched; `token_query_param="token"` restores the fallback
         and emits a **`warning`**-level record (asserted with `caplog`).
@@ -690,12 +690,12 @@ clean. P0 is independently mergeable here.
 
 ### Phase 2 — S13a: the `varco_core.revocation` seam (🟡 should, M) — pure addition
 
-15. [ ] `varco_core/tests/test_revocation_model.py` (**new**, failing first) — `RevocationScope`
+15. [x] `varco_core/tests/test_revocation_model.py` (**new**, failing first) — `RevocationScope`
         members; `RevocationEntry` is frozen and rejects a naive `datetime` (aware-UTC only, the
         house rule); `RevocationVerdict(revoked=False)` has `scope is None`;
         `RevocationEntry.for_token(jti, exp, skew=60)` sets `expires_at == exp + 60s`
         (brief 009 §5's TTL rule, asserted as an arithmetic property).
-16. [ ] `varco_core/varco_core/revocation/__init__.py`, `model.py`, `base.py` (**new package**) —
+16. [x] `varco_core/varco_core/revocation/__init__.py`, `model.py`, `base.py` (**new package**) —
         `RevocationScope`, `RevocationEntry`, `RevocationVerdict`, `RevocationFailureMode`,
         `AbstractTokenRevocationStore` per §D-S13-shape. The ABC docstring is the contract document:
         the four scopes and their lookup keys, the `issued_at < revoked_at` watermark rule
@@ -703,41 +703,41 @@ clean. P0 is independently mergeable here.
         convention (brief 009 §5), the three failure modes brief 009 §4 requires be documented, and
         `Thread safety:` / `Async safety:` blocks. `from __future__ import annotations`; imports
         limited to `abc`, `dataclasses`, `datetime`, `enum`, `typing`.
-17. [ ] `varco_core/tests/test_revocation_memory.py` (**new**, failing first) — `InMemoryTokenRevocationStore`:
+17. [x] `varco_core/tests/test_revocation_memory.py` (**new**, failing first) — `InMemoryTokenRevocationStore`:
         `TOKEN` revoke→`is_revoked` true, unknown `jti` false; `SUBJECT` revokes a token with
         `iat < revoked_at` and **not** one with `iat > revoked_at`; `TENANT` and `ISSUER` likewise;
         a token with `iat=None` and a matching non-`TOKEN` entry → revoked (§D-S13-noiat); an expired
         entry stops matching; `delete_expired()` returns the count removed; `unrevoke()` returns
         `False` for an absent key; concurrent `revoke()`s do not lose entries.
-18. [ ] `varco_core/varco_core/revocation/memory.py`, `null.py` (**new**) —
+18. [x] `varco_core/varco_core/revocation/memory.py`, `null.py` (**new**) —
         `InMemoryTokenRevocationStore` (dict of `(scope, key) -> RevocationEntry`, a **lazily
         created** `asyncio.Lock`, never at `__init__`) and `NullTokenRevocationStore` (a scanned
         `@Singleton(priority=-sys.maxsize - 1)`, always `RevocationVerdict(revoked=False)`, no I/O).
         `null.py`'s docstring states it is a Null Object that deliberately violates the ABC's
         revoke→is_revoked contract, and points at the `COVERAGE.md` row Step 39 adds.
-19. [ ] `varco_core/varco_core/revocation/di.py` (**new**) — `enable_token_revocation(container)`
+19. [x] `varco_core/varco_core/revocation/di.py` (**new**) — `enable_token_revocation(container)`
         per §D-S13-di and CLAUDE.md's `enable_*` row. Docstring notes the ⚠️ two-step: binding the
         store does not wire the registry.
-20. [ ] `varco_core/varco_core/jwt/config.py` — add to `JwtVerificationSettings` (**not** a second
+20. [x] `varco_core/varco_core/jwt/config.py` — add to `JwtVerificationSettings` (**not** a second
         settings class): `revocation_failure_mode: RevocationFailureMode = FAIL_CLOSED`,
         `revocation_require_jti: bool = False`, `revocation_skew_seconds: float = 60.0`,
         `revocation_enabled: bool = True` (meaning "consult the store *if one is wired*"). Env names
         `VARCO_JWT_REVOCATION_*` — check whether the `env_prefix` + field-name rule yields the
         intended names and add `AliasChoices` where it does not, following the `enforce_issuer`
         precedent (`config.py:69-75`). Extend the class docstring's `Attributes:` block for each.
-21. [ ] `varco_core/tests/test_jwt_verification_settings.py` (extend or new) — every new field's
+21. [x] `varco_core/tests/test_jwt_verification_settings.py` (extend or new) — every new field's
         default; each env var parses; **the existing "defaults are byte-identical" assertions still
         pass**; `RevocationFailureMode` parses case-insensitively from `fail_open`/`FAIL_OPEN`.
-22. [ ] `varco_core/varco_core/authority/exceptions.py` — `TokenRevokedError` and
+22. [x] `varco_core/varco_core/authority/exceptions.py` — `TokenRevokedError` and
         `RevocationStoreUnavailableError` per §D-S13-error, both `AuthorityError` subclasses.
         `TokenRevokedError.__str__` returns the fixed string; `scope`/`key`/`reason` are attributes
         only. Docstrings state the exfiltration rule explicitly and cite CLAUDE.md's `error_params()`
         warning as the same discipline.
-23. [ ] `varco_core/tests/test_revocation_errors.py` (**new**) — `str(TokenRevokedError(scope=...,
+23. [x] `varco_core/tests/test_revocation_errors.py` (**new**) — `str(TokenRevokedError(scope=...,
         key="jti-1", reason="compromised"))` contains **neither** `"jti-1"` nor `"compromised"`;
         the attributes do carry them; both are `AuthorityError` subclasses (so existing
         `except AuthorityError` handlers keep working).
-24. [ ] `varco_core/varco_core/__init__.py` — add the new public names to `_LAZY` **and** `__all__`
+24. [x] `varco_core/varco_core/__init__.py` — add the new public names to `_LAZY` **and** `__all__`
         (CLAUDE.md: a name in one but not the other is the trap the lazy-import design calls out).
         Verify with `uv run python scripts/import_budget.py --check --warn-only` that
         `varco_core`'s import cost is unchanged — the new package must be reachable only lazily.
@@ -748,7 +748,7 @@ not make.
 
 ### Phase 3 — S13b: wiring, the Redis backend, conformance (🟡 should, M)
 
-25. [ ] `varco_core/tests/test_registry_revocation.py` (**new**, failing first) — with a stub
+25. [x] `varco_core/tests/test_registry_revocation.py` (**new**, failing first) — with a stub
         registry entry and an `InMemoryTokenRevocationStore`: `verify()` with **no** store is
         byte-identical to today (assert the store is never touched via a spy); a revoked `jti`
         raises `TokenRevokedError`; a `SUBJECT` watermark revokes an older token and admits a newer
@@ -758,49 +758,49 @@ not make.
         `require_jti=False` + a `jti`-less token with no matching non-`TOKEN` entry → verifies;
         **the revocation lookup never happens for a token that fails `iss` enforcement** (spy asserts
         zero calls — §D-S13-order).
-26. [ ] `varco_core/varco_core/authority/registry.py` — `__init__` gains
+26. [x] `varco_core/varco_core/authority/registry.py` — `__init__` gains
         `revocation_store: AbstractTokenRevocationStore | None = None`; `verify()` gains
         `check_revocation: bool | None = None` and performs the check **between** the `iss` block
         (`:670-679`) and `return JwtParser._from_raw_claims(raw)` (`:682`). Extend `verify()`'s
         docstring `Args:`/`Raises:`/`Edge cases:` — including that a `TENANT`-scope lookup reads the
         token's `tenant_id` claim and never `current_tenant()` (§D-S13-scope).
-27. [ ] `varco_core/varco_core/authority/registry.py` — `from_env()` gains a
+27. [x] `varco_core/varco_core/authority/registry.py` — `from_env()` gains a
         `revocation_store=` passthrough. No env var may construct a store: a store is an object with
         a connection, not a string.
-28. [ ] `varco_fastapi/tests/milestone_a/test_server_auth.py` (extend, failing first) —
+28. [x] `varco_fastapi/tests/milestone_a/test_server_auth.py` (extend, failing first) —
         `JwtBearerAuth`: a `TokenRevokedError` from `verify()` → **401** whose detail contains
         neither the reason nor the scope nor the key; a `RevocationStoreUnavailableError` → **503**
         with a fixed detail; the existing exact-args mock assertion at `:270-282`
         (`test_jwt_bearer_auth_calls_registry_verify`) still passes **unchanged** — no new kwarg is
         added to the `verify()` call.
-29. [ ] `varco_fastapi/varco_fastapi/auth/server_auth.py:284-292` — add
+29. [x] `varco_fastapi/varco_fastapi/auth/server_auth.py:284-292` — add
         `except RevocationStoreUnavailableError` → `HTTPException(503, detail="Token verification is
         temporarily unavailable.")` and `except TokenRevokedError` → `HTTPException(401,
         detail="Token has been revoked.")`, both **before** the existing generic handler, and both
         logging the full exception server-side. The generic `f"Invalid or expired token: {exc}"`
         branch is otherwise untouched (035/S3 owns the wider question).
-30. [ ] `testkit/varco_conformance/token_revocation.py` (**new**) —
+30. [x] `testkit/varco_conformance/token_revocation.py` (**new**) —
         `TokenRevocationStoreConformance`, one abstract `store` fixture, deliberately **not** named
         `Test*`. Covers the ABC contract: revoke→is_revoked per scope; the watermark rule; the
         missing-`iat` rule; expiry; `unrevoke`; `delete_expired`; `list_entries` filtering;
         idempotent double-`revoke`.
-31. [ ] `varco_core/tests/test_conformance_inmemory.py` (extend) — subclass it for
+31. [x] `varco_core/tests/test_conformance_inmemory.py` (extend) — subclass it for
         `InMemoryTokenRevocationStore`. No Docker.
-32. [ ] `varco_redis/tests/test_redis_revocation.py` (**new**, `@pytest.mark.integration`) —
+32. [x] `varco_redis/tests/test_redis_revocation.py` (**new**, `@pytest.mark.integration`) —
         subclass `TokenRevocationStoreConformance` against a real Redis using the session-scoped
         `redis_url` fixture and a `uuid4().hex[:8]` key namespace (CLAUDE.md's per-test namespacing
         rule). Plus Redis-specific assertions: a `TOKEN` entry's Redis TTL is within a second of
         `expires_at - now`; an `expires_at=None` kill switch has **no** TTL.
-33. [ ] `varco_redis/varco_redis/revocation.py` (**new**) — `RedisTokenRevocationStore`:
+33. [x] `varco_redis/varco_redis/revocation.py` (**new**) — `RedisTokenRevocationStore`:
         `SET <ns>:<scope>:<key> <payload> PX <ttl>` for the TTL rule (brief 009 §5), one `MGET` over
         the four candidate keys in `is_redis`… `is_revoked()` (§D-S13-shape's one-round-trip
         property). Configurable key namespace. Docstring states the ⚠️ persistence caveat from
         §D-S13-backends.
-34. [ ] `varco_redis/varco_redis/di.py` — `enable_redis_token_revocation(container)`; `__all__`
+34. [x] `varco_redis/varco_redis/di.py` — `enable_redis_token_revocation(container)`; `__all__`
         updated. ⚠️ CLAUDE.md's CloudEvents rule applies by analogy: if the store is produced by a
         `@Provider`, the method must **declare** every dependency it needs, or providify silently
         injects nothing.
-35. [ ] `varco_redis/tests/test_redis_revocation_di.py` (**new**) — with default settings,
+35. [x] `varco_redis/tests/test_redis_revocation_di.py` (**new**) — with default settings,
         `container.scan("varco_redis", recursive=True)` binds **`NullTokenRevocationStore`** (from
         `varco_core`'s scan) and no Redis store exists; after `enable_redis_token_revocation`,
         exactly one Redis store is bound. Mirrors `test_tls_di.py`'s "nothing is registered by
@@ -811,7 +811,7 @@ not make.
 
 ### Phase 4 — the 036 seam (🟡 should, S) — definitions only
 
-36. [ ] `varco_fastapi/tests/auth/test_auth_posture.py` (**new**, failing first) —
+36. [x] `varco_fastapi/tests/auth/test_auth_posture.py` (**new**, failing first) —
         `inspect_auth_posture()` on: a default `ApiKeyAuth` → `api_key_query_fallback_enabled=False`;
         with `param="api_key"` → `True` and `api_key_query_param_name="api_key"`; constructed with
         `keys=` → `api_key_plaintext_source=True`, with `hashed_keys=` → `False`; a bare
@@ -819,19 +819,19 @@ not make.
         `CompositeServerAuth` inside a `WebSocketAuth`** → still `True` (the recursion test);
         `components` lists every class walked, in order; the function **never raises** on an
         unknown `AbstractServerAuth` subclass and never logs.
-37. [ ] `varco_fastapi/varco_fastapi/auth/posture.py` (**new**) — `AuthPostureReport` +
+37. [x] `varco_fastapi/varco_fastapi/auth/posture.py` (**new**) — `AuthPostureReport` +
         `inspect_auth_posture()` per §D-034-seam. Export from `varco_fastapi/auth/__init__.py`'s
         `__all__` and the package `__init__`. Module docstring states the boundary in one line:
         *"Reports facts. Plan 036 owns the judgement, the thresholds and the startup wiring — do not
         add a warning, a raise or a lifespan hook here."*
-38. [ ] `varco_core/tests/test_revocation_posture.py` (**new**) + `varco_core/varco_core/revocation/posture.py`
+38. [x] `varco_core/tests/test_revocation_posture.py` (**new**) + `varco_core/varco_core/revocation/posture.py`
         — `RevocationPostureReport` + `inspect_revocation_posture()`. Covers the §D-S13-di two-step:
         a store bound in DI but a registry constructed without one → `store_bound=True`,
         `registry_wired=False`. Same "facts only" docstring boundary.
 
 ### Phase 5 — docs, snapshot, backlog (🟡 should, S — **same commit as Phase 4**)
 
-39. [ ] `technical_docs/features/credential-and-token-lifecycle.md` (**new**) — the four rows'
+39. [x] `technical_docs/features/credential-and-token-lifecycle.md` (**new**) — the four rows'
         design narrative, the revocation scope table, the failure-mode trade-off in operator terms,
         and a **Pitfalls table** with at least: *pepper mismatch between offline hashing and
         runtime* → every key 401s; *store bound in DI but registry not wired* → revocation silently
@@ -840,33 +840,33 @@ not make.
         (brief 009 §4); *no `jti` from Auth0/Keycloak/Cognito* → `TOKEN` scope silently unusable
         (brief 009 §2); *`param="api_key"` restored for convenience* → the key is back in every
         access log; *the api-surface gate does not see either flip* (§D-034-gate).
-40. [ ] `README.md` + `varco_core/README.md` — a "Token revocation" usage section and an API-key
+40. [x] `README.md` + `varco_core/README.md` — a "Token revocation" usage section and an API-key
         hashing snippet; a `VARCO_*` env-var table covering `VARCO_JWT_REVOCATION_FAILURE_MODE`,
         `VARCO_JWT_REVOCATION_REQUIRE_JTI`, `VARCO_JWT_REVOCATION_SKEW_SECONDS`,
         `VARCO_JWT_REVOCATION_ENABLED`, `VARCO_API_KEY_PEPPER`. Fix every `JwtParser.parse()`
         example listed in the blast-radius table (`README.md:2692,2709`;
         `varco_core/README.md:144,183,196,202`; `technical_docs/features/jwt-claim-transformer.md:94,262`;
         `technical_docs/features/token-profiles.md:112`).
-41. [ ] `CLAUDE.md` — a one-line pointer to the new feature doc under the Authority/JWT section; a
+41. [x] `CLAUDE.md` — a one-line pointer to the new feature doc under the Authority/JWT section; a
         decision-tree entry (*"Revoke a credential before its natural expiry? → `varco_core.revocation`,
         never a second verification path"*; *"Store an API key? → `varco_core.auth.api_key.hash_api_key`,
         never a raw dict"*); and **update the "five conformance modules" count to eight** in both
         places it appears (correction 3).
-42. [ ] `testkit/varco_conformance/COVERAGE.md` — add the `token_revocation` row
+42. [x] `testkit/varco_conformance/COVERAGE.md` — add the `token_revocation` row
         (`InMemoryTokenRevocationStore` ✅, `RedisTokenRevocationStore` ✅) and a **Stated absence**
         entry for `NullTokenRevocationStore` (Null Object, same shape as `NoopEventBus`). Correct
         its own "five suites" header to eight (`COVERAGE.md:3`, `:5`, `:12`).
-43. [ ] `CHANGELOG.md` `[Unreleased]` — a **BREAKING** section for S1 and S2 with the exact one-line
+43. [x] `CHANGELOG.md` `[Unreleased]` — a **BREAKING** section for S1 and S2 with the exact one-line
         fixes (`algorithms=["HS256"]`; `param="api_key"`; `token_query_param="token"`), the measured
         blast radius, and ⚠️ the note that `api_surface.py --check` does **not** catch either
         (§D-034-gate) so out-of-tree callers must read this entry. An `### Added` section for S13/S14.
-44. [ ] `uv run python scripts/api_surface.py` — regenerate and commit both outputs (Phase 4 adds
+44. [x] `uv run python scripts/api_surface.py` — regenerate and commit both outputs (Phase 4 adds
         public names). Then `uv run python scripts/api_surface.py --check` must pass.
-45. [ ] `BACKLOG.md` — mark S1, S2, S13, S14 `✅ planned → plans/034-…`; add the **deferred
+45. [x] `BACKLOG.md` — mark S1, S2, S13, S14 `✅ planned → plans/034-…`; add the **deferred
         revocation backends** (SA/Beanie/introspection) and **`FAIL_OPEN_WITHIN_GRACE`** rows to the
         parked table with the un-park triggers from §D-S13-backends and §D-S13-fail; correct the S2
         row's *"`WebSocketAuth`'s `?token=` fallback at least warns"* claim (it logs at `debug`).
-46. [ ] `plans/000-index-3-2-security-release.md` — set 034's status to ✅ written; correct line
+46. [x] `plans/000-index-3-2-security-release.md` — set 034's status to ✅ written; correct line
         112-113's api-surface claim per §D-034-gate; record the exported seam names so 036's planner
         can consume them without opening this file.
 

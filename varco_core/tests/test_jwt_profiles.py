@@ -197,7 +197,7 @@ class TestParserProfileIntegration:
             )
         )
         signed = JwtBuilder().subject("svc_1").issuer("mesh-signer").encode(_SECRET)
-        token = JwtParser.parse(signed, _SECRET, profiles=profiles)
+        token = JwtParser.parse(signed, _SECRET, profiles=profiles, algorithms=["HS256"])
 
         assert token.auth_ctx is not None
         assert token.auth_ctx.metadata[PROFILE_METADATA_KEY] == "internal"
@@ -217,7 +217,7 @@ class TestParserProfileIntegration:
             )
         )
         signed = JwtBuilder().subject("svc_1").issuer("mesh-signer").encode(_SECRET)
-        token = JwtParser.parse(signed, _SECRET, profiles=profiles)
+        token = JwtParser.parse(signed, _SECRET, profiles=profiles, algorithms=["HS256"])
         assert token.auth_ctx is not None
 
     def test_matching_profile_without_implied_anything_keeps_auth_ctx_none(self):
@@ -226,7 +226,7 @@ class TestParserProfileIntegration:
         profiles = TokenProfileRegistry()
         profiles.register(TokenProfile(name="internal", issuers=frozenset({"mesh-signer"})))
         signed = JwtBuilder().subject("svc_1").issuer("mesh-signer").encode(_SECRET)
-        token = JwtParser.parse(signed, _SECRET, profiles=profiles)
+        token = JwtParser.parse(signed, _SECRET, profiles=profiles, algorithms=["HS256"])
         assert token.auth_ctx is None
 
 

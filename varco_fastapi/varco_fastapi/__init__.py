@@ -97,6 +97,7 @@ from varco_fastapi.auth.guard import (
 )
 
 # ── Auth — server side ────────────────────────────────────────────────────────
+from varco_fastapi.auth.posture import AuthPostureReport, inspect_auth_posture
 from varco_fastapi.auth.server_auth import (
     AbstractServerAuth,
     AnonymousAuth,
@@ -259,6 +260,8 @@ __all__ = [
     "PassthroughAuth",
     "AnonymousAuth",
     "WebSocketAuth",
+    "AuthPostureReport",
+    "inspect_auth_posture",
     "AbstractClientAuth",
     "JwtClientAuth",
     "TrustStore",

@@ -18,6 +18,7 @@ Testing strategy:
 
 from __future__ import annotations
 
+import inspect
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -290,7 +291,7 @@ class TestJwtBuilder:
 
 
 class TestJwtParser:
-    """JwtParser.parse() and parse_unverified() decoding correctness."""
+    """JwtParser.parse(, algorithms=["HS256"]) and parse_unverified() decoding correctness."""
 
     def _signed(self, **kwargs) -> str:
         """Helper: build and sign a token with the shared secret."""
@@ -309,14 +310,14 @@ class TestJwtParser:
 
     def test_parse_standard_claims(self):
         signed = self._signed(sub="usr_1", iss="svc", expires_in=_ONE_HOUR)
-        tok = JwtParser.parse(signed, _SECRET)
+        tok = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert tok.sub == "usr_1"
         assert tok.iss == "svc"
         assert tok.exp is not None
 
     def test_parse_reconstructs_auth_ctx(self):
         signed = self._signed(sub="usr_1", auth_ctx=_AUTH_CTX)
-        tok = JwtParser.parse(signed, _SECRET)
+        tok = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert tok.auth_ctx is not None
         assert tok.auth_ctx.user_id == "usr_1"
         assert "editor" in tok.auth_ctx.roles
@@ -328,7 +329,7 @@ class TestJwtParser:
         # A token with only sub/iss and no roles/scopes/grants → auth_ctx=None.
         # sub is already available as tok.sub; no AuthContext should be created.
         signed = self._signed(sub="usr_1", iss="svc")
-        tok = JwtParser.parse(signed, _SECRET)
+        tok = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert tok.auth_ctx is None
         # But the sub claim must still be accessible directly on the token
         assert tok.sub == "usr_1"
@@ -338,7 +339,7 @@ class TestJwtParser:
 
         signed = self._signed(sub="usr_1")
         with pytest.raises(_jwt_lib.InvalidSignatureError):
-            JwtParser.parse(signed, "wrong-secret")
+            JwtParser.parse(signed, "wrong-secret", algorithms=["HS256"])
 
     def test_parse_expired_raises(self):
         import jwt as _jwt_lib
@@ -351,7 +352,7 @@ class TestJwtParser:
             .encode(_SECRET)
         )
         with pytest.raises(_jwt_lib.ExpiredSignatureError):
-            JwtParser.parse(signed, _SECRET)
+            JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
 
     def test_parse_expired_skipped_with_option(self):
         # Callers can opt out of expiry checking (e.g., token refresh flows).
@@ -361,7 +362,7 @@ class TestJwtParser:
             .expires_at(datetime(2000, 1, 1, tzinfo=UTC))
             .encode(_SECRET)
         )
-        tok = JwtParser.parse(signed, _SECRET, options={"verify_exp": False})
+        tok = JwtParser.parse(signed, _SECRET, options={"verify_exp": False}, algorithms=["HS256"])
         assert tok.sub == "usr_1"
 
     def test_parse_unverified_decodes_without_secret(self):
@@ -380,24 +381,20 @@ class TestJwtParser:
             .encode(_SECRET, algorithm="HS256")
         )
         # Must pass audience= to PyJWT or it raises InvalidAudienceError
-        tok = JwtParser.parse(
-            signed,
-            _SECRET,
-            audience=["svc-a", "svc-b"],
-        )
+        tok = JwtParser.parse(signed, _SECRET, audience=["svc-a", "svc-b"], algorithms=["HS256"])
         assert isinstance(tok.aud, frozenset)
         assert "svc-a" in tok.aud
         assert "svc-b" in tok.aud
 
     def test_parse_extra_claims_captured(self):
         signed = JwtBuilder().subject("usr_1").claim("tenant_id", "t_abc").encode(_SECRET)
-        tok = JwtParser.parse(signed, _SECRET)
+        tok = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert tok.extra_claims.get("tenant_id") == "t_abc"
 
     def test_parse_grants_reconstruct_frozenset_of_action(self):
         # Action members must come back as typed Action, not raw strings.
         signed = self._signed(sub="usr_1", auth_ctx=_AUTH_CTX)
-        tok = JwtParser.parse(signed, _SECRET)
+        tok = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert tok.auth_ctx is not None
         for grant in tok.auth_ctx.grants:
             for action in grant.actions:
@@ -602,7 +599,7 @@ class TestFullRoundTrip:
             .with_auth_ctx(_AUTH_CTX)
             .encode(_SECRET)
         )
-        tok = JwtParser.parse(signed, _SECRET)
+        tok = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         util = JwtUtil(tok)
 
         assert util.has_auth_ctx()
@@ -622,7 +619,7 @@ class TestFullRoundTrip:
             .expires_in(timedelta(hours=24))
             .encode(_SECRET)
         )
-        tok = JwtParser.parse(signed, _SECRET)
+        tok = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         util = JwtUtil(tok)
 
         assert util.is_system() is True
@@ -644,7 +641,7 @@ class TestJwtLeeway:
             .encode(_SECRET)
         )
         # 30s leeway covers a token that expired only 10s ago.
-        token = JwtParser.parse(signed, _SECRET, leeway=30)
+        token = JwtParser.parse(signed, _SECRET, leeway=30, algorithms=["HS256"])
         assert token.sub == "usr_1"
 
     def test_expired_token_without_leeway_raises(self):
@@ -657,7 +654,7 @@ class TestJwtLeeway:
             .encode(_SECRET)
         )
         with pytest.raises(_pyjwt.ExpiredSignatureError):
-            JwtParser.parse(signed, _SECRET, leeway=0)
+            JwtParser.parse(signed, _SECRET, leeway=0, algorithms=["HS256"])
 
     def test_leeway_picked_up_from_env_when_omitted(self, monkeypatch):
         monkeypatch.setenv("VARCO_JWT_LEEWAY_SECONDS", "30")
@@ -668,7 +665,7 @@ class TestJwtLeeway:
             .encode(_SECRET)
         )
         # No explicit leeway= kwarg — must read VARCO_JWT_LEEWAY_SECONDS.
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.sub == "usr_1"
 
     def test_is_expired_with_leeway(self):
@@ -689,5 +686,47 @@ class TestJwtLeeway:
             .not_before(datetime.now(UTC) + timedelta(seconds=10))
             .encode(_SECRET)
         )
-        token = JwtParser.parse(signed, _SECRET, leeway=30)
+        token = JwtParser.parse(signed, _SECRET, leeway=30, algorithms=["HS256"])
         assert token.sub == "usr_1"
+
+
+class TestJwtParserRequiresAlgorithms:
+    """
+    Plan 034 / S1 — ``JwtParser.parse()`` must require ``algorithms=``
+    explicitly; the previous silent ``["HS256"]`` default is removed.
+    """
+
+    def test_parse_without_algorithms_raises_type_error(self):
+        # No production code called parse() without algorithms=, but any
+        # caller who omits it must get a loud TypeError, not a silent HS256
+        # default (§D-S1-required).
+        signed = JwtBuilder().subject("usr_1").encode(_SECRET)
+        with pytest.raises(TypeError, match="algorithms"):
+            JwtParser.parse(signed, _SECRET)  # type: ignore[call-arg]
+
+    def test_algorithms_is_required_keyword_only_by_signature(self):
+        # This is the §D-034-gate test: scripts/api_surface.py --check cannot
+        # see a narrowed method signature (only top-level `function` kind is
+        # recorded), so this repo-owned inspect.signature() guard is the only
+        # thing that would catch a future regression that restores a default.
+        sig = inspect.signature(JwtParser.parse)
+        algorithms_param = sig.parameters["algorithms"]
+        assert algorithms_param.default is inspect.Parameter.empty
+        assert algorithms_param.kind is inspect.Parameter.KEYWORD_ONLY
+
+    def test_parse_unverified_signature_unchanged_by_s1(self):
+        # Regression guard (§D-S1-required Step 6): parse_unverified() must
+        # never gain an algorithms parameter — it has no verification step
+        # for algorithms to apply to.
+        sig = inspect.signature(JwtParser.parse_unverified)
+        assert "algorithms" not in sig.parameters
+
+    def test_parse_with_empty_algorithms_list_propagates_pyjwt_error(self):
+        # Edge case (plan §Edge cases): an empty list is an explicit,
+        # auditable statement — varco adds no special-case ValueError for it,
+        # PyJWT's own error propagates unchanged.
+        import jwt as _pyjwt
+
+        signed = JwtBuilder().subject("usr_1").encode(_SECRET)
+        with pytest.raises(_pyjwt.DecodeError):
+            JwtParser.parse(signed, _SECRET, algorithms=[])

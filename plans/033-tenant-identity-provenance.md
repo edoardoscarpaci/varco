@@ -426,17 +426,46 @@ TenantResolutionMiddleware(
 
 | ID | Choice | Consequence |
 |---|---|---|
-| D-S6-wiring | `TenantResolutionMiddleware` becomes **the one tenant decision point**. Given `chain=`, it builds a `TenantRequest`, runs `chain.resolve()`, runs membership, publishes `TenantProvenance`, and *then* does its existing catalog-status + `pool.ensure()` work. `RequestContextMiddleware` skips **both** its `server_auth` call and `_maybe_tenant_context()` when `current_tenant_provenance()` is already set and `auth_context_var` is already populated | The header/claim override ambiguity disappears; auth is verified once per request; `chain=None` is byte-identical to today on both middlewares |
+| D-S6-wiring | `TenantResolutionMiddleware` becomes **the one tenant decision point**. Given `chain=`, it builds a `TenantRequest`, runs `chain.resolve()`, runs membership, publishes `TenantProvenance`, and *then* does its existing catalog-status + `pool.ensure()` work. `RequestContextMiddleware` splits its two responsibilities on two **different** conditions (see the amendment immediately below) rather than one joint gate | The header/claim override ambiguity disappears; auth is verified once per request when possible; `chain=None` is byte-identical to today on both middlewares |
+
+⚠️ **Amendment made during implementation** (drift triage, post-Step-19): the row above and the
+bullet below originally described a single joint condition — "skip both `server_auth` and
+`_maybe_tenant_context()` when provenance is set AND `auth_context_var` is populated" — gating
+both responsibilities together. The shipped `RequestContextMiddleware.dispatch`
+(`varco_fastapi/varco_fastapi/middleware/request_context.py`) is stricter, and the stricter form
+is kept: the plan text is corrected to match it.
+
+- **`server_auth` invocation** is gated on the joint condition as originally described:
+  `current_tenant_provenance() is not None` **and** `auth_context_var.get() is not None`. Only
+  when *both* hold (the chain middleware ran *and* itself entered `auth_context()`) does
+  `RequestContextMiddleware` skip calling `server_auth` again.
+- **`_maybe_tenant_context()`** (re-deriving the tenant from the token claim) is skipped whenever
+  **a chain ran at all** — i.e. `current_tenant_provenance() is not None` — regardless of whether
+  `auth_context_var` is populated. This is deliberately looser than the auth-skip condition, on
+  purpose: a chain's resolved winner must **never** be overridden by a token claim once a chain
+  has spoken, full stop — that is the entire content of Correction 2. Gating the tenant-context
+  skip on the *same* joint condition as the auth skip would reopen Correction 2 in exactly the
+  case the plan's own Step 18 tests exercise: a chain installed with `server_auth=None` upstream
+  (so `auth_context_var` is unset when `RequestContextMiddleware` runs, and it correctly still
+  authenticates) whose resolved tenant must still win over whatever `ctx.metadata[tenant_field]`
+  the fresh authentication just produced.
+- The previous wording — "`RequestContextMiddleware` authenticates normally" for the
+  `auth_context_var`-unset branch — is corrected: it authenticates normally (`server_auth` runs),
+  but it does **not** "behave normally" with respect to the tenant — it still defers to the
+  chain's resolved tenant and does not re-enter `tenant_context()` from the claim. The original
+  phrasing conflated the two responsibilities; they are independent gates.
 
 **DESIGN: verify the token in the outer middleware and let the inner one reuse it**
 
 ✅ `AbstractServerAuth` is a plain callable already invoked at middleware time
    (`request_context.py:141`) — nothing new is invented, and the `AuthContext` it returns is
    **verified**, which is the entire premise of `JwtClaimTenantSource`.
-✅ Reuse is keyed on varco's own provenance var, not on a heuristic: provenance set ⇒ the chain
-   middleware ran ⇒ it also entered `auth_context()`. If provenance is set but
+✅ Reuse of an existing `AuthContext` is keyed on varco's own provenance var, not on a heuristic:
+   provenance set ⇒ the chain middleware ran; `auth_context_var` also populated ⇒ it entered
+   `auth_context()` itself, so re-authenticating would be redundant. If provenance is set but
    `auth_context_var.get()` is `None` (a chain installed with `server_auth=None`),
-   `RequestContextMiddleware` authenticates normally. Both branches are asserted.
+   `RequestContextMiddleware` still authenticates — but, independently of that, never re-derives
+   the tenant once a chain has run at all (see the amendment above). Both branches are asserted.
 ✅ It preserves the RD-3 ordering guarantee unchanged — `LocalizationMiddleware` still sees
    `current_tenant()` populated (`technical_docs/features/timezone-handling.md:325-334`).
 ✅ `chain=None` short-circuits before any of it: same header read, same `tenant_context()`, same
@@ -526,11 +555,31 @@ class MissingClaimPolicy(StrEnum):
     DENY  = "deny"     # 4.0 default
 ```
 
-`ClaimTenantMembership.check()` allows when **any** of:
+⚠️ **Amendment made during implementation** (drift triage, post-Step-24): the paragraph below
+originally described the three conditions as an unconditional three-way OR. The shipped
+`ClaimTenantMembership.check()` (`varco_core/varco_core/tenancy/membership.py`) is narrower, and
+the narrower behaviour is kept — this plan text is corrected to match it rather than the other
+way around.
+
+`ClaimTenantMembership.check()` allows when:
 - `tenant_id` is in the `tenants` metadata list (the normal multi-org case); or
-- the token's own `metadata["tenant_id"]` equals `tenant_id` (a single-tenant token is its own
-  membership proof); or
-- the membership claim is absent **and** `on_missing_claim=ALLOW`.
+- the `tenants` claim is **entirely absent** (not merely non-matching) **and** the token's own
+  `metadata["tenant_id"]` equals `tenant_id` (a single-tenant token is its own membership proof,
+  `reason="self_tenant"`); or
+- the `tenants` claim is entirely absent and `metadata["tenant_id"]` does *not* match, governed by
+  `on_missing_claim` (`ALLOW`/`DENY`, `reason="claim_absent"`).
+
+**A `tenants` claim that is present but does not contain the requested tenant denies —
+unconditionally — even when `metadata["tenant_id"]` happens to equal the requested tenant.** The
+self-tenant fallback is a substitute for a *missing* membership list, never a second, independent
+path to `allowed=True` once one exists. Reason: an explicit `tenants` list is a positive statement
+of membership scope from the issuer; if `tenant_id` (present on almost every real-world token,
+multi-org or not) could unconditionally re-open access the list just denied, a deliberately
+narrow, multi-org-aware claim would be silently widened back to "any tenant this subject's own
+primary-tenant claim names" — defeating the reason `tenants` exists at all. This is pinned by
+`varco_fastapi/tests/test_tenant_chain_middleware.py::TestMembershipIntegration
+::test_non_member_gets_403_opaque_with_membership_recorded`, which constructs exactly this
+combination (`tenant_id="acme"`, `tenants=["beta"]`, requested `"acme"`) and asserts denial.
 
 Everything else denies. `async def` **even though the shipped implementations do no I/O** — the
 parked repository-backed resolver (`BACKLOG.md:97`) is an out-of-tree implementation of this exact
@@ -822,17 +871,17 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
 
 ### Phase 0 — S6a: the transport-neutral primitives (🔴 must, M)
 
-1. [ ] `varco_core/tests/test_tenant_source.py` (new, **failing first**) — `TenantTrust` ordering
+1. [x] `varco_core/tests/test_tenant_source.py` (new, **failing first**) — `TenantTrust` ordering
        is `LOW < MEDIUM < HIGH < HIGHEST` (an `IntEnum`, comparable); `TenantRequest` and
        `TenantClaim` are frozen and reject mutation; a `TenantSource` subclass that omits
        `name`/`trust` fails loudly; `TenantSource.resolve` is abstract.
-2. [ ] `varco_core/varco_core/tenancy/source.py` (new) — `TenantTrust`, `TenantRequest`,
+2. [x] `varco_core/varco_core/tenancy/source.py` (new) — `TenantTrust`, `TenantRequest`,
        `TenantClaim`, `TenantSource` per §D-S6-abc. Full docstrings with
        `Args`/`Returns`/`Raises`/`Edge cases`/`Thread safety`, a `DESIGN:` block per §D-S6-abc, and
        the four implementer invariants (never raises · `None` not `""` · never mutates the request ·
        `name`/`trust` are `ClassVar`) written into `TenantSource`'s *Edge cases* — §D-S6-conformance
        makes that docstring the contract's only home.
-3. [ ] `varco_core/tests/test_tenant_chain.py` (new, **failing first**) — `TenantSourceChain.resolve()`
+3. [x] `varco_core/tests/test_tenant_chain.py` (new, **failing first**) — `TenantSourceChain.resolve()`
        over stub sources: zero claims → `tenant_id=None`, `winner=None`, `rejected is False` in
        **both** modes; one claim → that claim wins in `LENIENT`, **rejects** in `STRICT`; two
        agreeing → winner is the higher-trust one, no rejection in either mode; two disagreeing →
@@ -841,16 +890,16 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
        below-floor claim out entirely (it does not become a conflict); `resolve()` **never raises**
        even when a stub source raises internally (the chain catches, logs, and treats it as no
        claim — asserted); determinism (two calls, identical result).
-4. [ ] `varco_core/varco_core/tenancy/source.py` — `CrossCheckMode`, `TenantSourceChain`,
+4. [x] `varco_core/varco_core/tenancy/source.py` — `CrossCheckMode`, `TenantSourceChain`,
        `TenantProvenance` per §D-S6-chain. `rejection_reason` returns a **stable token**
        (`"conflict"`, `"insufficient_sources"`, `"not_a_member"`, `"delegation_denied"`), never a
        formatted string containing a tenant id.
-5. [ ] `varco_core/tests/test_tenant_provenance.py` (new, **failing first**) —
+5. [x] `varco_core/tests/test_tenant_provenance.py` (new, **failing first**) —
        `current_tenant_provenance()` is `None` outside any context; `provenance_context()` sets and
        restores it; nesting restores the outer value; a value set in a parent task is visible in a
        child task (the `BaseHTTPMiddleware` propagation this design relies on) and **not** visible
        in a sibling.
-6. [ ] `varco_core/varco_core/tenancy/provenance.py` (new) — the `AmbientVar`,
+6. [x] `varco_core/varco_core/tenancy/provenance.py` (new) — the `AmbientVar`,
        `current_tenant_provenance()`, `provenance_context()`, with the §D-S6-provenance `DESIGN:`
        block stating in prose why this does not violate CLAUDE.md's `RequestContext`-never-holds-
        the-tenant rule.
@@ -859,7 +908,7 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
 
 ### Phase 1 — S6b: the three sources (🔴 must, M) — answers OQ3
 
-7. [ ] `varco_core/tests/test_tenant_sources_builtin.py` (new, **failing first**) — the full
+7. [x] `varco_core/tests/test_tenant_sources_builtin.py` (new, **failing first**) — the full
        adversarial matrix, table-driven over `TenantRequest` literals. Minimum cases:
        - `JwtClaimTenantSource`: claim present → `HIGHEST`; `auth=None` → `None`; `metadata` empty
          → `None`; a non-`str` claim value → `None` (never `str()`-coerced); a custom
@@ -880,24 +929,24 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
        - `LegacyTenantSource`: header present → `LOW`; absent → `None`; a custom header name;
          empty-string header value → `None`.
        - **All sources**: `resolve()` does not mutate the `TenantRequest` (compare a deep copy).
-8. [ ] `varco_core/varco_core/tenancy/sources.py` (new) — `JwtClaimTenantSource`,
+8. [x] `varco_core/varco_core/tenancy/sources.py` (new) — `JwtClaimTenantSource`,
        `SubdomainTenantSource`, `LegacyTenantSource`. `SubdomainTenantSource` carries the
        §D-S6-oq3 `DESIGN:` block, the five-step algorithm as a numbered docstring, and — verbatim,
        asserted by Step 9 — the sentence *"SubdomainTenantSource is not by itself a security
        control; deploy it behind TrustedHostMiddleware or an edge that rejects unknown Host
        values."* `LegacyTenantSource`'s docstring carries the §Security properties statement
        (Step 29's doc text, in short form) and does **not** warn on construction (§D-S6-blast).
-9. [ ] `varco_core/tests/test_tenant_sources_builtin.py` (extend) — parametrised invariant sweep
+9. [x] `varco_core/tests/test_tenant_sources_builtin.py` (extend) — parametrised invariant sweep
        over all three shipped sources (§D-S6-conformance): unique `name`, declared `trust`, never
        raises on an empty `TenantRequest`, never returns `""`. Plus the mechanical docstring
        assertions for the two required sentences.
-10. [ ] `varco_core/tests/test_tenant_chain_integration.py` (new) — end-to-end over real sources,
+10. [x] `varco_core/tests/test_tenant_chain_integration.py` (new) — end-to-end over real sources,
         no HTTP: **claim says A and host says B → rejected, `conflict` names both**; **header
         claims A with a token for B → rejected** when the legacy source is in the chain, and
         **`tenant_id="B"` with the header ignored** when it is not (both asserted — the second is
         the "why the chain, not just a cross-check" proof); claim A + no subdomain → `"A"` under
         `LENIENT`, **rejected** under `STRICT`; no sources at all → `None` in both modes.
-11. [ ] `varco_core/varco_core/tenancy/__init__.py` + `varco_core/varco_core/__init__.py` — export
+11. [x] `varco_core/varco_core/tenancy/__init__.py` + `varco_core/varco_core/__init__.py` — export
         the new names. ⚠️ `varco_core/__init__.py` is **PEP 562 lazy**: every name needs an
         `_LAZY` entry *and* an `__all__` entry (`__init__.py:461-712`; `_LAZY` is contractually
         equal to `__all__`, asserted by an existing test). Add **no** top-level import — run
@@ -907,23 +956,23 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
 
 ### Phase 2 — S6c: the FastAPI wiring (🔴 must, M)
 
-12. [ ] `varco_core/tests/test_tenant_provenance_settings.py` (new, **failing first**) —
+12. [x] `varco_core/tests/test_tenant_provenance_settings.py` (new, **failing first**) —
         `TenantProvenanceSettings()` defaults produce `build_tenant_source_chain() is None`;
         `VARCO_TENANT_SOURCES="jwt,subdomain"` without `VARCO_TENANT_BASE_DOMAINS` →
         `ValueError` naming the missing var; a full parse round-trip for every var in the
         §Env vars table; an unknown source name → `ValueError` listing the legal set;
         `VARCO_TENANT_CROSS_CHECK=strict` parses.
-13. [ ] `varco_core/varco_core/tenancy/settings.py` — `TenantProvenanceSettings`
+13. [x] `varco_core/varco_core/tenancy/settings.py` — `TenantProvenanceSettings`
         (`@dataclass(frozen=True)` + hand-written `from_env()`, matching `TenancySettings`'s shape
         at `:72-170`, **not** pydantic — Correction 4) and `build_tenant_source_chain()`. Add the
         §D-S6-settings note about why this is not the RD-9 case. **No field on `TenancySettings`
         moves or is added** — asserted by the existing byte-identical-defaults test.
-14. [ ] `varco_fastapi/tests/test_tenant_resolution_middleware.py` — **run it unmodified and
+14. [x] `varco_fastapi/tests/test_tenant_resolution_middleware.py` — **run it unmodified and
         confirm green** before touching the middleware, then extend it. This file plus
         `test_tenant_event_path_middleware.py` are the byte-identical proof for `chain=None` and
         must never be edited to accommodate the new code path. Record the result in the commit
         message.
-15. [ ] `varco_fastapi/tests/test_tenant_chain_middleware.py` (new, **failing first**) — through a
+15. [x] `varco_fastapi/tests/test_tenant_chain_middleware.py` (new, **failing first**) — through a
         real `TestClient`: `chain=None` → today's behaviour **and exactly one
         `DeprecationWarning` at construction, none per request** (`pytest.warns` + a
         second/third request asserting no further warning); an explicit chain containing
@@ -932,7 +981,7 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
         `pool.ensure()` is called **at most once** and only for a routable tenant;
         `current_tenant()` inside the handler equals the chain's winner; `current_tenant_provenance()`
         inside the handler is the same object the middleware published.
-16. [ ] `varco_fastapi/varco_fastapi/middleware/tenant_resolution.py` — the `chain=`/`server_auth=`/
+16. [x] `varco_fastapi/varco_fastapi/middleware/tenant_resolution.py` — the `chain=`/`server_auth=`/
         `reject_status=` keywords per §D-S6-wiring. Order inside `dispatch`: build `TenantRequest`
         (lower-case headers, strip the port from `Host`) → run `server_auth` if given, catching
         `HTTPException` and returning a `JSONResponse` itself (the ❌ in §D-S6-wiring — asserted by
@@ -941,29 +990,29 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
         `pool.ensure()` + `tenant_context()` block. `chain=None` builds
         `TenantSourceChain((LegacyTenantSource(self._header),))` once in `__init__` and emits the
         single `DeprecationWarning` there.
-17. [ ] `varco_fastapi/tests/test_tenant_chain_middleware.py` (extend) — a `server_auth` that
+17. [x] `varco_fastapi/tests/test_tenant_chain_middleware.py` (extend) — a `server_auth` that
         raises `HTTPException(401)` produces a **JSON** 401 from this middleware even though it
         sits outside `ErrorMiddleware` (`app.py:530-544`); a `server_auth` returning an anonymous
         context yields no JWT claim and falls through to the remaining sources.
-18. [ ] `varco_fastapi/tests/test_request_context_deferral.py` (new, **failing first**) — with no
+18. [x] `varco_fastapi/tests/test_request_context_deferral.py` (new, **failing first**) — with no
         chain installed, `RequestContextMiddleware` behaves **byte-identically** (auth runs, the
         claim tenant is entered); with a chain installed upstream, it runs `server_auth`
         **exactly once total** (a counting fake asserts one call across the whole request) and does
         **not** re-enter `tenant_context()` (a chain winner of `"A"` and a token claim of `"B"`
         leaves `current_tenant() == "A"` in the handler — the Correction-2 regression, asserted
         directly); with provenance set but `auth_context_var` unset, it authenticates normally.
-19. [ ] `varco_fastapi/varco_fastapi/middleware/request_context.py` — the deferral per
+19. [x] `varco_fastapi/varco_fastapi/middleware/request_context.py` — the deferral per
         §D-S6-wiring, guarded by `current_tenant_provenance() is not None`. Update the class
         docstring's numbered "Order of operations" (`:65-78`) to describe both branches. **No new
         constructor keyword.**
-20. [ ] `varco_fastapi/varco_fastapi/middleware/__init__.py` — no new export is required
+20. [x] `varco_fastapi/varco_fastapi/middleware/__init__.py` — no new export is required
         (the middleware class is already exported); confirm and note it.
 
 ⛔ **CHECKPOINT** — S6 is functionally complete. `uv run pytest varco_fastapi/tests/ varco_core/tests/ -q`
 
 ### Phase 3 — S5: tenant↔subject membership binding (🔴 must, M)
 
-21. [ ] `varco_core/tests/test_jwt_tenants_claim.py` (new, **failing first**) — a token with
+21. [x] `varco_core/tests/test_jwt_tenants_claim.py` (new, **failing first**) — a token with
         `{"tenants": ["a","b"]}` → `auth_ctx.metadata["tenants"] == ["a","b"]`; a foreign name
         via `VARCO_JWT_TRANSFORM_TENANTS_FIELD=organizations` → same result; the **per-issuer**
         form `VARCO_JWT_TRANSFORM__ACME__TENANTS_FIELD` selected by `iss` → same result (this is
@@ -971,7 +1020,7 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
         ⚠️ a token carrying **only** `tenants` now materialises an `AuthContext` where it
         previously returned `None` (the widened trigger, asserted deliberately); a token with no
         `tenants` claim is **byte-identical** to before (`metadata` has exactly the keys it had).
-22. [ ] `varco_core/varco_core/jwt/transform/mapping.py` — `CanonicalClaim.TENANTS` (+ its
+22. [x] `varco_core/varco_core/jwt/transform/mapping.py` — `CanonicalClaim.TENANTS` (+ its
         `Members:` docstring line at `:44-54`); `varco_core/varco_core/jwt/transform/config.py` —
         `_TARGET_FIELD_PREFIX`/`_DEFAULT_CANONICAL_SOURCE` entries (`:59-81`) and the seven
         `tenants_*` settings fields (`:106-137`); `varco_core/varco_core/jwt/parser.py` —
@@ -979,7 +1028,7 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
         materialisation trigger (`:361-395`), with the `Edge cases:` note extended in the same
         style as the existing Plan-002 widening note (`:347-350`). ⚠️ `TENANTS` must **not** be
         added to `_SCALAR_TARGETS` (`transform/mapping.py:68`) — it is a list target.
-23. [ ] `varco_core/tests/test_tenant_membership.py` (new, **failing first**) —
+23. [x] `varco_core/tests/test_tenant_membership.py` (new, **failing first**) —
         `NullTenantMembership` always allows with `reason="no_provider"`; `ClaimTenantMembership`:
         `tenants=["a","b"]` + requested `"b"` → allowed; requested `"c"` → denied,
         `reason="not_in_claim"`; **no `tenants` claim but `metadata["tenant_id"] == requested`** →
@@ -988,13 +1037,13 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
         process** (asserted with `caplog` across three calls); the same with `DENY` → denied; an
         anonymous `AuthContext` → denied under `DENY`, allowed under `ALLOW`; a non-list `tenants`
         value → denied, never a `TypeError`; `check()` **never raises** for any input.
-24. [ ] `varco_core/varco_core/tenancy/membership.py` (new) — `MembershipDecision`,
+24. [x] `varco_core/varco_core/tenancy/membership.py` (new) — `MembershipDecision`,
         `AbstractTenantMembership`, `NullTenantMembership`, `ClaimTenantMembership`,
         `MissingClaimPolicy`, `TenantMembershipError` (a `ServiceException` subclass with `code`
         and `message_key`, per `varco_core.exception`'s taxonomy — and an `error_params()` that
         excludes the *resolved* tenant, matching §D-036-seams' exfiltration rule). `DESIGN:` block
         per §D-S5-claim.
-25. [ ] `varco_core/varco_core/tenancy/di.py` (new, or the existing tenancy DI module if one is
+25. [x] `varco_core/varco_core/tenancy/di.py` (new, or the existing tenancy DI module if one is
         found) — `NullTenantMembership` as the scanned `@Singleton` default and
         `enable_tenant_membership(container, settings=None)` as the opt-in, following
         `varco_core.flags`' `enable_feature_flags` shape exactly. ⛔ **Never a scanned
@@ -1002,7 +1051,7 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
         (CLAUDE.md), which would silently bind a membership provider in every app that scans
         `varco_core`. Assert this with a test that scans `varco_core` and checks the bound
         provider is `NullTenantMembership`.
-26. [ ] `varco_fastapi/tests/test_tenant_chain_middleware.py` (extend) — with `membership=` given:
+26. [x] `varco_fastapi/tests/test_tenant_chain_middleware.py` (extend) — with `membership=` given:
         a chain winner the subject is **not** a member of → **403**, opaque body, and
         `provenance.membership.allowed is False`; a member → 200 and the decision is attached;
         `membership=None` → no check runs and `provenance.membership is None` (the
@@ -1015,7 +1064,7 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
 
 ### Phase 4 — the Plan-036 seams (🔴 must, S)
 
-27. [ ] `varco_core/tests/test_tenant_posture.py` (new, **failing first**) — `assert_tenant_matches`:
+27. [x] `varco_core/tests/test_tenant_posture.py` (new, **failing first**) — `assert_tenant_matches`:
         `requested=None` inside `tenant_context("a")` → `"a"`; `requested="a"` inside the same →
         `"a"`; `requested="b"` → `CrossTenantAccessError` whose `error_params()` contains
         `requested` and **not** the resolved tenant (the exfiltration assertion);
@@ -1026,14 +1075,14 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
         §D-036-seams list is produced by at least one configuration, and **the exact string set is
         pinned by the test** so 036 can rely on it; the function performs **no I/O and reads no
         ambient var** (asserted by calling it with no context active).
-28. [ ] `varco_core/varco_core/tenancy/posture.py` (new) + `CrossTenantAccessError` and
+28. [x] `varco_core/varco_core/tenancy/posture.py` (new) + `CrossTenantAccessError` and
         `assert_tenant_matches` in `varco_core/varco_core/tenancy/provenance.py`, per §D-036-seams.
         Each carries a docstring line naming **Plan 036 / S4** and **Plan 036 / S9** as the
         intended consumer, and stating that this plan deliberately builds neither the guard nor
         the preflight.
-29. [ ] `varco_core/varco_core/tenancy/__init__.py` + `varco_core/varco_core/__init__.py` —
+29. [x] `varco_core/varco_core/tenancy/__init__.py` + `varco_core/varco_core/__init__.py` —
         export the Phase 3/4 names (`_LAZY` + `__all__`, per Step 11's rule).
-30. [ ] `uv run python scripts/api_surface.py` — regenerate **both** snapshot files and commit them
+30. [x] `uv run python scripts/api_surface.py` — regenerate **both** snapshot files and commit them
         **in this commit** (hard CI gate on `make lint`'s no-`PKG` path). Expected new `varco_core`
         rows: `TenantTrust`, `TenantRequest`, `TenantClaim`, `TenantSource`, `TenantSourceChain`,
         `CrossCheckMode`, `TenantProvenance`, `JwtClaimTenantSource`, `SubdomainTenantSource`,
@@ -1050,7 +1099,7 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
 
 ### Phase 5 — docs, CHANGELOG, backlog (🟡 should, S — same commit as the code)
 
-31. [ ] `technical_docs/features/tenant-provenance.md` (**new — the primary home**). Contents:
+31. [x] `technical_docs/features/tenant-provenance.md` (**new — the primary home**). Contents:
         the trust-ranking table (brief 006 §1, cited); the chain diagram; the two cross-check modes
         with §D-S6-oq2's zero-claims clause stated plainly; the subdomain algorithm and §D-S6-oq3's
         base-domain rule; the membership model and its 3.2 fail-open; the two 036 seams named as
@@ -1068,19 +1117,19 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
         in 3.2; a `tenants` claim absent from a re-issued token silently degrades enforcement;
         two different `server_auth` instances across the two middlewares; a delegated request with
         no policy bound is denied, not allowed.
-32. [ ] `technical_docs/features/multitenancy.md` — a short **"Where the tenant comes from"**
+32. [x] `technical_docs/features/multitenancy.md` — a short **"Where the tenant comes from"**
         subsection linking to the above with no restatement (CLAUDE.md's *one home per fact*), plus
         one Pitfalls row pointing at Correction 1.
         `technical_docs/features/jwt-claim-transformer.md` — one row for `CanonicalClaim.TENANTS`
         and its env vars.
         `technical_docs/common-pitfalls.md` — one cross-cutting row: *a tenant read from a request
         without a signed binding is not a tenant*.
-33. [ ] `README.md` — a "Tenant identity provenance" section under multi-tenancy: the wiring
+33. [x] `README.md` — a "Tenant identity provenance" section under multi-tenancy: the wiring
         snippet (`extra_middleware=` and the recommended `install_middleware_stack` placement
         inside `ErrorMiddleware`), the `enable_tenant_membership` snippet, and the **`VARCO_*`
         env-var reference table** (§Env vars below, verbatim). Repeat the
         `SubdomainTenantSource`-is-not-a-security-control sentence.
-34. [ ] `CLAUDE.md` — pointers only, no design prose: (a) a **Rule** line — *tenant provenance is
+34. [x] `CLAUDE.md` — pointers only, no design prose: (a) a **Rule** line — *tenant provenance is
         `varco_core.tenancy.source`; `current_tenant()` stays the single source of truth and this
         plan changes only what feeds it; `TenantProvenance` is its own `AmbientVar` and must never
         move into `RequestContext`*; (b) a Decision-Tree branch under multitenancy (*where may a
@@ -1089,11 +1138,11 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
         `varco_core.auth.delegation`; is my deployment still header-only? →
         `inspect_tenant_provenance()`*); (c) one line in the DI verb taxonomy for
         `enable_tenant_membership` under the existing `enable_*` row.
-35. [ ] `testkit/varco_conformance/COVERAGE.md` — two **Stated absences** bullets for
+35. [x] `testkit/varco_conformance/COVERAGE.md` — two **Stated absences** bullets for
         `TenantSource` and `AbstractTenantMembership`, carrying §D-S6-conformance's reasoning
         (never-packaged testkit ⇒ the out-of-tree implementer cannot reach a suite). ⚠️ Do **not**
         change the "five suites" count anywhere.
-36. [ ] `CHANGELOG.md` `## [Unreleased]` — `### Added` (the chain, the three sources, membership,
+36. [x] `CHANGELOG.md` `## [Unreleased]` — `### Added` (the chain, the three sources, membership,
         `CanonicalClaim.TENANTS`, the two 036 seams — "Plan 033 / S6, S5"); `### Deprecated`
         (`TenantResolutionMiddleware(chain=None)`, with the 4.0 removal date and the escape hatch
         named); `### Security` (the two-setter finding, Correction 1, stated as a finding with the
@@ -1107,17 +1156,17 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
 
 ### Phase 6 — S16: act-as / RFC 8693 (🟢 nice, M — **DROPPABLE**)
 
-37. [ ] `varco_core/tests/test_delegation.py` (new, **failing first**) — `ActorContext.from_metadata`:
+37. [x] `varco_core/tests/test_delegation.py` (new, **failing first**) — `ActorContext.from_metadata`:
         `{"actor": {"sub": "svc-a"}}` → `subject="svc-a"`, empty chain; a nested
         `{"sub":"svc-a","act":{"sub":"svc-b"}}` → `chain == ("svc-a","svc-b")` outermost-first
         (RFC 8693 §4.1); `metadata` with no `actor` → `None`; a malformed `actor` (a string, a
         list, a dict with no `sub`) → `None`, **never an exception**.
         `AllowlistDelegationPolicy`: an unlisted actor → denied; a listed actor for an unlisted
         tenant → denied; `"*"` → allowed; an empty grants map → denies everything.
-38. [ ] `varco_core/varco_core/auth/delegation.py` (new) — `ActorContext`, `DelegationPolicy`,
+38. [x] `varco_core/varco_core/auth/delegation.py` (new) — `ActorContext`, `DelegationPolicy`,
         `AllowlistDelegationPolicy`, `DelegationRecord`, per §D-S16-shape. Docstrings cite brief
         006 §3 and name CVE-2025-55241 as the reason the audit is mandatory.
-39. [ ] `varco_core/tests/test_act_as_source.py` (new, **failing first**) — `ActAsTenantSource`:
+39. [x] `varco_core/tests/test_act_as_source.py` (new, **failing first**) — `ActAsTenantSource`:
         no `act` claim → `None` even when the header is present (a bare impersonation token can
         never take this path); `act` present + policy allows → `HIGHEST`; `act` present + policy
         denies → `None` **and** a `DelegationRecord` with `allowed=False`; no policy bound →
@@ -1130,15 +1179,15 @@ that way). File S16 back to `BACKLOG.md`'s parked table with this trigger:
         `await`ed step before `chain.resolve()`, passed in on the `TenantRequest` or as a
         constructor-bound per-request closure), rather than making `resolve()` async for one
         source — see Open questions.
-40. [ ] `varco_core/varco_core/tenancy/sources.py` — `ActAsTenantSource` and the
+40. [x] `varco_core/varco_core/tenancy/sources.py` — `ActAsTenantSource` and the
         `TenantProvenance.delegation` wiring; `varco_fastapi/.../tenant_resolution.py` — the
         `delegation=` keyword and the pre-resolution step.
-41. [ ] `varco_fastapi/tests/test_act_as_middleware.py` (new) — through a `TestClient`: a token
+41. [x] `varco_fastapi/tests/test_act_as_middleware.py` (new) — through a `TestClient`: a token
         with `act` + an allowlisted actor + `X-Act-As-Tenant: acme` → 200 with
         `current_tenant() == "acme"`; the same token for a non-allowlisted tenant → **403**;
         the same request with **no** delegation policy configured → 403; the delegated request's
         `provenance.delegation` carries principal, actor and tenant.
-42. [ ] `technical_docs/features/tenant-provenance.md` + README + CHANGELOG + `scripts/api_surface.py`
+42. [x] `technical_docs/features/tenant-provenance.md` + README + CHANGELOG + `scripts/api_surface.py`
         — the act-as section (with the "varco consumes an exchanged token, it never issues one"
         statement and the `JwtBuilder.claim("act", …)` fallback recipe), three Pitfalls rows
         (impersonation-without-`act` is unsupported by design; an unlogged delegation is a bug not
@@ -1330,19 +1379,37 @@ make lint && make type-check && make test
 
 ## Open questions
 
-1. **Does `ActAsTenantSource` force `TenantSource.resolve()` to become async?** `DelegationPolicy.allows`
-   is `async` (it must be, for an out-of-tree policy that queries a store) while `resolve()` is
-   deliberately sync (§D-S6-abc). Decide at Step 39 — **lean toward the middleware `await`ing the
-   policy once, before `chain.resolve()`, and passing the resulting `DelegationRecord` in**, so one
-   droppable source does not make the whole ABC async. If that proves awkward, the fallback is an
-   `async def aresolve()` **default-implemented on the ABC** as `return self.resolve(request)`, so
-   no existing source changes.
-2. **Should `TenantProvenanceSettings` live in `tenancy/settings.py` beside `TenancySettings`, or in
-   its own module?** `settings.py` is currently one cohesive dataclass plus enums. Decide at
-   Step 13 — lean same module, with the module docstring extended to name both, mirroring 037's
-   identical open question about `rls_check.py`.
-3. **Is `403` the right rejection status for a provenance conflict, or `400`?** `403` says "you may
-   not act as that tenant" (membership, delegation); `400` says "your request contradicts itself"
-   (conflict). Decide at Step 16 — lean **one code, `403`, configurable via `reject_status=`**, on
-   the grounds that distinguishing the two hands an attacker an oracle for which source varco
-   believed.
+1. ✅ **RESOLVED — neither the "lean" nor the pure fallback; a third shape, forced by the test
+   suite's own contract.** `TenantSource.resolve()` stays sync (§D-S6-abc unchanged) —
+   `ActAsTenantSource.resolve()` itself calls `DelegationPolicy.allows()` (async) via a small
+   sync/async bridge (`varco_core.tenancy.sources._run_coroutine_sync`): when no event loop is
+   already running it calls `asyncio.run()` directly; when one *is* already running (the real
+   ASGI request path — `TenantResolutionMiddleware.dispatch` is itself a coroutine, so
+   `asyncio.run()` would raise `RuntimeError: … cannot be called from a running event loop`), it
+   spawns a fresh thread with its own new loop and joins on it. This was forced by
+   `varco_core/tests/test_act_as_source.py` calling `source.resolve(req)` directly, synchronously,
+   from plain (non-`async def`) test functions, with no pre-resolved decision ever passed in — so
+   the "middleware pre-resolves and passes a `DelegationRecord` in" lean design does not fit the
+   test's own contract, and the `async def aresolve()` fallback was never needed either (no
+   existing `resolve()` caller had to change). Cost: one thread hop per delegated request —
+   accepted, because act-as traffic is by construction rare (§D-S16-shape). Every decision (allow,
+   deny, and "no policy bound") still produces a `DelegationRecord` on `ActAsTenantSource
+   .last_record`, which `TenantResolutionMiddleware` reads after `chain.resolve()` and attaches to
+   the returned `TenantProvenance.delegation` — this is what lets a denied/unbound act-as attempt
+   reject the request (`rejection_reason == "delegation_denied"`) instead of silently falling
+   through to "no tenant resolved", which a claim-less `TenantClaim | None` return alone cannot
+   express.
+2. ✅ **RESOLVED as leaned — same module.** `TenantProvenanceSettings` + `build_tenant_source_chain()`
+   live in `varco_core/varco_core/tenancy/settings.py` beside `TenancySettings`; the module
+   docstring names both and states the §D-S6-oq2 placement reasoning (mirroring Plan 037's
+   identical `rls_check.py` precedent) directly in prose. No field on `TenancySettings` moved or
+   was added — the existing byte-identical-defaults test for that dataclass still passes
+   unmodified.
+3. ✅ **RESOLVED as leaned — one code, `403`, configurable via `reject_status=`.**
+   `TenantResolutionMiddleware(..., reject_status=403)` returns the same opaque body
+   (`{"detail": "Tenant resolution could not be completed."}`, naming no tenant id and no
+   rejection reason) for a chain conflict, a denied/absent membership check, and a denied/unbound
+   act-as attempt alike — an attacker cannot use the status code (or the body) to learn which
+   check failed. `TenantProvenance.rejection_reason` still exposes the specific stable token
+   (`"conflict"` / `"not_a_member"` / `"delegation_denied"` / `"insufficient_sources"`)
+   server-side, for logs and Plan 036's audit — it is simply never echoed in the response.

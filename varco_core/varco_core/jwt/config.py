@@ -17,10 +17,11 @@ Async safety:   ✅ No I/O.
 
 from __future__ import annotations
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import SettingsConfigDict
 
 from varco_core.config import VarcoSettings
+from varco_core.revocation import RevocationFailureMode
 
 
 class JwtVerificationSettings(VarcoSettings):
@@ -54,6 +55,36 @@ class JwtVerificationSettings(VarcoSettings):
                         ``VARCO_JWT_ALLOW_ANY_AUDIENCE=true`` (or pass
                         ``allow_any_audience=True`` to ``JwtBearerAuth``) to
                         restore the old (warn + proceed) behaviour.
+        revocation_failure_mode: How ``TrustedIssuerRegistry.verify()``
+                        behaves when a bound ``AbstractTokenRevocationStore``
+                        raises. Default ``FAIL_CLOSED`` (Plan 034 / S13,
+                        §D-S13-fail) — a store outage is a 503, not a
+                        silently-admitted possibly-revoked token. Set
+                        ``VARCO_JWT_REVOCATION_FAILURE_MODE=fail_open`` for
+                        an availability-first posture (pair with
+                        short-lived tokens). Only ever consulted when a
+                        non-``Null`` store is actually wired to the
+                        registry — see ``varco_core.revocation.di``'s
+                        two-step warning.
+        revocation_require_jti: Whether a token with no ``jti`` claim is
+                        treated as revoked at ``TOKEN`` scope. Default
+                        ``False`` (§D-S13-jti) — Auth0, Keycloak, and
+                        Cognito do not emit ``jti`` by default (brief 009
+                        §2), so requiring one would break those
+                        deployments the moment a store is wired. Set
+                        ``VARCO_JWT_REVOCATION_REQUIRE_JTI=true`` to fail
+                        closed on a ``jti``-less token instead.
+        revocation_skew_seconds: Clock-skew tolerance (seconds) added to a
+                        ``TOKEN``-scope entry's TTL beyond the token's own
+                        ``exp`` (brief 009 §5). Default ``60.0`` (OWASP/RFC
+                        7519 recommend 30-60s).
+        revocation_enabled: Master kill-switch: consult the bound store *if
+                        one is wired* at all. Default ``True``. Set
+                        ``VARCO_JWT_REVOCATION_ENABLED=false`` as an
+                        incident-response override to disable revocation
+                        checking without unwiring the store or a
+                        redeploy — see the Open Question in the plan about
+                        this being a foot-gun an operator could leave set.
 
     Thread safety:  ✅ ``frozen=True``.
     """
@@ -74,6 +105,31 @@ class JwtVerificationSettings(VarcoSettings):
         default=True, validation_alias=AliasChoices("VARCO_JWT_ENFORCE_ISS")
     )
     allow_any_audience: bool = False
+
+    # ── Revocation (Plan 034 / S13) ──────────────────────────────────────────
+    revocation_failure_mode: RevocationFailureMode = RevocationFailureMode.FAIL_CLOSED
+    revocation_require_jti: bool = False
+    revocation_skew_seconds: float = 60.0
+    revocation_enabled: bool = True
+
+    @field_validator("revocation_failure_mode", mode="before")
+    @classmethod
+    def _lowercase_revocation_failure_mode(cls, value: object) -> object:
+        """
+        Accept ``VARCO_JWT_REVOCATION_FAILURE_MODE`` case-insensitively.
+
+        Args:
+            value: The raw value — a string from the environment, an
+                   already-constructed ``RevocationFailureMode``, or
+                   anything else pydantic will reject on its own.
+
+        Returns:
+            The lowercased string when given a string (so ``"FAIL_OPEN"``
+            and ``"fail_open"`` both resolve to
+            ``RevocationFailureMode.FAIL_OPEN``); any other value passes
+            through unchanged for pydantic's own enum coercion/error.
+        """
+        return value.lower() if isinstance(value, str) else value
 
 
 __all__ = [

@@ -111,6 +111,7 @@ policy engine, field encryption, observability, profiling, …) — see
 - [Internationalization, Timezones, and Bulk Cache Ops](#internationalization-timezones-and-bulk-cache-ops)
 - [Correlation ID / Tracing](#correlation-id--tracing)
 - [Multi-tenancy (DB-level)](#multi-tenancy-db-level)
+- [Tenant identity provenance](#tenant-identity-provenance)
 - [Query System](#query-system)
 - [Event System](#event-system)
   - [Event base class](#event-base-class)
@@ -185,6 +186,8 @@ policy engine, field encryption, observability, profiling, …) — see
 - [Database Auditing](#database-auditing)
 - [Dead Letter Queue](#dead-letter-queue)
 - [Idempotency-Key middleware](#idempotency-key-middleware)
+- [Token revocation](#token-revocation)
+- [API-key hashing](#api-key-hashing)
 - [CloudEvents envelope](#cloudevents-envelope)
 - [AsyncAPI export](#asyncapi-export)
 - [Outbound webhooks](#outbound-webhooks)
@@ -1145,6 +1148,109 @@ mount_tenant_admin(  # ← privileged surface, opt-in
     prefix="/tenancy",
 )
 ```
+
+---
+
+## Tenant identity provenance
+
+`TenantSourceChain` (`varco_core.tenancy.source`) answers a question the section above assumes
+is already settled: **which of a request's signals — a header, a subdomain, a JWT claim — is
+allowed to name the tenant, and what happens when two disagree?** Nothing flips by default —
+`TenantResolutionMiddleware(chain=None)` keeps reading `X-Tenant-Id`, byte-identically. Full
+design (trust ranking, the two cross-check modes, the subdomain algorithm, membership binding,
+act-as delegation, the 4.0 flip list, a Pitfalls table):
+`technical_docs/features/tenant-provenance.md`.
+
+```python
+from varco_core.tenancy.settings import TenantProvenanceSettings, build_tenant_source_chain
+from varco_fastapi.middleware.tenant_resolution import TenantResolutionMiddleware
+
+# Env-driven — see the table below. VARCO_TENANT_SOURCES unset -> build_tenant_source_chain()
+# returns None -> chain=None below -> byte-identical to pre-3.2 header-only behaviour.
+chain = build_tenant_source_chain(TenantProvenanceSettings.from_env())
+
+app.add_middleware(
+    TenantResolutionMiddleware,
+    catalog=catalog,
+    pool=pool,
+    chain=chain,               # None (default) or a TenantSourceChain
+    server_auth=server_auth,   # needed for a JWT-claim source to see a verified AuthContext
+    reject_status=403,
+)
+```
+
+Or build a chain explicitly, in code:
+
+```python
+from varco_core.tenancy.source import CrossCheckMode, TenantSourceChain
+from varco_core.tenancy.sources import JwtClaimTenantSource, SubdomainTenantSource
+
+chain = TenantSourceChain(
+    sources=(
+        JwtClaimTenantSource(),
+        SubdomainTenantSource(base_domains=("example.com",)),
+    ),
+    mode=CrossCheckMode.LENIENT,  # STRICT rejects a lone claim too — see the feature doc
+)
+```
+
+⛔ `SubdomainTenantSource` is not by itself a security control; deploy it behind
+`TrustedHostMiddleware` (`allowed_hosts=[...]`, Starlette's own) or an edge that rejects unknown
+`Host` values.
+
+**Membership binding** — is the authenticated subject allowed to act as the tenant the chain
+resolved? Opt in via the same `enable_*` shape as `varco_casbin.enable_policy_authorizer`:
+
+```python
+from varco_core.tenancy.di import enable_tenant_membership
+
+container = bootstrap(DIContainer())
+enable_tenant_membership(container)  # opt-in: ClaimTenantMembership over the scanned Null default
+```
+
+**Act-as / RFC 8693 delegation** — varco **consumes** an already-issued, already-verified
+delegation token; it never issues one (token exchange is the IdP's job). `ActAsTenantSource`
+emits a claim only when the token carries an `act` claim *and* a bound `DelegationPolicy` allows
+the requested tenant:
+
+```python
+from varco_core.auth.delegation import AllowlistDelegationPolicy
+from varco_core.tenancy.sources import ActAsTenantSource
+
+policy = AllowlistDelegationPolicy(grants={"svc-billing": frozenset({"acme"})})
+act_as_source = ActAsTenantSource(policy)  # None => deny-by-default, no claim ever
+```
+
+If your IdP has no RFC 8693 token-exchange endpoint, build the internal issuer yourself — no
+`JwtBuilder` change is needed:
+
+```python
+token = authority.sign(
+    authority.token().subject("acme-user").claim("act", {"sub": "svc-billing"})
+)
+```
+
+### Env vars (`VARCO_TENANT_*`)
+
+All read by `TenantProvenanceSettings.from_env()`. Every one is unset by default; an unset
+`VARCO_TENANT_SOURCES` means `build_tenant_source_chain()` returns `None` — nothing changes.
+
+| Var | Default | Meaning |
+|---|---|---|
+| `VARCO_TENANT_SOURCES` | *(unset)* | Ordered, comma-separated: `jwt`, `subdomain`, `legacy`, `act_as`. Unset ⇒ no chain |
+| `VARCO_TENANT_CROSS_CHECK` | `lenient` | `lenient` \| `strict` |
+| `VARCO_TENANT_MIN_TRUST` | `low` | `low` \| `medium` \| `high` \| `highest` — claims below the floor are discarded |
+| `VARCO_TENANT_CLAIM_METADATA_KEY` | `tenant_id` | Key in `AuthContext.metadata` the JWT source reads |
+| `VARCO_TENANT_BASE_DOMAINS` | *(unset)* | Comma-separated. **Required** when `subdomain` is in the chain |
+| `VARCO_TENANT_TRUST_FORWARDED_HOST` | `false` | Read `X-Forwarded-Host`; the claim drops to `MEDIUM` trust |
+| `VARCO_TENANT_FORWARDED_HOST_HEADER` | `X-Forwarded-Host` | |
+| `VARCO_TENANT_RESERVED_LABELS` | `www,api,app,admin,static,cdn` | Subdomain labels that are never a tenant |
+| `VARCO_TENANT_LEGACY_HEADER` | `X-Tenant-Id` | Header the legacy source reads |
+| `VARCO_TENANT_MEMBERSHIP` | *(unset)* | `null` \| `claim`. Unset ⇒ `NullTenantMembership` |
+| `VARCO_TENANT_MEMBERSHIP_CLAIM` | `tenants` | `AuthContext.metadata` key holding the membership list |
+| `VARCO_TENANT_MEMBERSHIP_ON_MISSING` | `allow` | `allow` \| `deny`. **Flips to `deny` in 4.0** |
+| `VARCO_TENANT_ACT_AS_HEADER` | `X-Act-As-Tenant` | Act-as / RFC 8693 delegation only |
+| `VARCO_JWT_TRANSFORM_TENANTS_FIELD` | *(unset)* | Foreign name for the membership-list claim; the per-issuer `VARCO_JWT_TRANSFORM__<LABEL>__TENANTS_FIELD` form also exists |
 
 ---
 
@@ -2721,7 +2827,7 @@ export VARCO_JWT_TRANSFORM_TOKEN_TYPE_FIELD="token_use"
 ```python
 from varco_core.jwt import JwtParser
 
-token = JwtParser.parse(raw_token, secret)  # unchanged call site
+token = JwtParser.parse(raw_token, secret, algorithms=["HS256"])  # algorithms= required (Plan 034 / S1)
 token.auth_ctx.roles  # populated from the foreign claim
 token.extra_claims["realm_access"]  # original claim still visible (non-destructive)
 ```
@@ -3841,6 +3947,99 @@ Stripe's de-facto conventions (24h TTL, 1 MiB body cap, streaming responses neve
 not an RFC. Full design (fingerprint construction, header replay allowlist, tenant/subject
 scoping and its fail-closed rule, streaming/over-ceiling handling, a Pitfalls table):
 `technical_docs/features/idempotency-key.md`.
+
+---
+
+## Token revocation
+
+Plan 034 / S13. `varco_core.revocation.AbstractTokenRevocationStore` lets you invalidate a JWT
+before its natural `exp` — per token, per subject, per tenant, or per issuer — through one ABC
+with three in-tree implementations. **Off by default**: `TrustedIssuerRegistry(revocation_store=None)`
+(the default) performs no check at all — zero-config behaviour is byte-identical to before this
+feature existed.
+
+```python
+from datetime import UTC, datetime
+
+from varco_core.authority import TrustedIssuerRegistry
+from varco_core.revocation import RevocationEntry, RevocationScope
+from varco_core.revocation.memory import InMemoryTokenRevocationStore
+
+store = InMemoryTokenRevocationStore()
+registry = TrustedIssuerRegistry(revocation_store=store)  # the required second wiring step
+await registry.load_all()
+
+# Deny a single compromised token by jti (denylist):
+await store.revoke(RevocationEntry.for_token(jti="jti-123", exp=some_token_exp, skew=60))
+
+# Global logout for one subject — every token issued before "now" stops verifying:
+await store.revoke(RevocationEntry(
+    scope=RevocationScope.SUBJECT,
+    key="my-issuer|usr_1",
+    revoked_at=datetime.now(UTC),
+    expires_at=None,   # a watermark has no natural expiry
+))
+
+# ... later, a revoked token raises TokenRevokedError -> JwtBearerAuth maps it to a 401
+# ... a store outage under the default FAIL_CLOSED mode raises RevocationStoreUnavailableError -> 503
+```
+
+Production wiring uses the Redis backend instead of the in-memory one:
+
+```python
+from varco_redis.di import enable_redis_token_revocation
+from varco_core.revocation import AbstractTokenRevocationStore
+
+container.scan("varco_redis", recursive=True)
+enable_redis_token_revocation(container, url="redis://localhost:6379/0")
+
+store = await container.aget(AbstractTokenRevocationStore)
+registry = TrustedIssuerRegistry(revocation_store=store)  # still required — binding alone is not enough
+```
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `VARCO_JWT_REVOCATION_ENABLED` | `true` | Master kill-switch — consult the bound store *if one is wired at all* |
+| `VARCO_JWT_REVOCATION_FAILURE_MODE` | `fail_closed` | `fail_closed` (503 on a store outage) or `fail_open` (log + proceed) |
+| `VARCO_JWT_REVOCATION_REQUIRE_JTI` | `false` | `true` fails closed on a `jti`-less token at `TOKEN` scope — leave `false` for Auth0/Keycloak/Cognito issuers |
+| `VARCO_JWT_REVOCATION_SKEW_SECONDS` | `60.0` | Clock-skew tolerance added to a `TOKEN`-scope entry's TTL beyond the token's own `exp` |
+
+Full design (the four-scope table, the not-valid-before watermark rule, the two-step DI footgun,
+a Pitfalls table): `technical_docs/features/credential-and-token-lifecycle.md`.
+
+---
+
+## API-key hashing
+
+Plan 034 / S14. `varco_core.auth.api_key.hash_api_key()`/`verify_api_key()` are stdlib-only
+(`hashlib`, `hmac`) primitives so an API key never has to sit in memory as plaintext, and
+comparison is always `hmac.compare_digest` — never a raw `==`.
+
+`ApiKeyAuth` uses them automatically — `keys=` (plaintext) is hashed immediately at construction;
+`hashed_keys=` (the production path) accepts pre-hashed digests directly, so the plaintext key
+never enters the process at all:
+
+```python
+from varco_core.auth.api_key import hash_api_key
+from varco_fastapi.auth import ApiKeyAuth
+
+# Pre-hash offline (e.g. in a migration script or admin job):
+digest = hash_api_key("sk_live_abc123", pepper=os.environb.get(b"VARCO_API_KEY_PEPPER"))
+# store `digest` in your config/DB — never the plaintext key
+
+auth = ApiKeyAuth(hashed_keys={digest: AuthContext(user_id="svc_orders")})
+```
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `VARCO_API_KEY_PEPPER` | unset (plain SHA-256) | Process-wide pepper `ApiKeyAuth` reads when no explicit `pepper=` is given; must be identical wherever `hash_api_key()` is called offline and wherever `ApiKeyAuth` verifies at runtime, or every key silently 401s |
+
+⚠️ **The `?api_key=` query-parameter fallback is off by default** (`param=None`) — a credential in
+a URL is already in the access log, the proxy log, and the `Referer` header by the time anything
+could warn about it. Name `param="api_key"` explicitly to opt back in.
+
+Full design (SHA-256 vs. HMAC-SHA-256 with a pepper, why per-key salt does not apply here, a
+Pitfalls table): `technical_docs/features/credential-and-token-lifecycle.md`.
 
 ---
 

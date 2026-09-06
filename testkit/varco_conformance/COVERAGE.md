@@ -1,15 +1,18 @@
 # Conformance suite coverage — audit outcome
 
-**Never packaged** — lives alongside the five conformance base classes it documents, reached only
-via `pythonpath = ["../testkit"]` (CLAUDE.md's Test Conventions). This file is the durable, audited
-record answering: *for every implementation of one of the five shared ABCs, does it subclass the
-matching conformance suite, and if not, why not?*
+**Never packaged** — lives alongside the eight conformance base classes it documents (five from
+Plan 012/019, plus `idempotency_store`/`webhook_subscription`/`token_revocation` added by Plans
+029/031/034), reached only via `pythonpath = ["../testkit"]` (CLAUDE.md's Test Conventions). This
+file is the durable, audited record answering: *for every implementation of one of the eight
+shared ABCs, does it subclass the matching conformance suite, and if not, why not?*
 
-Produced by Plan 024 (§D-C7, C7). See BACKLOG.md's "C7's audit outcome" open question, answered:
-**two** real gaps out of a five-suite × ~24-implementation matrix — the great majority of the
-apparent gaps scout tooling flagged were legitimate absences, not real holes.
+Produced by Plan 024 (§D-C7, C7), for the original five-suite matrix. See BACKLOG.md's "C7's audit
+outcome" open question, answered: **two** real gaps out of a five-suite × ~24-implementation
+matrix — the great majority of the apparent gaps scout tooling flagged were legitimate absences,
+not real holes. The three later ABCs (below) were designed with a shared suite from day one and
+audited at the same rigor as they landed.
 
-**Rule (CLAUDE.md's Test Conventions)**: a new implementation of one of the five ABCs either
+**Rule (CLAUDE.md's Test Conventions)**: a new implementation of one of the eight ABCs either
 subclasses its suite or gets a row in this file explaining why not — a future absence must be
 argued against a written record, not rediscovered from scratch.
 
@@ -50,6 +53,24 @@ These are legitimate, permanent absences — not TODOs, not backlog rows.
   broker/cache/job-store backend), and therefore does not need `pythonpath = ["../testkit"]` at
   all — the only package of the ten deliberately without one. Confirmed present in all nine
   others.
+- **`TenantSource`** (`varco_core.tenancy.source`, Plan 033 / S6) — no conformance suite, and
+  none is planned (§D-S6-conformance). `testkit/varco_conformance` is **never packaged**, so the
+  only audience a suite would serve — an out-of-tree implementer of a new source (mTLS, path-
+  based, a cached custom-domain lookup) — structurally cannot reach it. `resolve()` is also a
+  pure function over a frozen dataclass, unlike the five ABCs above, whose implementations all do
+  I/O against a real external system — "does this backend really behave the same" is not the hard
+  question here. The invariants a suite would assert (never raises; `None` not `""`; never
+  mutates the `TenantRequest`; `name`/`trust` are class-level and unique) are asserted once,
+  parametrised over the three shipped sources, in
+  `varco_core/tests/test_tenant_sources_builtin.py`, and written into `TenantSource`'s own
+  *Edge cases* docstring section — the contract's only home.
+- **`AbstractTenantMembership`** (`varco_core.tenancy.membership`, Plan 033 / S5) — same reasoning
+  as `TenantSource` immediately above: the parked repository-backed resolver
+  (`BACKLOG.md`'s parked table) is the only realistic out-of-tree implementer, and the never-
+  packaged testkit cannot reach it either way. `NullTenantMembership`/`ClaimTenantMembership` do
+  no I/O, so the "does this backend behave the same under a real broker/store" question a suite
+  exists to answer does not apply. Covered instead by
+  `varco_core/tests/test_tenant_membership.py` directly against both shipped implementations.
 
 ## New ABC outside the five (Plan 025)
 
@@ -90,6 +111,25 @@ These are legitimate, permanent absences — not TODOs, not backlog rows.
   `varco_beanie/tests/test_webhook_subscription_repository_integration.py`. The tenant-scoping
   assertion (`test_find_by_tenant_never_leaks_another_tenant`) is the load-bearing one — a
   subscription belonging to one tenant must never be returned for another, across every backend.
+
+## New ABC outside the five, with a shared suite (Plan 034)
+
+- **`AbstractTokenRevocationStore`** (`varco_core.revocation.base`, Plan 034 / S13) is an **eighth
+  ABC**, same treatment as `AbstractIdempotencyStore`/`WebhookSubscriptionRepository` above — a
+  shared cross-package suite from day one:
+  `testkit/varco_conformance/token_revocation.py`'s `TokenRevocationStoreConformance` is
+  subclassed by `InMemoryTokenRevocationStore` (`varco_core/tests/test_conformance_inmemory.py`)
+  and `RedisTokenRevocationStore` (`varco_redis/tests/test_redis_revocation.py`, integration-only).
+  The load-bearing assertions are the not-valid-before watermark rule
+  (`test_watermark_rule_iat_before_revoked_at_is_revoked`) and the missing-`iat` fail-closed rule
+  (`test_missing_iat_is_treated_as_revoked`) — both are §D-S13-nvb/§D-S13-noiat's contract made
+  executable across every backend.
+
+  **Stated absence — `NullTokenRevocationStore`**: the scanned DI default (`varco_core.revocation.null`)
+  is a Null Object, same shape as `NoopEventBus` above — `revoke()` silently discards every entry,
+  which deliberately violates the suite's revoke→is_revoked contract. Subclassing the suite for it
+  would mean xfail-ing nearly all of it, teaching nothing. It is intentionally uncovered by the
+  shared suite; `varco_core/varco_core/revocation/null.py`'s class docstring points here.
 
 ## What Plan 024 filled
 

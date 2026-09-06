@@ -551,6 +551,7 @@ def create_varco_app(
             acknowledge_unbounded_keyspace=(
                 rate_limit.acknowledge_unbounded_keyspace if rate_limit is not None else False
             ),
+            has_error_middleware=enable_error_middleware,
         )
 
     # RequestContextMiddleware (populates auth ContextVars)
@@ -575,6 +576,7 @@ def create_varco_app(
             acknowledge_unbounded_keyspace=(
                 rate_limit.acknowledge_unbounded_keyspace if rate_limit is not None else False
             ),
+            has_error_middleware=enable_error_middleware,
         )
 
     # Tracing (correlation ID + OTel span)

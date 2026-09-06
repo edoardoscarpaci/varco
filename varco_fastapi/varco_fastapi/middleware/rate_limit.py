@@ -74,19 +74,36 @@ DESIGN: ``Retry-After`` always; draft ``RateLimit-Policy`` behind a flag;
        rule that kept ``BulkCache`` off ``AsyncCache``, Plan 011 / D-11). A
        header that lies about remaining quota is worse than an absent one.
 
-DESIGN: constructs its own 429/503 response directly, never raises through
-    ``ErrorMiddleware``
-    ✅ A 429 needs ``Retry-After`` **and**, optionally, ``RateLimit-Policy``
-       — headers no generic ``ServiceException`` dispatch path knows how
-       to attach. Sending the response directly means this middleware
-       behaves identically whether or not ``ErrorMiddleware`` is present
-       in the stack (the same self-contained shape the
-       ``enable_error_middleware=False`` edge case requires of both new
-       middlewares) — one code path, not two.
-    ✅ ``correlation_id`` is still populated (ambient if set, freshly
-       generated otherwise — the same fallback ``ErrorMiddleware`` uses),
-       so the response is no less correlatable for not going through the
-       envelope machinery.
+DESIGN: raise ``RateLimitExceededError`` through ``ErrorMiddleware`` when
+    present; self-render only when it is absent (Plan 035 drift fix,
+    mirroring ``BodyLimitMiddleware``'s ``has_error_middleware`` shape)
+    ✅ §D-order's own rationale for positioning this middleware **inside**
+       ``ErrorMiddleware`` is "so the 429 renders through the envelope" —
+       a self-rendered ``JSONResponse`` never went through
+       ``error_message_for()``, so it carried no i18n/``Content-Language``
+       handling despite being envelope-shaped. Raising fixes that for the
+       common case (``create_varco_app``'s default
+       ``enable_error_middleware=True``).
+    ✅ ``Retry-After``/``RateLimit-Policy`` still reach the response —
+       ``RateLimitExceededError`` carries both as duck-typed attributes
+       (``retry_after_seconds``/``rate_limit_policy``) that
+       ``ErrorMiddleware._service_error_response`` reads via ``getattr``,
+       the same mechanism already shipped for
+       ``IdempotencyKeyConflictError.retry_after_seconds``. See
+       ``varco_core.exception.rate_limit``'s DESIGN block for why this was
+       chosen over wrapping ``send`` (provably unreachable here — see that
+       block) or a new generic ``ServiceException`` headers API.
+    ✅ ``has_error_middleware=False`` (``create_varco_app`` threads its own
+       ``enable_error_middleware`` here) keeps the prior self-render
+       behaviour byte-for-byte — an uncaught raise with no catcher would
+       be an unhandled 500, the opposite of this middleware's purpose.
+    ❌ Two response-construction code paths inside one middleware, same
+       trade-off ``BodyLimitMiddleware`` already accepted. The 503
+       fail-closed path (limiter itself unavailable) is unaffected by this
+       change — it always self-renders; only the 429 rate-limit-exceeded
+       path gained the raise-through-the-envelope behaviour, since only
+       the 429 is named in §D-order/Step 21's "renders through the
+       envelope" requirement.
 
 Thread safety:  ✅ Stateless per request — ``RateLimiter`` instances own
                 their own concurrency safety; this middleware holds no
@@ -107,6 +124,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic_settings import SettingsConfigDict
 from varco_core.config import VarcoSettings
+from varco_core.exception.rate_limit import RateLimitExceededError
 from varco_core.resilience.rate_limit import InMemoryRateLimiter, RateLimiter
 from varco_core.service.tenant import current_tenant
 
@@ -274,6 +292,16 @@ class RateLimitMiddleware:
         acknowledge_unbounded_keyspace: Required ``True`` to construct an
                   ``IP``/``SUBJECT``-scoped rule backed by an
                   ``InMemoryRateLimiter`` (§D-S10-keyspace).
+        has_error_middleware: Whether an ``ErrorMiddleware`` sits further
+                  out in the stack to catch and render a raised
+                  ``RateLimitExceededError`` (Plan 035 drift fix, same
+                  contract as ``BodyLimitMiddleware``). Default ``True``.
+                  ``create_varco_app`` passes its own
+                  ``enable_error_middleware`` value here. When ``False``,
+                  the 429 is self-rendered instead of raised — an uncaught
+                  raise with no catcher would be an unhandled 500. The
+                  503 fail-closed path always self-renders regardless of
+                  this flag (see this module's DESIGN block).
 
     Raises:
         ValueError: A ``SUBJECT``/``TENANT`` rule is used with
@@ -293,6 +321,7 @@ class RateLimitMiddleware:
         stage: RateLimitStage,
         settings: RateLimitSettings | None = None,
         acknowledge_unbounded_keyspace: bool = False,
+        has_error_middleware: bool = True,
     ) -> None:
         for rule in rules:
             if stage is RateLimitStage.PRE_AUTH and rule.scope in _POST_AUTH_ONLY_SCOPES:
@@ -321,6 +350,7 @@ class RateLimitMiddleware:
         self._rules = rules
         self._stage = stage
         self._settings = settings or RateLimitSettings()
+        self._has_error_middleware = has_error_middleware
         self._last_logged: dict[str, float] = {}
 
     async def __call__(
@@ -445,11 +475,24 @@ class RateLimitMiddleware:
         send: Send,
     ) -> None:
         retry_after_int = max(1, math.ceil(retry_after_seconds))
+        policy = self._policy_header_value(rule) if self._settings.emit_draft_headers else None
+
+        if self._has_error_middleware:
+            # Plan 035 drift fix: raise so ErrorMiddleware renders the 429
+            # through the one error envelope (§D-order position 11's own
+            # rationale) — Retry-After/RateLimit-Policy still reach the
+            # response via RateLimitExceededError's duck-typed attributes
+            # (see this module's and varco_core.exception.rate_limit's
+            # DESIGN blocks).
+            raise RateLimitExceededError(
+                rule_name=rule.name or rule.scope.value,
+                retry_after_seconds=retry_after_int,
+                rate_limit_policy=policy,
+            )
+
         headers = {"Retry-After": str(retry_after_int)}
-        if self._settings.emit_draft_headers:
-            policy = self._policy_header_value(rule)
-            if policy is not None:
-                headers["RateLimit-Policy"] = policy
+        if policy is not None:
+            headers["RateLimit-Policy"] = policy
         await send_json_error(
             scope,
             receive,
