@@ -55,7 +55,7 @@ from varco_core.exception.service import (
     ServiceValidationError,
 )
 from varco_core.i18n.catalog import MessageCatalog
-from varco_core.tracing import current_correlation_id
+from varco_core.tracing import current_correlation_id, generate_correlation_id
 
 _logger = logging.getLogger(__name__)
 
@@ -278,14 +278,33 @@ class ErrorMiddleware(BaseHTTPMiddleware):
             if msg.detail:
                 body["detail"] = msg.detail
         except Exception:  # noqa: BLE001
-            # Fallback if error_message_for fails (e.g. unmapped exception type)
+            # Fallback if error_message_for() itself raises — e.g. exc.error_params()
+            # or a translator/message_resolver raises (see §D-S3's honest note: an
+            # unmapped DBAPIError/OSError never reaches this branch; it is caught by
+            # the outer `except Exception` and rendered by _internal_error_response(),
+            # already sanitized). Plan 035 / §D-S3a: this branch used to echo
+            # str(exc) directly into the body — the same leak _internal_error_response()
+            # already avoids. Mirror it: opaque message, ERROR-level log with
+            # exc_info=True so the operator can still recover the detail via the
+            # correlation_id already present in the response.
             status_code = _FALLBACK_STATUS.get(type(exc), 500)
-            body = {"code": "INTERNAL_ERROR", "message": str(exc)}
+            _logger.error(
+                "error_message_for() raised while rendering %s: %s",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
+            body = {"code": "INTERNAL_ERROR", "message": "An internal error occurred."}
 
         if self._include_trace_id:
-            cid = current_correlation_id()
-            if cid:
-                body["correlation_id"] = cid
+            # DESIGN (Plan 035 / §D-S3a): a correlation_id is the supported
+            # correlation key for every error response — including this one,
+            # which may fire before RequestContextMiddleware ever ran (e.g.
+            # this middleware used standalone). Generate a fresh one rather
+            # than silently omitting the key when no ambient id is set, so
+            # "look up the correlation_id in the log" always has a value to
+            # look up.
+            body["correlation_id"] = current_correlation_id() or generate_correlation_id()
 
         response = JSONResponse(status_code=status_code, content=body)
         if self._set_content_language and locale:
@@ -321,9 +340,7 @@ class ErrorMiddleware(BaseHTTPMiddleware):
             body["detail"] = f"{type(exc).__name__}: {exc}"
 
         if self._include_trace_id:
-            cid = current_correlation_id()
-            if cid:
-                body["correlation_id"] = cid
+            body["correlation_id"] = current_correlation_id() or generate_correlation_id()
 
         return JSONResponse(status_code=500, content=body)
 

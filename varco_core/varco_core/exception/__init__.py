@@ -22,9 +22,11 @@ Exception hierarchy for the varco_core domain, query, and service layers.
     │   └── IdempotencyKeyConflictError        → HTTP 409 (Plan 029 / D1)
     ├── ServiceValidationError                 → HTTP 422
     │   └── IdempotencyFingerprintMismatchError → HTTP 422 (Plan 029 / D1)
-    └── IdempotencyKeyInvalidError              → HTTP 400 (Plan 029 / D1)
+    ├── IdempotencyKeyInvalidError              → HTTP 400 (Plan 029 / D1)
+    └── RequestBodyTooLargeError                → HTTP 413 (Plan 035 / S8)
 """
 
+from varco_core.exception.body_limit import RequestBodyTooLargeError
 from varco_core.exception.idempotency import (
     IdempotencyFingerprintMismatchError,
     IdempotencyKeyConflictError,
@@ -75,4 +77,6 @@ __all__ = [
     "IdempotencyKeyConflictError",
     "IdempotencyFingerprintMismatchError",
     "IdempotencyKeyInvalidError",
+    # Body limit exceptions (Plan 035 / S8)
+    "RequestBodyTooLargeError",
 ]

@@ -62,10 +62,12 @@ DESIGN: middleware stack applied via add_middleware() (Starlette reverse order)
     becomes the OUTERMOST layer.  We add CORS last so it runs FIRST on
     incoming requests (CORS preflight OPTIONS must not hit the auth check).
 
-    Execution order (request in → response out):
-        CORSMiddleware → ErrorMiddleware → TracingMiddleware →
-        MetricsMiddleware (optional) → RequestLoggingMiddleware →
-        RequestContextMiddleware → SessionMiddleware → route handler
+    The verified, normative execution order — including the three optional
+    entries Plan 035 adds (SecurityHeadersMiddleware, BodyLimitMiddleware,
+    RateLimitMiddleware) — lives in exactly one place:
+    ``varco_fastapi.middleware``'s module docstring (§D-order). This
+    docstring used to restate it and had drifted (§D-order-bugs); it now
+    points there instead of carrying a second, divergent copy.
 
 Thread safety:  ✅ Intended to be called once at module import or startup.
 Async safety:   ✅ No async operations — route registration is synchronous.
@@ -86,6 +88,9 @@ from varco_core.tz.settings import TimezoneSettings
 from varco_fastapi.validation import validate_container_bindings, validate_router_class
 
 if TYPE_CHECKING:
+    from varco_fastapi.middleware.body_limit import BodyLimitSettings
+    from varco_fastapi.middleware.rate_limit import RateLimitBundle
+    from varco_fastapi.middleware.security_headers import SecurityHeadersSettings
     from varco_fastapi.router.mcp import MCPAdapter
     from varco_fastapi.router.skill import SkillAdapter
 
@@ -130,6 +135,9 @@ def create_varco_app(
     configure_jwt: bool = True,
     global_attributes: Mapping[str, str] | None = None,
     capture_params: bool | None = None,
+    security_headers: SecurityHeadersSettings | bool | None = None,
+    body_limit: BodyLimitSettings | bool | None = None,
+    rate_limit: RateLimitBundle | None = None,
 ) -> Any:
     """
     Create a fully configured FastAPI application for a varco service.
@@ -229,6 +237,38 @@ def create_varco_app(
                                     before the middleware stack is built,
                                     toggling automatic ``@span`` parameter
                                     capture process-wide.
+        security_headers:            Plan 035 / §D-S7-default. ``None``
+                                    (default) installs ``SecurityHeadersMiddleware``
+                                    with ``SecurityHeadersSettings()`` (on,
+                                    ``BALANCED`` preset — four headers on
+                                    every response). Pass ``False`` to not
+                                    register it at all, or a
+                                    ``SecurityHeadersSettings`` instance for
+                                    custom configuration (e.g. ``STRICT``).
+                                    Registered at §D-order position 2 —
+                                    inside ``CORSMiddleware``, outside
+                                    everything else, so its headers attach
+                                    to error responses too.
+        body_limit:                  Plan 035 / §D-S8-default. ``None``
+                                    (default) installs ``BodyLimitMiddleware``
+                                    with ``BodyLimitSettings()`` (on, 10 MiB
+                                    ceiling). Pass ``False`` to not register
+                                    it, or a ``BodyLimitSettings`` instance
+                                    for a custom ceiling/``exempt_paths``.
+                                    Registered at §D-order position 5 —
+                                    immediately inside ``ErrorMiddleware``,
+                                    outside ``IdempotencyMiddleware``, so an
+                                    over-limit request is rejected before
+                                    anything buffers it.
+        rate_limit:                  Plan 035 / §D-S10. ``None`` (default,
+                                    the one opt-in row) registers nothing.
+                                    Pass a ``RateLimitBundle`` to install up
+                                    to two ``RateLimitMiddleware`` instances
+                                    — its ``IP``/``GLOBAL`` rules at §D-order
+                                    position 9 (outside
+                                    ``RequestContextMiddleware``, before
+                                    auth) and its ``SUBJECT``/``TENANT``
+                                    rules at position 11 (inside it).
 
     Returns:
         A fully configured ``fastapi.FastAPI`` instance.
@@ -489,19 +529,65 @@ def create_varco_app(
             timezone_settings=_resolved_timezone_settings,
         )
 
+    # RateLimitMiddleware(POST_AUTH) — Plan 035 / §D-order position 11.
+    # Added BEFORE RequestContextMiddleware (below) so RequestContextMiddleware
+    # ends up more OUTER (add_middleware() prepends — later call = more outer)
+    # and therefore runs FIRST, populating the AuthContext/current_tenant()
+    # this stage's SUBJECT/TENANT keying reads. §D-S10-keyspace: the
+    # acknowledgement comes from RateLimitBundle.acknowledge_unbounded_keyspace
+    # — the CALLER's own explicit opt-in, never forged here — so an IP/SUBJECT
+    # rule backed by an InMemoryRateLimiter still raises ValueError at
+    # construction unless the caller set it, exactly as a hand-registered
+    # RateLimitMiddleware would.
+    _post_auth_rate_limit_rules = _partition_rate_limit_rules(rate_limit, post_auth=True)
+    if _post_auth_rate_limit_rules:
+        from varco_fastapi.middleware.rate_limit import RateLimitMiddleware, RateLimitStage
+
+        app.add_middleware(
+            RateLimitMiddleware,
+            rules=_post_auth_rate_limit_rules,
+            stage=RateLimitStage.POST_AUTH,
+            settings=rate_limit.settings if rate_limit is not None else None,
+            acknowledge_unbounded_keyspace=(
+                rate_limit.acknowledge_unbounded_keyspace if rate_limit is not None else False
+            ),
+        )
+
     # RequestContextMiddleware (populates auth ContextVars)
     if container is not None:
         _try_add_request_context_middleware(app, container)
+
+    # RateLimitMiddleware(PRE_AUTH) — Plan 035 / §D-order position 9. Added
+    # AFTER RequestContextMiddleware (above) so it ends up more OUTER —
+    # rejecting an unauthenticated flood before any JWT signature
+    # verification happens (the DoS §D-order's DESIGN block names).
+    # §D-S10-keyspace: same caller-supplied acknowledgement as the POST_AUTH
+    # registration above — never forged here.
+    _pre_auth_rate_limit_rules = _partition_rate_limit_rules(rate_limit, post_auth=False)
+    if _pre_auth_rate_limit_rules:
+        from varco_fastapi.middleware.rate_limit import RateLimitMiddleware, RateLimitStage
+
+        app.add_middleware(
+            RateLimitMiddleware,
+            rules=_pre_auth_rate_limit_rules,
+            stage=RateLimitStage.PRE_AUTH,
+            settings=rate_limit.settings if rate_limit is not None else None,
+            acknowledge_unbounded_keyspace=(
+                rate_limit.acknowledge_unbounded_keyspace if rate_limit is not None else False
+            ),
+        )
 
     # Tracing (correlation ID + OTel span)
     if enable_tracing:
         app.add_middleware(TracingMiddleware)
 
-    # Metrics — sits INSIDE TracingMiddleware so OTel context is already active
-    # when instruments are recorded.  Sits OUTSIDE RequestContextMiddleware so
-    # it does not depend on auth ContextVars.
-    # add_middleware() prepends, so this ends up between Tracing and Logging
-    # in the final execution order.
+    # Metrics — verified position: OUTSIDE TracingMiddleware (§D-order-bugs
+    # corrects the prior "sits INSIDE Tracing" claim here, which did not
+    # match what add_middleware() actually builds — see
+    # varco_fastapi.middleware's module docstring for the full, verified
+    # order and BACKLOG.md for the filed "is this the right position?"
+    # question). Sits OUTSIDE RequestContextMiddleware so it does not
+    # depend on auth ContextVars.
     if enable_metrics:
         try:
             from varco_fastapi.middleware.metrics import (
@@ -526,6 +612,25 @@ def create_varco_app(
         except ImportError:
             pass
 
+    # BodyLimitMiddleware — Plan 035 / §D-order position 5. Immediately
+    # INSIDE ErrorMiddleware (added here, before it, so ErrorMiddleware ends
+    # up more outer) so its 413 renders through the one error envelope;
+    # OUTSIDE IdempotencyMiddleware (an app-level opt-in, added separately by
+    # the caller) so an over-limit request is rejected before anything
+    # buffers it. body_limit=None (default) installs it on at 10 MiB;
+    # body_limit=False registers nothing.
+    if body_limit is not False:
+        from varco_fastapi.middleware.body_limit import BodyLimitMiddleware, BodyLimitSettings
+
+        _body_limit_settings = (
+            body_limit if isinstance(body_limit, BodyLimitSettings) else BodyLimitSettings()
+        )
+        app.add_middleware(
+            BodyLimitMiddleware,
+            settings=_body_limit_settings,
+            has_error_middleware=enable_error_middleware,
+        )
+
     # Error (exception → JSON response) — must wrap tracing so errors are traced
     if enable_error_middleware:
         app.add_middleware(
@@ -534,7 +639,14 @@ def create_varco_app(
             set_content_language=_resolved_i18n_settings.set_content_language,
         )
 
-    # Extra middleware from caller (added before CORS = inside ErrorMiddleware)
+    # Extra middleware from caller. §D-order-bugs: verified OUTSIDE
+    # ErrorMiddleware (added AFTER it here, and add_middleware() prepends —
+    # so this lands further out), NOT "inside" as a prior comment claimed.
+    # Consequence: a ServiceException raised from an extra_middleware=
+    # entry is NOT rendered through the error envelope. Register a varco
+    # edge middleware via the dedicated security_headers=/body_limit=/
+    # rate_limit= keywords instead — never via extra_middleware=, which is
+    # the wrong position for all three (BACKLOG.md's filed question).
     for mw_entry in reversed(extra_middleware or []):
         if isinstance(mw_entry, tuple):
             mw_cls, mw_kwargs = mw_entry[0], mw_entry[1] if len(mw_entry) > 1 else {}
@@ -542,6 +654,26 @@ def create_varco_app(
         else:
             # Accept bare class too (no kwargs)
             app.add_middleware(mw_entry)
+
+    # SecurityHeadersMiddleware — Plan 035 / §D-order position 2. Added here,
+    # after extra_middleware and before install_cors, so it ends up INSIDE
+    # CORSMiddleware (never rewrites a preflight response) and OUTSIDE
+    # everything else — including ErrorMiddleware, so its headers attach to
+    # every error response too (413/429 included).
+    # security_headers=None (default) installs it on at BALANCED;
+    # security_headers=False registers nothing.
+    if security_headers is not False:
+        from varco_fastapi.middleware.security_headers import (
+            SecurityHeadersMiddleware,
+            SecurityHeadersSettings,
+        )
+
+        _security_headers_settings = (
+            security_headers
+            if isinstance(security_headers, SecurityHeadersSettings)
+            else SecurityHeadersSettings()
+        )
+        app.add_middleware(SecurityHeadersMiddleware, settings=_security_headers_settings)
 
     # Outermost: CORS (must run before auth so OPTIONS preflight passes)
     cors_config = cors or (CORSConfig.from_env() if container is None else _resolve_cors(container))
@@ -917,6 +1049,36 @@ def _try_resolve_component(
         return
 
     out.append(component)
+
+
+def _partition_rate_limit_rules(rate_limit: Any | None, *, post_auth: bool) -> tuple[Any, ...]:
+    """
+    Split a ``RateLimitBundle``'s rules by §D-order stage.
+
+    ``IP``/``GLOBAL`` rules are PRE_AUTH-capable; ``SUBJECT``/``TENANT``
+    rules require an authenticated request context and are POST_AUTH only
+    (§D-S10-shape) — ``RateLimitMiddleware.__init__`` itself refuses the
+    wrong combination with a ``ValueError``, so this partition is purely a
+    convenience for ``create_varco_app``, not a second source of truth for
+    which scopes are legal where.
+
+    Args:
+        rate_limit: The ``RateLimitBundle`` passed to ``create_varco_app``,
+                    or ``None`` (§D-S10 is the one opt-in row — no bundle
+                    means no rules at all).
+        post_auth:  ``True`` to return the ``SUBJECT``/``TENANT`` rules,
+                    ``False`` to return the ``IP``/``GLOBAL`` rules.
+
+    Returns:
+        A tuple of matching ``RateLimitRule``s — empty when ``rate_limit``
+        is ``None`` or no rule matches this stage.
+    """
+    if rate_limit is None:
+        return ()
+    from varco_fastapi.middleware.rate_limit import RateLimitScope
+
+    post_auth_scopes = {RateLimitScope.SUBJECT, RateLimitScope.TENANT}
+    return tuple(rule for rule in rate_limit.rules if (rule.scope in post_auth_scopes) == post_auth)
 
 
 def _try_add_request_context_middleware(app: Any, container: Any) -> None:

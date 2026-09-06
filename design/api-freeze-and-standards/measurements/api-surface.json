@@ -1242,6 +1242,14 @@
         "kind": "class",
         "module": "varco_fastapi.router.health"
       },
+      "HttpEdgeFinding": {
+        "kind": "class",
+        "module": "varco_fastapi.middleware.introspect"
+      },
+      "HttpEdgePosture": {
+        "kind": "class",
+        "module": "varco_fastapi.middleware.introspect"
+      },
       "HttpQueryParams": {
         "kind": "class",
         "module": "varco_fastapi.router.base"
@@ -1508,7 +1516,7 @@
       "create_varco_app": {
         "kind": "function",
         "module": "varco_fastapi.app",
-        "signature": "(container: 'Any | None' = None, *, routers: 'list[type] | None' = None, scan_packages: 'list[str] | None' = None, title: 'str' = 'Varco API', version: 'str' = '0.1.0', description: 'str' = '', cors: 'Any | None' = None, enable_tracing: 'bool' = True, enable_logging: 'bool' = True, enable_error_middleware: 'bool' = True, enable_metrics: 'bool' = False, enable_profiling: 'bool' = False, mcp_adapter: 'MCPAdapter | None' = None, mcp_path: 'str' = '/mcp', skill_adapter: 'SkillAdapter | None' = None, skill_base_url: 'str' = '', skill_agent_card_path: 'str' = '/.well-known/agent.json', skill_tasks_prefix: 'str' = '/tasks', extra_middleware: 'list[Any] | None' = None, extra_lifespan_components: 'list[Any] | None' = None, migrations: 'AbstractMigrator | Sequence[AbstractMigrator] | None' = None, migration_settings: 'MigrationSettings | None' = None, tenancy: 'Any | None' = None, reliability: 'Any | None' = None, i18n: 'I18nSettings | None' = None, timezone: 'TimezoneSettings | None' = None, validate: 'bool' = True, strict_validation: 'bool' = False, openapi_url: 'str' = '/openapi.json', docs_url: 'str' = '/docs', configure_jwt: 'bool' = True, global_attributes: 'Mapping[str, str] | None' = None, capture_params: 'bool | None' = None) -> 'Any'"
+        "signature": "(container: 'Any | None' = None, *, routers: 'list[type] | None' = None, scan_packages: 'list[str] | None' = None, title: 'str' = 'Varco API', version: 'str' = '0.1.0', description: 'str' = '', cors: 'Any | None' = None, enable_tracing: 'bool' = True, enable_logging: 'bool' = True, enable_error_middleware: 'bool' = True, enable_metrics: 'bool' = False, enable_profiling: 'bool' = False, mcp_adapter: 'MCPAdapter | None' = None, mcp_path: 'str' = '/mcp', skill_adapter: 'SkillAdapter | None' = None, skill_base_url: 'str' = '', skill_agent_card_path: 'str' = '/.well-known/agent.json', skill_tasks_prefix: 'str' = '/tasks', extra_middleware: 'list[Any] | None' = None, extra_lifespan_components: 'list[Any] | None' = None, migrations: 'AbstractMigrator | Sequence[AbstractMigrator] | None' = None, migration_settings: 'MigrationSettings | None' = None, tenancy: 'Any | None' = None, reliability: 'Any | None' = None, i18n: 'I18nSettings | None' = None, timezone: 'TimezoneSettings | None' = None, validate: 'bool' = True, strict_validation: 'bool' = False, openapi_url: 'str' = '/openapi.json', docs_url: 'str' = '/docs', configure_jwt: 'bool' = True, global_attributes: 'Mapping[str, str] | None' = None, capture_params: 'bool | None' = None, security_headers: 'SecurityHeadersSettings | bool | None' = None, body_limit: 'BodyLimitSettings | bool | None' = None, rate_limit: 'RateLimitBundle | None' = None) -> 'Any'"
       },
       "get_auth_context": {
         "kind": "function",
@@ -1539,6 +1547,11 @@
         "kind": "function",
         "module": "varco_fastapi.context",
         "signature": "() -> 'str | None'"
+      },
+      "inspect_http_edge": {
+        "kind": "function",
+        "module": "varco_fastapi.middleware.introspect",
+        "signature": "(app: 'Any') -> 'HttpEdgePosture'"
       },
       "install_cors": {
         "kind": "function",

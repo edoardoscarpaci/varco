@@ -180,6 +180,7 @@ from varco_fastapi.middleware.cors import CORSConfig, install_cors
 
 # ── Middleware ────────────────────────────────────────────────────────────────
 from varco_fastapi.middleware.error import ErrorMiddleware
+from varco_fastapi.middleware.introspect import HttpEdgeFinding, HttpEdgePosture, inspect_http_edge
 from varco_fastapi.middleware.logging import RequestLoggingMiddleware
 from varco_fastapi.middleware.metrics import MetricsMiddleware
 from varco_fastapi.middleware.request_context import RequestContextMiddleware
@@ -276,6 +277,10 @@ __all__ = [
     "TracingMiddleware",
     "CORSConfig",
     "install_cors",
+    # Plan 035 / §D-seam — cross-plan contract with Plan 036, top-level too
+    "HttpEdgeFinding",
+    "HttpEdgePosture",
+    "inspect_http_edge",
     # Router
     "VarcoRouter",
     "GenericRouter",

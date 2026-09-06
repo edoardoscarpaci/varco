@@ -191,6 +191,9 @@ policy engine, field encryption, observability, profiling, …) — see
 - [Feature flags](#feature-flags)
 - [Recurring schedules](#recurring-schedules)
 - [File watching and hot reload](#file-watching-and-hot-reload)
+- [Security headers](#security-headers)
+- [Request body limits](#request-body-limits)
+- [HTTP rate limiting](#http-rate-limiting)
 - [Composite Deployment](#composite-deployment)
 - [Durability preset (one-line opt-in)](#durability-preset-one-line-opt-in)
 - [Changelog summary](#changelog-summary)
@@ -901,6 +904,18 @@ list(FastrestErrorCodes)  # all built-in codes — iterable because it's an Enum
 | `CONFLICT` | `FASTREST_003` | 409 |
 | `VALIDATION_ERROR` | `FASTREST_004` | 422 |
 | `INTERNAL_ERROR` | `FASTREST_500` | 500 |
+
+`ErrorEnvelopeSettings` (env prefix `VARCO_ERROR_`) governs what else the envelope carries:
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `VARCO_ERROR_INCLUDE_MESSAGE_KEY` | `true` | Include the i18n `message_key` member |
+| `VARCO_ERROR_INCLUDE_PARAMS` | `true` | Include the structured `params` member |
+| `VARCO_ERROR_PROBLEM_DETAILS` | `false` | Emit an RFC 9457 Problem Details body instead |
+| `VARCO_ERROR_INCLUDE_DETAIL` | `true` | Include the `detail` member (`str(exc)`) on a mapped `ServiceException`. Byte-identical to pre-3.2 (Plan 035 / §D-S3b) — a **warn-only**, 4.0-flip-candidate knob, reported by `inspect_http_edge()` as `http.error.detail_exposed`. Set `false` to omit it now |
+
+See `technical_docs/features/error-taxonomy-and-i18n.md` for the full envelope shape and the S3
+fallback-leak fix this knob is adjacent to (unconditional, no toggle).
 
 ### FastAPI exception handler
 
@@ -4165,6 +4180,176 @@ from varco_fastapi.lifespan import VarcoLifespan
 
 lifespan = VarcoLifespan()
 lifespan.register(bundle)  # starts the watcher too — ReloadableResource.start()/stop() own it
+```
+
+---
+
+## Security headers
+
+`SecurityHeadersMiddleware` (Plan 035 / S7) sends a baseline of security response headers on
+**every** response, including error responses. **On by default** — `create_varco_app()` installs
+it at the `BALANCED` preset with no code change:
+
+```python
+app = create_varco_app(container)
+# GET /anything now carries:
+#   X-Content-Type-Options: nosniff
+#   X-Frame-Options: DENY
+#   Referrer-Policy: strict-origin-when-cross-origin
+#   Strict-Transport-Security: max-age=31536000; includeSubDomains   (HTTPS only)
+```
+
+Opt into `STRICT` for CSP/COOP/CORP/Permissions-Policy (breaks `/docs`/`/redoc` unless
+`exclude_paths` covers them — the default does):
+
+```python
+from varco_fastapi.middleware.security_headers import SecurityHeadersPreset, SecurityHeadersSettings
+
+app = create_varco_app(container, security_headers=SecurityHeadersSettings(preset=SecurityHeadersPreset.STRICT))
+```
+
+Hand-registered form (position matters — see `technical_docs/features/http-edge-hardening.md`'s
+ordering contract: inside `CORSMiddleware`, outside everything else):
+
+```python
+from varco_fastapi.middleware.security_headers import SecurityHeadersMiddleware
+
+app.add_middleware(ErrorMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)  # added AFTER ErrorMiddleware → ends up outside it
+install_cors(app, CORSConfig.from_env())
+```
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `VARCO_SECURITY_HEADERS_ENABLED` | `true` | Master on/off switch |
+| `VARCO_SECURITY_HEADERS_PRESET` | `balanced` | `balanced` \| `strict` |
+| `VARCO_SECURITY_HEADERS_X_CONTENT_TYPE_OPTIONS` | `nosniff` | Set empty/unset to omit |
+| `VARCO_SECURITY_HEADERS_X_FRAME_OPTIONS` | `DENY` | `SAMEORIGIN` for a self-framing app |
+| `VARCO_SECURITY_HEADERS_REFERRER_POLICY` | `strict-origin-when-cross-origin` | |
+| `VARCO_SECURITY_HEADERS_HSTS_MAX_AGE` | `31536000` | `0` disables HSTS |
+| `VARCO_SECURITY_HEADERS_HSTS_INCLUDE_SUBDOMAINS` | `true` | |
+| `VARCO_SECURITY_HEADERS_TRUSTED_PROXIES` | `()` | CIDRs trusted for `X-Forwarded-Proto` (HSTS behind a TLS-terminating proxy) |
+| `VARCO_SECURITY_HEADERS_EXCLUDE_PATHS` | `("/docs", "/redoc", "/openapi.json")` | Path prefixes exempt from every header |
+
+## Request body limits
+
+`BodyLimitMiddleware` (Plan 035 / S8) enforces a hard ceiling on request-body bytes — a
+`Content-Length` pre-check plus a cumulative count over the ASGI `receive()` stream (rejects
+before Starlette finishes buffering). **On by default at 10 MiB**:
+
+```python
+app = create_varco_app(container)
+# POST with a body > 10 MiB now gets a 413 naming the ceiling and VARCO_BODY_LIMIT_MAX_BYTES
+```
+
+```python
+from varco_fastapi.middleware.body_limit import BodyLimitSettings
+
+app = create_varco_app(
+    container,
+    body_limit=BodyLimitSettings(max_bytes=50 * 1024 * 1024, exempt_paths=("/upload",)),
+)
+```
+
+Hand-registered form — must sit inside `ErrorMiddleware` (so the 413 renders through the error
+envelope) and outside `IdempotencyMiddleware` (so an over-limit request is rejected before
+anything buffers it):
+
+```python
+from varco_fastapi.middleware.body_limit import BodyLimitMiddleware
+
+app.add_middleware(BodyLimitMiddleware)
+app.add_middleware(ErrorMiddleware)  # added AFTER → ends up outside BodyLimitMiddleware
+```
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `VARCO_BODY_LIMIT_ENABLED` | `true` | Master on/off switch |
+| `VARCO_BODY_LIMIT_MAX_BYTES` | `10485760` (10 MiB) | The byte ceiling |
+| `VARCO_BODY_LIMIT_EXEMPT_PATHS` | `()` | Path prefixes exempt entirely |
+| `VARCO_BODY_LIMIT_TRUST_CONTENT_LENGTH` | `true` | Whether to also do the cheap pre-check (the cumulative count always runs) |
+
+## HTTP rate limiting
+
+`RateLimitMiddleware` (Plan 035 / S10) is the ASGI assembly around the existing
+`RateLimiter`/`RateLimitConfig`/`InMemoryRateLimiter` (`varco_core.resilience.rate_limit`) and
+`RedisRateLimiter` (`varco_redis.rate_limit`) — no new algorithm. **Off by default** — the one
+opt-in row:
+
+```python
+from varco_core.resilience.rate_limit import InMemoryRateLimiter, RateLimitConfig
+from varco_fastapi.middleware.rate_limit import RateLimitBundle, RateLimitRule, RateLimitScope
+
+bundle = RateLimitBundle(
+    rules=(
+        RateLimitRule(
+            scope=RateLimitScope.IP,
+            limiter=InMemoryRateLimiter(RateLimitConfig(rate=100, period=60.0)),
+            name="ip",
+        ),
+        RateLimitRule(
+            scope=RateLimitScope.TENANT,
+            limiter=InMemoryRateLimiter(RateLimitConfig(rate=1000, period=60.0)),
+            name="tenant",
+        ),
+    ),
+)
+app = create_varco_app(container, rate_limit=bundle)
+# create_varco_app partitions rules by scope automatically: IP/GLOBAL -> stage=PRE_AUTH
+# (before auth), SUBJECT/TENANT -> stage=POST_AUTH (after RequestContextMiddleware).
+```
+
+Hand-registered form — `IP`/`GLOBAL` rules go **outside** `RequestContextMiddleware`;
+`SUBJECT`/`TENANT` rules require `stage=POST_AUTH` and go **inside** it:
+
+```python
+from varco_fastapi.middleware.rate_limit import RateLimitMiddleware, RateLimitStage
+
+app.add_middleware(RequestContextMiddleware, server_auth=my_auth)
+app.add_middleware(
+    RateLimitMiddleware,
+    rules=(tenant_rule,),
+    stage=RateLimitStage.POST_AUTH,
+)  # added AFTER RequestContextMiddleware → ends up inside it
+```
+
+An `IP`/`SUBJECT`-scoped rule backed by `InMemoryRateLimiter` raises `ValueError` unless you pass
+`acknowledge_unbounded_keyspace=True` — its key space is attacker-controlled (a new source
+IP/subject permanently costs a `deque` + `asyncio.Lock`). This applies whether the middleware is
+hand-registered or assembled via `create_varco_app(rate_limit=RateLimitBundle(...))`:
+`RateLimitBundle` carries its own `acknowledge_unbounded_keyspace` field (default `False`),
+forwarded verbatim to both `RateLimitMiddleware` instances `create_varco_app` builds from it — so
+`RateLimitBundle(rules=(...), acknowledge_unbounded_keyspace=True)` is required for the bundle form
+too. Use `RedisRateLimiter` (TTL-bounded) for any multi-process deployment, and see
+`technical_docs/features/http-edge-hardening.md`'s §D-S10-keyspace subsection for the full
+reasoning.
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `VARCO_RATE_LIMIT_ENABLED` | `true` | Master on/off switch for a constructed instance |
+| `VARCO_RATE_LIMIT_FAIL_OPEN` | `true` | A limiter exception allows the request (`false` → 503) |
+| `VARCO_RATE_LIMIT_TRUSTED_PROXIES` | `()` | CIDRs trusted for `X-Forwarded-For` (the `IP` scope) |
+| `VARCO_RATE_LIMIT_TRUSTED_PROXY_HOPS` | `0` | Trusted proxy hops to skip from the right |
+| `VARCO_RATE_LIMIT_EMIT_DRAFT_HEADERS` | `false` | Emit the IETF draft-11 `RateLimit-Policy` header |
+| `VARCO_RATE_LIMIT_EXEMPT_PATHS` | `()` | Path prefixes exempt from every rule |
+| `VARCO_RATE_LIMIT_ERROR_LOG_INTERVAL` | `60.0` | Minimum seconds between repeated "limiter raised"/"unkeyable rule" log lines |
+
+`Retry-After` is always sent on a 429 (RFC 9110 §10.2.3). `RateLimit`/`X-RateLimit-*` are never
+emitted — the `RateLimiter` ABC cannot report remaining quota. Full design (scope/stage model,
+trusted-proxy trust rule, fail-open reasoning, standards status): see
+`technical_docs/features/http-edge-hardening.md`.
+
+**"Is my edge configured?"** — `inspect_http_edge(app)` (also exported from `varco_fastapi`
+directly) returns a frozen `HttpEdgePosture` reporting what of the above is actually wired, with
+zero startup refusal — it is a pure read, not a preflight (that is Plan 036's `SecurityPosture`).
+
+```python
+from varco_fastapi import inspect_http_edge
+
+posture = inspect_http_edge(app)
+posture.security_headers_installed   # True
+posture.rate_limit_installed         # False, unless you passed rate_limit=
+[f.check for f in posture.findings]  # e.g. ["http.rate_limit.absent", "http.error.detail_exposed"]
 ```
 
 ---

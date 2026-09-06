@@ -1,39 +1,64 @@
 # BACKLOG
 
-> **Four cycles live in this file.** The **3.1 API-surface & interop** cycle is immediately
-> below; the **3.1 trust-store / hot-reload / performance** cycle follows it. Both are 3.1 and
-> both are live — the second does not supersede the first, and neither supersedes the `N1`–`N5`
-> rows carried in the 3.0.1 section. Everything under `# 3.0.1 — cleanup cycle` is already
-> completed, and `# 3.0.0 — release cycle (historical record)` onward is the **completed 3.0.0
-> backlog**, kept verbatim as the record of what shipped and what was decided. Do not delete any
-> of it — the Parked and "do not relitigate" sections are the reason decisions are not re-argued
-> each cycle, and this repo has already lost one ledger to a wholesale rewrite (`cae7f33`, see
-> UPSTREAM-GAPS.md's header).
+**One cycle is live: `# 3.2 — security release`, immediately below.**
+
+Everything from earlier cycles (3.0.0, 3.0.1, and both 3.1 cycles) is **complete and shipped**.
+Their work tables have been trimmed — the detail lives in `plans/`, `CHANGELOG.md`, and git
+history, and restating it here only creates a second copy that drifts. What is *not* trimmed, and
+must never be, are the **standing parks** and the **answered decisions**: those two sections are
+the reason this project does not re-argue settled questions every cycle, and they are consolidated
+across all cycles at the bottom of this file.
+
+> ⚠️ An earlier incarnation of this ledger was lost wholesale in `cae7f33`. When trimming, delete
+> *completed work rows*; never delete a park, a trigger, or an answered decision.
 
 ---
 
-# 3.1 — API surface & interop (discover, 2026-09-04)
+# 3.2 — security release (discover, 2026-09-05)
 
-Produced by `/discover` (no focus given — a full-repo scan plus two research briefs).
+Produced by `/discover` with a focus on tenant-identity trust. **This cycle is a dedicated
+security release** — its rows are not competing with feature work, and none of them were cut for
+size.
 
-⚠️ **This cycle adds to, and does not replace, the two 3.1 sections below it.** The
-trust-store / hot-reload / performance cycle (`T3`/`T5`/`T7`, `P2`–`P4`) and the
-`N1`–`N5` rows carried from 3.0.1 both remain in scope. Where a row here **is** one of
-those rows, it keeps its original ID (`N1`, `N2`, `N3`) and this section only records the
-severity the interview settled on — it is not a second, competing entry.
+**Research brief backing this cycle:**
+[`design/research/006-multi-tenant-identity-and-hardening.md`](design/research/006-multi-tenant-identity-and-hardening.md)
 
-Research briefs backing this cycle:
-- [`design/research/001-feature-gap-analysis-against-comparable-frameworks.md`](design/research/001-feature-gap-analysis-against-comparable-frameworks.md)
-- [`design/research/002-python-ecosystem-shifts-late-2026.md`](design/research/002-python-ecosystem-shifts-late-2026.md)
+Three further briefs were written during planning, one per hardening theme:
+[`007-postgres-rls-enforcement-mechanics.md`](design/research/007-postgres-rls-enforcement-mechanics.md) (S12/S15),
+[`008-http-hardening-conventions-2026.md`](design/research/008-http-hardening-conventions-2026.md) (S7/S8/S10),
+[`009-token-revocation-and-credential-storage.md`](design/research/009-token-revocation-and-credential-storage.md) (S13/S14).
+
+**Plan split:** these 16 rows are carved into **five plans** —
+see [`plans/000-index-3-2-security-release.md`](plans/000-index-3-2-security-release.md) for the
+slice boundaries, dependency edges, build order, and the definition of done for the whole set.
+**All five plans are now written**, so every row below is `✅ planned`. The rows stay in this
+table — they are *planned*, not *shipped*; they fold into `# Completed cycles — summary` only
+once the code lands. Build order: **035 → 034 → 033 → 037 → 036** (036 last by design).
+
+## The problem this cycle exists to fix
+
+`TenantResolutionMiddleware` reads `X-Tenant-Id` off the request and feeds it straight into
+`tenant_context()` (`varco_fastapi/varco_fastapi/middleware/tenant_resolution.py:61`). The only
+validation is *does this tenant exist and is it active*. **Nothing binds the claimed tenant to the
+authenticated caller** — any client that can reach the service can act as any active tenant.
+
+The trusted value already exists and is already parsed: a `tenant_id` JWT claim lands in
+`AuthContext.metadata` (`varco_core/varco_core/jwt/parser.py:384`). It is simply never connected to
+the routing decision.
+
+The audit that followed found the same shape — a documented-but-unguarded insecure default —
+repeated across the platform. That class, not the single header bug, is what this cycle addresses.
 
 ## Locked decisions (this session)
 
 | Decision | Choice | Consequence |
 |---|---|---|
-| **Horizon** | **3.1, near-term** — finish the in-flight work and add S/M items alongside it | Every XL candidate is parked by definition, most consequentially **durable execution**. It is not rejected on merit — brief 001 calls it varco's largest strategic gap — it simply cannot fit a near-term minor |
-| **Must-ship bar** | Only **`N1` MCP v2** and **`D1` Idempotency-Key** are 🔴 | `N1` is repair of an already-shipped surface, not new scope; `D1` is S-sized and an adoption blocker. `N2`/`N3`/`D4` ship if ready and slip without blocking the release |
-| **Webhooks in scope** | **Yes**, as 🟡 | The largest genuinely-new surface this cycle. Kept because varco already owns every part (outbox, DLQ, retry, redrive) and only lacks the assembly |
-| **OpenFeature un-park** | **Re-opened as 🟢, trigger still unverified** | The recorded un-park condition is "`openfeature-sdk` Python SDK reaches 1.0". Brief 001/002 evidence is about the **specification** (v0.9), which is *not* the same claim. `/plan` must verify the SDK version before building — see the Parked table's amended row |
+| **Horizon** | **3.2, a dedicated security release** | Nothing is cut for size. Rows are ranked by how much of the hole they close, not by what fits |
+| **Migration posture** | **Split by blast radius** | Defaults with a cheap caller-side fix (add an argument, drop a fallback) **flip** in 3.2. Defaults needing real application work (authorizer, tenant membership) get a **loud warn-only preflight** in 3.2 and flip in 4.0 |
+| **Legacy path** | **`LegacyTenantSource` ships as a named, documented escape hatch** | Header-only resolution remains available for anyone not ready to move, with its security properties stated plainly. Same shape as the `varco_fastapi.auth.TrustStore` deprecation subclass |
+| **Tenant sources in scope** | **JWT claim + subdomain + legacy header.** mTLS parked | The cross-check ("claim says A, host says B → reject") is the half with real security value, and it needs two sources to exist at all. `X-Forwarded-Client-Cert` trust is a separate problem nobody has asked for |
+| **Membership model** | **Signed-claim membership list; no external lookup** | `TenantSource` resolves a *requested* tenant; it is checked against a `tenants`/`orgs` claim in the token. Trust stays anchored in the signature. A repository-backed resolver is an out-of-tree implementation of the same ABC |
+| **Tenant-filter guarantee** | **Both, sequenced** | RLS-by-default (`S12`) is the proven production backstop and lands first. The applicator-level assertion (`S15`) is the portable dev-time guard and may slip. Shipping the assertion **alone** is rejected — it advertises a guarantee it cannot fully make |
 
 ## The work
 
@@ -41,568 +66,181 @@ Ordered by severity, then complexity ascending.
 
 | ID | Feature | Severity | Complexity | Rationale | Evidence |
 |----|---------|----------|------------|-----------|----------|
-| `D1` | **`Idempotency-Key` HTTP middleware** — dedup a retried request by header, replay the stored response | 🔴 must | S | Both briefs surfaced it independently, which is the strongest signal either produced. varco already has the storage (inbox, cache) and the tenant/request-scoping; what is missing is the HTTP-layer assembly. Adoption blocker for anything payments-adjacent, where a retried POST that charges twice is not a tolerable failure mode | brief 001 (table stakes); brief 002 §6 (IETF draft-ietf-httpapi-idempotency-key-header-07) |
-| `N1` | **MCP v2 migration** | 🔴 must | M–L | ⬆️ **Confirmed 🔴, unchanged in substance from its row below.** Recorded here only because the interview ratified it as the one item 3.1 cannot ship without. This is repair: SDK v2.0.0 (stable 2026-07-28) removed the lowlevel decorators `to_mcp_server()` is built on, so the surface is broken-on-upgrade rather than merely dated. The `mcp>=1.28.1,<2` pin is what is currently holding it up | brief 002 §5 (obligation); `varco_fastapi/varco_fastapi/router/mcp.py`; the `N1` row in "3.1 — scoped, not worked this cycle" below |
-| `D5` | **CycloneDX SBOM per release + a written CRA / NIS2 posture** | 🟡 should | S | ⚠️ **RATIONALE CORRECTED (Plan 030 / Phase 3, research 004 §3): this is credibility, not obligation, and the date was wrong.** It previously read "an obligation, not a feature" and cited "EU CRA reporting obligations bind from September 2026". Both are wrong. Full CRA enforcement is **2027-12-11**, and varco — free, Apache-2.0, no donations, no paid support, no SLA hosting, no commercial steward — falls under the CRA's **non-commercial FOSS exemption**; NIS2 does not bind FOSS authors at all, only *organizations using* the software. The row stays 🟡 for a different reason: downstream consumers who **are** CRA/NIS2-regulated genuinely need an SBOM from their upstreams, and that is the honest case for it. Nothing in this cycle is a compliance deadline, so D5 is the cheapest row to cut and the least costly to defer. The supply-chain scaffolding to hang it on already exists — `release.yml` with PEP 740 attestations, `scorecard.yml` — so this is one workflow step plus a `SECURITY.md`-adjacent document, not a project | brief 002 §3/§8 (superseded on the obligation claim); **research 004 §3** (correction); `docs/regulatory-posture.md` |
-| `N2` | **CloudEvents envelope** | 🟡 should | M | ⬆️ Ratified as 🟡 for this cycle. Design is already complete (Plan 022 §D-CE1–§D-CE4) with seam RS-1 reserved, so the remaining risk is execution, not design — the reason it survived a near-term scope cut that killed larger items | brief 001 (differentiator); `plans/022-api-freeze-and-standards-alignment.md` |
-| `N3` | **AsyncAPI export** | 🟡 should | M | ⬆️ Ratified as 🟡. Same standing as `N2` — design complete (§D-AA1–§D-AA4), seam RS-3 reserved. ✅ **RISK CLOSED (Plan 030 / §D-N3-nodep, research 004 §2):** the `datamodel-code-generator` risk was mis-scoped — that tool *consumes* JSON Schema/OpenAPI/Avro to emit Python models and cannot produce an AsyncAPI document, so it was never a candidate dependency. The shipped generator adds **zero** dependencies (plain `dict` + `json` + Pydantic's `model_json_schema()`) | brief 001; `plans/022-api-freeze-and-standards-alignment.md` |
-| `D4` | **Outbound webhooks** — subscription registry, HMAC/RFC 9421 signing, retry into the existing DLQ, replay from the admin surface | 🟡 should | M | Table stakes for anything SaaS-shaped, and the case here is unusually strong: varco already ships outbox, DLQ, retry policy, and redrive — a `WebhookDispatcher` is assembly over parts that exist, not new machinery. Svix is a whole company built on the fact that everyone rebuilds this badly. Kept at 🟡 rather than 🔴 because it is still the largest new surface area in the cycle | brief 001 (table stakes) |
-| `D7` | **Feature flags — `AbstractFeatureFlags` seam + OpenFeature provider** | 🟢 nice | S–M | Re-opens a documented park. The seam is the valuable half — a tenant/user-aware evaluation context wired to `RequestContext`, with the provider as an adapter — so it stays useful even if the OpenFeature verdict changes. ⚠️ The recorded un-park trigger (Python SDK ≥ 1.0) is **not** what the briefs evidence (spec v0.9); do not treat it as fired until `/plan` checks the SDK. `varco_core.flags` remains reserved (RS-3) | brief 001; brief 002 §6; the amended Parked row below |
-| `D6` | **Recurring schedules (cron / RRULE)** — a `Schedule` entity that *materializes* `Job` rows | 🟢 nice | M | Carried as a non-goal since 3.0.0, and CLAUDE.md already sketches the exact shape: "a future `Schedule` entity that produces `Job` rows exactly like these". The DST-safe zoned fields (`run_at_wall`/`run_at_tz`/`run_at_fold`) were designed for it. Closes the loop on the job subsystem | brief 001; CLAUDE.md §Decision Tree (tz/schedule.py branch) |
-| `D8` | **Ship `varco-testkit` to PyPI** | 🟢 nice | M | `intuition` — no brief raised it; it came out of the scout report noting `testkit/` is deliberately never packaged. Consequence: every downstream app rebuilds fakes, clock control, and tenant fixtures that already exist in-tree. ⚠️ Packaging it converts internal test scaffolding into public API subject to the `api_surface.py` gate — that trade-off is the whole decision, and it belongs to `/plan` | `intuition`; scout §"testkit is never packaged by design"; `testkit/varco_conformance/COVERAGE.md` |
+| `S1` | ✅ **planned → [`plans/034-credential-and-token-lifecycle.md`](plans/034-credential-and-token-lifecycle.md)** — **Require `algorithms=` on `JwtParser.parse()`** — no silent default | 🔴 must | S | `parser.py:137-139` defaults to `["HS256"]` when the caller passes nothing, with a comment reading "always pass algorithms explicitly in production". An HMAC default reachable by an unaware caller is the classic algorithm-confusion setup. Making the argument required is a one-line caller fix, so it flips under the blast-radius rule | `varco_core/varco_core/jwt/parser.py:137` |
+| `S2` | ✅ **planned → [`plans/034-credential-and-token-lifecycle.md`](plans/034-credential-and-token-lifecycle.md)** — **`?api_key=` query fallback off by default** | 🔴 must | S | `ApiKeyAuth` accepts the key as a query parameter with no warning and no toggle (`server_auth.py:358`), so keys land in access logs, proxy logs, and `Referer` headers. `WebSocketAuth`'s `?token=` fallback (`:626`) at least warns — align both on off-by-default with explicit opt-in | brief §5 (input handling); `varco_fastapi/varco_fastapi/auth/server_auth.py:358` |
+| `S3` | ✅ **planned → [`plans/035-http-edge-hardening.md`](plans/035-http-edge-hardening.md)** — **Close the error-response information leak** | 🔴 must | S | `error.py:283` — when `error_message_for()` cannot map an exception, the fallback returns `str(exc)` to the client. For an unmapped `DBAPIError` or `OSError` that is a schema fragment or a filesystem path. Return an opaque message plus the existing `correlation_id`; log the detail server-side | `varco_fastapi/varco_fastapi/middleware/error.py:283` |
+| `S4` | ✅ **planned → [`plans/036-authorization-surface-and-posture.md`](plans/036-authorization-surface-and-posture.md)** — **Cross-tenant write guard on the three admin surfaces** | 🔴 must | S | `webhook/router.py:134` trusts `X-Tenant-Id` for reads *independently of the middleware*, and `create_subscription` takes `tenant_id` from the **request body**, unchecked — a direct cross-tenant write. Bind admin routes to the resolved tenant unless the caller holds an explicit cross-tenant role. Applies to all three `mount_*` surfaces | brief §2 (BOLA); `varco_fastapi/varco_fastapi/webhook/router.py:134-160` |
+| `S5` | ✅ **planned → [`plans/033-tenant-identity-provenance.md`](plans/033-tenant-identity-provenance.md)** — **Tenant↔subject membership binding** — `AbstractTenantMembership`, signed-claim default | 🔴 must | M | Stops a *legitimately authenticated* user of tenant A acting as tenant B. Default implementation checks the requested tenant against a `tenants`/`orgs` list claim — no external lookup, no per-request query, trust anchored in the signature. Depends on `S6` | brief §2 (explicit binding required; no ambient selection without re-verification) |
+| `S6` | ✅ **planned → [`plans/033-tenant-identity-provenance.md`](plans/033-tenant-identity-provenance.md)** — **`TenantSource` provenance chain** — JWT claim + subdomain + cross-check + `LegacyTenantSource` | 🔴 must | M–L | ⭐ **The centerpiece.** Replaces the bare header read with an ordered, configurable chain; disagreement between two sources fails the request. Header-only becomes opt-in, not the default. Needs per-issuer claim mapping because **there is no standard OIDC claim name** — Auth0 uses `org_id`, Entra `tid`, Cognito a custom attribute — which `varco_core.jwt.transform` already provides | brief §1 (trust ranking; "header-only, never alone"); brief §1 (no standardized claim name) |
+| `S7` | ✅ **planned → [`plans/035-http-edge-hardening.md`](plans/035-http-edge-hardening.md)** — **Security headers middleware** — CSP, HSTS, `X-Content-Type-Options`, `Referrer-Policy`, frame options | 🟡 should | S | **Zero of these exist anywhere in the repo today** — verified by grep across all ten packages. Pure addition, no breaking change, and the single cheapest row in the cycle | brief §5 (table stakes); OWASP Secure Headers Project |
+| `S8` | ✅ **planned → [`plans/035-http-edge-hardening.md`](plans/035-http-edge-hardening.md)** — **Request body size limits** (renamed from "Request body size and complexity limits" — Plan 035's Non-goals: no framework middleware can enforce JSON nesting depth without the schema; parked, see below) | 🟡 should | S | Nothing enforces a ceiling today; only the metrics middleware even reads `Content-Length` (`middleware/metrics.py:396`), and reading is not enforcing | brief §5 |
+| `S9` | ✅ **planned → [`plans/036-authorization-surface-and-posture.md`](plans/036-authorization-surface-and-posture.md)** — **`SecurityPosture` startup preflight** | 🟡 should | S–M | ⭐ **The vehicle for every warn-only half of the blast-radius decision.** One startup check that reports on: `BaseAuthorizer` still bound, `PassthroughAuth` on a public app, an admin mount with `server_auth=None`, a webhook repository with `encryptor=None`. varco already proves it likes fail-closed — `tenancy_cache_key()` raises rather than silently un-namespacing. Warn in 3.2, refuse in 4.0 | `intuition`, grounded in four verified in-repo instances (`auth/authorizer.py:65`, `auth/server_auth.py:447`, the three `mount_*`, `webhook/models.py`) |
+| `S10` | ✅ **planned → [`plans/035-http-edge-hardening.md`](plans/035-http-edge-hardening.md)** — **HTTP rate-limit middleware, per tenant and per subject** | 🟡 should | S–M | The `RateLimiter` ABC and both backends already exist (`varco_core/resilience/rate_limit.py`, `RedisRateLimiter`); what is missing is the ASGI assembly. Same "varco already owns every part, it only lacks the wiring" argument that carried webhooks in 3.1 | brief §5 (global + per-tenant limiting is table stakes) |
+| `S11` | ✅ **planned → [`plans/036-authorization-surface-and-posture.md`](plans/036-authorization-surface-and-posture.md)** — **Authorization-decision audit** | 🟡 should | S–M | Every allow/deny through `AbstractAuthorizer`, emitted into the existing audit trail with principal, actor, tenant, and resource. The audit subsystem exists; authz decisions are simply not in it. The Entra actor-token incident turned on impersonation being *unlogged*, not merely permitted | brief §3 (audit must log both principal and actor; CVE-2025-55241) |
+| `S12` | ✅ **planned → [`plans/037-data-layer-tenant-enforcement.md`](plans/037-data-layer-tenant-enforcement.md)** — **RLS-by-default for `TenantScope.TENANT` tables** | 🟡 should | M | Extends `render_rls_ddl()` into a generated-for-you path, wires `set_tenant_local()` into the UoW automatically, and documents the never-connect-as-`BYPASSRLS` rule. The database enforces the invariant even when application code forgets. Postgres-only by nature | brief §4 (RLS mature since PG 9.5, fail-closed, OWASP-recommended); `varco_sa/varco_sa/rls.py` |
+| `S13` | ✅ **planned → [`plans/034-credential-and-token-lifecycle.md`](plans/034-credential-and-token-lifecycle.md)** — **Token revocation seam** | 🟡 should | M | varco has **no way to invalidate a JWT before `exp`** — no logout, no compromise response, no per-tenant kill switch. A `TokenRevocationStore` consulted in `TrustedIssuerRegistry.verify()` closes it. Basic revocation is not CAEP-dependent; CAEP/SSF becomes a later provider against the same seam | brief §6 |
+| `S14` | ✅ **planned → [`plans/034-credential-and-token-lifecycle.md`](plans/034-credential-and-token-lifecycle.md)** — **API keys hashed at rest** | 🟢 nice | S–M | `ApiKeyAuth` holds a `dict[str, AuthContext]` of raw keys in memory, loaded at startup. Hashed-at-rest with a constant-time verify is the expected shape | brief §5 (secrets management); `varco_fastapi/varco_fastapi/auth/server_auth.py:308-343` |
+| `S15` | ✅ **planned → [`plans/037-data-layer-tenant-enforcement.md`](plans/037-data-layer-tenant-enforcement.md)** (Phase 5, explicitly droppable) — **Applicator-level tenant-filter assertion** | 🟢 nice | M–L | The portable half of the tenant-filter guarantee — a check that a `TENANT`-scoped entity's compiled query carries a tenant predicate, raising if not. Backend-agnostic and catches the bug in dev, but it is a whitebox assertion over compiled SQL/pipeline structure and is fooled by a raw query that bypasses the applicator. **Ships only after `S12`, never instead of it** | brief §4 notes **no framework ships this** — a differentiator with no prior art to copy, which is exactly why it is 🟢 and not 🔴 |
+| `S16` | ✅ **planned → [`plans/033-tenant-identity-provenance.md`](plans/033-tenant-identity-provenance.md)** (Phase 6, explicitly droppable) — **Act-as / RFC 8693 token exchange with `act` claim** | 🟢 nice | M | The sanctioned way for an internal service to operate for an arbitrary tenant once the legacy header is gone. ⚠️ **Ranked 🟢 on absence of evidence, not low value** — varco is a framework with no deployments of its own, so no consumer is known to be blocked. Until it ships, `LegacyTenantSource` is the migration path for anyone who is, which makes that shim load-bearing rather than a courtesy | brief §3 (RFC 8693, `act` claim) |
+| `S17` | ❓ **question, filed by [`plans/035-http-edge-hardening.md`](plans/035-http-edge-hardening.md) / §D-order-bugs — not fixed by that plan** — **Is `MetricsMiddleware` intended to sit outside `TracingMiddleware`?** | 🟡 should | — | Verifying Plan 035's middleware ordering contract found `MetricsMiddleware` is registered, and executes, **outside** `TracingMiddleware` (`app.py:511` runs after `:498`, and `add_middleware()` prepends) — but two in-repo comments (`app.py:500-504`'s "sits INSIDE TracingMiddleware so OTel context is already active" and `middleware/__init__.py:16-25`'s "3. Tracing / 4. Metrics") both assert the opposite order. Either the comments are wrong, or `MetricsMiddleware`'s position is a real OTel-context bug (a metric recorded without an active span context). This is a metrics-correctness question with its own blast radius — Plan 035 (a security release) corrected the comments to state the verified reality and stopped there | `varco_fastapi/varco_fastapi/app.py:500-504,511`; `varco_fastapi/varco_fastapi/middleware/__init__.py:16-25` |
+| `S18` | ❓ **question, filed by [`plans/035-http-edge-hardening.md`](plans/035-http-edge-hardening.md) / §D-order-bugs — not fixed by that plan** — **Should `create_varco_app(extra_middleware=...)` land inside `ErrorMiddleware`?** | 🟡 should | — | Verified: an `extra_middleware=` entry is registered, and executes, **outside** `ErrorMiddleware` (`app.py:538` runs after `:531`) — the opposite of the in-repo comment that used to read "added before CORS = inside ErrorMiddleware". Consequence: a `ServiceException` raised from an `extra_middleware=` entry is never rendered through the error envelope, and (separately) it also sits outside `RequestContextMiddleware`, so it cannot read `current_tenant()`/the auth subject. This is why Plan 035's three new middlewares (`security_headers=`/`body_limit=`/`rate_limit=`) each got a dedicated `create_varco_app` keyword instead of relying on `extra_middleware=` | `varco_fastapi/varco_fastapi/app.py:537-544` |
+
+## Verified as already sound (do not re-raise)
+
+| Area | Finding |
+|---|---|
+| **CORS defaults** | Hardened in 3.0.0 (Plan 022 / AB-5). `allow_origins` defaults to `()`, not `("*",)` |
+| **SSRF guard** | The five-layer model in `varco_core/webhook/ssrf.py` is genuinely solid — scheme allowlist, resolve-once-and-pin, CIDR deny, no redirect following, IPv6 equivalents. Its **only** weakness is that nothing asserts callers actually use the returned `pinned_ip`; fold that assertion into `S9`'s preflight rather than opening a row |
+| **Cache-key tenancy** | `tenancy_cache_key()` already fails closed with `RuntimeError` outside `tenant_context()`. This is the house pattern the rest of the cycle is being held to |
+| **Admin mount acknowledgement** | Three independent barriers per mount (`acknowledge_*` kwarg, `server_auth`, no env-var path). The gap is the `server_auth=None` warn-and-mount default, covered by `S9` — not the acknowledgement design |
 
 ## Parked — this cycle (do not relitigate without new evidence)
 
-| Item | Why parked | What would un-park it |
+| Item | Why parked | Un-park trigger |
 |---|---|---|
-| **Durable execution / workflow-as-code** (`@workflow`/`@activity`, deterministic replay) | **XL, and parked on size alone — not on merit.** Brief 001 names it varco's largest strategic gap, and varco owns unusual amounts of the substrate (job store with fenced leases, outbox, saga orchestrator, DLQ). It cannot fit a near-term minor, and half of it would be worse than none | A major-version horizon (4.0) with the appetite to build it properly, or a consumer requirement that makes the saga orchestrator's limits concrete rather than theoretical |
-| **Per-tenant quotas & usage metering** | Cut in the interview. Real (multitenancy is a varco flagship and quotas are its missing half), but M-sized new surface in a cycle already carrying `D4` | 3.2, or a consumer asking for metered billing events off the existing rate limiter |
-| **Secrets-manager sources (Vault / cloud KMS)** | Cut in the interview. The technical argument is good — credential rotation is the same problem as cert rotation, and Plan 025–027 built the machinery — but it is an extension, not a gap | 3.2, or JWT-signing-key rotation becoming a concrete need rather than an analogy |
-| **Free-threading (3.13t/3.14t) readiness** | Cut in the interview. Brief 002 is explicit that **no code changes are forced** — varco's async design is already sound under no-GIL — so this is an audit plus a published support statement, and the credibility payoff does not beat the 🔴 rows | Free-threaded builds becoming a default rather than an opt-in, or a consumer actually running one |
-| **GraphQL surface** | 🔁 **Re-affirmed non-goal, now with outside evidence.** Brief 001 independently classifies it defensible: REST + OpenAPI covers the case, and Strawberry/Ariadne integrate at the app layer without varco's involvement | Unchanged from 3.0.0 |
-| **Admin UI / CRUD scaffolding** | 🔁 Re-affirmed. Brief 001: Django-level admin is full-stack scope, incompatible with varco's API-first position | Unchanged |
-| **Event sourcing** | 🔁 Re-affirmed. Brief 001: the audit trail covers the common case that sends people to event sourcing | Unchanged |
-| **OpenFeature — the *park* is lifted, the *trigger* is not** | ⚠️ **Amended, read this before re-arguing either way.** The row below parks OpenFeature until the `openfeature-sdk` Python SDK reaches 1.0. This cycle re-opens the work as `D7` **on the strength of the seam being worth having regardless**, *not* on a claim that the trigger fired — the briefs evidence spec v0.9, which is a different artifact from the SDK version the trigger names | `/plan` verifies the actual `openfeature-sdk` release and records it. If it is still pre-1.0, `D7` ships the seam and defers the provider |
-| **MCP `mount()` — migrate HTTP+SSE transport to Streamable HTTP** | Filed forward by Plan 029 / N1b (Step 24). HTTP+SSE is *deprecated* in the 2026-07-28 spec revision but remains fully functional (research brief 003 §5) — replacing a working transport mid-repair is new scope, not the parity fix N1 was scoped to | A client drops HTTP+SSE support entirely, or a future minor picks up MCP transport work generally (3.2) |
-
----
-
-
-# 3.1 — trust store, hot reload & performance
-
-Produced by `/discover` (focus: **"a FileWatcher for certificate renewal and hot reload of files;
-a TrustStore that optionally uses the filewatcher/dirwatcher for certificates + automatic
-injection for popular libraries (requests, urllib3, httpx, aiohttp); and, if not too big already,
-performance work so the library paths don't burn memory/CPU"**).
-
-⚠️ **This cycle does not replace the `N1`–`N5` rows** in the 3.0.1 section's "3.1 — scoped, not
-worked this cycle" table below (MCP v2, CloudEvents, AsyncAPI, NATS→DLQ, BeanieConfig collapse).
-Those remain scoped to 3.1 and are not re-litigated here; this cycle adds to them.
-
-## Locked decisions (this session)
-
-| Decision | Choice | Consequence |
-|---|---|---|
-| **Direction** | **Outbound only** — varco services *calling out* (broker TLS, peer HTTP clients, JWKS) | Server-side TLS termination and per-handshake cert rotation via `sni_callback` are **out of scope** and parked. This removes the single largest (L) item from the cycle |
-| **Release scope** | **3.1, strictly additive** | `varco_fastapi.auth.TrustStore` is *exported* and sits in the frozen API snapshot, so it cannot move. New home is `varco_core.tls`; the old name stays as a deprecated re-export alias until 4.0.0 — the pattern `render_rls_ddl` (AB-1) and `SchemaMigrationError` (AB-2) already established. `scripts/api_surface.py --check` therefore stays green |
-| **Cert search** | **Recursive by default — on the new type only** | Flipping the *existing* `SSLConfig.ca_folder` to recursive would silently widen what an existing deployment trusts. Existing field keeps flat semantics and gains an opt-in flag; only `varco_core.tls.TrustStore` is recursive by default |
-| **`ca_folder` multiplicity** | **One path or many** | Widening the annotation is additive, and `api_surface.py --check` does not record class signatures, so no gate churn |
-| **System CAs** | **On by default** — already correct, do not "fix" | Both existing impls already do `create_default_context()` then *additive* `load_verify_locations`. Neither has the `create_default_context(cafile=...)` replacement bug. This ask is **already satisfied**; the work is unification, not correction |
-| **Reload strategy** | **Both, selectable** — mutate in place on additions, swap the context on removal/replacement | `ssl.SSLContext` can gain trust via `load_verify_locations()` on a live context but has **no unload API**. Mutation is free (every client holding the context sees the rotation, no rebuild) but cannot revoke; swapping revokes but forces pooled-client teardown. The watcher already diffs folder contents, so it can pick per event. Renewal — the 6-day-cert common path — takes the cheap branch |
-| **Watch strategy** | `StatPollWatcher` **default, zero-dep**; `watchfiles` opt-in extra | Not a fallback-grade compromise: inotify does not fire on NFS/Docker bind mounts, and Kubernetes Secret/ConfigMap updates are a `..data` **symlink swap** that watchers see as `IN_DELETE_SELF`, not a content change. Certs on K8s arrive exactly that way |
-| **Platform** | **Linux only** this cycle | Cross-platform (macOS Keychain / Windows CryptoAPI) parked with an explicit audit of every implementation for Linux-only assumptions. See Parked |
-| **`truststore` dependency** | **Cut** | Investigated and rejected on evidence, not assumption — see Parked for the full finding. On Linux its verifier is a documented no-op, so it would add a dependency and a code path for zero behavioural gain |
-| **HTTP client adapters** | httpx, aiohttp, urllib3, requests — **function-body imports, no hard deps** | Matches the existing local-import pattern at `varco_fastapi/varco_fastapi/connection.py:333`. An adapter for an uninstalled library raises a clear `ImportError` when *called* and costs nothing at import time — which matters given P1 |
-| **Auto-injection** | **Explicit, opt-in, never implicit** | `truststore`'s own docs instruct that *libraries must not* call `inject_into_ssl()`; they construct a context and pass it. varco documents the app-level call but never makes it on the user's behalf |
-| **Performance scope** | **Harness + the one measured win** | `slots` and reflection-caching are currently *unmeasured guesses*. Filed as P3/P4, explicitly unblocked by P1. This is U-8 evidence discipline applied to our own perf claims |
-| **Ordering** | Default: severity, then complexity ascending | No override requested this cycle |
-
-**Research briefs backing this cycle:**
-
-- `design/research-output/001-tls-certificate-hotreload-and-file-watching-2026.md` — file watching
-  (watchfiles vs watchdog vs polling; inotify/NFS/K8s-symlink pitfalls), cert rotation in
-  comparable systems (SPIFFE/SPIRE, cert-manager, Envoy SDS), trust stores (`certifi` vs
-  `truststore`, `SSL_CERT_FILE`/`SSL_CERT_DIR`), SSL-context injection per client, mTLS/PKCS#12.
-- `design/async-performance-patterns/research/001-async-framework-performance-memory-2026.md` —
-  lazy imports (PEP 562/649/690/810), `slots=True` savings, reflection caching, middleware and
-  `contextvars` cost, benchmarking infrastructure (CodSpeed/pytest-benchmark/asv), free-threaded
-  Python status.
-
-**Measurement taken this session (the basis for P1):** `uv run python -X importtime -c "import
-varco_core"` → **419 ms**, against a **7 ms** interpreter baseline. No single hot leaf (largest
-self-time is `varco_core.mapper` at 9.6 ms); the cost is ~700 modules pulled eagerly by
-`varco_core/__init__.py`. Third-party contributors measured individually: providify 75 ms,
-pydantic 48 ms, PyJWT 45 ms, lark 32 ms, psutil 17 ms — all unconditional today.
-
-## 3.1 — the work
-
-| ID | Feature | Severity | Complexity | Rationale | Evidence |
-|----|---------|----------|------------|-----------|----------|
-| T1 | ✅ **done (Plan 025).** **`varco_core.watch` — `AbstractPathWatcher` ABC + pluggable strategies.** `StatPollWatcher` (default, zero-dep) and `WatchfilesWatcher` (opt-in `watch` extra). Debounce; correct under atomic-rename and K8s `..data` symlink swap. Structurally satisfies `AbstractLifecycle` start/stop | 🔴 must | M | The primitive T2/T3 are built on, and nothing like it exists. `PemFolderSource._has_changes()` already hand-rolls a pull-driven mtime-diff directory watcher that nothing else can reuse — this extracts and generalises code the repo has already written once | brief 001 §1; `varco_core/varco_core/authority/sources/pem_folder.py:179-199` |
-| T2 | ✅ **done (Plan 025).** **`ReloadableResource[T]` — load → swap under lock → notify subscribers, with keep-last-good on parse failure** | 🔴 must | M | Makes T1 reusable rather than cert-only. **Last-good semantics are the point**: a truncated or half-written file must never take down a live service, and a cert folder mid-rotation is exactly that. Three in-repo consumers already exist beyond certs — `varco_casbin`'s file adapter, i18n `.mo` catalogs, and JWKS PEM folders | `intuition` (shape), consumers verified in-repo |
-| T3 | **`varco_core.tls.TrustStore` — unify the two TLS models and make the result reloadable.** Recursive multi-folder search, `SSL_CERT_FILE`/`SSL_CERT_DIR`, `ReloadingTrustStore` on T1/T2, both reload strategies | 🔴 must | L | **There are two overlapping TLS models in different layers today and neither is a superset of the other.** `TrustStore` (`varco_fastapi.auth`) has `include_system_cas` and in-memory `bytes` CAs; `SSLConfig` (`varco_core.connection`) has the `verify=False` escape hatch and `check_hostname`. The `to_trust_store()` bridge is one-directional and **silently drops `verify=False`**. Also: TLS trust is neither FastAPI- nor authz-specific, so the broker backends can never share it where it currently sits | `varco_fastapi/varco_fastapi/connection.py:310-337` (lossy bridge, caveat documented at :326); `varco_core/varco_core/connection/ssl.py:218-276`; `varco_fastapi/varco_fastapi/auth/trust_store.py:190-249` |
-| T4 | ✅ **done (Plan 027).** **Client injection adapters** — `to_httpx_verify()`, `to_aiohttp_connector()`, `to_urllib3_poolmanager()`, `to_requests_adapter()` (`varco_core.tls.clients`), plus a documented, opt-in, never-auto-called `install_process_trust()` (`varco_core.tls.install`) | 🟡 should | M | The "automatic injection" half of the ask, minus the footgun. All four clients accept a custom `ssl.SSLContext` on current releases; the adapters are thin, function-body imports keep every one of them optional (guarded by `test_tls_no_hard_client_deps.py`), and `install_process_trust()` requires an explicit `acknowledge_global_mutation=True` and is never called by varco itself | brief 001 §4 (per-client APIs + versions); §3 (library-must-not-inject caveat) |
-| T5 | **Give `JwksUrl` / `OidcDiscovery` an SSL context** | 🟡 should | S | They fetch through bare `urllib.request.urlopen` with **no SSL context parameter at all**. A JWKS endpoint behind an internal PKI or a corporate TLS-intercepting proxy is currently unverifiable — the only workarounds are process-wide env vars or disabling verification. Smallest row in the cycle and the first real consumer of T3 | `varco_core/varco_core/authority/sources/jwks_url.py:199`; `varco_core/varco_core/authority/sources/oidc.py:189` |
-| T6 | ✅ **done (Plan 027).** **mTLS hardening — encrypted private keys (`TrustStore.key_password`, str/bytes/callable) and PKCS#12 / `.pfx` (`TrustStore.pkcs12_file`, `varco_core.tls.pkcs12`)** | 🟡 should | S–M | Brief 001 names PKCS#12 as *the* standard gap, normally requiring third-party shims (`httpx-pkcs12`, `requests-pkcs12`). varco closes it with **zero new dependencies** — `cryptography>=50.0.0` is already a hard `varco_core` dependency and decodes PKCS#12 natively; the temp material is written `0600`, `/dev/shm`-preferred, and unlinked in a `finally` on both the success and failure path | brief 001 §5; `varco_core/pyproject.toml` dependencies |
-| T7 | **Reconcile the three disagreeing cert-glob paths** | 🟢 nice | S | `SSLConfig` globs `*.pem` + `*.crt`; `TrustStore` globs `*.pem` + `*.crt`; `PemFolderSource` globs **only** `*.pem`. All three are non-recursive. Three code paths that answer "what is a cert file in this folder?" differently is a silent-misconfiguration surface — a `.cer` file, or a cert one directory down, is ignored with no error | `varco_core/varco_core/connection/ssl.py:261`; `varco_fastapi/varco_fastapi/auth/trust_store.py:225`; `varco_core/varco_core/authority/sources/pem_folder.py:196` |
-| P1 | **Import-time budget + lazy `__init__`** — PEP 562 module `__getattr__` on the large `__init__.py`s, plus a CI ceiling via `-X importtime` | 🔴 must | M | **The only perf item with a measured number: 419 ms vs a 7 ms baseline.** No hot leaf — it is purely structural, so it is fixable without touching logic. Every CLI invocation, serverless cold start and test-collection run pays it now. It also directly serves this cycle's own feature: a TLS/watch subsystem meant for sidecars and CLIs must not drag in 419 ms of unrelated framework | measured this session (see above); brief 002 §1 — PEP 562 is the shipped mechanism (PEP 690 rejected; PEP 810 lands in 3.15) |
-| P2 | **Benchmark + regression harness** — `pytest-codspeed`, PR comment first, **not** a gate | 🟡 should | S–M | There is currently **zero** perf infrastructure (`scripts/` has no benchmark runner). Nothing in P3/P4 can be honestly justified without it. Comment-not-gate is the mainstream posture: pydantic, FastAPI and polars all run CodSpeed; almost none gate on it, and GitHub-hosted runner noise is acknowledged but unquantified | brief 002 §5 |
-| P3 | **`slots=True` sweep on value objects and query AST nodes** | 🟢 nice | M | 40–90% per-instance memory on objects allocated per request; no `__slots__` exists anywhere in the repo today, and frozen+slots compose cleanly. ⚠️ **Cannot be a blanket sweep**: multiple inheritance imposes slot-layout constraints and this codebase is deliberately mixin/MRO-heavy. Also arguably breaking on public value objects (forbids attribute assignment), so in an additive 3.1 it is **internal types only**. **Blocked on P2** — currently a guess | brief 002 §2; `intuition` for the varco-specific win size |
-| P4 | **Reflection-caching audit** — `functools.cache` over `inspect.signature`/`get_type_hints`; build resolution plans at registration, not per call | 🟢 nice | M | Zero uses of `functools.cache`/`lru_cache` in the repo. Concrete lead: `QueryParser._parser` is `@cached_property` **per instance**, so a per-request parser rebuilds the Lark parser every time. ⚠️ Brief 002 §3 is explicit that "plan at registration, not call time" is universally advocated but **has no published micro-benchmarks** — which is precisely why this is 🟢 and **blocked on P2** | brief 002 §3; `varco_core/varco_core/query/parser.py:60-98` |
-
-## Parked — this cycle (do not relitigate without new evidence)
-
-| Item | Why parked | Re-open trigger |
-|---|---|---|
-| **Server-side cert rotation via `sni_callback`** | The user scoped this cycle to **outbound** calls. It was the only L-complexity item in the original candidate set, and dropping it is what made the cycle fit | varco services begin terminating TLS directly rather than sitting behind a proxy/ingress |
-| **`truststore` dependency** | **Investigated and rejected on source evidence, not assumption.** The objection raised was "it misses custom CA and hot reload". Half correct: it has **no** reload (that comes from T2 regardless), but it **does** support custom CAs — `load_verify_locations`/`load_cert_chain` delegate to the wrapped context, and `_macos.py` passes `ctx.get_ca_certs(binary_form=True)` to `SecTrustSetAnchorCertificates` then calls `SecTrustSetAnchorCertificatesOnly(trust, False)` ("we always want system certificates" *in addition*). The real reason to cut it is narrower and decisive: **on Linux its verifier is a documented no-op** ("we've enabled SSLContext's built-in verification via `verify_mode=CERT_REQUIRED`, and don't need to repeat it"), because OpenSSL's default paths *are* the Linux system store. Zero behavioural gain for a dependency | varco officially supports macOS or Windows deployments, where `create_default_context()` cannot see Keychain / CryptoAPI and an MDM-pushed corporate root is invisible |
-| **Cross-platform (macOS / Windows) support** | Explicitly deferred to a future release. Scoping to Linux keeps platform caveats out of the T1/T3 design instead of scattering them through it | A future release commits to official multi-OS support — at which point the work is *not* just adding `truststore`, but **auditing every implementation for Linux-only assumptions** (inotify, path handling, `SSL_CERT_DIR` semantics, the `StatPollWatcher`'s mtime granularity) |
-| **`slots` / reflection work as a decided outcome** | Not parked as *ideas* — filed as P3/P4. Parked as *decisions*: neither may be implemented until P2 can measure it | P2 lands and produces a benchmark showing a real win |
-| **PEP 810 native lazy imports** | Lands in Python 3.15; this repo's matrix is 3.12/3.13. P1 uses PEP 562, which ships today | The support matrix reaches 3.15 |
-
-## Open questions for `/plan` — 1-3 ANSWERED (Plan 026)
-
-1. **T3's deprecation shim shape** — ~~is `varco_fastapi.auth.TrustStore` a plain re-export
-   alias, or a subclass that keeps `include_system_cas` semantics exactly as they are today?~~
-   **Answered**: a subclass, not a plain alias — a plain alias was never available here, unlike
-   AB-1/AB-2, because the old and new names do not denote the same behaviour (the new type is
-   recursive by default and globs a wider cert set; aliasing would silently widen every
-   existing `varco_fastapi.auth.TrustStore` construction on upgrade). The subclass pins the
-   exact 3.0 semantics (non-recursive scan, `("*.pem", "*.crt")` patterns, deferred mTLS-pairing
-   check) and accepts the resulting `isinstance` asymmetry
-   (`isinstance(legacy, core.TrustStore)` is `True`; the reverse is `False`) as a documented,
-   CHANGELOG'd cost of a deprecation window. See plan 026 §D-T3-oq1.
-2. **Does `SSLConfig` also gain reload** — ~~or does it stay a static value object with
-   `varco_core.tls.TrustStore` as the only reloadable path?~~ **Answered**: `SSLConfig` stays
-   frozen and static; `varco_core.tls.ReloadingTrustStore` is the only reloadable path. Making
-   `SSLConfig` reloadable would turn every settings object constructed at import/DI time into an
-   unmanaged background-task owner — `SSLConfig` gains only `recursive`/`cert_patterns` (opt-in)
-   and the lossless `to_trust_store()` conversion. See plan 026 §D-T3-oq2.
-3. **Where does the `ReloadingTrustStore` background task get started** — ~~its own
-   `AbstractLifecycle` registered in `VarcoLifespan`, or a `@Configuration` in `varco_core`?~~
-   **Answered**: `ReloadingTrustStore` owns `start()`/`stop()` itself (inherited shape from Plan
-   025's watch/reload composition) and is an `async` context manager; **no** `@Configuration` is
-   added to `varco_core` — `container.scan("varco_core", recursive=True)` is a documented,
-   in-use pattern that auto-activates every scanned `@Configuration`, which would start a
-   filesystem watcher in every app that scans `varco_core`. `varco_core/tls/di.py` exposes only
-   `bind_trust_store(container, store)`, with no lifecycle side effect; a FastAPI app registers
-   an already-started store with `lifespan.register(store)`, non-FastAPI consumers use `async
-   with store:` or call `start()`/`stop()` directly. See plan 026 §D-T3-oq3.
-4. **P1's CI ceiling value** — a hard number (e.g. 100 ms) or a ratchet against the committed
-   previous measurement? A hard number is clearer; a ratchet cannot be gamed by a slow runner.
-   **Not answered by Plan 026** — P1 (import-time budget) is unrelated to T3/T5/T7 and is still
-   open.
-
----
-
-
-# 3.0.1 — cleanup cycle
-
-Produced by `/discover` (focus: **"we released the first version outside alpha, so for this new
-3.0.1 release let's cleanup all the missing or parked feature"**).
-
-## Locked decisions (this session)
-
-| Decision | Choice | Consequence |
-|---|---|---|
-| **Release scope** | **Strict patch** | 3.0.1 carries bug fixes, strict-xfail closures, CI gates, tests and docs — **no new API surface**. Chosen deliberately to keep the SemVer contract published in `CONTRIBUTING.md` intact on its very first follow-up release |
-| **Parked features** | **Not reachable at this version number** | The user's opening ask was to "clean up all the missing or parked feature", but four of them (MCP v2, CloudEvents, AsyncAPI, NATS→DLQ) are *additive* and one (BEANIE-CFG) is *breaking* — none can ride a patch. They are scoped to **3.1** below rather than worked now. This is a scope reduction the user made explicitly, not one taken silently |
-| **C2 / providify 2.0.1** | ~~**Gates the release**~~ ⚠️ **REVERSED (Plan 024)** — providify 2.0.1 shipped 2026-09-01 and **deliberately does not fix** the gap; the behaviour is declared intentional (Jakarta CDI producer-method rule), with only a detection warning (`IssueKind.UNREACHABLE_PRE_DESTROY`) and docstring corrections added. varco therefore adopts `@Disposes` itself — upstream's own supported teardown mechanism, not a workaround — closing nine live-resource-leak sites. **3.0.1 is gated on nothing external** | ~~The `RedisCache` shutdown leak is being fixed upstream in providify 2.0.1, not worked around in varco. 3.0.1 therefore waits on providify's release date, which is outside this repo's control.~~ See §D-C2 in `plans/024-3-0-1-cleanup.md` and `design/3-0-1-cleanup/research/002-providify-201-status.md` for the full reversal reasoning |
-| **Operator debt** | **Reported complete** | The user states PyPI publication, the ten GitHub Environments, the ten trusted publishers, Pages, and the branch/tag rulesets are all done. ⚠️ Several in-tree docs still say otherwise and are **stale** — see C1 |
-| **Ordering** | Default: severity, then complexity ascending | No override requested this cycle |
-
-**Research brief backing this cycle:**
-
-- `design/3-0-1-cleanup/research/001-parked-item-triggers.md` — current state of every parked
-  item's falsifiable re-open trigger as of 2026-09-01: OpenFeature (NOT FIRED), MCP Python SDK
-  (PARTIAL — v2.0.0 stable 2026-07-28, but issue #772 open), CloudEvents + AsyncAPI (FIRED),
-  Toxiproxy (NOT FIRED), plus a 2025–2026 packaging/ecosystem scan.
-
----
-
-## 3.0.1 — the work
-
-| ID | Feature | Severity | Complexity | Rationale | Evidence |
-|----|---------|----------|------------|-----------|----------|
-| C1 | **Reconcile this backlog against source** — re-verify every open row the way RL-4 did for `UPSTREAM-GAPS.md`; close what is already fixed, correct what is misstated, and fix the docs that still describe completed operator steps as pending | 🔴 must | S | Discussion opened on this finding: **KI-12 is already fixed in source** — `uow.py:86` calls `self._client.start_session()` un-awaited, with a docstring table documenting the motor-vs-pymongo divergence — while its row still reads 🔴 must and "currently FAILING, not xfailed". A cleanup release driven by a backlog nobody has verified will chase work that no longer exists. Same failure mode, same fix, as RL-4. **Also in scope:** `CLAUDE.md:185-191` and `design/varco-1-0-release/release-runbook.md` still describe branch protection and the PyPI/Environments setup as not-yet-applied; the user reports all of it done | verified this session: `varco_beanie/varco_beanie/uow.py:86` vs `BACKLOG.md:138`; `CLAUDE.md:185-191`; UPSTREAM-GAPS.md |
-| C2 | **Upgrade to providify 2.0.1 and adopt `@Disposes` to close P22-PROVIDER-PREDESTROY** — bump the ten `providify>=2.0.0` constraints to `>=2.0.1`, add `@Disposes` teardown at all nine sites the audit found (three Tier-A, visible to providify's new `UNREACHABLE_PRE_DESTROY` detector; six Tier-B, invisible to it), delete the two `strict=True` xfails, close the gap's row in `UPSTREAM-GAPS.md` (the report file under `design/upstream-gaps/` is never deleted) | 🔴 must | S | **Reshaped (Plan 024, Decision 1)** — providify 2.0.1 shipped 2026-09-01 *without* the fix, declaring the leaked-teardown behaviour intentional (Jakarta CDI producer-method rule); it only adds a `WARNING`-severity detector and docstring corrections. varco's own report's §5 proposal — adopt `@Disposes`, upstream's supported teardown mechanism — is what ships. Not a workaround: `@Disposes` is documented as the *only* teardown path for `@Provider`-produced instances (`providify/README.md:945-949`). ⚠️ Superseded language: ~~"do not implement the workaround"~~ | `design/upstream-gaps/providify-provider-predestroy.md`; `varco_core/tests/test_providify_provider_predestroy.py`; `varco_redis/tests/test_redis_cache_lifespan_shutdown_integration.py`; `design/3-0-1-cleanup/research/002-providify-201-status.md` |
-| C3 | **Fix RT9 — `BeanieMigrator.upgrade()` never reaches its `index_mode='create'` block** when the registry holds no pending migrations; it returns early first | 🔴 must | S | A genuine production defect, not an upstream gap: index creation silently does not happen on the common path where a deployment has no outstanding migrations. Found during Plan 019 Phase 5 and correctly parked as a `strict=True` xfail per this repo's "a conformance/contract failure becomes an xfail plus a backlog row, never an in-place fix" norm — this is the row being cashed in | `varco_beanie/tests/test_beanie_migration_integration.py:91-92` (strict xfail, real MongoDB) |
-| C4 | ✅ **DONE (Plan 022 Phase 3)** — **Two dangling Batch-B fixes from Plan 014 / audit 001** — (a) upgrade both `_MOUNTED_APPS` double-mount guards (`varco_fastapi.tenancy`, `varco_fastapi.admin`) to `weakref.WeakSet[FastAPI]`; (b) add the missing `container is None` guard to `varco_redis.di.async_bootstrap()`, which `varco_memcached` already has | 🟡 should | S | Verified this session (Plan 024 / C1): (a) both `_MOUNTED_APPS` are `weakref.WeakSet[Any]` (`varco_fastapi/varco_fastapi/tenancy/mount.py:53`, `varco_fastapi/varco_fastapi/admin/mount.py:43`, used at `tenancy/mount.py:112,128` and `admin/mount.py:107,155`); (b) the `container is None` guard with its RIDER-1 comment is present at `varco_redis/varco_redis/di.py:223-230`. Both landed | `varco_fastapi/varco_fastapi/tenancy/mount.py:53`; `varco_fastapi/varco_fastapi/admin/mount.py:43`; `varco_redis/varco_redis/di.py:223-230` |
-| C5 | **Wire `scripts/api_surface.py --check` into CI** | 🟡 should | S | Plan 022 scheduled this for Phase 7 and it never landed, so **the API freeze declared in 3.0.0 currently has no gate** — the snapshot is a tool a contributor must remember to run by hand. CLAUDE.md says so itself ("⚠️ This is not a gate today"). Note the documented limitation survives the wiring: `--check` catches removals and *function* signature changes only, never a narrowed class `__init__`. That is a reason to state the gate's scope honestly, not a reason to keep having no gate | `CLAUDE.md` §"Public API surface snapshot"; `scripts/api_surface.py`; `.github/workflows/test.yml` |
-| C6 | ✅ **DONE (Plan 020)** — **Wire the `examples/00-full-stack-post-api` smoke suite into the standard runner** | 🟡 should | S | Verified this session (Plan 024 / C1): `scripts/unit_tests.sh:59` appends `EXTRA_SUITES=("examples/00-full-stack-post-api:example/tests")` to `SUITES` on the no-argument path, and `.github/workflows/test.yml:83` runs `bash scripts/unit_tests.sh` in the `unit` job — the example suite runs on every normal CI run, no longer hand-invoked only | `scripts/unit_tests.sh:59-79`; `.github/workflows/test.yml:83` |
-| C7 | **Audit and fill the conformance-suite coverage gaps** — `varco_ws` and `varco_memcached` subscribe to fewer of the five suites than their siblings | 🟡 should | M | Two-step by agreement: **audit first** (cheap) to separate legitimate absences from real holes, **then fill only the real ones**. Known-legitimate: `varco_memcached` has no queue, so no DLQ suite; there is no `InMemoryChannelManager`, so `channel_manager.py` has no in-process runner. Everything else needs a stated reason or a subclass. Unfilled gaps are how a backend's ABC violation stays invisible — the same reasoning that created the suites | scout §4: EventBus present in 4/10, Cache 3/10, JobStore 5/10, DLQ 7/10, ChannelManager 3/10; `testkit/varco_conformance/` |
-| C8 | 🟡 **DOWNGRADED to documented known-flake (Plan 024, Decision 2 pre-authorised)** — **Fix the RT7b Kafka restart-recovery flake** — outbox relay across a Kafka container restart is intermittently red | 🟡 should | M | ⚠️ **Time-boxed pass completed.** 2/2 `make chaos-test PKG=varco_kafka` runs (2026-09-02, Docker 27.5.1/WSL2) reproduced the failure identically — `test_outbox_entries_survive_a_broker_restart_and_are_republished` fails with `NodeNotReadyError`/heartbeat-session-expired even at the already-widened `_DRAIN_TIMEOUT=240.0`, while the sibling single-relay-bus test passes both runs. Not a slow-recovery-fixable-by-longer-timeout case — the consumer's group-coordinator connection never re-establishes within the window. This reproduces, not extends, the root cause BACKLOG's own prior investigation already characterized (multi-client Kafka consumer-group recovery timing under Docker/WSL2, orthogonal to the port-pinning and KRaft fixes already landed). Stopped at 2/3 runs — evidence was unambiguous and matched prior findings exactly, so a third run would not have changed the disposition. `⚠️ Known flake` note added to `test_kafka_chaos.py`'s module docstring. Next real evidence point: the nightly `chaos` job on GitHub Actions' native-Linux dockerd | `BACKLOG.md:178`; `varco_kafka/tests/test_kafka_chaos.py` module docstring; `.github/workflows/integration.yml`'s `chaos` job |
-| C9 | **Replace `RedisJobStore`'s guard-key claim with an atomic Lua check-and-claim** | 🟢 nice | M | The rejected alternative to the RT7a fix, filed as the better design. Patch-legal because it is internal behaviour with no API surface — but note it **replaces a fix that already works**, which is why it sorts last and why nothing else should wait on it. **Guarded since 2026-09-05:** `test_no_claim_key_survives_after_a_claim_round` (Plan 024 Step 40's pre-written test, left in the tree when Phase 6 was dropped) is now `@pytest.mark.xfail(strict=True)` — it asserts the post-C9 contract, so it turns the suite red the day the CAS rewrite lands and the marker must be deleted with it. The winning claimer's guard key being retained until its TTL is **by design**, not a leak (`job_store.py:645-647`); the anti-leak invariant is asserted separately by `test_regression_claim_guard_key_is_never_ttl_less` | `BACKLOG.md:177`; `varco_redis/tests/test_redis_job_store_claim.py` |
-
----
-
-## 3.1 — scoped, not worked this cycle
-
-These are the "parked features" from the opening ask. Each is genuinely ready to build; none is
-patch-legal. They are recorded here so 3.1 does not have to rediscover them.
-
-| ID | Feature | Severity | Complexity | Rationale | Evidence |
-|----|---------|----------|------------|-----------|----------|
-| N1 | **MCP v2 migration** | 🔴 must (for 3.1) | M–L | Newly urgent and **larger than the old row assumed**. MCP Python SDK **v2.0.0 went stable 2026-07-28** and removes the `@server.list_tools()` / `@server.call_tool()` lowlevel decorators **entirely** — which is exactly the API Plan 020 rebuilt `to_mcp_server()` on to close KI-11. Also corrects the tracked issue number: the old row watched **#761**, which does not exist; the real tracker is **#772** ("No support of inputSchema in mcp.tool decorator"), still open. The `mcp>=1.28.1,<2` pin holds for now, so this is urgent-but-not-broken | brief 001 §2; `varco_fastapi/varco_fastapi/router/mcp.py`; `varco_fastapi/pyproject.toml` |
-| N2 | **CloudEvents envelope** | 🟡 should | M | **Trigger FIRED.** Design already complete (Plan 022 §D-CE1–§D-CE4) with seam RS-1 reserved; spec and the Python `cloudevents` SDK are production-ready. Purely additive, which is both why it never needed the 3.0.0 freeze window and why it cannot ride 3.0.1 | brief 001 §3; `plans/022-api-freeze-and-standards-alignment.md` §D-CE1–4 |
-| N3 | **AsyncAPI export** | 🟡 should | M | **Trigger FIRED.** Design complete (§D-AA1–§D-AA4), seam RS-3 reserved, tooling production-ready. ⚠️ brief 001 flags the Python generator's `datamodel-code-generator` dependency as an unassessed risk — resolve that during `/plan`, not now | brief 001 §3; `plans/022-api-freeze-and-standards-alignment.md` §D-AA1–4 |
-| N4 | **NATS max-deliveries → DLQ bridge** | 🟡 should | L | A message that exhausts `max_deliver` is currently `term()`'d and logged — it **never reaches the DLQ**, which contradicts the DLQ contract's "dead letters must never be silently deleted". Additive (a new advisory-consumer wiring), so 3.1 | `BACKLOG.md:176` |
-| N5 | **Collapse `BeanieConfig` / `BeanieSettings`** | 🟡 should | S | Two near-duplicate config objects. Deferred out of the RL-8 API audit, and **breaking** — so it needs a minor at minimum, with the deprecation cycle `CONTRIBUTING.md` now mandates. Cheapest to do at the *start* of 3.1, not the end | `BACKLOG.md:129` |
-
----
-
-## Parked — this cycle (do not relitigate without new evidence)
-
-| Item | Why parked | What would un-park it |
-|---|---|---|
-| **OpenFeature** | Trigger **NOT FIRED**, and the trigger itself was mis-specified: the original condition was "the spec reaches ≥1.0", but OpenFeature does not version its specification that way, so the clause can never fire as written. The Python SDK is at **0.8.4**, still pre-1.0 | Rewrite the trigger to track the **`openfeature-sdk` Python SDK reaching 1.0**, or a concrete runtime feature-flag requirement from a real consumer. The name `varco_core.flags` stays reserved (RS-3) |
-| **Toxiproxy graded latency/bandwidth chaos** | Trigger **NOT FIRED**. `testcontainers-python` still ships no Toxiproxy module, and the standalone Python client is 0.x with no recent activity (possibly orphaned) | A `testcontainers.toxiproxy` module, or a maintained Python client. brief 001 found no roadmap issue or RFC either way |
-| **Operator/release debt (Plan 023 Phases 8–9)** | **Reported done by the user** this session — PyPI publication, ten GitHub Environments, ten trusted publishers, Pages source, branch + tag rulesets | Nothing. But the in-tree docs still claiming it is pending are **not** parked — that correction is in C1 |
-| **Integration tests gating PRs (RL-16)** | Unchanged, deliberate. Promotion needs **≥30 consecutive nightly runs with ≤1 non-code failure**; below 30 there is no measurement, only anecdote | Reaching that count. The `chaos` job is **never** a promotion candidate, on any schedule |
-| **WD-1 — WS backpressure margin** | Watch item, not work. The margin is machine-dependent | The test failing **twice on CI**; then thread `ws_max_queue`/`write_limit` through the fixture |
-| **RT4-ws-scale — many-connection WS scale test** | Blocked on undocumented GitHub Actions fd limits | Documented limits, or a measured local ceiling worth encoding |
-| **GraphQL surface · event sourcing · per-package versioning · umbrella `varco` meta-package · recurring/RRULE schedules** | Carried forward unchanged from the 3.0.0 cycle — see that cycle's Parked section below for the original reasoning | As recorded there |
-
----
-
-## Open questions for `/plan` — ANSWERED (Plan 024)
-
-1. **C2's start signal** — ~~does providify 2.0.1 have a date?~~ **Answered**: it shipped
-   2026-09-01 and does **not** contain the fix; the behaviour is declared intentional. The gate is
-   **removed, not rescheduled** — varco adopts `@Disposes` itself. 3.0.1 is gated on nothing
-   external. See plan 024 §"Answers to BACKLOG's three open questions" §1.
-2. **C7's audit outcome** — ~~how many of the conformance absences are real?~~ **Answered**: two,
-   out of a five-suite × ~24-implementation matrix (`NoopEventBus`, resolved as a stated reason;
-   `RedisStreamDLQ`, resolved by subclassing). C7 stays M, not split. See plan 024 §D-C7 / §2.
-3. **C8's time-box** — ~~what is the actual budget?~~ **Answered**: one focused root-cause pass,
-   ≤ 3 `make chaos-test PKG=varco_kafka` runs, then a pre-authorised downgrade to a documented
-   known-flake. See plan 024 §D-C8 / §3.
-
----
-
-# 3.0.0 — release cycle (historical record)
-
-Feature backlog produced by `/discover` (focus: **providify 2.0.0 upgrade + first official
-public release of the varco packages**).
-
-**Stated priority** (user, this session): move onto providify 2.0.0 and confirm compatibility,
-then close the gap between "feature-rich alpha" and "first official release" — mirroring the
-release engineering providify itself just shipped (GitHub Actions, trusted publishing, repo
-settings, governance files).
-
-## Locked decisions (this session)
-
-| Decision | Choice | Consequence |
-|---|---|---|
-| **Release scope** | Release engineering **+ reliability floor** | ~~Standards-alignment work (CloudEvents/AsyncAPI/OpenFeature) parked to 3.1~~ ⚠️ **REVERSED (Plan 022)** — CloudEvents and AsyncAPI are un-parked (both purely additive, so neither ever needed the freeze window); OpenFeature is re-parked with a falsifiable two-clause trigger. See the Parked table's reversal notice |
-| **Versioning** | **Lockstep at 3.0.0** across all ten packages | PyPI forbids version reuse and `varco_sa` is already at 2.2.0, so 1.0.0 is unavailable. Mirrors providify's own 1.1.1 → 2.0.0 jump: a major bump that buys escape from the Alpha classifier, **not** breakage |
-| **Breaking-change appetite** | **Deliberately spend the window** | 3.0.0 is the last cheap moment before the SemVer contract binds — an API-surface audit (RL-8) is in scope and must precede the version freeze |
-| **RT reliability push** | **Gates 3.0.0** | See the status correction below — far less remains than originally reported |
-| **Docs hosting** | **GitHub Pages + `mike`**, versioned, published from CI | No third-party service; a docs job joins the release workflow |
-| **Ordering** | **Dependency-ordered phases**, overriding the default (severity, complexity) sort | Each phase is independently shippable and unblocks the next |
-
-⚠️ **Reversal of a prior decision.** A previous `/discover` session parked GitHub Actions
-entirely (see Parked: "user chose local-only tooling over any GitHub Actions involvement, even
-non-blocking"). This session reverses that deliberately — a public release needs CI. The parked
-entries are kept below, marked as superseded, so the reversal is visible rather than silent.
-
-⚠️ **Status correction.** The scan backing this session's proposals reported all nine RT items
-as pending. Verification against source shows otherwise: **RT1 and RT6 are complete**, and
-RT2/RT4/RT5 have materially advanced. The RT table below carries verified statuses. The "all
-nine gate 3.0.0" decision was taken on the stale figure — the remaining work is smaller than
-that decision assumed.
-
-**Research briefs backing this backlog:**
-
-- `design/varco-1-0-release/research/001-release-and-ecosystem-stakes.md` — release table stakes
-  for multi-package Python OSS frameworks in 2026 (SemVer + deprecation cycles, monorepo
-  versioning strategy, trusted publishing + PEP 740 attestations, docs hosting, SECURITY.md);
-  varco's commodity-vs-differentiator feature matrix; 2025–2026 ecosystem shifts.
-- `design/i18n-tz-framework/research/005-github-actions-integration-testing-multi-backend.md` —
-  testcontainers-python vs GitHub Actions `services:`; conformance/contract testing precedent.
-- `design/reliability-release/research/001-reference-app-end-to-end-testing-patterns.md` —
-  chaos/fault-injection precedent (Temporal, Confluent, Celery).
-
----
-
-## Phase 1 — providify 2.0.0
-
-Unblocks everything else: the compat shim deletion and the gap-register reconcile both change
-what later phases have to carry. providify 2.0.0's changelog states **no breaking API changes**
-(the 1.x → 2.x jump is purely to escape the Alpha classifier), so this phase is expected to be
-mechanical — but the 1.1.0-era behaviour changes it inherits are not.
-
-| ID | Feature | Severity | Complexity | Rationale | Evidence |
-|----|---------|----------|------------|-----------|----------|
-| RL-1 | **✅ DONE (Plan 016)** — **Upgrade to providify 2.0.0 and un-vendor it** — drop `vendor/providify-1.1.0-py3-none-any.whl` from the root `[tool.uv.sources]`, bump all nine `providify>=1.1.0` constraints to `>=2.0.0`, resolve from PyPI, full test sweep | 🔴 must | S | The user's explicit opening ask. Un-vendoring also removes the documented "must re-build the wheel when providify changes" maintenance burden in the root `pyproject.toml`. Vendored path override is incompatible with publishing anyway — consumers can't resolve a local wheel | providify `CHANGELOG.md` §2.0.0 ("this release contains no breaking API changes"); root `pyproject.toml:25-39`; commits `7cea36b`/`1008655`; `vendor/providify-1.1.0-py3-none-any.whl` deleted (Plan 016 Phase F, Step 43) |
-| RL-2 | **✅ DONE (Plan 016)** — **Delete `varco_core.providify_compat`, adopt `@Provider(returns=...)`** — migrate the `bind_*` factory sites off the annotation-patching shim onto the native override | 🔴 must | S | providify 2.0.0 ships **exactly** the API requested in UPSTREAM-GAPS U-20. CLAUDE.md already describes the shim as "a deletable compat shim, not a DI entry point" — this is the deletion it was written for. Shipping a public 1st release still carrying a shim for a closed upstream gap is indefensible | providify `CHANGELOG.md` §"`returns=` — explicit interface override for `@Provider` and `provide()`": *"removes the only reason a caller ever had to mutate `factory.__annotations__["return"]`"*; `UPSTREAM-GAPS.md` U-20 (CLOSED); commit `c7e1c11` |
-| RL-3 | **✅ DONE (Plan 016)** — **Adopt `container.validate()`; audit `ShutdownError` + priority direction; evaluate providify's pytest plugin** | 🔴 must | M | Four distinct 2.0.0 deltas land on varco: (a) `validate()` walks the whole graph without instantiating — strictly stronger than varco's hand-rolled per-package `validate_bindings()` health tests; (b) `shutdown()` now raises an **aggregated** `ShutdownError` instead of the first raw exception — varco_fastapi's lifespan teardown must handle it; (c) the "higher priority value wins" doc correction needs an audit for code written against the old wrong wording; (d) providify now registers a `pytest11` plugin (`di_container`/`di_overrides`/`di_global`) + `ContainerOverrides` — adopt, and check for fixture-name collisions in varco's suites | providify `CHANGELOG.md` §2.0.0 — "startup-time full graph validation", "`shutdown()`/`ashutdown()` now aggregate ALL teardown failures", "Priority direction — documentation corrected", "Pytest integration"; commits `bff1492` (RL-3a), `deeecb7` (RL-3b), `356868e` (RL-3c), `4815301` (RL-3d) |
-| RL-4 | **✅ DONE (Plan 016)** — **Reconcile `UPSTREAM-GAPS.md` against source** — verify every open entry, close what providify 2.0.0 or varco's own later work already fixed, re-file what remains | 🔴 must | S | 20 entries, last touched 2026-08-23. Several P0/P1 "blockers" (U-11 job lease fencing, U-17 job `run_at`, U-13 JWT `iss` enforcement) read as **already implemented** per CLAUDE.md — the register looks stale, and a public release must not ship with a blocker list nobody trusts. Front-loaded because the answer resizes phases 3 and 4. The register's own U-8 lesson mandates verifying in source, not from docs | `UPSTREAM-GAPS.md` (20 entries) vs `CLAUDE.md` §"Background jobs — time, lease, fencing" and §"Two BREAKING security defaults"; **outcome:** U-1, U-2, U-3, U-11, U-13, U-17 closed (genuinely implemented, not merely documented); U-12 confirmed still open against providify 2.0.0's own source (`validate()` covers wiring resolvability only, never interface conformance); U-14/U-15 absences reconfirmed unchanged; commit `f1d5b27` |
-
----
-
-## Phase 2 — CI green
-
-✅ **DONE (Plan 017).** Nothing downstream is trustworthy until the suite runs automatically —
-both workflows are now live (see RL-5/RL-6 below); the new findings and deferred work the
-implementation surfaced are recorded in the "Plan 017 findings" subsection immediately after
-this table.
-
-| ID | Feature | Severity | Complexity | Rationale | Evidence |
-|----|---------|----------|------------|-----------|----------|
-| RL-5 | ✅ **DONE (Plan 017)** — **Re-enable and rebuild the GitHub Actions workflows** — `test.yml` (Python 3.12/3.13 matrix, ruff gate, mypy gate, unit-test matrix with per-package accumulation instead of a per-package job fan-out), `integration.yml` (Docker-backed, testcontainers) | 🔴 must | M | Zero automated gating before this plan. providify's working `ci.yml` supplied the matrix/pinning/aggregate shape (adopted, not the per-package job count — see plan 017 §RL-5-shape). **Supersedes the prior session's park** (see the reversal note above). ⚠️ **Evidence correction (U-8 discipline):** this row's own original Evidence cell — "`test.yml` is 81/92 lines commented, `integration.yml` 169/200, `publish.yml` 134/154" — did not survive contact with the tree: all three were **100% commented, zero live lines** (totals 92/200/154), not partially live. `publish.yml` is untouched (RL-10). Branch protection (requiring only the `all-green` check) is a repo-settings change **not yet applied** — see CLAUDE.md's CI subsection | `.github/workflows/test.yml`/`integration.yml` (live); `git diff cae7f33..HEAD -- .github/workflows/`; commits 8dba7d3/f03e613/8350f92 |
-| RL-6 | ✅ **DONE (Plan 017)** — **Workspace-level lint/type config** — a root `[tool.ruff]` and `[tool.mypy]` with declared strictness, so the CI gates in RL-5 have something to enforce | 🟡 should | S | Packages carry `[tool.pytest.ini_options]` but there was no workspace ruff/mypy config before this plan — both ran unpinned/on defaults if run at all. **Measured, not estimated:** whole-repo ruff under the adopted config (providify's `E,F,I,UP` select, `E501`/`UP046`/`UP047` ignored) found **1799 errors, 1723 auto-fixable** (source-only: 505 errors, 489 auto-fixable = 96.8%, above the plan's 95% threshold — no `per-file-ignores` needed); this plan's own pre-measured 987 figure did not hold and is corrected here per the same discipline. mypy's real venv baseline (not the pre-measured `--no-site-packages` figure of 117) was **219 errors** — split varco_fastapi 85 / varco_core 51 / varco_sa 35 / varco_beanie 33 / varco_redis 6 / varco_casbin 4 / varco_nats 3 / varco_kafka 2 / varco_memcached 0 / varco_ws 0 — closed with granular `# type: ignore[<code>]` suppressions per the plan's design, under the 250 re-litigate threshold. ⚠️ **Evidence correction (U-8 discipline):** this row's own original Evidence cell said "`py.typed` present in all nine packages" — there are **ten** distributed packages (plus `examples` = 11 workspace members), and `py.typed` was present in only **nine** of them; `varco_nats/pyproject.toml` declared `"Typing :: Typed"` while shipping no marker file. Fixed and wheel-verified. Python 3.13 measured **green** across all ten member suites + the example suite (Decision-table row 1, matrix `[3.12, 3.13]`, no skip markers) | `pyproject.toml` root `[tool.ruff]`/`[tool.mypy]`; `varco_nats/varco_nats/py.typed` (new); `.pre-commit-config.yaml` ruff rev bump; commits 8dba7d3/f03e613/8350f92 |
-
-### Plan 017 findings — new rows filed during CI-green implementation
-
-✅ **RL-20 — `examples/00-full-stack-post-api` unit suite — RESOLVED, row retained as a
-measurement-discipline record.** This row was originally filed 🔴 must, claiming the suite was
-RED (8 failed, 3 passed) and that the new `unit` CI job would therefore fail on its first run.
-**That claim was wrong.** The `InMemoryUoW` test double had already been fixed in commit
-`f03e613` (it now subclasses `AsyncUnitOfWork` and exposes `uow.posts`, with five regression
-tests added — see CHANGELOG's "unit-test double drifted from the UoW contract" entry). The
-observed failure came from a transient `uv` workspace re-sync racing test collection, not from
-the code; a re-run on the identical tree gives **51 passed**, and `make test` is green across
-all eleven suites.
-
-⚠️ **The lesson, which is the reason this row is kept rather than deleted:** a single red
-pytest run immediately after `uv` has re-synced the workspace is not evidence. It was taken as
-evidence twice — once by the implementing agent, once during review — and produced a false
-🔴-must blocker on the release path. Re-run before filing. This is the same U-8 discipline the
-register already imposes on entries filed off documentation rather than source. Evidence:
-`examples/00-full-stack-post-api/example/tests/` (51 passed); `scripts/unit_tests.sh`'s
-`EXTRA_SUITES` array; commit `f03e613`.
-
-🟡 **RL-21 — `scripts/unit_tests.sh` intermittent false failures — FIXED, watch for recurrence**,
-🟡 should, M. Observed **twice** on trees later proven green, in different packages: once on
-`examples/00-full-stack-post-api` (8 failed; 51 passed on re-run) and once on `varco_fastapi`
-(suite reported ✘ by the runner; `cd varco_fastapi && uv run pytest tests/` immediately after
-gave **848 passed, 8 skipped**, and the very next `make test` was fully green). Both happened on
-a byte-identical tree with no intervening edit.
-
-**Why this matters more than a nuisance:** `scripts/unit_tests.sh` is the entry point for CI's
-`unit` job, and `all-green` — the single required status check — is downstream of it. A runner
-that intermittently reports a false red makes the required check untrustworthy exactly where
-trust is the whole point, and trains reviewers to re-run rather than investigate.
-
-**Cause and fix (applied):** each of the eleven suites invoked `uv run` separately, and `uv run`
-re-resolves and re-syncs the environment whenever it judges it stale — up to eleven syncs
-interleaved with pytest collection. `scripts/unit_tests.sh` now runs `uv sync --all-packages
---all-extras` **once**, up front, and every per-suite invocation is `uv run --no-sync`, so a
-suite either runs against a fully prepared venv or fails loudly at the sync step instead of
-racing one. A retry was deliberately **not** added — that would have hidden the failure mode
-rather than removed it. Side benefit: the run is materially faster without ten redundant
-staleness checks.
-
-⚠️ **Not provable by testing.** Four consecutive full-sweep runs were green after the fix, but
-an intermittent fault cannot be shown absent by a finite number of green runs — the mechanism
-argument (no concurrent sync is now possible) is the real evidence, and four green runs are
-only consistent with it. **If a false red is ever seen again, reopen this at 🔴 and do not
-assume the same cause.** Evidence: `scripts/unit_tests.sh`'s "Sync the workspace ONCE" block;
-this session's `make test` runs; RL-20 above (same root cause, first sighting).
-
-| ID | Feature | Severity | Complexity | Rationale | Evidence |
-|----|---------|----------|------------|-----------|----------|
-| RL-14 | ✅ **DONE (Plan 021)** — full ramp complete, `strict = true` + `disallow_any_unimported`. Was 🟠 **PARTIALLY CLOSED (Plan 020)** — **mypy strictness ramp** — landed: `warn_unused_configs`/`warn_redundant_casts` (G1), `no_implicit_reexport` (G2, one-line fix: `varco_fastapi/router/presets.py` now imports `CreateDTO`/`ReadDTO`/`UpdateDTO` from their canonical `varco_core.dto`, not the non-re-exporting `varco_core.service.types`), per-package `check_untyped_defs` (G3, all ten packages, two real bugs fixed: `varco_sa/sqlalchemy_session.py`'s `Token[AsyncSession]` annotation + a `None`-guard before `ContextVar.reset()`, `varco_fastapi/router/health.py`'s `_composite` annotation), `disallow_subclassing_any` + `disallow_untyped_decorators` (G4, partial — 1 + 2 errors, both genuinely-untypable-third-party suppressions per §RL-14-metric, not debt: `varco_casbin/beanie_adapter.py`'s `casbin.persist.adapters.asyncio.AsyncAdapter`, `varco_fastapi/router/mcp.py`'s two `@server.list_tools()`/`@server.call_tool()` decorators on the `Any`-typed low-level `Server`). **Stopped per §RL-14-stop** (exceeded the 50-error-per-flag budget, filed forward): `disallow_any_generics` (176 errors — RL-14c below) and `warn_return_any` (67 errors — RL-14d below), both re-measured individually per §RL-14-stop's "the budget applies per flag" reading of the G4/G5 table rows. `disallow_incomplete_defs`/`disallow_untyped_defs` re-filed as **RL-14b** (below) per brief 001's own "high effort, per-package ramp recommended" tier 4 guidance; `disallow_untyped_calls`/`disallow_any_unimported`/`disallow_any_expr` decided **never**, recorded in `[tool.mypy]` | 🟡 should | M | ⚠️ **Evidence correction (EC-2, U-8 discipline):** this row's original Rationale cell said "`rg -c 'type: ignore' varco_*/varco_*` (currently 219)" — that command does not yield 219. **219 was RL-6's *mypy-error* baseline** (a different quantity, measured under a different command), not this row's suppression-count metric. Two metrics are now named separately (Plan 020 §RL-14-metric): **M1 — suppression debt** (`rg -o 'type: ignore' varco_*/varco_* \| wc -l`, directional gauge only, never a gate) measured **327** at Plan 020's start, **324** after Phases D/E/F removed three now-obsolete suppressions (KI-9/KI-10/KI-11), and **327** again after G4 added three new genuinely-untypable-third-party suppressions (not a regression — §RL-14-metric explicitly excludes these from "debt"); **M2 — flag fallout** (`uv run mypy <ten dirs>` under the candidate flag, the actual gate — a flag ships only once its M2 is 0) | `plans/017-ci-green-workflows-and-lint-type-gates.md` §RL-6-mypy; `plans/020-plan-017-findings-remediation.md` §RL-14; `pyproject.toml` root `[tool.mypy]` |
-| RL-14c | ✅ **DONE (Plan 021)** — landed, 176 errors across 73 files annotated per §D3/§D5/§D6, zero behaviour change. Was **mypy `disallow_any_generics`** — measured **176 errors across 73 files** (Plan 020 / RL-14 G4, stopped per §RL-14-stop's 50-error-per-flag budget). Bulk of the fallout is bare `dict`/`list` return/param annotations and unparameterized generic varco types (`AsyncVarcoClient`, `VarcoRouter`, `ClientConfigurator`) across `varco_fastapi` (the majority) and `varco_beanie`, plus a handful in `varco_casbin`. A real annotation sweep, not a config change | 🟡 should | L | `uv run mypy --disallow-any-generics <ten dirs>` (176 errors, 73 files) — re-measure before starting, Phases D/E/F/G already changed the surface once | `pyproject.toml` `[tool.mypy]`'s G4 comment block |
-| RL-14b | ✅ **DONE (Plan 021 Phase 1 & Phase 3)** — `check_untyped_defs` hoisted global (Phase 1), `disallow_incomplete_defs`/`disallow_untyped_defs` landed (Phase 3, 22 errors, 8 files); `[[tool.mypy.overrides]]` section is now empty. Was **mypy annotation-enforcement tier** — `disallow_incomplete_defs` then `disallow_untyped_defs`, per-package via `[[tool.mypy.overrides]]`, deleting each package's override block as it goes global. Brief 001 §Ramp Order tier 4: "High effort … per-package ramp recommended". Completion criterion: the `[[tool.mypy.overrides]]` section is empty and both flags are global | 🟡 should | L | Brief 001 §"Recommended Ramp Order" tier 4; Plan 020 §RL-14-order | `plans/020-plan-017-findings-remediation.md` §RL-14-order; `pyproject.toml` `[tool.mypy]` |
-| MCP-v2 | **Migrate off `mcp` v1.x** — v1.29.1 is the last v1 release and the branch is maintenance-only (research brief 003 §"Version/compatibility notes"). Scope already mapped by brief 003 §"Options compared" row 3: low-level decorators removed → constructor-based `Server(list_tools_handler=…, call_tool_handler=…)`, handler shape `async (ctx, params) -> result`, `inputSchema` → `input_schema`, stateless protocol. Blocked on nothing; not urgent | 🟡 should | M | `design/plan-017-findings/research/003-fastmcp-add-tool-schema.md` §"Options compared"; `varco_fastapi/varco_fastapi/router/mcp.py` |
-| MCP-761 | **Watch SDK issue #761** (`input_schema=` on the high-level `FastMCP` server, open since May 2025). If it lands, revert §KI-11's low-level detour — brief 003 §"Librarian's note" item 3 says the return trip is small | 🟢 nice | S | `design/plan-017-findings/research/003-fastmcp-add-tool-schema.md` §"Librarian's note" |
-| BEANIE-CFG | **`BeanieConfig` and `BeanieSettings` are near-duplicate value objects** — surfaced by KI-10's fix, which now maps one onto the other field-for-field. Collapsing them deletes exported public API (`varco_beanie/__init__.py:46`) and belongs in the **RL-8 API-surface audit**, before the 3.0.0 version freeze | 🟡 should | S | `varco_beanie/varco_beanie/bootstrap.py` (`BeanieConfig`); `varco_beanie/varco_beanie/config.py` (`BeanieSettings`) |
-| RL-14d | ✅ **DONE (Plan 021 Phase 6)** — landed. Corrected count (U-8): the 2026-08-30 measurement found **64 errors**, not 67 — the original count was stale. 47 remained after two structural fixes (`_run_in_span` made generic in `observability/mixin.py`/`repository_mixin.py`, Phase 3) pre-paid ~13; all fixed by annotating an intermediate local, no `cast()`/suppression needed. Was **mypy `warn_return_any`** — measured **67 errors across 35 files** (Plan 020 / RL-14 G5, stopped per §RL-14-stop's 50-error-per-flag budget). Concentrated in `varco_fastapi`'s client/middleware modules (`Returning Any from function declared to return "Response"` etc.) — real unsoundness per brief 001, but a genuine per-call-site fix pass, not a config change | 🟡 should | M | `uv run mypy --warn-return-any <ten dirs>` (67 errors, 35 files) — re-measure before starting | `pyproject.toml` `[tool.mypy]`'s G5 comment block |
-| RL-15 | ✅ **DONE (Plan 020)** — **`# noqa` filed during the ruff sweep** — 9× `UP042` (deferred `StrEnum` migration: `ErrorPolicy`, `DispatchMode`, `HealthStatus`, `PKStrategy`, `CircuitState`, `KafkaDeliverySemantics`, `NatsDeliverySemantics`, `BackpressurePolicy`, and the example's `FailMode`); 1× `UP045` in `varco_beanie/factory.py`; 1× `UP007` in `varco_core/meta.py`; 2× `UP045` in `varco_core/tests/test_serializer.py` (intentional `Optional[]` backward-compat testing, not migration debt) | 🟢 nice | S | Each is a mechanical follow-up to the RL-6 sweep, deliberately deferred rather than silently widening `[tool.ruff.lint] ignore`. ⚠️ **Evidence correction (EC-3)**: brief 002's three wire-format-change risks all require a bare `f"{member}"`/`str(member)`/`%s` interpolation reaching the wire — **zero such interpolations exist in-tree** (every site already uses `.value` or `!r`), so the measured blast radius is smaller than brief 002's worst case. **Closed by Plan 020**: all 9 `UP042` sites migrated to `enum.StrEnum` inside the 3.0.0 breaking-change window (BREAKING, see CHANGELOG); the remaining 4 `# noqa` (1×`UP007`, 1×`UP045` in `varco_beanie/factory.py`, 2×`UP045` in `test_serializer.py`) reclassified from deferrals to permanent reasons; characterization tests (`test_strenum_serialization.py`) prove `json.dumps`/pydantic `model_dump(mode="json")`/`BaseSettings` env parsing are byte-identical before and after | `git grep -n 'noqa: UP0' -- 'varco_*' 'examples/**'`; `varco_core/tests/test_strenum_serialization.py` |
-| RL-16 | **Integration tests do not gate PRs** (§RL-5-triggers, deliberate) | 🟡 should | — | `integration.yml` runs on push-to-`main` + nightly + manual dispatch only, never on PRs — a PR can break a broker-facing path (Kafka/NATS/Redis/Mongo/Postgres/Memcached) and only the nightly run catches it. Deliberate per the plan (fast PR feedback, bounded Actions minutes) but genuinely weaker than gating. **Disposition per Plan 018 §RT7-ci**: only the `integration` job is a candidate for eventual promotion to a required/PR-gating check, and only after a measured flake rate over real nightly runs — the new `chaos` job added by Plan 018 must **never** be promoted, on any schedule, for any reason (it exercises genuine race conditions like black-holed sockets and container-restart port remaps by design). **Plan 020 §RL-16 restates this row rather than closing it, and adds the missing trigger quantity**: the `integration` job is a promotion candidate only after **≥30 consecutive nightly `integration` runs with ≤1 non-code-caused failure** — below 30 runs there is no measurement, only anecdote, the exact error RL-20/RL-21 were filed to stop repeating. The `chaos` job is never a promotion candidate, on any schedule. **Plan 024 §D-REQUIRED adds a coupling**: `integration.yml` now carries `cancel-in-progress: true` (event-name-scoped `concurrency` group, so a merge never cancels the nightly), and a cancelled run resolves as neither success nor failure — whoever promotes `integration` to a required check must, in the same change, either drop `cancel-in-progress: true` or accept that stuck-merge failure mode (research 001 §8) | `.github/workflows/integration.yml` triggers; plan 017 §RL-5-triggers; plan 018 §RT7-ci; plan 020 §RL-16; plan 024 §D-REQUIRED |
-| RL-17 | ✅ **DONE (Plan 020)** — **`ruff format` deferred** (plan 017 Non-goal) | 🟢 nice | S | No formatter gate exists; `E501` is ignored in `[tool.ruff.lint]`, so nothing currently depends on a formatter running. ⚠️ **Evidence correction (EC-1)**: this row's original Rationale said adoption is "unmeasured whole-tree churn across 439+ source files" — measured this session with the pinned `ruff==0.16.4`: **zero** `.py` files would be reformatted (`uv run ruff format --check .` → 1107/1204 files already formatted at time of measurement; the only two diffs were Markdown fenced code blocks, out of a `.py`-scoped gate). This is an S with no churn, not an unmeasured L. **Closed by Plan 020**: `[tool.ruff.format]` added (`docstring-code-format = false` explicit), gated in `make lint`, CI's `lint` job, and pre-commit's `ruff-format` hook | `pyproject.toml` `[tool.ruff.format]`; `.github/workflows/test.yml`'s `lint` job |
-| RL-18 | ✅ **DONE (Plan 020)** — **Package-list triplication** — `Makefile:PACKAGES`, `scripts/unit_tests.sh`, `scripts/integration_tests.sh` each hold their own hand-written copy of the ten/eleven-member list | 🟡 should | S | This is exactly how `varco_casbin` went missing from `make lint`/`make type-check`/etc. in the first place (RL-6's own finding). Deriving the list from `[tool.uv.workspace] members` in the root `pyproject.toml` would make the three files structurally unable to drift again. ⚠️ **Evidence correction**: this row named three copies; there is a **fourth** — `scripts/gen_ref_pages.py:27-37`, itself already drifted (missing `varco_casbin`, so `make docs` had never rendered its API reference). **Closed by Plan 020**: `scripts/packages.sh` is now the single derivation from `[tool.uv.workspace] members` (stdlib `tomllib`, no venv dependency), consumed by `Makefile` (`PACKAGES := $(shell ...)` + `make print-packages`), `scripts/unit_tests.sh`, `scripts/integration_tests.sh` (+ a named `INTEGRATION_EXCLUDE=("varco_core")`), and `scripts/gen_ref_pages.py` (which now includes `varco_casbin`); guarded by `varco_core/tests/test_repo_package_lists.py` | `scripts/packages.sh`; `Makefile:PACKAGES`; `scripts/unit_tests.sh`; `scripts/integration_tests.sh`; `scripts/gen_ref_pages.py`; `varco_core/tests/test_repo_package_lists.py` |
-| RL-19 | ✅ **DONE (Plan 020)** — **`.pre-commit-config.yaml` ruff rev bumped `v0.4.1` → `v0.16.4`, unplanned** | 🟢 nice | — | Not anticipated by plan 017 — required because `v0.4.1` predates the `UP046`/`UP047` rule codes now referenced in `[tool.ruff.lint] ignore` and could not even parse the config, which would have blocked every local commit via the pre-commit hook. Closed by Plan 020 Step 2 with a pin-parity guard (`varco_core/tests/test_repo_tooling_pins.py`) asserting `.pre-commit-config.yaml`'s ruff `rev` always names the same version as root `pyproject.toml`'s `[dependency-groups] lint` ruff pin (`ruff==0.16.4` ↔ `v0.16.4`) — the failure this row fixed was silent (only broke at commit time on one developer's machine); the next divergence is now a loud CI failure instead | `.pre-commit-config.yaml`; `varco_core/tests/test_repo_tooling_pins.py` |
-| KI-9 | ✅ **DONE (Plan 020)** — **`varco_beanie.audit.BeanieAuditRepository.list_for_entity` is missing tenant scoping** — no `tenant_id` parameter, unlike the base `AuditRepository` class | 🔴 must | S | Surfaced by the mypy sweep, suppressed with a `# type: ignore` + inline note rather than silently patched (fix-first rule only covers trivially-local, obviously-correct fixes — adding tenant scoping to an audit query is a behaviour change, out of scope for a docstring/type-annotation pass). **Closed by Plan 020**: `tenant_id: str | None = None` added and filtered (mirrors `varco_sa.audit.SAAuditRepository` exactly), `# type: ignore[override]` removed, verified against a real MongoDB in `varco_beanie/tests/test_beanie_audit_tenant_scoping.py` | `varco_beanie/varco_beanie/audit.py` (`list_for_entity`); `varco_beanie/tests/test_beanie_audit_tenant_scoping.py` |
-| KI-10 | ✅ **DONE (Plan 020)** — **`varco_beanie.bootstrap.BeanieFastrestApp`'s non-DI construction path is out of sync with `BeanieRepositoryProvider`'s real signature** — it calls `BeanieRepositoryProvider(mongo_client=, db_name=, transactional=)`, but that class's actual `__init__` takes `settings=` | 🔴 must | S | Surfaced by the mypy sweep (a genuine type error, not a suppression candidate for the fix-first rule since reconciling the two constructors is a behaviour decision). **Closed by Plan 020**: ⚠️ evidence correction — the row and the original scout report both called the class `BeanieApp`; the real name is **`BeanieFastrestApp`** (`bootstrap.py:115`), confirmed to have zero test coverage before this plan (`grep` for the real name across every `*.py` found source only, no test file). Fixed by building a `BeanieSettings` from `BeanieConfig` and passing `settings=`; the stale docstring in `BeanieRepositoryProvider` that caused the bug (documenting the deleted `mongo_client=`/`db_name=` shape) is also fixed; first-ever test coverage in `varco_beanie/tests/test_beanie_bootstrap.py`. ⚠️ A **separate, pre-existing, unrelated** bug was discovered by this new coverage's real-Mongo integration test and is NOT fixed here — filed as **KI-12** (below) | `varco_beanie/varco_beanie/bootstrap.py` (`BeanieFastrestApp`); `varco_beanie/varco_beanie/provider.py` (`BeanieRepositoryProvider`); `varco_beanie/tests/test_beanie_bootstrap.py` |
-| KI-12 | ✅ **DONE (fixed prior to Plan 024, verified this session)** — **`varco_beanie.uow.BeanieUnitOfWork._begin()` awaits a non-coroutine** — `await self._client.start_session()` against a real `pymongo>=4.11` `AsyncMongoClient` raises `TypeError: object AsyncClientSession can't be used in 'await' expression`; `AsyncMongoClient.start_session()` is a synchronous factory method (verified against the resolved `pymongo==4.16.0`, `inspect.iscoroutinefunction(...)` is `False`), not a coroutine | 🔴 must | S | Verified this session (Plan 024 / C1, Step 4): `varco_beanie/varco_beanie/uow.py:86` now calls `self._client.start_session()` un-awaited, with a docstring table documenting the motor-vs-pymongo divergence. `uv run pytest varco_beanie/tests/test_beanie_bootstrap.py -m integration -k round_trip` (real MongoDB via Docker) — **PASSED**, no longer failing. Row corrected from 🔴 must/FAILING to ✅ DONE | `varco_beanie/varco_beanie/uow.py:86` (`_begin`); `varco_beanie/tests/test_beanie_bootstrap.py::TestBeanieFastrestAppIntegration::test_save_and_get_round_trip_through_a_real_mongo` (PASSED, verified 2026-09-02) |
-| KI-11 | ✅ **DONE (Plan 020)** — **`MCPAdapter.to_mcp_server()` has never worked against a real `mcp` install** — two independent defects: it imported `FastMCP` from the `mcp` package root (it lives in `mcp.server.fastmcp` and has never been exported from the root), and it calls `server.add_tool(input_schema=...)`, a parameter `FastMCP.add_tool()` does not have — the SDK derives tool schemas from the handler's type hints, while varco's `_handler` is an untyped `**kwargs` shim | 🔴 must | M | The import bug is FIXED (it made the method raise a misleading "the 'mcp' package is required, pip install varco-fastapi[mcp]" at callers who already had it installed). The `add_tool` mismatch is NOT fixed: mapping varco's JSON `input_schema` onto FastMCP's signature-derived schema is a design change, so it is marked `xfail(strict=True)` per the repo's "never an in-place production fix" norm — the marker fails loudly once it is fixed. Invisible until RL-21's up-front `--all-extras` sync put `mcp` in the venv; with it absent, `ignore_missing_imports` typed the module as `Any` and mypy saw nothing. ⚠️ CI's `lint` job syncs `--all-extras`, so this would have turned the first CI run red. **Closed by Plan 020**: `to_mcp_server()` dropped to the low-level `mcp.server.lowlevel.Server` API with a new `_to_mcp_tools()` builder passing varco's own JSON Schema to `mcp.types.Tool` verbatim; `mount()` rebuilt on `mcp.server.sse.SseServerTransport` directly; `mcp` extra pinned `>=1.28.1,<2` (uv.lock resolved 1.26.0 at plan start, bumped to 1.29.1 — the last v1 release — by this pin, still v1.x, so no third evidence-correction was needed per §KI-11-pin's ⚠️); the `xfail(strict=True)` marker removed and the test renamed to assert the new, working contract | `varco_fastapi/varco_fastapi/router/mcp.py` (`to_mcp_server`, `mount`, `_to_mcp_tools`); `varco_fastapi/tests/milestone_f/test_mcp_adapter.py`; `varco_fastapi/pyproject.toml` (`mcp` extra) |
-
----
-
-## Phase 3 — reliability floor (RT, Plan 012 / Plan 018)
-
-**Verified status**, not the stale figures. Plan 018 (`plans/018-reliability-floor-rt-integration-and-chaos.md`)
-closes RT2/RT3/RT4/RT5, resolves RT9's residual, and splits RT7 into an in-process half (RT7a,
-done) and a container-lifecycle half (RT7b, the deliberate 3.0.0 cut line — see §phase-order in
-that plan).
-
-| ID | Feature | Status | Severity | Complexity | Rationale |
-|----|---------|--------|----------|------------|-----------|
-| RT1 | Testcontainers-backed integration runner (session-scoped fixtures per service, `VARCO_TEST_<SERVICE>_URL` override contract, `scripts/integration_tests.sh`) | ✅ **done** | 🔴 must | M | Shipped. Documented in CLAUDE.md §"Shared, session-scoped integration containers" |
-| RT6 | Conformance/contract suite — one module per `varco_core` ABC, opted into by each backend | ✅ **done** | 🔴 must | L | Shipped: `testkit/varco_conformance/{event_bus,cache,job_store,dlq}.py`, subclassed by 8 backends incl. the Docker-free in-process run |
-| RT2 | `varco_nats` real-broker coverage | ✅ **done (Plan 018)** | 🔴 must | S | `test_nats_semantics_integration.py`/`test_nats_channel_integration.py`/`test_nats_dlq_integration.py`/`test_nats_health_chaos.py`. Two genuine ABC-contract gaps found, not fixed — see the xfail rows below |
-| RT5 | `varco_kafka` integration — DLQ, offset management, partition rebalancing, EOS | ✅ **done (Plan 018)** | 🔴 must | M | `test_kafka_eos_integration.py` (new, 4 tests) + rebalance/offset deepening. Required a test-fixture-only conftest change (`KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR`/`_MIN_ISR=1`) — a single-broker `KafkaContainer` cannot create `__transaction_state` at the default replication factor 3, which hung every EOS test indefinitely before the fix |
-| RT4 | `varco_ws` real WebSocket/SSE server — pooling, backpressure, reconnect, ordering | ✅ **done (Plan 018)** | 🔴 must | M | `test_ws_backpressure_integration.py` — slow-client-does-not-starve-fast-client + `DISCONNECT`-policy ejection, both over a real ASGI socket. See the WD-1 row below re: the margin's machine-dependence |
-| RT3 | `varco_casbin` + Postgres/SQLAlchemy adapter integration | ✅ **done (Plan 018)** | 🔴 must | S/M | `test_concurrent_writers_integration.py`, 3/3 green against real Postgres — the plan's own risk note ("adapter concurrent-writer semantics deliberately unresearched") resolved favourably, no finding |
-| RT8 | One-command smoke run of `examples/00-full-stack-post-api` | 🟠 partial | 🟡 should | S | Suite executed and its findings recorded (below), but not wired into the standard runner |
-| RT9 | Migration lifecycle integration — `create_varco_app(migrations=...)` against a real DB | ✅ **done (Plan 018), residual closed** | 🟡 should | S | `test_lifecycle_raises_migration_lock_timeout_when_holder_never_releases` (deterministic app-layer lock-timeout assertion) + `test_migration_chaos.py`'s crashed-lock-holder recovery. Beanie/Mongo migration integration coverage remains a genuine gap — filed as its own row below rather than silently folded back into "pending" |
-| RT7a | Job-lease fencing after a worker crash, in-process (`try_claim`/`renew`/`reap_expired_leases`/`save(expected_epoch=)`) | ✅ **done (Plan 018)** | 🔴 must | S | `varco_sa/tests/test_sa_job_lease_crash.py` green; `varco_redis/tests/test_redis_job_lease_crash.py` found a genuine cross-backend disagreement — see the RT7a-redis-claim-guard finding below |
-| RT7b | Container-lifecycle chaos — outbox relay × broker/database restart, circuit breaker × black-holed dependency, crashed migration-lock holder | ✅ **shipped as the deliberate 3.0.0 cut line** | 🔴 must | L | Test modules written and scaffolding (`testkit/varco_chaos`, `make chaos-test[-clean]`, nightly-only `chaos` CI job) in place per §RT7-ci/§chaos-fixture. **Environment caveat found while wiring the scaffolding**: `Container.restart()` did **not** preserve the host port mapping in this session's Docker 27.5.1/WSL2 environment (verified with raw docker-py, no testcontainers involved) — contradicting research 002 §1's port-survivorship claim. Native Linux dockerd (the actual GitHub Actions runner) was not re-verified this session; if the nightly `chaos` job shows the same instability, treat it as confirmation, not a new bug — see the RT7b-port-remap finding below |
-
-### Plan 018 findings — new rows filed during reliability-floor implementation
-
-| ID | Finding | Severity | Complexity | Evidence |
-|----|---------|----------|------------|----------|
-| RT2-B | ✅ **done (Plan 019)** — **NATS `AT_LEAST_ONCE` does not redeliver after a handler raises.** Original finding: `varco_nats/varco_nats/bus.py:565-573` acks in a `finally`, and the module's own docstring says the message is acked "whether or not a handler raised … JetStream only redelivers on a process crash." Fixed: `_on_message` now `nak()`s on handler failure (bounded by new `NatsEventBusSettings.max_deliver`, default 5) and `term()`s once the budget is exhausted or on a deserialization failure | 🔴 must | S | `varco_nats/tests/test_nats_semantics_integration.py::test_at_least_once_redelivers_after_handler_raises` — green, 0 xfail; new `test_at_least_once_stops_redelivering_after_max_deliver` guards the bound |
-| RT2-C | ✅ **done (Plan 019)** — **NATS `ChannelManager.channel_exists()`/`list_channels()` implement a "has messages" predicate, not an "exists" predicate.** Original finding: `channel.py:377-395`/`:417`: `declare_channel()`'s `channel` argument is documented as "only used for logging", and `list_channels()` returns "channels that currently carry messages" — `declare_channel()` → `channel_exists()` was `False` on an empty stream. Fixed: `NatsStreamManager` gained a process-local declaration registry (`declare_channel` records; `delete_channel` discards) layered on broker evidence; the old predicate survives as `channel_has_messages()` | 🔴 must | M | `varco_nats/tests/test_nats_channel_integration.py` — 4/4 green, 0 xfail; new `testkit/varco_conformance/channel_manager.py` machine-checks the round-trip across Kafka/Redis/NATS |
-| RT7a-redis-claim-guard | ✅ **done (Plan 019)** — **`RedisJobStore.reap_expired_leases()` does not release the SET-NX-EX claim guard key `try_claim()` created for the original claim** (`job_store.py:595-605`) — the guard's TTL (`claim_ttl`, default 30s) is independent of `lease_ttl` and was never cleared on reap, so a legitimate re-claim by a second worker was refused for up to `claim_ttl` seconds after a correct reap. `varco_sa`'s `SAJobStore` had no equivalent second guard key and did not exhibit this. Fixed: `reap_expired_leases()` deletes the claim key for each job it reaps (after `save()`); `try_claim()` releases its guard on every non-success path via a `claimed`-flag/`finally` | 🔴 must | S | `varco_redis/tests/test_redis_job_lease_crash.py::test_reaped_lease_fences_the_zombie_worker_on_save` — green, 0 xfail; both backends' twin tests agree; `test_renewed_lease_keeps_a_second_worker_locked_out` unaffected |
-| RT7b-port-remap | ✅ **done (Plan 019)** — **`docker-py`'s `Container.restart()` did not preserve the host port mapping** in this session's Docker 27.5.1 / WSL2 environment — contradicted research 002 §1's port-survivorship claim that `ChaosContainer.restart()` and every restart-based chaos test's "capture the DSN once, reuse across restarts" pattern was built on. Fixed: research 006 settles the mechanism (Docker documents the port as re-allocatable on every restart, platform-independent) — research 002 §1 corrected in-tree with a superseded banner. `ChaosContainer` gained a `url_factory`/`url` property, re-derived fresh on every access, never memoised; `test_sa_chaos.py`/`test_kafka_chaos.py`/`test_migration_chaos.py` read `chaos.url` instead of a captured DSN; Kafka additionally pins its host port. **Residual**: `test_kafka_chaos.py` surfaced a second, orthogonal defect (a ZooKeeper ephemeral-znode race on restart, fixed via KRaft mode) and remains flaky on one of its two tests in this local environment — filed as its own row, RT7b-kafka-restart-recovery, below | 🔴 must | M | `test_chaos_container_url.py` (unit, 4/4) proves the URL-ownership mechanism; `test_sa_chaos.py`/`test_migration_chaos.py` pass reliably 3/3 |
-| WD-1 | 🔭 **watch item, not a defect (Plan 019 / §WD-1)** — **WS backpressure margin is machine-dependent and thin.** `test_ws_backpressure_integration.py` required raising the volume to `_N=6000` × 64 KiB payloads (~384 MB in flight) to make the "slow client received strictly fewer than N" assertion engage; smaller volumes passed vacuously. Root cause: uvicorn's `websockets_impl` buffers server-side writes with no `write_limit` applied. **Written trigger (Plan 019)**: if this test fails on CI **twice** (any two runs, not necessarily consecutive), the response is *not* a third volume increase — thread `ws_max_queue`/`write_limit` through the test fixture's `uvicorn.Config` so backpressure engages at a deterministic byte count | 🟡 should | S | `varco_ws/tests/test_ws_backpressure_integration.py` module docstring's calibration table; 3/3 consecutive clean local runs (~95s each) |
-| RT7-toxiproxy | ⏸️ **re-affirmed, deferred to 3.1 (Plan 019)** — **Toxiproxy (graded latency, bandwidth throttling, one-directional faults)** — `docker pause`/`restart` cover every 3.0.0 chaos assertion (a genuine black hole or a genuine restart), but cannot express latency injection or partial/asymmetric failure. Re-affirmed against research 006 — §D lists Toxiproxy as option (4), the ecosystem's choice "when deterministic, repeatable fault injection is needed", none of which this release needs. **Precondition to revisit**: research 002 §Evidence Gaps 1-4 close (an upstream `testcontainers.toxiproxy` Python module, or a vetted client) | 🟢 nice | M | `plans/018-reliability-floor-rt-integration-and-chaos.md` §RT7-toxiproxy (four ❌s recorded there) |
-| RT9-beanie-migrations | ✅ **done (Plan 019)** — **Beanie/Mongo migration integration coverage.** **Status corrected (Plan 019, verified in source)**: the original claim was wrong in both directions — it *is* a package, `varco_beanie/varco_beanie/migration/{migrator,store,indexes,framework,base}.py` (not a single `migration.py` module, which does not exist), and the lock mechanism is **not** missing — `MigrationStore.acquire()` (`migration/store.py:86-145`) already implements research 007 §A's `find_one_and_update`+upsert+`_id`-uniqueness pattern, with an acquire-time `expires_at` predicate (not a TTL index — deliberately, since a standalone `mongod` never runs the TTL background thread). This was a pure test-coverage gap, now fixed: `varco_beanie/tests/test_beanie_migration_integration.py` (new, 5 tests) drives it against a real `mongod` — concurrent-migrator serialization, `MigrationLockTimeout`, crashed-holder reclaim (seconds-scale, no 180s TTL-monitor wait needed), and the `DuplicateKeyError`-as-lock-lost race. One genuine **new** defect found and `xfail(strict=True)`'d rather than fixed (outside this plan's licence) — see RT9-beanie-index-mode-no-pending-migrations below | 🟡 should | M→S (pure coverage, no design work needed) | `varco_beanie/varco_beanie/migration/` package (not `migration.py` — corrected path); `varco_beanie/tests/test_beanie_migration_integration.py` |
-| RT9-beanie-index-mode-no-pending-migrations | **`BeanieMigrator.upgrade()` never runs `index_mode="create"` reconciliation when the hand-written `MigrationRegistry` has no pending migrations** — `upgrade()` computes `pending_migrations` (Migration subclasses only) and returns early via `if not pending_migrations: return ...` (`migration/migrator.py`) BEFORE the lock is acquired and BEFORE the `index_mode == 'create'` block is ever reached. `plan()` independently reports index drift via `_index_pending()`, so `plan()` and `upgrade()` disagree about whether there is work to do. Found writing RT9-beanie real-Mongo coverage (Plan 019 Phase 5) — a migrator with `index_mode='create'` and an empty/fully-applied registry silently never creates a missing index. `xfail(strict=True)`, not fixed (outside this plan's four-row production-patch licence) | 🟡 should | S | `varco_beanie/tests/test_beanie_migration_integration.py::test_index_mode_upgrade_creates_indexes_and_is_idempotent` |
-| RT4-ws-scale | ⏸️ **re-affirmed, deferred (Plan 019)** — **Many-connection WS/SSE scale test** — blocked on undocumented GitHub Actions file-descriptor limits for a test that would open hundreds/thousands of concurrent WebSocket connections. §RT4-backpressure scoped Plan 018 to per-client isolation (2 connections) rather than fleet-scale connection counts. Unchanged precondition: **a measured fd limit on `ubuntu-latest`**, at which point the connection count can be chosen rather than guessed | 🟢 nice | M | `plans/018-reliability-floor-rt-integration-and-chaos.md` §RT4-backpressure |
-| NATS-max-deliveries-dlq | **NATS max-deliveries advisory → `NatsDLQ` bridge, new row filed by Plan 019 / §RT2-B-nak** — a message that exhausts `max_deliver` (RT2-B) is `term()`ed and logged today, but never reaches `NatsDLQ`. JetStream publishes `$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.<STREAM>.<CONSUMER>` (research 005 §B: "there is no automatic DLQ" — applications must subscribe to it themselves) — routing that to `NatsDLQ` is a second subscription with its own lifecycle and `@PostConstruct` wiring, an L-sized feature deliberately not bolted onto RT2-B's S-sized fix. `@listen(dlq=...)` already gives handlers their own DLQ path in the meantime | 🟡 should | L | `varco_nats/varco_nats/bus.py`'s `_on_message` (the `term()` call site); research 005 §B |
-| RedisJobStore-atomic-lua-claim | **`RedisJobStore` atomic Lua claim script, new row filed by Plan 019 / §RT7a-guard** — the rejected-but-recorded alternative to RT7a's guard-key fix: replace the two-key (`SET NX` guard + job JSON) `try_claim()` with one atomic Lua check-and-claim script, closing the `job_store.py`-documented non-atomicity note and making the guard key concept redundant entirely. Deliberately not built this plan (Plan 019 §RT7a-guard's rejected-alternative reasoning): needs its own N-concurrent-claimers integration test, and must handle the `lease_ttl=None` no-lease path, which has no `lease_epoch` fence and genuinely relies on the guard key today | 🟡 should | M | `varco_redis/varco_redis/job_store.py`'s `try_claim`/`reap_expired_leases` DESIGN blocks; the module docstring's existing "a real multi-replica deployment should extend this with a Lua claim script" note |
-| RT7b-kafka-restart-recovery | **`test_kafka_chaos.py::test_outbox_entries_survive_a_broker_restart_and_are_republished` remains flaky after Plan 019 / §RT7b-port's fixes, for a reason orthogonal to port stability.** Two real, independent defects were found and fixed while verifying Phase 4 locally (Docker 27.5.1/WSL2): (1) the default `KafkaContainer()` runs Kafka against an embedded ZooKeeper in the same container, and `docker restart` makes the new broker process re-register its ephemeral znode *before* ZooKeeper expires the previous process's session for it, crashing fatally with `org.apache.zookeeper.KeeperException$NodeExistsException` — **always**, not flakily (confirmed via a standalone docker-py script independent of pytest/testcontainers); fixed by `KafkaContainer().with_kraft()`, which removes ZooKeeper entirely. (2) With KRaft, the broker reliably comes back (a standalone single-producer reconnect test recovers in ~25-30s, reproducibly), but the actual outbox-durability test — which keeps a `KafkaEventBus` consumer + a relay `KafkaEventBus` + an `OutboxRelay` all alive and reconnecting concurrently across the restart, rather than a single fresh client — still failed on 3/3 local runs even with `_DRAIN_TIMEOUT` raised to 240s, while its sibling test in the same module (`test_relay_does_not_dead_letter_on_a_transient_broker_outage`, one relay bus only, no consumer) passed. The sibling `test_sa_chaos.py`/`test_migration_chaos.py` (Postgres, no pinning needed) and the pause-based `test_redis_chaos.py`/`test_nats_health_chaos.py` all pass reliably (3/3 each) with the same Plan 019 `ChaosContainer.url` mechanism — this is specific to multi-client Kafka consumer-group recovery under this session's Docker/WSL2 networking, not the URL-ownership fix itself, which is unit-tested and structurally correct (`test_chaos_container_url.py`, 4/4). Per Non-goals ("test_kafka_chaos.py keeps its current assertions verbatim") and CLAUDE.md's "chaos tests are the flakiest class, never a required check", not further chased this plan — the nightly `chaos` job on GitHub Actions' native-Linux dockerd is the next real evidence (research 006 §F predicts identical *port* behaviour there, but says nothing about aiokafka multi-client reconnection timing) | 🟡 should | M | Local runs during Plan 019 Phase 4 verification: `KafkaContainer()` without `.with_kraft()` → container status `exited` with `NodeExistsException` on every restart (never recovers); with `.with_kraft()` → 1 failed / 1 passed across 3 consecutive `test_kafka_chaos.py` runs, always the consumer-carrying test that fails |
-
----
-
-## Phase 4 — API freeze prep
-
-Must complete **before** the version freeze in phase 5 — 3.0.0 is the last cheap window.
-
-| ID | Feature | Severity | Complexity | Rationale | Evidence |
-|----|---------|----------|------------|-----------|----------|
-| RL-8 | **✅ DONE (Plan 022)** — **API-surface audit + breaking cleanup** — **12 candidates audited, 4 accepted, 8 `leave-and-document`, 0 rejected outright.** Accepted: AB-1 (`enable_rls_ddl` → `render_rls_ddl`, alias), AB-2 (schema `MigrationError`/`MigrationPlan` → `SchemaMigrationError`/`SchemaMigrationPlan`, aliases, and the two `varco_core` re-export holes closed), AB-4 (`BeanieConfig` collapsed into `BeanieSettings`, alias), AB-5 (`CORSConfig.allow_origins` defaults to `()` — the one security-bearing break, and the only one with no alias possible). AB-3 (`install_*` vs providify's `container.install()`) verdicted `leave-and-document`, with the CLAUDE.md taxonomy row corrected: `install_*` is two shapes, not one | 🔴 must | M | The audit is now a reproducible artifact, not an eyeball pass: `scripts/api_surface.py` snapshots 471 exports across ten packages and `--check` diffs a live tree against it. Every verdict was taken at an explicit user checkpoint, dated in the candidates file | `design/api-freeze-and-standards/api-break-candidates.md` (all 12 rows, verdicts dated); `design/api-freeze-and-standards/measurements/api-surface.json`; `CHANGELOG.md` §"BREAKING — API-surface freeze audit (Plan 022, RL-8)" |
-| RL-8a | **✅ DONE (Plan 022) — decision: *adopted*.** `VarcoLifespan` gains an optional, keyword-only `shutdown=` hook (symmetric to its existing `setup=`) and `create_varco_app()` fills it with `container.ashutdown()` whenever it holds a container. `_stop_all()` still runs **first**, so registered components keep their documented LIFO dependency order and the container only sweeps afterwards; the aggregated `ShutdownError` is logged at ERROR one line per `ShutdownFailure` and never re-raised, matching `_stop_all()`'s pre-existing logs-not-raises contract. Signature additive, **behaviour breaking** — see the CHANGELOG | 🟡 should | S | ✅ **Measured, no longer suspected** (U-8). The row previously read "⚠️ Suspected, not proven"; it is now **proven true — 6 orphaned `@PreDestroy` singletons out of 10**: `KafkaChannelManager`, `NatsStreamManager`, `RedisChannelManager`, `RedisCache`, `MemcachedCache`, `CasbinPolicyEngine`. `create_varco_app()` registers only four well-known interfaces (`AbstractEventBus`, `AbstractJobRunner`, and the two `varco_ws` buses), so no `ChannelManager`/`CacheBackend`/`PolicyEngine` was ever torn down; two of the six held an already-open connection. Double-stop is safe: all ten `stop()` implementations were read and **10/10 are idempotent**, so the ">3 non-idempotent → reconsider" trigger never fired and the planned remediation budget was respent as double-`stop()` regression tests | `design/api-freeze-and-standards/measurements/predestroy-vs-lifespan.md` (the proof, both parts); `varco_fastapi/tests/test_lifespan_shutdown.py` (17 tests); `varco_nats/tests/test_nats_lifespan_shutdown_integration.py` (real container, orphan actually torn down); `varco_fastapi/tests/test_lifespan_shutdown_characterization.py` |
-
----
-
-## Phase 5 — release
-
-| ID | Feature | Severity | Complexity | Rationale | Evidence |
-|----|---------|----------|------------|-----------|----------|
-| RL-9 | ✅ **DONE (Plan 023)** — **Version unification at 3.0.0 + written SemVer/deprecation policy** — a single-source-of-truth bump mechanism replacing ten hand-edited `version =` fields, and `Development Status :: 5 - Production/Stable` | 🔴 must | M | All ten packages now `3.0.0` + `Production/Stable`, written by `scripts/bump.py` (tomlkit-based, tested); sibling requirements pinned `~=3.0`; versioning + 12-month deprecation policy in `CONTRIBUTING.md` | `scripts/bump.py`, `varco_core/tests/test_bump_script.py` (19 tests, no xfail), `CONTRIBUTING.md`'s "Versioning and deprecation policy" section, `CHANGELOG.md`'s `[3.0.0]` "Packaging & release" entry |
-| RL-10 | ✅ **DONE (Plan 023)** — **Release automation + supply-chain posture** — tag-triggered PyPI publish via OIDC **trusted publishing**, PEP 740 attestations, `dependabot.yml`, OpenSSF Scorecard workflow, all actions pinned by commit SHA | 🔴 must | M | `.github/workflows/release.yml` (packages/build/publish jobs, matrix derived from `scripts/packages.sh`, per-package `environment:`/`packages-dir`), `dependabot.yml`, `scorecard.yml` all committed; `publish.yml` deleted. ⚠️ The ten GitHub Environments, ten PyPI trusted-publisher configs, and the rc1/final tag pushes are manual operator steps **not applied by this execution** — see the runbook | `.github/workflows/release.yml`/`dependabot.yml`/`scorecard.yml`; `design/varco-1-0-release/release-runbook.md` |
-| RL-11 | ✅ **DONE (Plan 023)** — **Governance + community files** — `CONTRIBUTING.md` (carrying RL-9's versioning/deprecation policy), `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue + PR templates, `CODEOWNERS`; plus gitignore hygiene | 🔴 must | S | All six file groups committed and linked from `README.md`. Gitignore hygiene claim **re-verified, not assumed**: `git status --porcelain`/`git ls-files`/`git check-ignore -v` all showed the tree already clean (`*.log`, `.venv`, `/site`, `dist/` already covered) — no `.gitignore` edit was needed | `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.github/CODEOWNERS`, `.github/ISSUE_TEMPLATE/*`, `.github/PULL_REQUEST_TEMPLATE.md`; `design/varco-1-0-release/measurements/version-baseline.md` §Step 2 |
-| RL-12 | ✅ **DONE (Plan 023)** — **Versioned docs hosting — GitHub Pages + `mike`** — publish the existing mkdocs site from CI with a version switcher (3.0 / latest / dev) | 🔴 must | S/M | `mike>=2.1,<3` in the docs group; `mkdocs.yml` carries `site_url` + `extra.version.provider: mike`; `.github/workflows/docs.yml` deploys `dev` from `main` and `3.0`/`latest` from a non-pre-release tag. ⚠️ The Pages publishing-source setting and the actual first deploy are manual/tag-triggered and **not applied by this execution** | `mkdocs.yml`, `.github/workflows/docs.yml`, `design/varco-1-0-release/release-runbook.md` §3 |
-| RL-13 | ✅ **DONE (Plan 023)** — **PEP 639 license metadata + PEP 735 dependency-groups audit** across all ten packages | 🟢 nice | S | All ten now declare `license = "Apache-2.0"` + `license-files = ["LICENSE"]` (a per-package `LICENSE` copy was required — verified empirically that `../LICENSE` globs are not honored by hatchling), `hatchling>=1.27`, no `License ::` classifier; verified on a real built wheel's `METADATA` (`Metadata-Version: 2.5`, `License-Expression: Apache-2.0`, `License-File: LICENSE`). PEP 735 audit: already compliant, no migration | `design/varco-1-0-release/packaging-audit.md`; `design/varco-1-0-release/measurements/version-baseline.md` §Step 9-11 |
-
----
-
-## Parked
-
-| Feature | Why parked |
-|---------|------------|
-| **CloudEvents envelope** | 📋 **DEFERRED TO 3.1 (Plan 022 Step 30, decided 2026-08-31) — design COMPLETE, implementation not started.** Un-parked and fully scoped by Plan 022 as its Phase 6, then deliberately cut at the Phase 5 boundary so 3.0.0 could ship. **A successor plan implements §D-CE1–§D-CE4 as written; it does not re-derive them.** The work is *purely additive*: a second `Serializer[Event]` implementation opting in via DI, zero change to `Event`, zero change to any bus (reserved seam RS-1). It may ship in 3.0.0 or slip to 3.1 at identical cost, which is precisely why it never needed the freeze window. [Design](plans/022-api-freeze-and-standards-alignment.md) §D-CE1–§D-CE4; [reserved seams](design/api-freeze-and-standards/reserved-seams.md) RS-1/RS-2 |
-| **AsyncAPI export** | 📋 **DEFERRED TO 3.1 (Plan 022 Step 30, decided 2026-08-31) — design COMPLETE, implementation not started.** Un-parked and fully scoped by Plan 022 as its Phase 7, then cut at the Phase 5 boundary with CloudEvents. **A successor plan implements §D-AA1–§D-AA4 as written.** Also purely additive: a new `varco_core.asyncapi` module plus a new `varco.commands` verb `export-asyncapi --check`, both names reserved (RS-3). Generation is runtime (from wired consumers), not a static import walk, because a `@listen` channel may be a callable resolved at `register_to()` time. Same 3.0.0-or-3.1 freedom | §D-AA1–§D-AA4; [reserved seams](design/api-freeze-and-standards/reserved-seams.md) RS-3 |
-| **OpenFeature integration** | ⏸️ **RE-PARKED (Plan 022)** with a falsifiable trigger, replacing an undated park. **Reopen when either (a) the OpenFeature *spec reaches ≥1.0*, or (b) a concrete in-tree requirement for *runtime* (not startup) flag evaluation appears — either one, not both.** Reasoning: the spec is v0.8.0 and the Python SDK 0.10.0 shipped a breaking change inside a minor bump; freezing an ABC derived from a moving spec *inside a version freeze* is the one combination to avoid. Shipping "just the ABC as a seam" is worse than either extreme — it freezes a five-method surface and buys nothing, since a `FeatureFlags` ABC added in 3.1 is purely additive. The name `varco_core.flags` is reserved (RS-3) so waiting costs nothing; the full intended shape is recorded in §D-OF so a future plan does not re-derive it | §D-OF; [brief 003](design/api-freeze-and-standards/research/003-openfeature-integration.md) |<br>⚠️ **Trigger checked again, 2026-09-04 (Plan 032 / D7, brief 004 §1) — still NOT FIRED.** `openfeature-sdk` (PyPI) is at **0.10.0** (2026-06-01), the spec at **0.9.0** (2026-07-29); both pre-1.0, and 0.10.0 itself shipped a breaking change (`set_provider()` no longer blocks; callers must use `set_provider_and_wait()`) inside a minor bump — the exact instability this park exists to wait out. **Outcome: the seam shipped, the provider stayed deferred**, per the backlog's own anticipated split ("if it is still pre-1.0, D7 ships the seam and defers the provider"). `varco_core.flags` (`AbstractFeatureFlags`/`FlagEvaluationContext`/`FlagResolution`/`InMemoryFeatureFlags`/`NullFeatureFlags`, opt-in via `varco_core.flags.di.enable_feature_flags`) is a varco-shaped ABC, not a transcription of OpenFeature's — a future `OpenFeatureFlags` adapter remains purely additive once the SDK (not the spec) reaches 1.0. See `technical_docs/features/feature-flags.md`. |
-| ⚠️ **Reversal notice — "Standards alignment … parked to 3.1"** | The single row that parked all three of the above, and the matching Locked-decisions entry, were **reversed by Plan 022**. Reason, on the merits: the park was protecting the 3.0.0 freeze window from work that never threatened it — item by item, none of CloudEvents/AsyncAPI changes the public surface, so none of it consumes breaking-change budget. What the window *did* owe them was a written seam reservation, which is now `design/api-freeze-and-standards/reserved-seams.md`. The park's *effect* on the ship date is preserved structurally: Plan 022's Phases 6–8 are explicitly non-blocking for RL-9 and may be cut at the Phase 5 boundary without reopening a decision. Same visible-reversal discipline used for the two GitHub Actions parks above. ✅ **Outcome, 2026-08-31:** that cut was exercised — Plan 022 closed at Phase 8 with Phases 6–7 unbuilt, and both rows above are now 3.1 items carrying a finished design. The reversal still stands and was not undone: the park was lifted on the merits, and the *scheduling* decision that followed is a separate, recorded one |
-| **GraphQL surface, event sourcing** | Named by research as absent vs comparable frameworks, but neither is on the differentiation axis varco actually competes on (multitenancy isolation, field-level encryption/crypto-shredding, audit trails for regulated workloads). Not re-litigating without user demand |
-| **Independent per-package versioning** | Considered and rejected this session in favour of lockstep 3.0.0. Revisit only if release churn from ten-package bumps becomes a real cost |
-| **`varco` umbrella meta-package with pinned extras** | Rejected as the most machinery for the least 3.0.0 benefit under lockstep versioning — a lockstep release already gives users one number to trust |
-| ~~**Re-enable `integration.yml` in GitHub Actions** (as a PR gate)~~ | ⚠️ **SUPERSEDED** — parked in a prior session ("no CI budget concern, but the user runs integration tests on their own schedule locally"). Reversed this session: a public release needs CI. Now **RL-5** |
-| ~~**Re-enable `integration.yml` as manual/nightly trigger**~~ | ⚠️ **SUPERSEDED** — same reversal. Now **RL-5** |
-| **New dedicated e2e reference application** | Research found no comparable reliability-focused framework uses a monolithic reference app as its primary regression strategy — per-feature chaos tests (RT7) score better, and an existing example already covers the cross-feature case (RT8). Park stands |
-
----
-
-## Answered by Plan 016 (do not relitigate)
-
-- **RL-1 sequencing** → **two-step, one branch, two commits**: un-vendor against 1.1.0 first
-  (commit `7cea36b`), full sweep, *then* bump to 2.0.0 (commit `1008655`), full sweep again. A
-  red sweep at step one means "PyPI's artifact ≠ the vendored local build"; a red sweep at step
-  two means "2.0.0 changed behaviour" — two different fixes, and a conflated failure would have
-  been expensive to diagnose across ten packages. See Plan 016 Design §RL-1.
-- **RL-3 pytest plugin adoption** → **leave it to consumers; document, do not wrap.** The four
-  fixtures (`di_container`/`di_overrides`/`di_global`/`di_acontainer`) are documented in
-  `CLAUDE.md`'s Test Conventions and `README.md`'s testing section (commit `4815301`); varco's
-  testkit deliberately does not re-export or wrap them, and a consumer conftest redefining
-  `di_container` wins over the plugin default. See Plan 016 Design §RL-3d.
-
-## Answered by Plan 023 (do not relitigate)
-
-- **RL-9 bump mechanism** → **a hand-rolled `scripts/bump.py` using tomlkit**, not `uv version`
-  (no `--all-members`/`--workspace` flag, and it cannot rewrite sibling requirement strings) and
-  not hatch-vcs (unsuitable for a hand-chosen, not CI-derived, version — see brief 004 §2's
-  sdist-without-`.git` failure mode). tomlkit's style-preserving parse/dump round-trips
-  byte-identical when nothing changes, verified against the real tree before the script was
-  written. See Plan 023 §RL-9-bump.
-- **RL-9 sibling pin exactness** → **compatible (`~=<major>.0`), not exact (`==<version>`)**.
-  Exact pins force the resolver to reconcile two different exact `varco-core` demands the moment
-  two siblings are on different patch versions — a diamond conflict this monorepo would hit on its
-  first post-3.0.0 patch release. The lockstep guarantee is carried by the *release process* (all
-  ten published from one tag), not by the metadata. See Plan 023 §RL-9-pins.
+| **mTLS / `X-Forwarded-Client-Cert` `TenantSource`** | Scoped out at the interview. Client-cert trust across a proxy hop is Envoy-specific and is its own trust problem, not a variation on the others | varco commits to service-mesh deployment guidance, or a consumer asks. The ABC is designed so this is an additive out-of-tree implementation |
+| **Repository-backed `AbstractTenantMembership`** | The signed-claim default covers the real multi-org case without a per-request query. Shipping both invites apps to pick the slower one by default | Memberships that genuinely cannot fit in a token. It is an out-of-tree implementation of the shipped ABC, so waiting costs nothing |
+| **DPoP / sender-constrained tokens (RFC 9449)** | Published March 2024, but the brief finds adoption early and concentrated in FAPI 2.0 / open banking. Real, but not 3.2-shaped | Broad library support in the Python OAuth ecosystem, or a consumer in a FAPI-regulated context |
+| **CAEP / SSF real-time session revocation** | Google Workspace beta; slow adoption outside enterprise. `S13`'s revocation seam is the useful, standard-independent half | The seam from `S13` exists and a consumer needs cross-provider session revocation. Then CAEP is a provider against it |
+| **SPIFFE / workload identity** | Production at scale (Stripe, Netflix, Uber) but Kubernetes-first, and it answers *service* identity rather than *tenant* identity — a neighbouring problem | varco grows an opinion about service-to-service identity; likely alongside `S16` |
+| **`RateLimit`/`X-RateLimit-Remaining` headers** (Plan 035 / S10, §D-S10-headers) | The `RateLimiter` ABC cannot report remaining quota, and adding one would break every out-of-tree implementation (the `BulkCache`-off-`AsyncCache` rule) | The design is written: an optional `@runtime_checkable RateLimitIntrospection` Protocol with `remaining(key) -> int`. Un-park when `draft-ietf-httpapi-ratelimit-headers` becomes an RFC |
+| **A bounded/LRU key space on `InMemoryRateLimiter`** (Plan 035 / S10, §D-S10-keyspace) | The right long-term fix for an IP/subject-keyed limiter's attacker-controlled key space, but it changes a public `varco_core` class's memory semantics for every existing `@rate_limit` caller | A consumer reports memory growth, or the acknowledgement kwarg proves to be the common path rather than the exception |
+| **Token-bucket rate limiter** (Plan 035 / S10, §D-S10-algorithm) | varco already ships two sliding-window implementations (in-memory + Redis sorted-set); a third algorithm is its own row | Burst intolerance is reported as a real problem by a consumer |
+| **JSON nesting/complexity limits** (Plan 035 / S8) | Brief 008 §2: no framework middleware can enforce nesting depth without the schema; it belongs in Pydantic validators, not this row (S8 is renamed "Request body size limits" accordingly) | A standardized middleware-level approach appears, or varco grows a schema-aware deserialization layer |
+| **Per-route body ceilings and per-route CSP** (Plan 035 / S7, S8) | `exempt_paths` covers the real cases without a decorator API; no authoritative per-route-CSP-in-FastAPI pattern exists (brief 008 Evidence Gap 1) | Two consumers need genuinely different ceilings/CSP on two routes of one app |
 
 ## Open questions for `/plan`
 
-- **RL-8 audit scope**: the audit produces a ranked list of candidate breaks — an explicit
-  accept/reject checkpoint is needed before any of them land, since each one spends
-  irreplaceable 3.0.0 budget.
-- ~~**RT7 shape**~~ — **answered by Plan 018**: see `plans/018-reliability-floor-rt-integration-and-chaos.md`
-  §RT7-shape (which failures are in-process vs. real container) and §RT7-ci (chaos runs as its
-  own job in `integration.yml`, nightly + `workflow_dispatch` only, never a required check).
+1. ✅ **ANSWERED** in [`plans/036`](plans/036-authorization-surface-and-posture.md) §D-S9-oq1 —
+   **an explicit `VARCO_SECURITY_ENV`, defaulting to `production`, governing severity presentation
+   only.** Inference is rejected on a concrete failure mode: every signal varco could infer from is
+   itself one of the things the preflight checks, so the worst-configured deployment would be the
+   one that decides it is not production. §D-S9-flip carries the consolidated 4.0 flip list.
+   **What is `SecurityPosture`'s "production" signal?** An explicit `VARCO_ENV`/`VARCO_SECURITY_STRICT`
+   setting, or inference from other configuration? Inference is convenient and gets it wrong at the
+   worst moment; an explicit flag is honest but must default to strict or nobody sets it.
+2. ✅ **ANSWERED** in [`plans/033`](plans/033-tenant-identity-provenance.md) §D-S6-oq2 —
+   **agreement-by-default (`LENIENT`)**, with a `STRICT` mode defined as *"if any source spoke, at
+   least two must agree"*, so zero-claim requests stay exempt with no path allowlist.
+   **Does `S6`'s cross-check fail-closed when only one source is present?** A request carrying a
+   JWT claim but no matching subdomain: is that agreement-by-default or a rejection? Leaning
+   agreement-by-default (a missing source is not a conflicting source), with a strict mode
+   available — but this is the decision most likely to break a real deployment quietly.
+3. ✅ **ANSWERED** in [`plans/033`](plans/033-tenant-identity-provenance.md) §D-S6-oq3 —
+   **explicit `base_domains`, no `publicsuffix2` dependency**; a PSL is a staleable data file
+   whose failure mode is tenant confusion, and `varco_core`'s zero-new-runtime-dependency rule is
+   decisive. `X-Forwarded-Host` is off by default.
+   **Subdomain parsing and the public-suffix trap.** `S6` needs a base-domain configuration.
+   Deriving the tenant from `tenant.example.com` requires knowing where the registrable domain
+   ends; getting this wrong on a multi-level TLD is a tenant-confusion bug. Explicit base-domain
+   config avoids a `publicsuffix2` dependency — confirm that is acceptable.
+4. ✅ **ANSWERED** in [`plans/037`](plans/037-data-layer-tenant-enforcement.md) §D-S12-oq4.
+   **Does `S12` (RLS-by-default) change existing generated DDL?** **No** — RLS is structurally
+   additive, no existing DDL is rewritten. But the migration story is **still mandatory**, because
+   policies must be created *before* `ENABLE ROW LEVEL SECURITY` or the table becomes default-deny
+   and goes dark (research 007). The plan also records that today's emission order is wrong.
 
 ---
 
-## Appendix — Plan 012 / 014 / 015 history
+# Completed cycles — summary
 
-Retained from the previous backlog: findings and deferred follow-ups from earlier work,
-kept because several remain open and feed phases 3 and 4.
+Detail lives in `plans/`, `CHANGELOG.md`, and git history. These are one-paragraph records so a
+reader knows what happened without a second copy of it drifting here.
 
-### Known issues found while implementing Plan 012 (xfail'd, not fixed — Non-goals)
+### 3.1 — API surface & interop (discover, 2026-09-04) — ✅ complete
 
-| ID | Finding | Evidence |
-|----|---------|----------|
-| KI-3 | ✅ **Fixed** — `RedisCache.set(ttl=)` (`varco_redis/varco_redis/cache.py`) truncated a sub-second float `ttl` to `int()` before calling `SETEX` — `ttl=0.05` became `0`, and Redis's `SETEX` rejects a `0`/negative expire time with `ResponseError: invalid expire time in 'setex' command`, raising instead of storing a very-short-lived entry. `CacheBackend.set()`'s `ttl: float \| None` contract implies sub-second precision is valid. Fixed by switching `set()`/`set_many()` to millisecond-precision `PSETEX` (`round(ttl * 1000)`) instead of second-precision `SETEX`/`int(ttl)`; a ttl that still rounds to `<=0`ms now raises a clear `ValueError` instead of Redis's cryptic `ResponseError`. `TestLayeredCacheConformance::test_ttl_expiry` (L1 `InMemoryCache` + real Redis L2) inherited the same symptom but for an unrelated second reason — its fixture built L1 with no `InvalidationStrategy`, and per `InMemoryCache`'s own documented contract a strategy-less L1 never expires a ttl-bearing entry on its own; fixed by giving the fixture's L1 a `TTLStrategy()`. | `varco_redis/tests/test_redis_conformance.py::TestRedisCacheConformance::test_ttl_expiry` and `::TestLayeredCacheConformance::test_ttl_expiry` (previously `xfail(strict=True)`, now pass), found by the shared `varco_conformance.cache.CacheBackendConformance` suite against a real Redis instance |
-| KI-5 | ✅ **Fixed** — `MemcachedCache.set(ttl=)` (`varco_memcached/varco_memcached/cache.py`) truncated a sub-second float `ttl` to `int()` before passing it as `exptime` — `ttl=0.05` became `exptime=0`, which the Memcached protocol treats as "no expiry" rather than "expire almost immediately"; the entry was never evicted. Same root cause as KI-3 (`RedisCache`), different failure mode (silent no-expiry instead of a raised error). Unlike KI-3, Memcached's `exptime` is genuinely whole-seconds-only at the wire-protocol level — there is no millisecond-precision command to switch to (Redis's `PSETEX` fix does not apply here). Fixed by rounding a positive sub-second `ttl` UP to the smallest expressible non-zero `exptime` (`1`) via `math.ceil()`, instead of truncating DOWN to `0` — an explicit `ttl<=0`/`ttl=None` still means no-expiry, unchanged. The shared conformance suite's `ttl=0.05`/`sleep(0.3)` timing cannot observe a real 1-second-granularity expiry, so `TestMemcachedCacheConformance.test_ttl_expiry` overrides the shared test with timing compatible with that real granularity (`sleep(1.3)`) rather than loosening the shared suite for every other backend. | `varco_memcached/tests/test_memcached_conformance.py::TestMemcachedCacheConformance::test_ttl_expiry` (previously `xfail(strict=True)`, now passes with an overridden timing window), found by the shared `varco_conformance.cache.CacheBackendConformance` suite against a real Memcached instance; hardened with 3 new unit tests in `varco_memcached/tests/test_cache.py` (sub-second round-up, fractional-above-1s round-up, explicit `ttl=0` still no-expiry) |
-| KI-6 | ✅ **Fixed** — `BeanieDeadLetterQueue.count_by_channel()` (`varco_beanie/varco_beanie/dlq.py`) did `await DeadLetterDocument.aggregate(pipeline).to_list()`. Root cause: beanie's `AggregationQuery.get_cursor()` unconditionally `await`s the collection's `aggregate()` call, but the installed motor version's `AsyncIOMotorCollection.aggregate()` returns its cursor synchronously (not a coroutine) — `TypeError: object AsyncIOMotorLatentCommandCursor can't be used in 'await' expression`. Fixed by driving `DeadLetterDocument.get_pymongo_collection().aggregate(pipeline)` directly (bypassing beanie's broken cursor plumbing) and iterating with `async for`, tolerating both a sync-cursor and a coroutine-returning `aggregate()`. | `varco_beanie/tests/test_beanie_conformance.py::TestBeanieDeadLetterQueueConformance::test_count_by_channel_no_predicate_refuses_or_raises` (previously `xfail(strict=True)`, now passes), found by the shared `varco_conformance.dlq.DeadLetterQueueConformance` suite against a real MongoDB instance |
-| KI-7 | ✅ **Fixed** — `NatsDLQ.delete_where()` (`varco_nats/varco_nats/dlq.py`) always raised `NotImplementedError`, even when called with **no predicate at all** — same class of deviation as KI-2 (`KafkaDLQ`) from the `AbstractDeadLetterQueue` ABC's documented "no predicate -> `ValueError`" contract (`varco_core/varco_core/event/dlq.py:440-489`). Root cause: `delete_where()` jumped straight to the backend-support `NotImplementedError`, never reaching the ABC's own "was any predicate given at all?" guard. Fixed by adding that guard as the first check in `NatsDLQ.delete_where()`, matching its own full keyword-only signature (`older_than`/`source`/`channel`/`tenant_id`/`limit`) instead of a catch-all `**_kwargs`, so an unbounded call raises `ValueError` before the backend-support `NotImplementedError`. | `varco_nats/tests/test_nats_conformance.py::TestNatsDLQConformance::test_delete_where_no_predicate_raises` (previously `xfail(strict=True)`, now passes), found by the shared `varco_conformance.dlq.DeadLetterQueueConformance` suite against a real NATS/JetStream broker |
-| KI-8 | ✅ **Fixed** — `CasbinPolicyEngine.enforce()` (`varco_casbin/varco_casbin/engine.py`) always wraps subject/object in `_AttrStr` (a `str` subclass with a custom `__new__(cls, value, attrs)`), even for the plain RBAC preset. `_AttrStr` had no `__deepcopy__`/`__reduce__`; once one had been threaded into Casbin's internal role-manager/model state via an `enforce()` call, a later `CasbinPolicyEngine.reload()` (-> Casbin's `load_policy()` -> `copy.deepcopy(self.model)`) raised `TypeError: _AttrStr.__new__() missing 1 required positional argument: 'attrs'` — `copy.deepcopy`'s default reconstruction for a `str` subclass calls `cls(value)` only, never the extra `attrs` kwarg the custom `__new__` requires. Fixed by adding `_AttrStr.__reduce__`, which stashes the original `attrs` mapping in `__new__` and returns `(cls, (str(self), self._attrs))` so `deepcopy`/`pickle` reconstruct through the real constructor instead of the broken default path. Chosen over the alternative (only wrap in `_AttrStr` for ABAC-configured engines) because it fixes the actual `str`-subclass/`deepcopy` incompatibility at its root without adding preset-conditional branching to `enforce()`, and preserves the existing "one engine serves ACL/RBAC/ABAC uniformly" design the module docstring describes. | `varco_casbin/tests/test_persistence_integration.py::test_two_engines_share_database_writer_reader` (previously `xfail(strict=True)`, now passes), verified against a real Postgres-backed `CasbinPolicyEngine`; full `varco_casbin/tests/` suite (67 tests, unit + `-m integration`, including ABAC tests in `test_abac_e2e.py`) green |
+Shipped `D1` Idempotency-Key middleware (🔴), `N1` MCP v2 migration (🔴), `N2` CloudEvents
+envelope, `N3` AsyncAPI export, `D4` outbound webhooks, `D5` CycloneDX SBOM + regulatory posture,
+and the 🟢 row group `D6` recurring schedules / `D7` feature-flag seam / `D8` `varco-testkit`.
+Plans 029–032. Backed by research briefs 001, 002, and 004.
 
-### Example suite findings (Plan 012 / RT8, Step 34 — corrected in test files, no production code touched)
+### 3.1 — trust store, hot reload & performance — ✅ complete
 
-Running `examples/00-full-stack-post-api`'s real integration suite for the first time (C-6/A-6
-had never actually executed it) surfaced one missing-config issue and two stale test
-expectations, all fixed inside `examples/00-full-stack-post-api/example/tests/` (a permitted
-path):
+Shipped `T3`/`T5`/`T7` (`varco_core.tls` unification, `ReloadingTrustStore`, client injection and
+mTLS hardening), `T4`/`T6` (the four client adapters, `install_process_trust()`, PKCS#12 and
+encrypted-key support), and `P1`–`P4` (PEP 562 lazy `varco_core` import — 289.6 ms → 6.6 ms —
+the `scripts/import_budget.py` harness, and the CodSpeed benchmark suite). Plans 025–028.
 
-- `example/app.py` constructs `JwtBearerAuth(registry=registry, required=False)` with no
-  `audience=` — since Plan 005 Phase 2, `JwtBearerAuth()` refuses to construct without an
-  audience configured (`ValueError`). Fixed by setting `VARCO_JWT_ALLOW_ANY_AUDIENCE=true` in
-  `example/tests/conftest.py`'s `running_server` fixture (a demo app has no single-audience
-  concept to enforce).
-- `test_me_with_garbage_token_is_anonymous` asserted a *present* malformed Bearer token falls
-  back to anonymous — `JwtBearerAuth.__call__`'s own docstring documents `required=False` only
-  covers an *absent* Authorization header; a present-but-invalid token always raises 401.
-  Renamed to `test_me_with_garbage_token_returns_401` and corrected the assertion.
-- `test_anonymous_cannot_create_post_returns_403` asserted anonymous `POST /v1/posts` is
-  rejected — `example/authorizer.py`'s own docstring documents anonymous CREATE as allowed
-  (`author_id=None`); only anonymous UPDATE/DELETE are rejected. Renamed to
-  `test_anonymous_can_create_post_with_null_author` and corrected the assertion.
+### 3.0.1 — cleanup cycle — ✅ complete
+
+Shipped `C1` (backlog/source reconciliation and the branch-protection ruleset), `C2` (providify
+`@Disposes` adoption, closing `P22-PROVIDER-PREDESTROY`), `C5` (`api_surface.py --check` promoted
+to a real gate), `C7` (`testkit/varco_conformance/COVERAGE.md`), and `C8` (the Kafka chaos
+restart flake, time-boxed then documented). Plan 024.
+
+### 3.0.0 — release cycle — ✅ complete
+
+The API freeze and first public release: providify 2.0.0 adoption, CI green across a 3.12/3.13
+matrix, the reliability floor (conformance suites, integration and chaos tests in CI), the API
+freeze itself (`scripts/api_surface.py`, reserved seams, the `AB-1`/`AB-2`/`AB-3`/`AB-5` break
+decisions), and the ten-package lockstep release machinery (`scripts/bump.py`, `release.yml` with
+PyPI trusted publishing and PEP 740 attestations, `scorecard.yml`). Plans 012–023.
 
 ---
 
-### Deferred follow-ups (Plan 014 / audit 001 Batch B)
+# Standing parks (do not relitigate without new evidence)
 
-- **`weakref.WeakSet[FastAPI]` upgrade for the double-mount guards** — both `varco_fastapi.tenancy.mount._MOUNTED_APPS` and `varco_fastapi.admin.mount._MOUNTED_APPS` are `set[int]` keyed by `id(app)`, which can produce a spurious `ValueError` if a collected `FastAPI` instance's id is reused by a new, unrelated app; deliberately not fixed in Plan 014 to keep `mount_reliability_admin()`'s guard shape-identical to the `mount_tenant_admin()` reference it was ported from — should change *both* modules together in one follow-up.
-- **`varco_redis.di.async_bootstrap()` is missing the `container is None` guard `varco_memcached.di.async_bootstrap()` has** — when providify is absent, `bootstrap()` returns `None` and the subsequent `await container.ainstall(RedisCacheConfiguration)` (when `setup_cache=True`) raises `AttributeError: 'NoneType' object has no attribute 'ainstall'` instead of returning `None` like every other varco `async_bootstrap()`.
+Consolidated from every cycle. A row leaves this table only when its trigger fires.
 
----
-
-### Deferred follow-ups (Plan 015 / audit 002)
-
-- **F12 — `## Test Conventions` prose density (RT1/RT6 paragraphs)** — the audit flagged this as
-  "a judgment call, not a clear misplacement," and Plan 015 explicitly left it untouched
-  (`## Test Conventions` in `CLAUDE.md` is byte-identical to before the refactor). Revisit in a
-  future pass if the section keeps growing.
-
----
-
-### Findings from Plan 022 (Phase 4 / RL-8a — filed, not fixed)
-
-| ID | Finding | Status |
+| Item | Why parked | Un-park trigger |
 |---|---|---|
-| **P22-PROVIDER-PREDESTROY** | `container.ashutdown()` does **not** run the `@PreDestroy` hook of an instance returned by a `@Provider`. providify's `_adispose()` (`providify/container.py:4550-4582`) dispatches on binding kind: a `ProviderBinding` runs its `@Disposes` disposer and returns; only a `ClassBinding` consults `binding.pre_destroy`. Consequence for varco: the RL-8a adoption tears down four of the six measured orphans, but **not `RedisCache` or `MemcachedCache`** — neither class carries a `@Singleton` of its own; each exists solely as the return value of its package's `@Configuration` provider, and each is constructed **eagerly with an already-started connection pool**. So the two worst orphans in the measurement are still leaked | ⛔ **Open.** Pinned by a `strict=True` xfail in `varco_redis/tests/test_redis_cache_lifespan_shutdown_integration.py` (real container) — it will fail loudly the day the gap closes. Deliberately **not** worked around in varco code (e.g. by adding a `@Disposes` to `RedisCacheConfiguration`, or by giving `RedisCache` a class-level `@Singleton`): both are plausible fixes but each changes a package's DI shape and belongs in its own plan with its own checkpoint. Indexed in `UPSTREAM-GAPS.md` (recreated at the Plan 022 closeout as a thin, disposable index over `design/upstream-gaps/` — its absence at any later date is expected, not an error). **Full report: `design/upstream-gaps/providify-provider-predestroy.md`** — reproduction, the three candidate upstream fixes, and ⚠️ the varco-side `@Disposes` fix that needs no upstream change at all. Also guarded by a fast, Docker-free strict xfail in `varco_core/tests/test_providify_provider_predestroy.py`, which runs on every `make test` |
-| **P22-REDIS-DOUBLE-BUS** | `RedisEventBus` carries `@Singleton(qualifier="redis")` *and* is constructed a second time by `RedisEventBusSelectorConfiguration.bus()` (`varco_redis/bus.py:558`). Only the selector's instance is bound to `AbstractEventBus` and becomes a lifecycle component; anything resolving the qualified singleton gets a distinct instance that is an orphan | 📋 Recorded during the Plan 022 Phase 0 measurement, out of that plan's scope. See `design/api-freeze-and-standards/measurements/predestroy-vs-lifespan.md` Part 1 |
+| **Durable execution / workflow-as-code** | **XL, parked on size alone — not on merit.** Brief 001 names it varco's largest strategic gap, and varco owns unusual amounts of the substrate (fenced-lease job store, outbox, saga orchestrator, DLQ). Half of it would be worse than none | A major-version horizon (4.0) with the appetite to build it properly, or a consumer requirement that makes the saga orchestrator's limits concrete rather than theoretical |
+| **OpenFeature provider** | Trigger checked **2026-09-04** (Plan 032 / D7, brief 004 §1) — **NOT FIRED**. `openfeature-sdk` at **0.10.0** (2026-06-01), spec at **0.9.0** (2026-07-29); 0.10.0 itself shipped a breaking change (`set_provider()` no longer blocks) inside a minor bump. **Outcome: the seam shipped, the provider did not** — `varco_core.flags` is a varco-shaped ABC, deliberately not a transcription of OpenFeature's | `openfeature-sdk` reaches **1.0.0** — the SDK, not the spec. The adapter is then purely additive |
+| **RRULE / RFC 5545 schedules** | A complete implementation means a `dateutil` runtime dependency, against the standing zero-new-runtime-dependencies rule for `varco_core` | A consumer needs a recurrence 5-field cron cannot express, and accepts the dependency |
+| **Seconds-precision / 6-field cron** | 5-field covers the case; a scheduler with second granularity is a different tool | A consumer needs sub-minute scheduling |
+| **Packaging `varco_chaos`** | Unstable by design, wraps testcontainers, needs Docker, and is the only sanctioned caller of `get_wrapped_container()`. Freezing it under the API gate buys nothing | A downstream writes chaos tests against varco backends and asks |
+| **Per-tenant quotas & usage metering** | Real — multitenancy is a varco flagship and quotas are its missing half — but M-sized new surface, cut for scope | A consumer asking for metered billing events off the existing rate limiter. ⚠️ Note `S10` builds the per-tenant rate-limit middleware this would extend |
+| **Secrets-manager sources (Vault / cloud KMS)** | The technical argument is good — credential rotation is the same problem as cert rotation, and Plans 025–027 built the machinery — but it is an extension, not a gap | JWT-signing-key rotation becoming a concrete need rather than an analogy |
+| **Server-side cert rotation via `sni_callback`** | The 3.1 cycle was scoped to **outbound** calls; this was its only L item and dropping it made the cycle fit | varco services begin terminating TLS directly rather than sitting behind a proxy/ingress |
+| **`truststore` dependency** | **Investigated and rejected on source evidence.** It *does* support custom CAs (the objection was half wrong), but **on Linux its verifier is a documented no-op** — OpenSSL's default paths already *are* the Linux system store. Zero behavioural gain for a dependency | varco officially supports macOS or Windows, where `create_default_context()` cannot see Keychain / CryptoAPI and an MDM-pushed corporate root is invisible |
+| **Cross-platform (macOS / Windows) support** | Scoping to Linux keeps platform caveats out of the TLS design instead of scattering them through it | A release commits to multi-OS support — at which point the work is **not** just adding `truststore` but auditing every implementation for Linux-only assumptions (inotify, path handling, `SSL_CERT_DIR`, `StatPollWatcher` mtime granularity) |
+| **PEP 810 native lazy imports** | Lands in Python 3.15; the matrix is 3.12/3.13. PEP 562 ships today and is what `varco_core` uses | The support matrix reaches 3.15 |
+| **Toxiproxy graded latency/bandwidth chaos** | `testcontainers-python` ships no Toxiproxy module, and the standalone Python client is 0.x with no recent activity (possibly orphaned) | A `testcontainers.toxiproxy` module, or a maintained Python client |
+| **Integration tests gating PRs (RL-16)** | Deliberate. Promotion needs **≥30 consecutive nightly runs with ≤1 non-code failure** — below 30 there is no measurement, only anecdote. ⚠️ Independently blocked by `cancel-in-progress: true`: a cancelled run resolves as neither success nor failure, so a required check that can be cancelled leaves a PR permanently pending (research 001 §8) | Reaching that count **and** resolving the concurrency interaction. The `chaos` job is **never** a promotion candidate, on any schedule |
+| **GraphQL surface · event sourcing** | Named by research as absent vs comparable frameworks, but neither is on the axis varco competes on (multitenancy isolation, field-level encryption / crypto-shredding, audit trails for regulated workloads) | Concrete user demand |
+| **Independent per-package versioning** | Rejected in favour of lockstep. A lockstep release gives users one number to trust | Release churn from ten-package bumps becoming a measured cost |
+| **`varco` umbrella meta-package with pinned extras** | The most machinery for the least benefit under lockstep versioning | Lockstep versioning being abandoned |
+| **New dedicated e2e reference application** | No comparable reliability-focused framework uses a monolithic reference app as its primary regression strategy; per-feature chaos tests score better, and an existing example covers the cross-feature case | — |
+| **WD-1 — WS backpressure margin** | A watch item, not work. The margin is machine-dependent | The test failing **twice on CI**; then thread `ws_max_queue`/`write_limit` through the fixture |
+| **RT4-ws-scale — many-connection WS scale test** | Blocked on undocumented GitHub Actions fd limits | Documented limits, or a measured local ceiling worth encoding |
 
 ---
 
-### Findings from Plan 016 (RL-3a — `container.validate()` adoption, Step 24)
+# Answered decisions (do not relitigate)
 
-`assert_no_structural_di_issues()` (`testkit/varco_conformance/providify_health.py`) was wired in
-after the existing `container.validate_bindings()` call at all 17 surviving per-package DI health
-sites (see Plan 016 Step 23's file list). **No structural error (`AMBIGUOUS_BINDING`,
-`CIRCULAR_DEPENDENCY`, `SCOPE_LEAK`, `LIVE_REQUIRED`, `UNRESOLVED_ANNOTATION`) was found at any
-site** — every one of the 17 tests passed unmodified on the first run. Per Design §RL-3a /
-Non-goals, no `xfail` was needed and no production code was touched.
-
-Every `MISSING_BINDING` the new assertion tolerates (a package scanned alone legitimately lacks
-the application's own bindings) — recorded here rather than in an allowlist, per the design's
-own rejection of a per-test allowlist:
-
-| Package (scanned alone, no app bindings) | Tolerated `MISSING_BINDING` |
-|---|---|
-| `varco_core` | none |
-| `varco_kafka` | none |
-| `varco_nats` | none |
-| `varco_redis` | none |
-| `varco_sa` | `SAConfig` — `'config' requests SAConfig but no binding is registered and no default value exists` (the app must supply its own `SAConfig`, e.g. via a `@Provider`) |
-| `varco_beanie` | `BeanieSettings` — `'settings' requests BeanieSettings but no binding is registered and no default value exists` (same shape as `SAConfig` above — the app supplies its Mongo connection settings) |
-| `varco_fastapi` | none observed at this call site — `varco_fastapi`'s framework-default ABCs (`AbstractJobStore`, `AbstractServerAuth`, …) are registered by `VarcoFastAPIModule`, a `@Configuration` class that a bare `container.scan("varco_fastapi", recursive=True)` does **not** auto-install (it requires an explicit `container.install(VarcoFastAPIModule)`), so this scan-alone shape never reaches the code paths that would report those interfaces missing |
-
----
+- **RL-1 — providify un-vendoring sequence** (Plan 016) → **two-step, one branch, two commits**:
+  un-vendor against 1.1.0 first, full sweep, *then* bump to 2.0.0 and sweep again. A red sweep at
+  step one means "PyPI's artifact ≠ the vendored local build"; at step two, "2.0.0 changed
+  behaviour" — two different fixes, and a conflated failure would have been expensive across ten
+  packages.
+- **RL-3 — providify pytest plugin adoption** (Plan 016) → **document, do not wrap.** The four
+  fixtures are used under providify's own names; `testkit` deliberately does not re-export them,
+  since it is never packaged and a second name for an identical fixture is pure confusion. A
+  consumer conftest redefining `di_container` wins over the plugin default.
+- **RL-9 — version bump mechanism** (Plan 023) → **a hand-rolled `scripts/bump.py` using
+  tomlkit**, not `uv version` (no `--all-members`, and it cannot rewrite sibling requirement
+  strings) and not hatch-vcs (unsuitable for a hand-chosen, not CI-derived, version).
+- **RL-9 — sibling pin exactness** (Plan 023) → **compatible (`~=<major>.0`), never exact.** Exact
+  pins force the resolver to reconcile two different exact `varco-core` demands the moment two
+  siblings differ by a patch — a diamond conflict this monorepo would hit on its first post-3.0.0
+  patch release. The lockstep guarantee is carried by the *release process*, not the metadata.
+- **T3 — deprecation shim shape** (Plan 026) → **a subclass, not an alias.** A plain alias was
+  never available, because the old and new names do not denote the same behaviour — the new type
+  is recursive by default and globs a wider cert set, so aliasing would silently widen every
+  existing construction on upgrade. The resulting `isinstance` asymmetry is a documented,
+  CHANGELOG'd cost of the deprecation window.
+- **T3 — does `SSLConfig` gain reload?** (Plan 026) → **no.** `SSLConfig` stays frozen and static;
+  `ReloadingTrustStore` is the only reloadable path. Making `SSLConfig` reloadable would turn every
+  settings object constructed at import/DI time into an unmanaged background-task owner.
+- **T3 — where the reload task starts** (Plan 026) → **the store owns `start()`/`stop()` itself;
+  no `@Configuration` is added to `varco_core`.** `container.scan("varco_core", recursive=True)`
+  is a documented, in-use pattern that auto-activates every scanned `@Configuration`, which would
+  start a filesystem watcher in every app that scans `varco_core`.
+- **C2 — providify 2.0.1 gate** (Plan 024) → **removed, not rescheduled.** 2.0.1 shipped without
+  the fix and the behaviour is declared intentional, so varco adopted `@Disposes` itself.
+- **RT7 — chaos test shape and CI placement** (Plan 018) → chaos runs as its own job in
+  `integration.yml`, nightly + `workflow_dispatch` only, **never** a required check.
+- **Standards alignment park — reversed** (Plan 022) → the park protecting the 3.0.0 freeze from
+  CloudEvents/AsyncAPI was lifted on the merits: neither changes the public surface, so neither
+  consumed breaking-change budget. What the window owed them was a written seam reservation
+  (`design/api-freeze-and-standards/reserved-seams.md`). Both shipped in 3.1.

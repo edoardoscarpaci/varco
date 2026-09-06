@@ -321,9 +321,14 @@ def error_message_for(
         else:
             message = error_code.default_message
 
-    # Normalize empty str(exc) to None — avoids {"detail": ""} in JSON output
+    # Normalize empty str(exc) to None — avoids {"detail": ""} in JSON output.
+    # Plan 035 / §D-S3b: `include_detail` gates this echo of str(exc). It
+    # defaults to True (byte-identical to pre-3.2 behaviour) because
+    # suppressing it by default breaks the one documented consumer
+    # (RouteGuard denial messages, exceptions.py:135-141) — a warn-only
+    # `inspect_http_edge()` finding covers deployments that want it off.
     raw_detail = str(exc)
-    detail: str | None = raw_detail if raw_detail else None
+    detail: str | None = raw_detail if (raw_detail and settings.include_detail) else None
 
     # D-4's kill switch: VARCO_ERROR_INCLUDE_MESSAGE_KEY / _INCLUDE_PARAMS.
     emitted_message_key = message_key if settings.include_message_key else None

@@ -39,6 +39,15 @@ class ErrorEnvelopeSettings(VarcoSettings):
             the RFC 9457 ``type`` member, e.g.
             ``"https://errors.example.com/"`` +
             ``"varco.error.not_found"``. ``None`` uses ``"about:blank"``.
+        include_detail: Emit the ``detail`` member (``str(exc)``) on the
+            error envelope. Default ``True`` — byte-identical to pre-3.2
+            behaviour (Plan 035 / §D-S3b). This is a **warn-only** knob in
+            3.2: ``detail`` is deliberately still present by default because
+            it is the only actionable channel for e.g. ``RouteGuard`` denial
+            messages (``exceptions.py:135-141``); ``inspect_http_edge()``
+            reports ``http.error.detail_exposed`` so an operator can flip it
+            per-deployment. **4.0 flip candidate** — the default is planned
+            to become ``False`` in varco 4.0.
     """
 
     model_config = SettingsConfigDict(env_prefix="VARCO_ERROR_", extra="ignore")
@@ -47,3 +56,4 @@ class ErrorEnvelopeSettings(VarcoSettings):
     include_params: bool = True
     problem_details: bool = False
     problem_type_base: str | None = None
+    include_detail: bool = True

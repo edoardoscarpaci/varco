@@ -9,6 +9,52 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- **Closed the unmapped-exception information leak (Plan 035 / S3).** Two fallback sites —
+  `ErrorMiddleware._service_error_response`'s `except` branch and `add_exception_handlers`'s
+  `_make_error_response`'s `except` branch (reached when `error_message_for()` itself raises, e.g.
+  a `ServiceException.error_params()` raises) — used to echo `str(exc)` directly into the response
+  body. Both now return an opaque `"An internal error occurred."` message plus `correlation_id`,
+  and log the exception type server-side at ERROR with `exc_info=True`. Unconditional — there is
+  no toggle for this fix; correlate via the `correlation_id` in the log.
+
+### Added
+
+- **`SecurityHeadersMiddleware` (Plan 035 / S7).** Baseline security response headers on every
+  response, including error responses — `X-Content-Type-Options`, `X-Frame-Options`,
+  `Referrer-Policy`, and a scheme-guarded `Strict-Transport-Security` at the `BALANCED` preset
+  (default); `STRICT` (opt-in) adds CSP/COOP/CORP/Permissions-Policy.
+- **`BodyLimitMiddleware` (Plan 035 / S8).** A hard ceiling on request-body bytes — a
+  `Content-Length` pre-check plus a cumulative count over the ASGI `receive()` stream, rejecting
+  before Starlette finishes buffering. Raises `RequestBodyTooLargeError` (`varco_core.exception`,
+  HTTP 413).
+- **`RateLimitMiddleware` + `RateLimitBundle` (Plan 035 / S10).** ASGI assembly around the
+  existing `RateLimiter`/`InMemoryRateLimiter`/`RedisRateLimiter` — per-`IP`/`GLOBAL`/`SUBJECT`/
+  `TENANT` HTTP rate limiting, registered at up to two stack positions (`PRE_AUTH`/`POST_AUTH`) by
+  `create_varco_app(rate_limit=...)`. Opt-in — the one row that ships off by default.
+- **`inspect_http_edge()` (Plan 035 / §D-seam).** A pure, side-effect-free read reporting which of
+  the above is wired into a given app — the seam Plan 036's `SecurityPosture` preflight consumes.
+  Exported from both `varco_fastapi.middleware` and `varco_fastapi` directly.
+- **`ErrorEnvelopeSettings.include_detail` (Plan 035 / §D-S3b).** Warn-only knob for the
+  `ErrorMessage.detail` (`str(exc)`) echo on every mapped `ServiceException`. Defaults to `True`
+  (byte-identical to 3.1) — a 4.0 flip candidate, reported by `inspect_http_edge()` as
+  `http.error.detail_exposed`.
+
+### Changed
+
+- The unmapped-exception fallback body no longer contains `str(exc)` (see Security, above) — no
+  revert; this is the security fix.
+- Four security headers are now sent by default on every response
+  (`VARCO_SECURITY_HEADERS_ENABLED=false` reverts).
+- A 10 MiB request-body ceiling is now enforced by default
+  (`VARCO_BODY_LIMIT_ENABLED=false`, or `VARCO_BODY_LIMIT_MAX_BYTES=<bytes>`, reverts).
+- `correlation_id` is now present on **every** error response body — `ErrorMiddleware` and
+  `add_exception_handlers` generate a fresh id when no ambient one is set, rather than omitting the
+  key entirely. This widens the S3 fix beyond the two fallback sites to every error path, including
+  `_internal_error_response()`'s already-sanitized 500 body. No toggle; not called out in Plan 035
+  as an explicit change — see the sync report's Drift section.
+
 ## [3.1.0] — 2026-09-05
 
 ### BREAKING (optional extra) — MCP Python SDK bumped to v2 (Plan 029 / N1)

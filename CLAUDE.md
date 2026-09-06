@@ -539,6 +539,27 @@ not the spec, reaching 1.0.0) had not fired as of the 2026-09-04 check (SDK 0.10
 An `OpenFeatureFlags` adapter is purely additive once it does. Full version evidence and design:
 `technical_docs/features/feature-flags.md`. Usage: README's "Feature flags" section.
 
+### HTTP edge hardening (Plan 035 / S3, S7, S8, S10)
+
+Security headers (`varco_fastapi.middleware.security_headers`, on by default), request body limits
+(`varco_fastapi.middleware.body_limit`, on by default at 10 MiB), and HTTP rate limiting
+(`varco_fastapi.middleware.rate_limit`, one opt-in `create_varco_app(rate_limit=RateLimitBundle(...))`
+row) — plus the unmapped-exception `str(exc)` leak fix (S3) and the `inspect_http_edge()` seam Plan
+036 consumes. Full design (the normative middleware-ordering table, every header/limit default
+argued, a Pitfalls table): `technical_docs/features/http-edge-hardening.md`. Usage: README's
+"Security headers"/"Request body limits"/"HTTP rate limiting" sections.
+
+**Rule**: never register `SecurityHeadersMiddleware`/`BodyLimitMiddleware`/`RateLimitMiddleware`
+via `create_varco_app(extra_middleware=...)` — verified to land at the wrong stack position
+(outside `ErrorMiddleware`, and outside `RequestContextMiddleware`) for all three. Use the
+dedicated `security_headers=`/`body_limit=`/`rate_limit=` keywords instead.
+
+**Rule**: never add a `remaining()`/quota-reporting method to `RateLimiter` to emit
+`X-RateLimit-*`/`RateLimit` headers — the ABC has no such method by design (adding one breaks
+every out-of-tree implementation, the same `BulkCache`-off-`AsyncCache` rule). A limiter that
+cannot report remaining quota must never emit a header that lies about it; the parked design is an
+optional `RateLimitIntrospection` Protocol.
+
 ### Recurring schedules (varco_core.schedule, Plan 032 / D6)
 
 `Schedule` (a cron expression + IANA timezone + `GapPolicy`/`OverlapPolicy`/`CatchUpPolicy`) is
@@ -1216,6 +1237,18 @@ Am I adding a new capability?
 │
 ├─ Resilience pattern (new retry/timeout/breaker variant)?
 │  └─ → varco_core.resilience (decorator + config)
+│
+├─ Browser security header (CSP, HSTS, frame options, …)?
+│  └─ → varco_fastapi.middleware.security_headers (SecurityHeadersMiddleware, on by default)
+├─ Request too big / memory-exhaustion ceiling on a request body?
+│  └─ → varco_fastapi.middleware.body_limit (BodyLimitMiddleware, on by default at 10 MiB)
+├─ HTTP rate limit (per IP/subject/tenant/global)?
+│  └─ → varco_fastapi.middleware.rate_limit (RateLimitMiddleware + RateLimitBundle) —
+│       never a new limiter; imports RateLimiter/RateLimitConfig from
+│       varco_core.resilience.rate_limit as-is
+├─ "Is my HTTP edge (headers/body-limit/rate-limit) actually configured?"
+│  └─ → varco_fastapi.middleware.introspect.inspect_http_edge() — a pure read,
+│       never a preflight (Plan 036's SecurityPosture is the preflight)
 │
 ├─ File/dir change detection (config reload, cert rotation, anything watching a path)?
 │  └─ → varco_core.watch — never a hand-rolled mtime dict (misses the K8s `..data` rotation)
