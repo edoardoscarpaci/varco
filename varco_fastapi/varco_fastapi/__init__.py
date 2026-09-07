@@ -187,6 +187,13 @@ from varco_fastapi.middleware.metrics import MetricsMiddleware
 from varco_fastapi.middleware.request_context import RequestContextMiddleware
 from varco_fastapi.middleware.tracing import TracingMiddleware
 from varco_fastapi.migrate import MigrationLifecycle
+from varco_fastapi.posture import (
+    PostureFinding,
+    PostureSeverity,
+    SecurityPosture,
+    SecurityPostureLifecycle,
+    SecurityPostureSettings,
+)
 
 # ── Router layer ──────────────────────────────────────────────────────────────
 from varco_fastapi.router.base import (
@@ -342,6 +349,12 @@ __all__ = [
     # Lifecycle
     "VarcoLifespan",
     "MigrationLifecycle",
+    # Plan 036 / S9 — security posture preflight
+    "PostureSeverity",
+    "PostureFinding",
+    "SecurityPosture",
+    "SecurityPostureSettings",
+    "SecurityPostureLifecycle",
     # Exceptions
     "add_exception_handlers",
     # DI

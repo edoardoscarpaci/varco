@@ -11,6 +11,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from varco_core.service.audit import AuditEntry, AuditRepository
+from varco_core.service.tenant import tenant_context
 
 
 class InMemoryAuditRepository(AuditRepository):
@@ -42,7 +43,12 @@ class TestAuditRouterFilters:
         app.include_router(router)
         client = TestClient(app)
 
-        resp = client.get("/audit/entries", params={"entity_type": "Order"})
+        # Plan 036 (S4b) / §D-S4-scope: an omitted `tenant_id` with no
+        # ambient tenant context now raises (CrossTenantAccessError -> 403)
+        # rather than silently sweeping every tenant — this route needs a
+        # resolved tenant to reach 200.
+        with tenant_context("t1"):
+            resp = client.get("/audit/entries", params={"entity_type": "Order"})
         assert resp.status_code == 200
 
     def test_entry_by_id_returns_404_when_absent(self) -> None:
@@ -71,7 +77,9 @@ class TestAuditRouterFilters:
         app.include_router(router)
         client = TestClient(app)
 
-        resp = client.post("/audit/verify-chain")
+        # Plan 036 (S4b) / §D-S4-scope: same omitted-tenant_id rule as above.
+        with tenant_context("t1"):
+            resp = client.post("/audit/verify-chain")
         assert resp.status_code == 200
         assert resp.json()["verified"] is True
 

@@ -103,6 +103,10 @@ from typing import TYPE_CHECKING, Any, Final
 # ─────────────────────────────────────────────────────────────────────────────
 
 if TYPE_CHECKING:
+    # ── Authorization-decision audit (Plan 036 / S11) ───────────────────────────────
+    from varco_core.auth.audit import AuditDecisionPolicy, AuditingAuthorizer
+    from varco_core.auth.di import enable_authorization_audit
+
     # ── Auth helpers ─────────────────────────────────────────────────────────────────
     from varco_core.auth.helpers import (
         GrantBasedAuthorizer,
@@ -504,7 +508,9 @@ _LAZY: Final[dict[str, str]] = {
     "AsyncCache": "varco_core.cache",
     "AsyncRepository": "varco_core.repository",
     "AsyncUnitOfWork": "varco_core.uow",
+    "AuditDecisionPolicy": "varco_core.auth.audit",
     "AuditedDomainModel": "varco_core.model",
+    "AuditingAuthorizer": "varco_core.auth.audit",
     "AuthorityError": "varco_core.authority",
     "AuthoritySource": "varco_core.authority",
     "AuthorizationConfig": "varco_core.authority",
@@ -725,6 +731,7 @@ _LAZY: Final[dict[str, str]] = {
     "current_timezone": "varco_core.context",
     "deprecated": "varco_core.deprecation",
     "deprecated_alias": "varco_core.deprecation",
+    "enable_authorization_audit": "varco_core.auth.di",
     "enable_tenant_membership": "varco_core.tenancy",
     "error_code_for": "varco_core.exception.http",
     "error_message_for": "varco_core.exception.http",
@@ -1035,6 +1042,10 @@ __all__ = [
     "GrantBasedAuthorizer",
     "OwnershipAuthorizer",
     "RoleBasedAuthorizer",
+    # ── Authorization-decision audit (Plan 036 / S11) ───────────────────────────
+    "AuditDecisionPolicy",
+    "AuditingAuthorizer",
+    "enable_authorization_audit",
     # ── Error codes and HTTP error mapping ───────────────────────────────────────
     "AnyErrorCode",
     "ErrorCode",

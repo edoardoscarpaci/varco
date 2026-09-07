@@ -197,6 +197,8 @@ policy engine, field encryption, observability, profiling, …) — see
 - [Security headers](#security-headers)
 - [Request body limits](#request-body-limits)
 - [HTTP rate limiting](#http-rate-limiting)
+- [Security posture preflight](#security-posture-preflight)
+- [Authorization-decision audit](#authorization-decision-audit)
 - [Composite Deployment](#composite-deployment)
 - [Durability preset (one-line opt-in)](#durability-preset-one-line-opt-in)
 - [Changelog summary](#changelog-summary)
@@ -3954,6 +3956,10 @@ async def on_order(self, event: OrderPlacedEvent) -> None: ...
 
 Redrive, retention, tenancy, a Beanie backend, and a bundled REST admin surface
 (`mount_reliability_admin()`) are covered in `technical_docs/features/dead-letter-queues.md`.
+`mount_reliability_admin(..., cross_tenant_role="cross-tenant-admin")` (Plan 036 / S4) is required
+to omit `tenant_id` and reach every tenant, or to pass a `tenant_id` other than the caller's own —
+an omitted `tenant_id` now scopes to the caller's resolved tenant, not "every tenant". See
+`technical_docs/features/admin-surface-tenancy.md`.
 
 ---
 
@@ -4282,6 +4288,9 @@ mount_webhook_admin(
     acknowledge_bundled_admin=True,  # required — RD-9, same posture as mount_reliability_admin
     server_auth=my_auth,
     admin_role="webhook-admin",
+    cross_tenant_role="cross-tenant-admin",  # Plan 036 / S4 — required to address another
+                                              # tenant's subscription; ctx=None (unauthenticated)
+                                              # can never hold it
 )
 ```
 
@@ -4618,6 +4627,76 @@ posture.security_headers_installed   # True
 posture.rate_limit_installed         # False, unless you passed rate_limit=
 [f.check for f in posture.findings]  # e.g. ["http.rate_limit.absent", "http.error.detail_exposed"]
 ```
+
+---
+
+## Security posture preflight
+
+`SecurityPostureLifecycle` (Plan 036 / S9) is a startup preflight that aggregates the security
+checks the rest of this README documents piecemeal — tenant provenance, auth hardening, HTTP
+edge, RLS, and a handful of admin-mount facts — into one report an operator reads at startup.
+**Opt-in in 3.2** — an app that never wires it gets no report and no log lines:
+
+```python
+from varco_fastapi import (
+    SecurityPostureLifecycle,
+    SecurityPostureSettings,
+    create_varco_app,
+)
+from varco_fastapi.posture import _collect_http, _collect_local
+from functools import partial
+
+lifecycle = SecurityPostureLifecycle(
+    collectors=[
+        partial(_collect_http, app=app),
+        partial(_collect_local, container=container, webhook_repository=webhook_repo),
+        # ... _collect_tenant / _collect_auth / _collect_data, each importing its
+        # sibling's inspector inside the function body — see the feature doc
+    ],
+    settings=SecurityPostureSettings(),  # reads VARCO_SECURITY_*
+)
+app = create_varco_app(container, extra_lifespan_components=[lifecycle])
+```
+
+`lifecycle.report` (a frozen `SecurityPosture`) is available once `start()` has run —
+`.summary()` renders one line, always separating `NOT_ASSESSED` ("could not check") from the
+other three severities so it is never mistaken for a clean report.
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `VARCO_SECURITY_ENV` | `production` | `"production"` \| `"development"` — **presentation only**; every check still runs in both modes, `WARN` findings are demoted to `INFO` in `development` |
+| `VARCO_SECURITY_ENFORCE` | `warn` | `"warn"` \| `"refuse"` — `"refuse"` raises at `start()` on any unsuppressed `HIGH` (or, in `production`, `WARN`) finding; never on `NOT_ASSESSED` alone |
+| `VARCO_SECURITY_SUPPRESS` | `""` | Comma-separated `check` ids to suppress — the finding is still produced, demoted to `INFO`, and flagged `suppressed=True` |
+
+Full design (the collector table, the consolidated 4.0 flip list gathering every warn-only
+default across the 3.2 cycle, a Pitfalls table): `technical_docs/features/security-posture.md`.
+
+---
+
+## Authorization-decision audit
+
+`AuditingAuthorizer` (Plan 036 / S11) wraps whatever `AbstractAuthorizer` an app has bound and
+records the outcome of every `authorize()` call it delegates — a decorator, not a middleware,
+because `authorize()` is called from the service layer and never from HTTP middleware (a
+middleware would miss jobs, consumers, and the CLI):
+
+```python
+from varco_core import enable_authorization_audit
+
+container = DIContainer()
+container.scan("myapp", recursive=True)     # binds the app's real AbstractAuthorizer
+enable_authorization_audit(container)        # call LAST — see the feature doc's ordering note
+```
+
+By default (`AuditDecisionPolicy.DENIALS`) it records every denial plus every allow whose
+`AuthContext` carries a delegated `actor` — the exact "who is really acting" property whose
+absence was the CVE-2025-55241 (Entra actor token) attack vector. `ALL` records every decision;
+`NONE` disables recording while keeping the wrapper installed. Recording is via
+`AbstractEventProducer` onto the `"varco.audit"` channel — the same channel `AuditEvent` uses —
+never the bus directly.
+
+Full design (the recorded/excluded field allowlist, the policy trade-offs, ordering pitfalls):
+`technical_docs/features/authorization-audit.md`.
 
 ---
 

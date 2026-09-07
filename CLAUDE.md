@@ -292,10 +292,14 @@ workflows that never gate a PR (Plan 023 / Phase 5):
   `Signed-Releases`).
 - **`docs.yml`** — versioned docs via `mike`, see the "Versioned documentation" section below.
   Never a required check.
-- **`bench.yml`** — CodSpeed benchmarks (Plan 028 / P2). `pull_request` + `push: [main]`,
+- **`bench.yml`** — CodSpeed benchmarks (Plan 028 / P2). ⛔ **Currently DISABLED —
+  `workflow_dispatch` only**: the `pull_request` + `push: [main]` triggers are commented out in
+  the file because no CodSpeed account / `CODSPEED_TOKEN` exists yet, so an automatic run would
+  upload nothing. Re-enable by uncommenting them (runbook §3b). Otherwise unchanged:
   `permissions: {}` at top level, a `concurrency` group scoped by `github.event_name` as well as
   `github.ref`, and an `if:` that **skips** a fork PR (no `CODSPEED_TOKEN`) rather than failing it.
   Comment-only. Not in `test.yml`'s `needs:`; ⛔ must never become a required check.
+  `make bench` runs the same directory locally, uninstrumented, and is unaffected.
 
 **Branch protection (repository setting, not in the repo tree) — APPLIED.** Plan 023's Phase 9 +
 Appendix A ruleset shape is live: branch ruleset `main-branch-protection` (Settings → Branches →
@@ -559,6 +563,22 @@ dedicated `security_headers=`/`body_limit=`/`rate_limit=` keywords instead.
 every out-of-tree implementation, the same `BulkCache`-off-`AsyncCache` rule). A limiter that
 cannot report remaining quota must never emit a header that lies about it; the parked design is an
 optional `RateLimitIntrospection` Protocol.
+
+### Admin surface tenancy, security posture preflight, authorization-decision audit (Plan 036 / S4, S9, S11)
+
+Cross-tenant write guard on the webhook and reliability admin surfaces (S4), the startup
+`SecurityPosture` preflight aggregating every sibling plan's exported inspector (S9), and
+`AuditingAuthorizer` recording every authorization denial plus every delegated allow (S11). Full
+design + Pitfalls tables: `technical_docs/features/admin-surface-tenancy.md`,
+`technical_docs/features/security-posture.md`, `technical_docs/features/authorization-audit.md`.
+Usage: README's "Security posture preflight"/"Authorization-decision audit" sections and the
+`mount_webhook_admin`/`mount_reliability_admin` snippets.
+
+**Rule**: `mount_webhook_admin` and `mount_reliability_admin` are now tenant-bound
+(`cross_tenant_role=`, default `"cross-tenant-admin"`) — `mount_tenant_admin` is deliberately
+**not**, because it *is* the tenant control plane (every route addresses a tenant that is by
+definition not the caller's own); see `admin-surface-tenancy.md`'s §D-S4-control for the full
+argument. Do not add a tenant guard to `mount_tenant_admin` without revisiting that decision.
 
 ### Recurring schedules (varco_core.schedule, Plan 032 / D6)
 
@@ -1439,6 +1459,18 @@ Am I adding a new capability?
 │                            (never a create_varco_app kwarg, never an env var — RD-9)
 │       ⚠️ Never weaken ssrf.validate_target()'s resolve-then-pin behaviour — a
 │         validate-the-URL-string-only shortcut reopens DNS rebinding
+│
+├─ Startup security check (is BaseAuthorizer still bound, is an admin mount
+│  unauthenticated, is RLS actually enforced, ...)?
+│  └─ → varco_fastapi.posture (SecurityPostureLifecycle) — never a second
+│       preflight; it aggregates the sibling plans' own exported inspectors
+│       (technical_docs/features/security-posture.md)
+│
+├─ Authorization decision logging (who was allowed/denied what, including
+│  delegated/impersonated access)?
+│  └─ → AuditingAuthorizer via varco_core.auth.di.enable_authorization_audit()
+│       — never a middleware (authorize() is called from the service layer,
+│       not HTTP) (technical_docs/features/authorization-audit.md)
 │
 └─ ORM/database feature?
    └─ → varco_sa (SQLAlchemy) and/or varco_beanie (MongoDB)

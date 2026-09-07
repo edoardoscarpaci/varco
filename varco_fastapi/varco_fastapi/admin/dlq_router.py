@@ -22,7 +22,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+
+from varco_fastapi.admin._tenant_scope import resolve_ctx, resolve_tenant_scope
 
 if TYPE_CHECKING:
     from varco_core.event.dlq import AbstractDeadLetterQueue
@@ -48,6 +50,7 @@ def build_dlq_router(
     redriver: DlqRedriver | None = None,
     server_auth: Any | None = None,
     admin_role: str = "reliability-admin",
+    cross_tenant_role: str = "cross-tenant-admin",
     prefix: str = "/dlq",
 ) -> APIRouter:
     """
@@ -59,10 +62,17 @@ def build_dlq_router(
                      — the redrive routes are not registered at all (RD-4/
                      DESIGN: an absent capability should not appear in the
                      OpenAPI schema, not surface as a 501 on every call).
-        server_auth: Auth strategy (unused placeholder — full RouteGuard
-                     wiring is left to the caller's own dependencies=).
+        server_auth: Auth strategy — ``admin_role`` enforcement is still
+                     left to the caller's own ``dependencies=`` (unchanged),
+                     but ``server_auth`` is now resolved here as well, to
+                     answer §D-S4-scope's cross-tenant question.
         admin_role:  Documented role requirement (enforced by the caller's
                      own ``dependencies=`` on ``app.include_router``).
+        cross_tenant_role: Role required to omit ``tenant_id`` and reach
+                     every tenant, or to supply a ``tenant_id`` other than
+                     the resolved one (§D-S4-scope). An omitted ``tenant_id``
+                     without this role means "my tenant", not "every
+                     tenant".
         prefix:      URL prefix. Defaults to ``"/dlq"``.
 
     Routes:
@@ -78,6 +88,7 @@ def build_dlq_router(
 
     @router.get("/entries")
     async def list_entries(
+        request: Request,
         channel: str | None = None,
         source: str | None = None,
         tenant_id: str | None = None,
@@ -86,6 +97,9 @@ def build_dlq_router(
     ) -> list[dict[str, Any]]:
         from varco_core.event.dlq import DeadLetterSource
 
+        ctx = await resolve_ctx(server_auth, request)
+        scoped_tenant_id = resolve_tenant_scope(tenant_id, ctx, cross_tenant_role)
+
         limit = min(limit, 1000)
         try:
             entries = await dlq.list_entries(
@@ -93,7 +107,7 @@ def build_dlq_router(
                 offset=offset,
                 channel=channel,
                 source=DeadLetterSource(source) if source else None,
-                tenant_id=tenant_id,
+                tenant_id=scoped_tenant_id,
             )
         except NotImplementedError as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
@@ -116,6 +130,7 @@ def build_dlq_router(
 
     @router.delete("/entries")
     async def delete_where(
+        request: Request,
         older_than: str | None = None,
         channel: str | None = None,
         tenant_id: str | None = None,
@@ -123,11 +138,14 @@ def build_dlq_router(
     ) -> dict[str, Any]:
         from datetime import datetime
 
+        ctx = await resolve_ctx(server_auth, request)
+        scoped_tenant_id = resolve_tenant_scope(tenant_id, ctx, cross_tenant_role)
+
         try:
             count = await dlq.delete_where(
                 older_than=datetime.fromisoformat(older_than) if older_than else None,
                 channel=channel,
-                tenant_id=tenant_id,
+                tenant_id=scoped_tenant_id,
                 limit=limit,
             )
         except NotImplementedError as exc:
@@ -165,16 +183,20 @@ def build_dlq_router(
             }
 
         @router.post("/redrive")
-        async def redrive_batch(body: dict[str, Any] | None = None) -> dict[str, Any]:
+        async def redrive_batch(
+            request: Request, body: dict[str, Any] | None = None
+        ) -> dict[str, Any]:
             from varco_core.event.dlq import DeadLetterSource
 
+            ctx = await resolve_ctx(server_auth, request)
             body = body or {}
+            scoped_tenant_id = resolve_tenant_scope(body.get("tenant_id"), ctx, cross_tenant_role)
             source = body.get("source")
             report = await redriver.redrive_batch(
                 limit=body.get("limit", 10),
                 channel=body.get("channel"),
                 source=DeadLetterSource(source) if source else None,
-                tenant_id=body.get("tenant_id"),
+                tenant_id=scoped_tenant_id,
                 dry_run=body.get("dry_run", False),
             )
             return {

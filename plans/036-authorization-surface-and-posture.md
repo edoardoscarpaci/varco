@@ -586,17 +586,23 @@ each row names the plan that owns the flip and the escape hatch that exists in 3
 
 ### Phase 0 — S4a: the BOLA fix on the webhook admin (🔴 must, S) — **independently mergeable**
 
-1. Add a module-level helper in `varco_fastapi/varco_fastapi/webhook/router.py` that resolves a
+1. [x] Add a module-level helper in `varco_fastapi/varco_fastapi/webhook/router.py` that resolves a
    subscription by `pk` and 404s when it does not exist **or** belongs to another tenant, with the
    tenant comparison behind a `cross_tenant: bool` the caller supplies. In Phase 0 the comparison
    is against `current_tenant()` directly; Phase 1 swaps it to `assert_tenant_matches()`.
-2. Route `get_subscription` (`:165`), `disable_subscription` (`:173`), `enable_subscription`
+   **Implementer's note**: 033's `assert_tenant_matches()`/`CrossTenantAccessError` were verified
+   present and byte-identical to this plan's assumed signature *before* Phase 0 was written, so
+   Phase 0 was implemented directly against the real seam — no throwaway local comparator was
+   built only to be deleted in Phase 1. This collapses Phases 0 and 1 into one commit for the
+   `_scoped_subscription_or_404`/`assert_tenant_matches` plumbing; the `cross_tenant_role=` kwarg
+   and reliability-admin scoping (originally Phase 1 only) landed in the same pass.
+2. [x] Route `get_subscription` (`:165`), `disable_subscription` (`:173`), `enable_subscription`
    (`:183`), `rotate_secret` (`:194`) and `delete_subscription` (`:209`) through it.
-3. Scope `list_subscriptions` (`:132-140`): the `X-Tenant-Id` header read at `:134` is replaced by
+3. [x] Scope `list_subscriptions` (`:132-140`): the `X-Tenant-Id` header read at `:134` is replaced by
    the resolved tenant; the `else: subs = []` branch at `:139` stays as the no-tenant-context case.
-4. Add the missing `server_auth=None` warning to `build_webhook_router` — the other two mounts
+4. [x] Add the missing `server_auth=None` warning to `build_webhook_router` — the other two mounts
    warn (`admin/mount.py:113-118`) or refuse (`tenancy/router.py:113-116`); this one does neither.
-5. Tests (`varco_fastapi/tests/`): a subscription owned by tenant B is **404, not 403**, on each of
+5. [x] Tests (`varco_fastapi/tests/`): a subscription owned by tenant B is **404, not 403**, on each of
    the five by-id routes under tenant A's context; `rotate_secret` on another tenant's
    subscription neither rotates nor reveals; `list_subscriptions` ignores a spoofed `X-Tenant-Id`;
    with no tenant context at all, the by-id routes behave as documented in §Edge cases.
@@ -605,22 +611,22 @@ each row names the plan that owns the flip and the escape hatch that exists in 3
 
 ### Phase 1 — S4b: the guard proper (🔴 must, S) — **gated on 033**
 
-6. Swap Phase 0's local comparison for 033's `assert_tenant_matches(requested,
+6. [x] Swap Phase 0's local comparison for 033's `assert_tenant_matches(requested,
    allow_cross_tenant=...)`, and add `cross_tenant_role: str = "cross-tenant-admin"` to
    `build_webhook_router`, `mount_webhook_admin`, `build_dlq_router`, `build_audit_router` and
    `mount_reliability_admin`.
-7. Resolve `allow_cross_tenant` from the request's `AuthContext` per §D-S4-role — `ctx is None`
+7. [x] Resolve `allow_cross_tenant` from the request's `AuthContext` per §D-S4-role — `ctx is None`
    ⇒ `False`, unconditionally.
-8. Guard `create_subscription`'s body-supplied `tenant_id` (`router.py:152`) — the row's originally
+8. [x] Guard `create_subscription`'s body-supplied `tenant_id` (`router.py:152`) — the row's originally
    named write.
-9. Reliability admin per §D-S4-scope: route `tenant_id` through `assert_tenant_matches()` in
+9. [x] Reliability admin per §D-S4-scope: route `tenant_id` through `assert_tenant_matches()` in
    `dlq_router.list_entries` (`:83`), `delete_where` (`:121`), `redrive_batch` (`:177`) and
    `audit_router.list_entries` (`:67`), `verify_chain` (`:116`), `delete_where` (`:172`).
-10. Map `CrossTenantAccessError` to **403** on the reliability admin and to **404** on the webhook
+10. [x] Map `CrossTenantAccessError` to **403** on the reliability admin and to **404** on the webhook
     by-id routes (§D-S4-bola), each in exactly one place per router.
-11. `mount_tenant_admin` is **not** touched (§D-S4-control) — assert that in a test that fails if a
+11. [x] `mount_tenant_admin` is **not** touched (§D-S4-control) — assert that in a test that fails if a
     future edit adds a guard there without revisiting the decision.
-12. Tests: cross-tenant body `tenant_id` on create; a caller with and without `cross-tenant-admin`;
+12. [x] Tests: cross-tenant body `tenant_id` on create; a caller with and without `cross-tenant-admin`;
     an omitted `tenant_id` on `delete_where` scoping to the caller's tenant; the same with the role
     reaching every tenant; `server_auth=None` never granting cross-tenant.
 
@@ -628,36 +634,36 @@ each row names the plan that owns the flip and the escape hatch that exists in 3
 
 ### Phase 2 — S9a: the posture core (🟡 should, S) — **no sibling imports**
 
-13. `varco_fastapi/varco_fastapi/posture.py`: `PostureSeverity`, `PostureFinding`,
+13. [x] `varco_fastapi/varco_fastapi/posture.py`: `PostureSeverity`, `PostureFinding`,
     `SecurityPosture` (§D-S9-shape), all frozen, `from __future__ import annotations`.
-14. `SecurityPostureSettings` (pydantic `BaseSettings`, prefix `VARCO_SECURITY_`):
+14. [x] `SecurityPostureSettings` (pydantic `BaseSettings`, prefix `VARCO_SECURITY_`):
     `environment` (`VARCO_SECURITY_ENV`, default `production`), `enforce`
     (`VARCO_SECURITY_ENFORCE`, default `warn`), `suppress` (`VARCO_SECURITY_SUPPRESS`, default
     empty).
-15. The severity ladder, suppression (§D-S9-suppress) including the `posture.unknown_suppression`
+15. [x] The severity ladder, suppression (§D-S9-suppress) including the `posture.unknown_suppression`
     finding, the `development` demotion, and the summary-line renderer that always separates
     `not assessed` from the rest.
-16. `SecurityPostureLifecycle` with `start()`/`stop()` and `.report`; the `refuse` mode
+16. [x] `SecurityPostureLifecycle` with `start()`/`stop()` and `.report`; the `refuse` mode
     (§D-S9-enforce), with `NOT_ASSESSED` explicitly never fatal.
-17. Tests: severity demotion in `development`; suppression demotes but never removes; an unknown
+17. [x] Tests: severity demotion in `development`; suppression demotes but never removes; an unknown
     suppression id is reported; `refuse` raises on `HIGH` and never on `NOT_ASSESSED`.
 
 **Verify:** `uv run pytest varco_fastapi/tests/ -k posture` green.
 
 ### Phase 3 — S9b: the five collectors (🟡 should, M) — **gated on 033/034, degrades for 035/037**
 
-18. `_collect_local` first (it needs no sibling): `posture.admin_mount_unauthenticated`,
+18. [x] `_collect_local` first (it needs no sibling): `posture.admin_mount_unauthenticated`,
     `posture.tenant_admin_mounted`, `posture.webhook_secrets_plaintext`,
     `posture.base_authorizer_bound`, `posture.webhook_transport_unverified` (§D-S9-checks, with
     its narrow wording).
-19. `_collect_tenant`, `_collect_auth`, `_collect_http`, `_collect_data` — each importing its
+19. [x] `_collect_tenant`, `_collect_auth`, `_collect_http`, `_collect_data` — each importing its
     sibling's inspector **inside the function body**, each wrapped per §D-S9-degrade.
-20. Assign severities for 033's, 034's and 037's tokens here; **re-emit 035's nine ids with 035's
+20. [x] Assign severities for 033's, 034's and 037's tokens here; **re-emit 035's nine ids with 035's
     own severities unchanged.**
-21. Register the lifecycle in the docs' recommended wiring — `create_varco_app(...,
+21. [x] Register the lifecycle in the docs' recommended wiring — `create_varco_app(...,
     extra_lifespan_components=[SecurityPostureLifecycle(...)])`. **No auto-registration** (4.0
     flip row 1).
-22. Tests: with every sibling module absent (monkeypatched `ImportError`), the report contains four
+22. [x] Tests: with every sibling module absent (monkeypatched `ImportError`), the report contains four
     `NOT_ASSESSED` entries, zero `OK`-shaped silence, and `start()` still returns; a collector
     raising a non-import exception yields one `NOT_ASSESSED` carrying **only** the type name; the
     full report against a deliberately-worst-case app has the expected ids.
@@ -666,15 +672,15 @@ each row names the plan that owns the flip and the escape hatch that exists in 3
 
 ### Phase 4 — S11: the authorization-decision audit (🟡 should, M) — **independent**
 
-23. `varco_core/varco_core/auth/audit.py`: `AuditDecisionPolicy` enum and `AuditingAuthorizer`
+23. [x] `varco_core/varco_core/auth/audit.py`: `AuditDecisionPolicy` enum and `AuditingAuthorizer`
     (§D-S11-shape), payload built strictly per §D-S11-payload.
-24. The event type and its route into the existing audit path — reusing `AuditEntry`'s storage via
+24. [x] The event type and its route into the existing audit path — reusing `AuditEntry`'s storage via
     `AuditConsumer` where the fields fit, and adding the authz-specific fields as a distinct
     event rather than overloading a mutation row. **`AbstractEventProducer` only, never the bus.**
-25. `enable_authorization_audit(container, *, policy=AuditDecisionPolicy.DENIALS)` in the
+25. [x] `enable_authorization_audit(container, *, policy=AuditDecisionPolicy.DENIALS)` in the
     appropriate `di.py` — the `enable_*` verb — resolving the currently bound authorizer and
     re-binding the wrapper, with the "call it last" guard and error.
-26. Tests: a denial is recorded and the original exception re-raised unchanged; an allow with no
+26. [x] Tests: a denial is recorded and the original exception re-raised unchanged; an allow with no
     actor is **not** recorded under `DENIALS`; an allow **with** an actor **is**; `ALL` records
     everything; `NONE` records nothing but keeps the delegate's behaviour identical; and an
     explicit assertion that the recorded payload contains none of the six excluded fields —
@@ -707,11 +713,11 @@ each row names the plan that owns the flip and the escape hatch that exists in 3
 32. `testkit/varco_conformance/COVERAGE.md` — the §D-S11-conformance "Stated absence" row.
 33. CHANGELOG: S4 as a **behaviour change** (three sub-entries: BOLA fix, cross-tenant guard,
     reliability-admin default scoping), S9 and S11 as additions, and the upgrade note.
-34. `uv run python scripts/api_surface.py` — regenerate and commit. New public names:
+34. [x] `uv run python scripts/api_surface.py` — regenerate and commit. New public names:
     `PostureSeverity`, `PostureFinding`, `SecurityPosture`, `SecurityPostureSettings`,
     `SecurityPostureLifecycle`, `AuditDecisionPolicy`, `AuditingAuthorizer`,
     `enable_authorization_audit`.
-35. BACKLOG.md: mark S4, S9, S11 as shipped and record §D-S9-oq1 as the answer to open question 1.
+35. [x] BACKLOG.md: mark S4, S9, S11 as shipped and record §D-S9-oq1 as the answer to open question 1.
 
 **Verify:** `make lint` (runs `api-check`, `asyncapi-check`, `import-budget`), `make type-check`,
 `make test` all green.
@@ -795,15 +801,24 @@ own Postgres integration tests. Stated so the absence is a decision.
 | The audit payload grows a leaky field later | Medium | The Phase 4 test is a field **allowlist**, so any added field fails until it is argued |
 | The preflight becomes a checkbox nobody reads | Low | Stable ids + explicit suppression make an accepted finding an auditable decision rather than ignored noise |
 
-## Open questions
+## Open questions — RESOLVED at implementation time
 
 1. **Does `AuditEntry` accommodate an authorization decision, or does the authz trail need its own
-   row type?** Step 24 chooses "a distinct event, reusing the storage where fields fit" from a
-   reading of `service/audit.py:100-238`; the implementer should confirm against
-   `AuditRepository`'s query surface before committing to it. If it needs its own repository
-   method, that is an ABC addition and belongs in this plan's phase, not a follow-up.
+   row type?** **RESOLVED: a distinct event type, `AuthorizationDecisionEvent` (`varco_core.auth.audit`),
+   carrying one generic `payload: dict[str, Any]` field — NOT `AuditEntry`'s typed shape, and no
+   `AuditRepository` method addition.** `AuditEntry`'s fields (`entity_type`, `entity_id`, `diff`,
+   `prev_hash`/hash-chain machinery) are shaped around a *mutation* — an authorization decision has
+   no `diff` and needs `decision`/`denial_type`/`is_collection`, none of which fit without widening
+   `AuditEntry` for every existing mutation-audit consumer too. §D-S11-shape's promise is
+   "recorded via `AbstractEventProducer`" — not "persisted to a specific table" — so this plan ships
+   exactly that: `AuditingAuthorizer` produces `AuthorizationDecisionEvent` onto the `"varco.audit"`
+   channel (the same channel `AuditEvent` uses), and an app wires its own consumer to persist it,
+   exactly as it would for any other event. No new `AuditRepository` ABC method was needed, so this
+   did not turn into an ABC addition mid-phase, per the open question's own escape clause.
 2. **Should `enable_authorization_audit()` live in `varco_core.auth.di` or `varco_fastapi.di`?**
-   The wrapper is `varco_core` and has no HTTP dependency, which argues for the former; Step 25
-   says "the appropriate `di.py`" deliberately, because the existing `enable_*` precedent
-   (`varco_casbin.di.enable_policy_authorizer`) lives in the package that owns the implementation.
-   Resolve at implementation time and record it.
+   **RESOLVED: `varco_core.auth.di`.** `AuditingAuthorizer` wraps `AbstractAuthorizer` and injects
+   `AbstractEventProducer` — both `varco_core` interfaces with zero HTTP dependency — so it follows
+   the same precedent as `varco_casbin.di.enable_policy_authorizer`: the `enable_*` verb lives in
+   the package that owns the implementation being wired, not in the package that happens to serve
+   HTTP. Mirrors `varco_core.revocation.di.enable_token_revocation`'s shape exactly (an opt-in DI
+   binding flip, never a scanned `@Configuration`).

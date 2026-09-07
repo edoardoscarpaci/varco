@@ -131,6 +131,21 @@ These are legitimate, permanent absences — not TODOs, not backlog rows.
   would mean xfail-ing nearly all of it, teaching nothing. It is intentionally uncovered by the
   shared suite; `varco_core/varco_core/revocation/null.py`'s class docstring points here.
 
+## No conformance suite (Plan 036, §D-S11-conformance)
+
+- **Stated absence — `AbstractAuthorizer`** (`varco_core.auth.base`, first shipped pre-3.2;
+  `AuditingAuthorizer` added by Plan 036 / S11). Not one of the eight ABCs this page audits, and
+  no suite is planned for it. `AbstractAuthorizer` is a single-method (`authorize(ctx, action,
+  resource) -> None`), app-supplied policy hook, not a broker/cache/job-store/DLQ/idempotency-
+  store/webhook-subscription/revocation-store backend doing I/O against a real external system —
+  the "does this backend really behave the same under a real server" question a conformance suite
+  exists to answer does not apply here; an authorizer's entire contract is "raise on denial, deny
+  by default", which is a business-logic property, not an I/O-adapter property. That contract is
+  asserted directly, in `varco_core/tests/`, against both shipped implementations
+  (`BaseAuthorizer` — permissive by design, and `AuditingAuthorizer` — the decorator this plan
+  adds), rather than through a shared suite `testkit/varco_conformance` (never packaged) could not
+  usefully serve an out-of-tree authorizer implementer anyway.
+
 ## What Plan 024 filled
 
 - **`RedisStreamDLQ` → subclassed.** `varco_redis/tests/test_redis_conformance.py` gained

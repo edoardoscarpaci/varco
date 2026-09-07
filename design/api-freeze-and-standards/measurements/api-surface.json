@@ -232,9 +232,17 @@
         "kind": "class",
         "module": "varco_core.uow"
       },
+      "AuditDecisionPolicy": {
+        "kind": "class",
+        "module": "varco_core.auth.audit"
+      },
       "AuditedDomainModel": {
         "kind": "class",
         "module": "varco_core.model"
+      },
+      "AuditingAuthorizer": {
+        "kind": "class",
+        "module": "varco_core.auth.audit"
       },
       "AuthorityError": {
         "kind": "class",
@@ -1138,6 +1146,11 @@
         "module": "varco_core.deprecation",
         "signature": "(name: 'str', target: 'object', *, since: 'str', removed_in: 'str', fallback: 'Callable[[str], object] | None' = None) -> 'Callable[[str], object]'"
       },
+      "enable_authorization_audit": {
+        "kind": "function",
+        "module": "varco_core.auth.di",
+        "signature": "(container: 'DIContainer', *, policy: 'AuditDecisionPolicy' = <AuditDecisionPolicy.DENIALS: 'denials'>) -> 'DIContainer'"
+      },
       "enable_tenant_membership": {
         "kind": "function",
         "module": "varco_core.tenancy.di",
@@ -1468,6 +1481,14 @@
         "kind": "class",
         "module": "varco_fastapi.router.mixins"
       },
+      "PostureFinding": {
+        "kind": "class",
+        "module": "varco_fastapi.posture"
+      },
+      "PostureSeverity": {
+        "kind": "class",
+        "module": "varco_fastapi.posture"
+      },
       "PreparedRequest": {
         "kind": "class",
         "module": "varco_fastapi.client.middleware"
@@ -1507,6 +1528,18 @@
       "RouterMixin": {
         "kind": "class",
         "module": "varco_fastapi.router.base"
+      },
+      "SecurityPosture": {
+        "kind": "class",
+        "module": "varco_fastapi.posture"
+      },
+      "SecurityPostureLifecycle": {
+        "kind": "class",
+        "module": "varco_fastapi.posture"
+      },
+      "SecurityPostureSettings": {
+        "kind": "class",
+        "module": "varco_fastapi.posture"
       },
       "ServiceMount": {
         "kind": "class",

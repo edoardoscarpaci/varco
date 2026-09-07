@@ -497,21 +497,16 @@ one settings field and the call sites — no unpicking.
        §D-S12-order and it must run as the app role, not the container's superuser
        (`postgres-rls.md:314-324`).
 
-       ⚠️ **NEEDS A DECISION — implemented but currently failing, not fixed.**
+       ✅ **RESOLVED — option (a), and green.**
        `TestRenderRlsDdlOrderingRegressionAgainstRealPostgres::test_table_never_passes_through_a_default_deny_window`
-       creates the table AS the app role (so the app role is the table OWNER), then asserts that
-       after statement 2 (`ENABLE`, before `FORCE`) RLS already restricts that SAME owning role to
-       tenant A's row. This contradicts documented Postgres semantics: a table owner is exempt from
-       RLS policies regardless of policy-vs-enable ordering — only `FORCE ROW LEVEL SECURITY`
-       (statement 3) brings the owner under the policy. §D-S12-order's actual guarantee (no
-       default-deny window between `ENABLE` and `CREATE POLICY`) is real and already proven by
-       Step 1's reorder + the passing unit tests in this file — but this specific integration
-       assertion tests something Postgres does not do for an owning role at that point in the
-       sequence, independent of statement order. Fixing it needs either (a) a second, genuinely
-       non-owning role for the mid-sequence check (this file has no such fixture — `test_rls_posture.py`
-       provisions extra roles but this file does not), or (b) deferring that assertion to after
-       `FORCE`. Both are logic changes to the test's assertions, not a rename — left unresolved
-       pending a decision instead of guessed.
+       originally observed the mid-sequence state from the app role that OWNS the table, which
+       Postgres exempts from its own policies until `FORCE` (statement 3) — so that role sees every
+       row after statement 2 under BOTH statement orders and is blind to the failure being
+       regressed. Fixed by adding a genuinely non-owning `varco_rls_reader` role
+       (`RLS_READER_ROLE` / `provision_rls_reader_url`, `varco_sa/tests/conftest.py:232,295`) and
+       making the after-`ENABLE`-before-`FORCE` assertion from that role: it must see exactly
+       tenant A's row — not `[]` (the default-deny window the old order produced) and not both
+       rows. The owner-exemption reasoning is recorded as a comment at the assertion itself.
 
 ⛔ **CHECKPOINT** — `uv run pytest varco_sa/tests/test_rls.py varco_sa/tests/test_framework_rls.py`
 

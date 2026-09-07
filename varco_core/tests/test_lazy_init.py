@@ -195,7 +195,9 @@ def test_all_list_is_unchanged_in_length() -> None:
     # the current, deliberate size of the public surface — Plan 033 / S6+S5
     # added 25 names (TenantTrust ... inspect_tenant_provenance), taking it
     # from 235 to 260; drift-repair Decision 4 added one more
-    # (TenantMembershipSettings), taking it to 261. Bump this number (with
+    # (TenantMembershipSettings), taking it to 261. Plan 036 / S11 added
+    # three more (AuditDecisionPolicy, AuditingAuthorizer,
+    # enable_authorization_audit), taking it to 264. Bump this number (with
     # a reason) whenever a plan legitimately adds/removes a top-level export.
-    assert len(varco_core.__all__) == 261
+    assert len(varco_core.__all__) == 264
     assert len(set(varco_core.__all__)) == len(varco_core.__all__)

@@ -42,6 +42,7 @@ def mount_webhook_admin(
     acknowledge_bundled_admin: bool = False,
     server_auth: Any | None = None,
     admin_role: str = "webhook-admin",
+    cross_tenant_role: str = "cross-tenant-admin",
     prefix: str = "/webhooks",
 ) -> None:
     """
@@ -56,6 +57,9 @@ def mount_webhook_admin(
                      subscriptions and rotate secrets.
         server_auth: Auth strategy — enforced via ``admin_role``.
         admin_role:  Documented role requirement.
+        cross_tenant_role: Role required to address a subscription outside
+                     the resolved tenant (§D-S4-role). Forwarded to
+                     ``build_webhook_router`` unchanged.
         prefix:      URL prefix for the whole admin surface.
 
     Raises:
@@ -97,6 +101,7 @@ def mount_webhook_admin(
             redriver=redriver,
             server_auth=server_auth,
             admin_role=admin_role,
+            cross_tenant_role=cross_tenant_role,
             prefix=prefix,
         )
     )

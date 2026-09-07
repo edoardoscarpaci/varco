@@ -19,8 +19,60 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and log the exception type server-side at ERROR with `exc_info=True`. Unconditional — there is
   no toggle for this fix; correlate via the `correlation_id` in the log.
 
+### BEHAVIOUR CHANGE — cross-tenant write guard on the admin surfaces (Plan 036, S4)
+
+- **BOLA fix — five webhook-admin by-id routes now 404 on another tenant's subscription.**
+  `get_subscription`, `disable_subscription`, `enable_subscription`, `rotate_secret`, and
+  `delete_subscription` used to fetch by `pk` with no tenant check at all —
+  `rotate_secret` returned the new secret in the response, so a `webhook-admin` of tenant A who
+  guessed a subscription UUID could rotate tenant B's signing secret **and read the
+  replacement** (OWASP API1:2023 BOLA). Every by-id route now goes through one shared
+  fetch-then-compare helper, mapping a cross-tenant hit to **404, not 403** — the routes already
+  404 on a genuine miss, so a cross-tenant hit is indistinguishable from an absent resource
+  (no existence oracle). `list_subscriptions` no longer trusts the `X-Tenant-Id` header —
+  it uses the resolved tenant instead.
+- **Cross-tenant guard, opt-in role.** `build_webhook_router`/`mount_webhook_admin`,
+  `build_dlq_router`/`build_audit_router`/`mount_reliability_admin` all gained
+  `cross_tenant_role: str = "cross-tenant-admin"`. `create_subscription`'s body-supplied
+  `tenant_id` is now checked against the resolved tenant (403 on mismatch without the role).
+  `ctx is None` (no `server_auth` configured) always resolves `allow_cross_tenant=False` — an
+  unauthenticated mount is strictly narrower than before, never wider.
+  `mount_tenant_admin` is **deliberately not guarded** — it is the tenant control plane, and
+  every one of its routes addresses a tenant that is by definition not the caller's own; see
+  `technical_docs/features/admin-surface-tenancy.md`'s §D-S4-control.
+- **Reliability-admin default scoping: an omitted `tenant_id` now means "mine", not "every
+  tenant".** `dlq_router.list_entries`/`delete_where`/`redrive_batch` and
+  `audit_router.list_entries`/`verify_chain`/`delete_where` used to treat an absent `tenant_id`
+  query parameter as unscoped — `DELETE /reliability/dlq/entries` with everything omitted was a
+  cross-tenant delete reachable by omitting a parameter. It now resolves to the caller's own
+  tenant (via `current_tenant()`); an unscoped, cross-tenant sweep requires
+  `cross_tenant_role`, and raises when no tenant context exists at all and the role is absent.
+  ⚠️ **Upgrade note**: verify a retention/redrive sweep that relied on the old unscoped default
+  still does what you intend before granting the role — see the plan's migration table for the
+  full list of affected call shapes.
+
 ### Added
 
+- **`SecurityPosture` startup preflight (Plan 036, S9).** `SecurityPostureLifecycle`
+  (`varco_fastapi.posture`) aggregates 033's `inspect_tenant_provenance()`, 034's
+  `inspect_auth_posture()`/`inspect_revocation_posture()`, 035's `inspect_http_edge()`, and 037's
+  `inspect_rls_posture()`, plus a local collector for admin-mount/webhook-encryption/
+  `BaseAuthorizer` facts, into one report logged at startup and returned as `.report`. Four
+  severities (`INFO`/`WARN`/`HIGH`/`NOT_ASSESSED` — a missing sibling module is never silently a
+  pass), `VARCO_SECURITY_SUPPRESS` for a knowingly-accepted finding, `VARCO_SECURITY_ENV`
+  (presentation only, defaults `production`), and an opt-in `VARCO_SECURITY_ENFORCE=refuse` mode
+  that never fails on `NOT_ASSESSED` alone. **Opt-in** — pass it to
+  `create_varco_app(extra_lifespan_components=[...])`; nothing runs by default. See
+  `technical_docs/features/security-posture.md`, including the consolidated 4.0 flip list
+  gathering every warn-only default introduced across the 3.2 security cycle.
+- **Authorization-decision audit (Plan 036, S11).** `AuditingAuthorizer`
+  (`varco_core.auth.audit`) wraps whatever `AbstractAuthorizer` an app has bound and records
+  every denial, plus every allow whose `AuthContext` carries a delegated `actor` — the property
+  whose absence was the CVE-2025-55241 (Entra actor-token) attack vector. Opt in via
+  `varco_core.auth.di.enable_authorization_audit(container)`, called **last**. Emits
+  `AuthorizationDecisionEvent` via `AbstractEventProducer` (never the bus) onto the
+  `"varco.audit"` channel; persistence is application wiring, same as any other event. See
+  `technical_docs/features/authorization-audit.md`.
 - **`SecurityHeadersMiddleware` (Plan 035 / S7).** Baseline security response headers on every
   response, including error responses — `X-Content-Type-Options`, `X-Frame-Options`,
   `Referrer-Policy`, and a scheme-guarded `Strict-Transport-Security` at the `BALANCED` preset
