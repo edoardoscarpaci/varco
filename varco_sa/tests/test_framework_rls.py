@@ -199,3 +199,74 @@ class TestFrameworkRlsPostgresIntegration:
             row = result.fetchone()
             assert row is not None
             assert "current_setting" in row[0]
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Plan 037 / Step 5 — §D-S12-order & the "What already exists" table:
+# FRAMEWORK_RLS_TABLES was hand-listed and stale (only two of at least five
+# tenant-carrying framework tables). ``framework_rls_tables()`` must be a
+# DERIVED helper — walking ``framework_metadata()`` for tables carrying the
+# tenant column — so a future framework table cannot be forgotten silently.
+# ════════════════════════════════════════════════════════════════════════════════
+
+
+class TestFrameworkRlsTablesDerived:
+    def test_derived_set_contains_the_five_known_tenant_carrying_tables(self) -> None:
+        from varco_sa.rls_framework import framework_rls_tables
+
+        derived = framework_rls_tables()
+
+        assert "varco_dead_letters" in derived
+        assert "varco_audit_log" in derived
+        # Actual table names carry no "varco_" prefix (schedule.py:57,
+        # webhook.py:57) — the plan's prose named them "varco_schedules"/
+        # "varco_webhook_subscriptions", which was a naming guess, not the
+        # real table name; corrected here to match reality.
+        assert "schedules" in derived
+        assert "webhook_subscriptions" in derived
+        # varco_sa/varco_sa/encryption_store.py:100 — the encryption-key-store
+        # table, name asserted via its owning module's table object rather
+        # than hand-typing a name that could itself drift.
+        from varco_sa.encryption_store import _KEY_TABLE
+
+        assert _KEY_TABLE.name in derived
+
+    def test_derived_set_never_contains_the_tenant_catalog(self) -> None:
+        # varco_tenants' tenant_id is its PRIMARY KEY, not a filterable
+        # tenant column — an RLS policy on it would show every connection
+        # exactly one row and break provisioning/fan-out. Hard-excluded.
+        from varco_sa.rls_framework import framework_rls_tables
+
+        assert "varco_tenants" not in framework_rls_tables()
+
+    def test_old_constant_still_importable_and_matches_derived_helper(self) -> None:
+        # "Keep the old constant as a module attribute computed from it so no
+        # import breaks" (Step 4).
+        from varco_sa.rls_framework import FRAMEWORK_RLS_TABLES, framework_rls_tables
+
+        assert set(FRAMEWORK_RLS_TABLES) == set(framework_rls_tables())
+
+    def test_completeness_walk_every_tenant_carrying_table_is_accounted_for(self) -> None:
+        """
+        Every ``framework_metadata()`` table carrying a ``tenant_id`` column
+        is either in ``framework_rls_tables()`` or in a named, asserted
+        exclusion list (today: only ``varco_tenants``) — so a fourteenth
+        framework table with a ``tenant_id`` column can never be silently
+        forgotten by this generator.
+        """
+        from varco_sa.metadata import framework_metadata
+        from varco_sa.rls_framework import framework_rls_tables
+
+        known_exclusions = {"varco_tenants"}
+        derived = set(framework_rls_tables())
+
+        metadata = framework_metadata()
+        carrying_tenant_column = {
+            table.name for table in metadata.tables.values() if "tenant_id" in table.columns
+        }
+
+        unaccounted = carrying_tenant_column - derived - known_exclusions
+        assert unaccounted == set(), (
+            f"Framework table(s) {unaccounted} carry a tenant_id column but are "
+            "neither in framework_rls_tables() nor in the named exclusion list."
+        )

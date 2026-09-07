@@ -289,13 +289,15 @@ async with session.begin():
 ```
 
 `render_rls_ddl(table, *, tenant_column="tenant_id", setting="rls.tenant_id",
-policy_name=None, cast_type="uuid")` returns three DDL statements in order:
-`ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY` (without `FORCE`,
-Postgres exempts the table owner — often the migration/ORM role — from the
-policy entirely, which is itself a silent bypass — **but see the superuser
-caveat below**, `FORCE` does not close every exemption), and `CREATE POLICY`
-with the InitPlan-form `USING`/`WITH CHECK` clause. It performs no I/O — the
-caller runs the statements inside their own Alembic revision.
+policy_name=None, cast_type="uuid")` returns three DDL statements, **in this
+order** (reordered in Plan 037 / S12a — see "Statement order: policy before
+enable" below): `CREATE POLICY` with the InitPlan-form `USING`/`WITH CHECK`
+clause, then `ENABLE ROW LEVEL SECURITY`, then `FORCE ROW LEVEL SECURITY`
+(without `FORCE`, Postgres exempts the table owner — often the
+migration/ORM role — from the policy entirely, which is itself a silent
+bypass — **but see the superuser caveat below**, `FORCE` does not close
+every exemption). It performs no I/O — the caller runs the statements
+inside their own Alembic revision.
 
 `cast_type` controls what Postgres type the (always-`text`) GUC value is
 cast to before comparison with `tenant_column`: default `"uuid"` matches the
@@ -341,6 +343,169 @@ matching each table's actual isolation requirements, rather than a
 one-size-fits-all default that could break a table that legitimately needs
 cross-tenant reads (e.g. an admin reporting table).
 
+## Statement order: policy before enable (Plan 037 / S12a, §D-S12-order)
+
+Brief 007 §5 is direct: *"When RLS is enabled without a policy, a **default-deny policy**
+applies — all rows become invisible and immutable to non-superuser roles"*, and *"If policies
+are created before RLS is enabled, no gap exists."* `render_rls_ddl()` therefore returns, in
+order: `CREATE POLICY`, `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY` — the same three
+statements as before Plan 037, only reordered. `CREATE POLICY` on a table with RLS still
+disabled is legal Postgres — the policy has no effect until `ENABLE` runs.
+
+This matters because `render_rls_ddl()` is a **documented standalone generator** (see "Using the
+helpers directly" above): a caller that does not run all three statements inside one transaction
+previously had an unbounded default-deny window between `ENABLE` and `CREATE POLICY`. Every
+in-repo caller already executes the whole list in order, so this is not a behaviour change for
+them; a caller that indexes the returned list positionally (`render_rls_ddl(t)[0]`) now gets a
+different statement — see the CHANGELOG's `### Changed` entry.
+
+## Nullable tenant columns are refused, not silently hidden (§D-S12-nullable)
+
+`tenant_id = (SELECT NULLIF(current_setting(...), '')::t)` is `NULL` — never `TRUE` — for a row
+whose `tenant_id` IS `NULL`. Enabling RLS on a table with a nullable tenant column therefore makes
+every untenanted row **invisible to every connection, permanently, with no error**. Three
+framework tables are in exactly that shape (`varco_dead_letters`, `varco_schedules`, the
+encryption-key-store table).
+
+`varco_sa.rls_autogen.plan_tenant_rls()` inspects the column and raises `ValueError` (naming the
+table, the column, and both remedies) when the tenant column is nullable, unless the caller opts
+explicitly into `NullTenantPolicy.VISIBLE` (fail-open — adds `OR {col} IS NULL` to both `USING`
+and `WITH CHECK`) or `NullTenantPolicy.HIDDEN` (today's `render_rls_ddl()` behaviour, spelled out
+explicitly rather than silently inherited). `render_rls_ddl()` itself is unchanged — it takes a
+table *name* and has no column to inspect; the check lives at the generator, where the
+`sqlalchemy.Table` and `column.nullable` are actually available.
+
+## The generated-for-you DDL path: `varco_sa.rls_autogen` (Plan 037 / S12b)
+
+Working out each table's `cast_type` and nullability by hand does not scale past a handful of
+tables. `varco_sa.rls_autogen` walks a set of domain classes and produces an inspectable,
+printable plan before any DDL exists:
+
+```python
+from varco_sa.rls_autogen import (
+    NullTenantPolicy, plan_tenant_rls, render_tenant_rls_ddl,
+    tenant_rls_upgrade, tenant_rls_downgrade,
+)
+
+# In code review, before writing any DDL:
+plans = plan_tenant_rls([User, Order, Invoice], base=Base)
+print(plans)  # every skip is visible; resolve them before proceeding
+
+# In an application's own reviewed Alembic revision:
+def upgrade() -> None:
+    tenant_rls_upgrade(op, plans=plans)
+
+def downgrade() -> None:
+    tenant_rls_downgrade(op, plans=plans)
+```
+
+`plan_tenant_rls()` reads `ParsedMeta.tenant_scope` — only `TenantScope.TENANT` classes are
+candidates; a `TenantScope.GLOBAL` class is silently absent from the result (never a skip entry).
+It derives each table's Postgres cast from the column's SQLAlchemy type (`Uuid`/`UUID` → `uuid`;
+`String`/`Text`/`Unicode` → `text`; `Integer`/`BigInteger` → `bigint`) — an unmappable type is a
+`skipped_reason`, never a guess, matching the same already-experienced footgun `cast_type`
+exists to prevent (see "Using the helpers directly" above). A `TENANT`-scoped class with no
+tenant column, or one never registered with `SAModelFactory`, is also a `skipped_reason` — never
+a silent omission and never a `KeyError`. `varco_tenants` is hard-excluded, always — its
+`tenant_id` is the table's primary key, not a filterable column.
+
+Every statement `render_tenant_rls_ddl()` emits still comes from `varco_sa.rls.render_rls_ddl()`
+— the InitPlan form is never re-derived in `rls_autogen`. **No revision ships in `varco_sa` for
+this** — see "What is opt-in and what is not" above and CLAUDE.md's Rule: enabling RLS, including
+on varco's own framework tables, stays an application-authored, reviewed revision.
+
+## Automatic tenant GUC-setting: `install_rls_tenant_hook` (Plan 037 / S12c, §D-S12-hook)
+
+Calling `set_tenant_local()` by hand at every transaction boundary is easy to forget, and easy to
+get subtly wrong across a commit: `set_config(..., true)` is scoped to the transaction, so a
+session that commits and then issues another query on the same connection has **no tenant set**
+unless something re-sets it. `varco_sa.tenancy.rls_session.install_rls_tenant_hook()` wires this
+automatically via a SQLAlchemy **`after_begin`** event listener, which brief 007 §6 names as the
+supported SQLAlchemy 2.x hook: *"fires at the start of every transaction, including nested
+transactions"*, registered on the **sync `Session` class** so `AsyncSession` inherits it.
+
+```python
+from sqlalchemy.ext.asyncio import AsyncSession
+from varco_sa.tenancy.rls_session import install_rls_tenant_hook
+
+uninstall = install_rls_tenant_hook(AsyncSession, require_tenant=False)
+# every transaction opened on any session built from AsyncSession now sets
+# rls.tenant_id from current_tenant() the moment its first statement runs
+```
+
+This covers all three ways a session is produced in `varco_sa` — `SQLAlchemyUnitOfWork`,
+`SQLAlchemyRepositoryProvider.get_repository()`, and app code holding the session factory
+directly — where an imperative call from `SQLAlchemyUnitOfWork._begin()` alone would miss the
+latter two and silently break after the first `commit()` in a session. Turn it on with
+`TenancySettings(rls_set_tenant=True)` (env `VARCO_TENANCY_RLS_SET_TENANT`); with
+`rls_require_tenant=True` (env `VARCO_TENANCY_RLS_REQUIRE_TENANT`) the hook raises `RuntimeError`
+naming `tenant_context()` instead of clearing the GUC when no tenant is ambient — off by default
+because a background job, an `OutboxRelay` poll, a migration, and a health check all legitimately
+run with no tenant. A non-Postgres dialect: the hook still installs but skips the `set_config()`
+call with one `WARNING` per engine.
+
+## Connection pooler survival (brief 007 §4)
+
+`set_tenant_local()`'s `set_config(..., true)` form is the transaction-scoped ("`SET LOCAL`"-
+equivalent) primitive §2 above already argues for. Its safety under a pooler still depends on
+which pooler:
+
+| Pooler | `SET LOCAL`/`set_config(..., true)` | Notes |
+|---|---|---|
+| PgBouncer, transaction mode | ✅ safe | Reverted on `COMMIT`/`ROLLBACK` before the connection returns to the pool — the default, recommended shape |
+| RDS Proxy | ⚠️ session-pinning | `SET LOCAL` causes RDS Proxy to **pin** the connection to the client until `RESET ALL`, defeating multiplexing for that client — a performance cost, not a correctness one |
+| Supavisor | ⚠️ untested | Supavisor's documented multi-tenant pattern embeds the tenant in the connection **username**, not a session variable; `SET LOCAL` behaviour under Supavisor is not documented — test thoroughly before relying on it, or use its tenant-in-username pattern instead |
+
+`rls_set_tenant` is opt-in specifically so an RDS Proxy deployment can decline the hook and keep
+app-layer scoping (`TenantAwareService`) plus `enforce_rls` assertions instead.
+
+## Applying RLS to an existing table: locking and rollback
+
+`ALTER TABLE ... ENABLE ROW LEVEL SECURITY` takes an **`AccessExclusiveLock`** — brief 007 §5:
+*"the most restrictive lock level ... held briefly — typically milliseconds for a small table"*.
+No measurement exists for a very large table (an open evidence gap), so apply in a maintenance
+window, largest tables last, with a short `lock_timeout`. This is exactly why no revision ships
+for any table — including varco's own framework tables — from this repository: the operator, not
+the framework, decides the maintenance window.
+
+**Adopting RLS on an existing database, in order:** read `inspect_rls_posture()` first (stop if
+`is_superuser`/`rolbypassrls` is `True` for the app role — a policy would be a no-op); turn on
+`rls_set_tenant` and deploy *before* writing any policy (a harmless extra `set_config` per
+transaction with no policies yet, and it means the next step cannot take the app to zero rows);
+review `plan_tenant_rls()`'s output and resolve every `skipped_reason`/nullable column; apply one
+reviewed revision calling `tenant_rls_upgrade(op, plans=...)`; verify as the app role, never as a
+superuser.
+
+**Rollback.** `tenant_rls_downgrade(op, plans=...)` (`DROP POLICY IF EXISTS` +
+`DISABLE ROW LEVEL SECURITY`) restores full visibility and takes the same brief lock. Safe to run
+with the hook still installed. Rolling back only the application while leaving policies in place
+is also safe *provided* `rls_set_tenant` stays on — remove the policies before removing the
+GUC-setter, never the other way round.
+
+## Finding a silent no-op: `inspect_rls_posture()` (Plan 037 / S12d, §D-S12-posture)
+
+`assert_rls_enabled()` only reads `pg_class.relrowsecurity` — a table can pass that check and
+still be fully unprotected if the connecting role bypasses RLS unconditionally
+(superuser/`BYPASSRLS`), or owns the table without `FORCE`. Brief 007 §1 names this *"the cause
+of production RLS failures"*.
+
+```python
+from varco_sa.tenancy.rls_check import inspect_rls_posture
+
+posture = await inspect_rls_posture(conn, tables=["orders", "invoices"])
+posture.is_superuser       # bypasses RLS unconditionally, on every table
+posture.rolbypassrls       # same unconditional bypass, without being a superuser
+posture.owned_tables       # bypasses unless that table's FORCE bit is set
+posture.tables["orders"]   # TablePosture(rls_enabled, rls_forced, has_policy)
+```
+
+`inspect_rls_posture()` **never raises** — it is a report, and it logs one `WARNING` per finding.
+`assert_rls_enabled()`'s raise condition is unchanged by its existence: making it raise on a
+missing `FORCE` or a bypassing role would be an upgrade-time behaviour change for every existing
+`enforce_rls=True` deployment, and would fail every local/CI Postgres container, whose default
+role *is* a superuser. Plan 036's `SecurityPosture` preflight is the intended consumer of this
+report.
+
 ## Pitfalls
 
 | Pitfall | Symptom | Root Cause | Fix |
@@ -351,3 +516,9 @@ cross-tenant reads (e.g. an admin reporting table).
 | **`render_rls_ddl()` on a `VARCHAR`/`TEXT` tenant column** | Every migration using the policy aborts with `operator does not exist: character varying = uuid` — this is exactly what made `varco_sa.rls_framework.framework_rls_upgrade()` inapplicable before its fix | `render_rls_ddl()`'s `cast_type` defaults to `"uuid"`, matching a real `UUID` tenant column; a `String`/`VARCHAR` column needs the GUC cast to match | Pass `cast_type="text"` (`render_rls_ddl(..., cast_type="text")`); `framework_rls_upgrade()` already does this for the two framework tables, whose `tenant_id` is `String(255)` |
 | **RLS test/connection uses a superuser role** | RLS policies appear to do nothing — every row is visible regardless of the tenant GUC — even though `pg_class.relforcerowsecurity` is `True` and the policy is correctly applied | `FORCE ROW LEVEL SECURITY` only revokes the *table-owner* exemption; `rolbypassrls`/superuser connections bypass RLS **unconditionally**, `FORCE` or not — this is a hard Postgres rule, not a varco gap | Connect (and write RLS tests) as a dedicated non-superuser, non-`BYPASSRLS` application role — see `varco_sa/tests/test_rls.py`/`test_framework_rls.py`'s fixture |
 | **RLS enabled by a startup hook** | Policies appear/disappear depending on which process booted last; unreviewed DDL in production | RLS is schema DDL that must be ordered after table creation and reviewed like any other change | Put it in a reviewed revision with `varco_sa.migration.ops.rls_upgrade(op, "orders")` / `rls_downgrade`. Nothing in varco auto-enables RLS, and no `VARCO_MIGRATE_MODE` value does either |
+| **Owner-bypass no-op** | RLS looks fully configured (`relrowsecurity=True`, a correct policy) but a query from the migration/app role still returns every tenant's rows | The connecting role **owns** the table and `FORCE ROW LEVEL SECURITY` was never applied — Postgres exempts owners from RLS by default | Run `varco_sa.rls_autogen.tenant_rls_upgrade`/`render_rls_ddl()` as shipped (they always include `FORCE`); check `inspect_rls_posture().owned_tables` and `.tables[t].rls_forced` to confirm |
+| **`FORCE` is set but the role is `BYPASSRLS`/superuser anyway** | Every query from that connection sees every tenant's rows despite `relforcerowsecurity=True` and a correct policy | `BYPASSRLS`/superuser roles bypass RLS **unconditionally** — `FORCE` only revokes the table-owner exemption, nothing more | `inspect_rls_posture().is_superuser`/`.rolbypassrls` — if either is `True` for the app's connecting role, fix the role (own tables with a privileged migration role, run the app as a non-privileged role) before trusting any policy |
+| **Policy-before-enable ordering violated** (only relevant to hand-written DDL, not `render_rls_ddl()`) | Every row on the table becomes invisible and immutable to non-superuser roles for the duration of the window | `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` applies a **default-deny** policy the instant it runs if no policy exists yet | Always emit `CREATE POLICY` before `ENABLE`/`FORCE` — `render_rls_ddl()`/`render_tenant_rls_ddl()` already return statements in this order (Plan 037 / §D-S12-order); never hand-order RLS DDL differently |
+| **Nullable tenant column → rows invisible forever** | Rows whose tenant column is `NULL` vanish from every query, on every connection, with no error — permanently | `NULLIF(current_setting(...), '')` is `NULL`, never `TRUE`, for a `NULL` tenant column — the comparison never matches | `plan_tenant_rls()` refuses (raises `ValueError`) by default; choose `NullTenantPolicy.VISIBLE` (fail-open, `OR col IS NULL`) or `NullTenantPolicy.HIDDEN` (today's behaviour, explicit) deliberately, per table |
+| **RDS Proxy session pinning** | Connection pool utilization climbs; RDS Proxy stops multiplexing connections for clients that set the tenant GUC | `SET LOCAL`/`set_config(..., true)` causes RDS Proxy to **pin** the connection to that client until `RESET ALL` | Known tradeoff, documented in the pooler table above; `rls_set_tenant` is opt-in, so an RDS Proxy deployment can decline it and keep app-layer scoping + `enforce_rls` assertions instead |
+| **`current_tenant()` value doesn't match the tenant column's type** | The very first query in the transaction raises `invalid input syntax for type uuid: "acme"` instead of the documented "RLS hides every row" | `render_rls_ddl()`'s InitPlan form casts the GUC (always `text`) to `cast_type` — a non-UUID tenant id against a `uuid`-cast policy fails the cast, not the comparison | Ensure `current_tenant()` always yields a value the protected column's type can parse (a real UUID string for a `uuid` column); the fix is the tenant-id format, never the policy |

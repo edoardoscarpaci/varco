@@ -375,7 +375,7 @@ function's own docstring for the "why".
 | `bind_*(container, ...)` | sync, mutates container | registers N *typed, per-item* generic bindings unknowable before app startup | `varco_sa.di.bind_repositories`, `varco_fastapi.client.bind_clients_from`, `varco_ws.di.bind_websocket_adapter` |
 | `enable_*(container)` | sync, mutates container | flips on an opt-in DI **binding** that would shadow an app default if auto-registered | `varco_casbin.di.enable_policy_authorizer`, `varco_core.tenancy.di.enable_tenant_membership` |
 | `mount_*(app, ...)` | sync, mutates the ASGI app | flips on an opt-in privileged **HTTP surface**, always behind an explicit acknowledgement kwarg | `varco_fastapi.tenancy.mount_tenant_admin`, `varco_fastapi.admin.mount_reliability_admin` |
-| `install_*(...)` | sync, **container-free**; **two shapes** | ⚠️ one verb, two shapes (Plan 022 / AB-3). **(a)** a process-global side effect (OTel instrument registration), taking no argument at all; **(b)** an ASGI-app mutation, taking and modifying an `app`. Neither takes a container — both are unrelated to `container.install(SomeConfiguration)` | (a) `install_cache_metrics`, `install_reliability_metrics` · (b) `install_middleware_stack`, `install_cors` |
+| `install_*(...)` | sync, **container-free**; **three shapes** | ⚠️ one verb, three shapes (Plan 022 / AB-3, extended Plan 037 / §D-S12-hook). **(a)** a process-global side effect (OTel instrument registration), taking no argument at all; **(b)** an ASGI-app mutation, taking and modifying an `app`; **(c)** a mutation of a caller-supplied SQLAlchemy object (a `Session`/`sessionmaker`/`async_sessionmaker`), container-free, returning an uninstall callable. Neither (a) nor (b) nor (c) takes a container — all are unrelated to `container.install(SomeConfiguration)` | (a) `install_cache_metrics`, `install_reliability_metrics` · (b) `install_middleware_stack`, `install_cors` · (c) `varco_sa.tenancy.rls_session.install_rls_tenant_hook` |
 
 Name collisions this table exists specifically to call out (audited at Plan 022's RL-8
 checkpoint — see `design/api-freeze-and-standards/api-break-candidates.md` for each verdict):
@@ -978,6 +978,11 @@ registers nothing.
 server_auth=..., admin_role="tenant-admin")` is the **only** way to expose the admin
 surface — there is deliberately **no** `VARCO_TENANCY_MOUNT_ADMIN` env var, ever.
 
+**Rule**: never ship a varco-owned Alembic revision that enables RLS (Plan 037 / §D-S12-oq4) —
+varco ships the generator (`varco_sa.rls_autogen`), the ordering guarantee, and the posture
+check; enabling RLS on any table, including varco's own framework tables, stays an
+application-authored, reviewed revision. Full detail: `technical_docs/features/postgres-rls.md`.
+
 ### Tenant identity provenance & delegation (varco_core.tenancy.source, Plan 033 / S6, S5, S16)
 
 **Rule**: tenant provenance — *where a request's tenant identity is allowed to come from* — is
@@ -1379,6 +1384,11 @@ Am I adding a new capability?
 │     ↳ May this service act for that tenant (RFC 8693 act claim)?
 │                            → varco_core.auth.delegation
 │     ↳ Is my deployment still header-only? → inspect_tenant_provenance()
+│     ↳ RLS DDL for tenant tables? → `varco_sa.rls_autogen` (the generated-for-you
+│       path) or `varco_sa.rls.render_rls_ddl` (the per-table escape hatch); the
+│       per-transaction GUC? → `varco_sa.tenancy.rls_session.install_rls_tenant_hook`;
+│       is my deployment actually protected? → `inspect_rls_posture()`
+│       (`technical_docs/features/postgres-rls.md`)
 │
 ├─ Cross-repo service integration (calling a peer whose Python package is
 │  not importable from this repo)?

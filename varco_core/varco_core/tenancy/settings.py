@@ -123,10 +123,35 @@ class TenancySettings:
                    ``VARCO_TENANCY_GLOBAL_DSN``.
         global_writable: Opt-in to a writable global credential (RD-10).
                    Env: ``VARCO_TENANCY_GLOBAL_WRITABLE``.
+        rls_set_tenant: Install the ``after_begin`` GUC-setter hook
+                   (``varco_sa.tenancy.rls_session.install_rls_tenant_hook``)
+                   automatically at provider construction (Plan 037 / S12c,
+                   §D-S12-hook). Env: ``VARCO_TENANCY_RLS_SET_TENANT``.
+        rls_require_tenant: When ``rls_set_tenant`` is on, raise instead of
+                   clearing the GUC when no tenant is ambient (Plan 037,
+                   §D-S12-hook's fail-closed-is-opt-in note). Env:
+                   ``VARCO_TENANCY_RLS_REQUIRE_TENANT``.
+        assert_tenant_filter: Opt-in, **development-time only** AST
+                   tenant-filter guard (Plan 037 / S15,
+                   ``varco_core.query.applicator.tenant_guard``) — **not a
+                   security control**; Postgres RLS (``enforce_rls``/
+                   ``rls_set_tenant`` above) is. Env:
+                   ``VARCO_TENANCY_ASSERT_TENANT_FILTER``.
 
     Edge cases:
         - No key corresponding to "mount the admin surface" is recognised
           anywhere in this module (RD-9) — asserted by a dedicated test.
+
+    DESIGN: two new flags, ``enforce_rls`` untouched (Plan 037 / §D-S12-hook)
+        ✅ ``enforce_rls`` means one thing today — "assert Postgres RLS is
+           enabled on every routed table". Widening it to also mean "and set
+           the GUC for me" would change runtime behaviour for every existing
+           ``enforce_rls=True`` deployment on upgrade — precisely the
+           silent-change class this cycle exists to stop.
+        ✅ Independent knobs match reality: an app can want the assertion
+           without the hook, or the hook without the assertion.
+        ❌ Three RLS-related flags on one settings object. Accepted; the
+           alternative is one flag that means three things.
     """
 
     isolation: TenantIsolation = TenantIsolation.SHARED
@@ -139,6 +164,9 @@ class TenancySettings:
     fanout_framework_tables: bool = False
     global_dsn: str | None = None
     global_writable: bool = False
+    rls_set_tenant: bool = False
+    rls_require_tenant: bool = False
+    assert_tenant_filter: bool = False
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> TenancySettings:
@@ -189,6 +217,13 @@ class TenancySettings:
             ),
             global_dsn=source.get("VARCO_TENANCY_GLOBAL_DSN", defaults.global_dsn),
             global_writable=_bool("VARCO_TENANCY_GLOBAL_WRITABLE", defaults.global_writable),
+            rls_set_tenant=_bool("VARCO_TENANCY_RLS_SET_TENANT", defaults.rls_set_tenant),
+            rls_require_tenant=_bool(
+                "VARCO_TENANCY_RLS_REQUIRE_TENANT", defaults.rls_require_tenant
+            ),
+            assert_tenant_filter=_bool(
+                "VARCO_TENANCY_ASSERT_TENANT_FILTER", defaults.assert_tenant_filter
+            ),
         )
 
 

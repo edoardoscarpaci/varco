@@ -75,8 +75,22 @@ from varco_sa.provider import SQLAlchemyRepositoryProvider
 # SA-specific applicator is in varco_core (no session; pure SA expressions)
 from varco_sa.query.applicator import SQLAlchemyQueryApplicator
 from varco_sa.repository import AsyncSQLAlchemyRepository
+
+# Plan 037 / S12 — RLS-by-default: the generated-for-you DDL path, the
+# after_begin GUC-setter hook, and the BYPASSRLS/owner posture check.
+from varco_sa.rls_autogen import (
+    NullTenantPolicy,
+    RlsTablePlan,
+    plan_tenant_rls,
+    render_tenant_rls_ddl,
+    tenant_rls_downgrade,
+    tenant_rls_upgrade,
+)
+from varco_sa.rls_framework import framework_rls_tables
 from varco_sa.saga import SASagaRepository, sagas_metadata
 from varco_sa.schema_guard import SchemaDrift, SchemaDriftReport, SchemaGuard
+from varco_sa.tenancy.rls_check import RlsPosture, inspect_rls_posture
+from varco_sa.tenancy.rls_session import install_rls_tenant_hook
 from varco_sa.type_coercion import registry_from_sa_model
 from varco_sa.uow import SQLAlchemyUnitOfWork
 
@@ -147,4 +161,15 @@ __all__ = [
     # ── Idempotency store (Plan 029 / D1b) ────────────────────────────────────
     "SAIdempotencyStore",
     "idempotency_metadata",
+    # ── RLS-by-default (Plan 037 / S12) ───────────────────────────────────────
+    "NullTenantPolicy",
+    "RlsPosture",
+    "RlsTablePlan",
+    "framework_rls_tables",
+    "inspect_rls_posture",
+    "install_rls_tenant_hook",
+    "plan_tenant_rls",
+    "render_tenant_rls_ddl",
+    "tenant_rls_downgrade",
+    "tenant_rls_upgrade",
 ]

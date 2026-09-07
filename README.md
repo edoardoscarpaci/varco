@@ -1149,6 +1149,74 @@ mount_tenant_admin(  # ← privileged surface, opt-in
 )
 ```
 
+### Database-enforced isolation (Postgres RLS)
+
+Strategy 2 (shared schema + RLS asserted, above) is opt-in and generates nothing by default. To
+get a full, reviewed policy set for every `TenantScope.TENANT` table without hand-writing one
+per table, plus the GUC-setter every policy needs at query time:
+
+```python
+from varco_sa.rls_autogen import plan_tenant_rls, tenant_rls_upgrade, tenant_rls_downgrade
+
+# In code review, before any DDL exists:
+plans = plan_tenant_rls([User, Order, Invoice], base=Base)
+print(plans)  # resolve every skipped_reason and nullable-tenant-column choice first
+
+# In your own reviewed Alembic revision — varco never ships one for you:
+def upgrade() -> None:
+    tenant_rls_upgrade(op, plans=plans)
+
+def downgrade() -> None:
+    tenant_rls_downgrade(op, plans=plans)
+```
+
+```python
+from sqlalchemy.ext.asyncio import AsyncSession
+from varco_sa.tenancy.rls_session import install_rls_tenant_hook
+
+# Sets rls.tenant_id from current_tenant() at the start of every transaction —
+# covers SQLAlchemyUnitOfWork, get_repository(), and app code holding the
+# session factory directly. Opt-in; nothing installs unless you call this or
+# set VARCO_TENANCY_RLS_SET_TENANT=true.
+install_rls_tenant_hook(AsyncSession, require_tenant=False)
+```
+
+```python
+from varco_sa.tenancy.rls_check import inspect_rls_posture
+
+# Is my deployment actually protected, or just carrying a policy nobody's role obeys?
+posture = await inspect_rls_posture(conn, tables=["orders", "invoices"])
+```
+
+Two new `TenancySettings` fields, both `False` by default:
+
+| Field | Env | Meaning |
+|---|---|---|
+| `rls_set_tenant` | `VARCO_TENANCY_RLS_SET_TENANT` | Install `install_rls_tenant_hook` automatically at DI wiring time |
+| `rls_require_tenant` | `VARCO_TENANCY_RLS_REQUIRE_TENANT` | The hook raises instead of clearing the GUC when no tenant is ambient |
+
+Full guide (ordering rule, nullable-tenant-column decision, pooler survival table, locking and
+rollback, the `BYPASSRLS`/owner footgun): [Postgres RLS](technical_docs/features/postgres-rls.md).
+
+### The tenant-filter guard (development-time)
+
+`assert_tenant_predicate()` is a development-time assertion that a tenant-scoped query was built
+with a tenant filter; **it is not a security control — Postgres RLS (above) is.** It walks
+varco's query AST before any backend compiles it and raises `TenantFilterError` unless an
+equality comparison on the tenant field sits on the top-level `AND` spine:
+
+```python
+from varco_core.tenancy.settings import TenancySettings
+
+# VARCO_TENANCY_ASSERT_TENANT_FILTER=true — off by default, on both backends.
+TenancySettings(assert_tenant_filter=True)
+```
+
+It has exactly one false-negative class, and it is documented rather than claimed: a query that
+never builds a `QueryParams` AST — raw `session.execute(text(...))`, a hand-written `Select`,
+`get(pk)`, a Mongo aggregation pipeline — passes unguarded. Use it to catch a forgotten filter
+while writing a query; use RLS to stop one reaching the database.
+
 ---
 
 ## Tenant identity provenance

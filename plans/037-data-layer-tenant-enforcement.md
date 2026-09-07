@@ -471,37 +471,53 @@ one settings field and the call sites — no unpicking.
 
 ### Phase 0 — S12a: correctness of the existing primitives (🟡 should, S)
 
-1. [ ] `rg -n "render_rls_ddl\(" . && rg -n "render_rls_ddl\(.*\)\[" .` — confirm no in-repo caller
+1. [x] `rg -n "render_rls_ddl\(" . && rg -n "render_rls_ddl\(.*\)\[" .` — confirm no in-repo caller
        indexes the returned list (§D-S12-order's ❌). Record the result in the commit message.
-2. [ ] `varco_sa/tests/test_rls.py` (extend, **failing first**) — `render_rls_ddl()` returns
+2. [x] `varco_sa/tests/test_rls.py` (extend, **failing first**) — `render_rls_ddl()` returns
        `CREATE POLICY` at index 0, `ENABLE` at 1, `FORCE` at 2; the existing `len(ddl) == 3`
        (`:102-106`) and `(SELECT` InitPlan assertions still pass unchanged.
-3. [ ] `varco_sa/varco_sa/rls.py:174-182` — reorder to `CREATE POLICY`, `ENABLE`, `FORCE` per
+3. [x] `varco_sa/varco_sa/rls.py:174-182` — reorder to `CREATE POLICY`, `ENABLE`, `FORCE` per
        §D-S12-order. Update the docstring's numbered `Returns:` list (`:117-127`) and add a
        `DESIGN:` comment citing brief 007 §5's default-deny finding.
-4. [ ] `varco_sa/varco_sa/rls_framework.py` — replace the hand-listed `FRAMEWORK_RLS_TABLES`
+4. [x] `varco_sa/varco_sa/rls_framework.py` — replace the hand-listed `FRAMEWORK_RLS_TABLES`
        (`:38`) with a **derived** helper `framework_rls_tables() -> tuple[str, ...]`: walk
        `framework_metadata()` (`varco_sa/varco_sa/metadata.py:86`) and select tables carrying the
        tenant column, **excluding `varco_tenants`** (§D-S12-autogen). Keep the old constant as a
        module attribute computed from it so no import breaks.
-5. [ ] `varco_sa/tests/test_framework_rls.py` (extend) — the derived set contains
+5. [x] `varco_sa/tests/test_framework_rls.py` (extend) — the derived set contains
        `varco_dead_letters`, `varco_audit_log`, `varco_schedules`,
        `varco_webhook_subscriptions` and the encryption-key-store table; it **never** contains
        `varco_tenants`; a completeness walk asserts every `framework_metadata()` table with a
        tenant column is either in the set or in a named, asserted exclusion list — so a
        fourteenth framework table cannot be forgotten silently.
-6. [ ] `varco_sa/tests/test_rls.py` (extend, **integration**, `@pytest.mark.integration`) — using
+6. [x] `varco_sa/tests/test_rls.py` (extend, **integration**, `@pytest.mark.integration`) — using
        the existing non-superuser role fixture (`provision_rls_app_url`, `test_rls.py:126-136`):
        execute the three statements **one transaction each, in the returned order**, and assert
        the table is never invisible-with-no-policy between them. This is the regression test for
        §D-S12-order and it must run as the app role, not the container's superuser
        (`postgres-rls.md:314-324`).
 
+       ⚠️ **NEEDS A DECISION — implemented but currently failing, not fixed.**
+       `TestRenderRlsDdlOrderingRegressionAgainstRealPostgres::test_table_never_passes_through_a_default_deny_window`
+       creates the table AS the app role (so the app role is the table OWNER), then asserts that
+       after statement 2 (`ENABLE`, before `FORCE`) RLS already restricts that SAME owning role to
+       tenant A's row. This contradicts documented Postgres semantics: a table owner is exempt from
+       RLS policies regardless of policy-vs-enable ordering — only `FORCE ROW LEVEL SECURITY`
+       (statement 3) brings the owner under the policy. §D-S12-order's actual guarantee (no
+       default-deny window between `ENABLE` and `CREATE POLICY`) is real and already proven by
+       Step 1's reorder + the passing unit tests in this file — but this specific integration
+       assertion tests something Postgres does not do for an owning role at that point in the
+       sequence, independent of statement order. Fixing it needs either (a) a second, genuinely
+       non-owning role for the mid-sequence check (this file has no such fixture — `test_rls_posture.py`
+       provisions extra roles but this file does not), or (b) deferring that assertion to after
+       `FORCE`. Both are logic changes to the test's assertions, not a rename — left unresolved
+       pending a decision instead of guessed.
+
 ⛔ **CHECKPOINT** — `uv run pytest varco_sa/tests/test_rls.py varco_sa/tests/test_framework_rls.py`
 
 ### Phase 1 — S12b: the generated-for-you DDL path (🟡 should, M)
 
-7. [ ] `varco_sa/tests/test_rls_autogen.py` (new, **failing first**) — `plan_tenant_rls()`:
+7. [x] `varco_sa/tests/test_rls_autogen.py` (new, **failing first**) — `plan_tenant_rls()`:
        a `TENANT`-scoped model with a `UUID` tenant column → `cast_type="uuid"`; a `String(255)`
        one → `"text"`; an `Integer` one → `"bigint"`; a `TenantScope.GLOBAL` model → absent
        entirely; a `TENANT` model with **no** tenant column → present with a `skipped_reason` and
@@ -509,24 +525,24 @@ one settings field and the call sites — no unpicking.
        `varco_tenants` → hard-excluded; a nullable tenant column → `ValueError` naming table,
        column and both remedies (§D-S12-nullable), `NullTenantPolicy.VISIBLE` → the emitted policy
        contains `OR … IS NULL`, `HIDDEN` → it does not; determinism (two calls, same order).
-8. [ ] `varco_sa/varco_sa/rls_autogen.py` (new) — `RlsTablePlan` (`@dataclass(frozen=True)`),
+8. [x] `varco_sa/varco_sa/rls_autogen.py` (new) — `RlsTablePlan` (`@dataclass(frozen=True)`),
        `NullTenantPolicy` (`StrEnum`: `REFUSE`/`HIDDEN`/`VISIBLE`), `plan_tenant_rls()`,
        `render_tenant_rls_ddl()`, `tenant_rls_upgrade()`, `tenant_rls_downgrade()`. Every string
        comes from `render_rls_ddl()` — **the InitPlan form is never re-derived here** (the same
        single-source rule `migration/ops.py:11-16` already states). Full docstrings with
        `Args`/`Returns`/`Raises`/`Edge cases`, a `DESIGN:` block per §D-S12-autogen and
        §D-S12-nullable.
-9. [ ] `varco_sa/varco_sa/rls_autogen.py` — `plan_tenant_rls()` reads
+9. [x] `varco_sa/varco_sa/rls_autogen.py` — `plan_tenant_rls()` reads
        `ParsedMeta.tenant_scope` (`varco_core/varco_core/meta.py:802-825`) and resolves each
        domain class to its generated `Table` via the provider's `base.metadata`. A domain class
        that was never registered is a `skipped_reason`, not a `KeyError`.
-10. [ ] `varco_sa/tests/test_rls_autogen_integration.py` (new, **integration**) — against real
+10. [x] `varco_sa/tests/test_rls_autogen_integration.py` (new, **integration**) — against real
         Postgres and the **non-superuser app role**: build two `TENANT` models (one `UUID`, one
         `String` tenant column) and one `GLOBAL` model in a `uuid4().hex[:8]`-namespaced schema;
         run `tenant_rls_upgrade`; assert tenant A sees only A's rows on both tables, the `GLOBAL`
         table is unaffected, a cross-tenant `INSERT` is rejected by `WITH CHECK`, and
         `tenant_rls_downgrade` restores full visibility.
-11. [ ] `varco_sa/varco_sa/__init__.py` — export the new public names; `__all__` updated.
+11. [x] `varco_sa/varco_sa/__init__.py` — export the new public names; `__all__` updated.
 
 ⛔ **CHECKPOINT** — do not proceed to Phase 2 without Step 10 green; and **do not stop here**:
 policies without Phase 2's GUC-setter mean zero rows for an app that has not wired
@@ -534,21 +550,21 @@ policies without Phase 2's GUC-setter mean zero rows for an app that has not wir
 
 ### Phase 2 — S12c: automatic `set_tenant_local()` (🟡 should, M) — the wiring row
 
-12. [ ] `varco_core/tests/test_tenancy_settings.py` (extend, **failing first**) — `rls_set_tenant`
+12. [x] `varco_core/tests/test_tenancy_settings.py` (extend, **failing first**) — `rls_set_tenant`
         and `rls_require_tenant` default `False`; `VARCO_TENANCY_RLS_SET_TENANT=true` /
         `VARCO_TENANCY_RLS_REQUIRE_TENANT=1` parse through the existing `_bool` helper
         (`settings.py:148-152`); the existing "defaults are byte-identical" assertions
         (`:19`, `:42`) still pass.
-13. [ ] `varco_core/varco_core/tenancy/settings.py` — the two fields (§D-S12-hook's table) plus
+13. [x] `varco_core/varco_core/tenancy/settings.py` — the two fields (§D-S12-hook's table) plus
         `from_env()` wiring and docstring `Args:` entries. **No other default moves.**
-14. [ ] `varco_sa/tests/test_rls_session_hook.py` (new, **failing first**, unit) — using a SQLite
+14. [x] `varco_sa/tests/test_rls_session_hook.py` (new, **failing first**, unit) — using a SQLite
         in-memory engine and a recording listener: the hook fires once per transaction; it fires
         **again after `commit()`** on the same session (the §D-S12-hook defect, asserted
         directly); the returned uninstaller removes it and is idempotent; `require_tenant=True`
         with no ambient tenant raises `RuntimeError` whose message names `tenant_context()`;
         `require_tenant=False` with no ambient tenant sets the empty string and does not raise;
         installing twice on the same target registers **one** listener.
-15. [ ] `varco_sa/varco_sa/tenancy/rls_session.py` (new) — `install_rls_tenant_hook()` per
+15. [x] `varco_sa/varco_sa/tenancy/rls_session.py` (new) — `install_rls_tenant_hook()` per
         §D-S12-hook. Registers on the **sync `Session` class** underlying the target so
         `AsyncSession` inherits it (brief 007 §6); the listener body calls the existing
         `varco_sa.rls.set_tenant_local` machinery with bound parameters and **never** builds SQL
@@ -556,17 +572,17 @@ policies without Phase 2's GUC-setter mean zero rows for an app that has not wir
         listener — SQLAlchemy does not await a sync event hook; the listener must execute
         synchronously on the greenlet-adapted `Connection` the event provides. Record whichever
         shape the empirical check in Step 16 establishes.
-16. [ ] `varco_sa/tests/test_rls_session_hook.py` (extend, **integration**) — real Postgres, the
+16. [x] `varco_sa/tests/test_rls_session_hook.py` (extend, **integration**) — real Postgres, the
         **non-superuser app role**, a table from Phase 1's generator: with the hook installed and
         `tenant_context("A")` active, a plain `repo.list()` returns only A's rows **with no
         `set_tenant_local()` call anywhere in the test**; after `commit()`, a second query in the
         same session still returns only A's rows (the regression this design exists for); with no
         tenant context, zero rows and no exception; with `require_tenant=True`, `RuntimeError`.
-17. [ ] `varco_sa/varco_sa/di.py` — when `TenancySettings.rls_set_tenant` is `True`, install the
+17. [x] `varco_sa/varco_sa/di.py` — when `TenancySettings.rls_set_tenant` is `True`, install the
         hook on the session factory at provider construction. When `False`, **nothing is
         registered and no listener exists** — assert this explicitly in a test, as
         `test_tls_di.py` does for the watcher (Plan 026 / Step 14).
-18. [ ] `varco_sa/tests/test_rls_session_hook.py` (extend) — `container.scan("varco_sa",
+18. [x] `varco_sa/tests/test_rls_session_hook.py` (extend) — `container.scan("varco_sa",
         recursive=True)` with default settings installs **no** listener; with
         `rls_set_tenant=True` it installs exactly one.
 
@@ -574,21 +590,21 @@ policies without Phase 2's GUC-setter mean zero rows for an app that has not wir
 
 ### Phase 3 — S12d: the owner / `BYPASSRLS` footgun, made findable (🟡 should, S)
 
-19. [ ] `varco_sa/tests/test_rls_posture.py` (new, **failing first**, integration) — provision
+19. [x] `varco_sa/tests/test_rls_posture.py` (new, **failing first**, integration) — provision
         three roles in a `uuid4().hex[:8]`-namespaced setup: the container superuser, a
         `BYPASSRLS` role, and the plain app role from `provision_rls_app_url`. Assert
         `inspect_rls_posture()` reports `is_superuser`/`rolbypassrls` correctly for each; reports
         `rls_forced=False` for a table with `ENABLE` but no `FORCE`; reports `has_policy=False`
         for a table with neither; and that **the superuser leg sees every row despite a correct
         policy** — the assertion that proves the test itself is not lying (`postgres-rls.md:314-324`).
-20. [ ] `varco_sa/varco_sa/tenancy/rls_check.py` — add `RlsPosture` (`@dataclass(frozen=True)`) and
+20. [x] `varco_sa/varco_sa/tenancy/rls_check.py` — add `RlsPosture` (`@dataclass(frozen=True)`) and
         `inspect_rls_posture()` per §D-S12-posture, querying `pg_roles` for
         `rolsuper`/`rolbypassrls` and `pg_class.relrowsecurity`/`relforcerowsecurity`/`relowner`.
         `assert_rls_enabled()`'s **raise condition is not touched** (`:116-127`); it gains one
         WARNING per new finding and a docstring note pointing at `inspect_rls_posture()` and at
         Plan 036's preflight as the reporting consumer. Non-Postgres dialect → the same
         skip-with-one-WARNING contract as today (`:95-103`).
-21. [ ] `uv run python scripts/api_surface.py` — regenerate both snapshot files and **commit them
+21. [x] `uv run python scripts/api_surface.py` — regenerate both snapshot files and **commit them
         in this commit** (CI gate, `make lint`'s no-`PKG` path). New `varco_sa` rows are expected:
         `RlsTablePlan`, `NullTenantPolicy`, `RlsPosture`, `plan_tenant_rls`,
         `render_tenant_rls_ddl`, `tenant_rls_upgrade`, `tenant_rls_downgrade`,
@@ -599,13 +615,13 @@ policies without Phase 2's GUC-setter mean zero rows for an app that has not wir
 
 ### Phase 4 — docs, CHANGELOG, backlog (🟡 should, S — same commit as the code)
 
-22. [ ] `CLAUDE.md` — (a) the **`install_*` shape (c)** row in the DI-wiring verb taxonomy
+22. [x] `CLAUDE.md` — (a) the **`install_*` shape (c)** row in the DI-wiring verb taxonomy
         (§D-S12-hook's ❌), naming `install_rls_tenant_hook` as its example; (b) one Decision-Tree
         branch under multitenancy (*RLS DDL for tenant tables? → `varco_sa.rls_autogen`; the
         per-transaction GUC? → `varco_sa.tenancy.rls_session`; is my deployment actually
         protected? → `inspect_rls_posture()`*); (c) a **Rule** line: *never ship a varco-owned
         Alembic revision that enables RLS* (§D-S12-oq4). Pointers only — no design prose.
-23. [ ] `technical_docs/features/postgres-rls.md` (**the primary home** — it already carries the
+23. [x] `technical_docs/features/postgres-rls.md` (**the primary home** — it already carries the
         InitPlan finding, the `SET LOCAL` section and a Pitfalls table at `:344-353`; extending it
         rather than duplicating into `multitenancy.md` is CLAUDE.md's "one home per fact"). Add:
         the generator recipe; the §D-S12-order ordering rule with brief 007 §5's citation; the
@@ -616,11 +632,11 @@ policies without Phase 2's GUC-setter mean zero rows for an app that has not wir
         anyway; policy-before-enable ordering; nullable tenant column → rows invisible forever;
         `RDS Proxy` session pinning; a `current_tenant()` value whose format does not match the
         tenant column's type (e.g. `"acme"` against a `uuid` column → `invalid input syntax`).
-24. [ ] `technical_docs/features/multitenancy.md` — a short **"Database-enforced isolation"**
+24. [x] `technical_docs/features/multitenancy.md` — a short **"Database-enforced isolation"**
         subsection linking to the above (no restatement) and one Pitfalls row: *`enforce_rls=True`
         asserts a policy exists; it does not prove the connecting role is subject to it — see
         `inspect_rls_posture()`*.
-25. [ ] `README.md` (multi-tenancy section) + `varco_sa/README.md` (`:303-321` already shows the
+25. [x] `README.md` (multi-tenancy section) + `varco_sa/README.md` (`:303-321` already shows the
         manual helpers) — the two new env vars in the reference table, the one-call generator
         recipe, and the hook. `CHANGELOG.md` `## [Unreleased]`: `### Added` (the generator, the
         hook, `inspect_rls_posture`, the two settings — "Plan 037 / S12"); `### Changed`
@@ -634,7 +650,7 @@ policies without Phase 2's GUC-setter mean zero rows for an app that has not wir
 
 ### Phase 5 — S15: the AST tenant-filter guard (🟢 nice, L — **DROPPABLE**)
 
-26. [ ] `varco_core/tests/test_query_tenant_guard.py` (new, **failing first**) —
+26. [x] `varco_core/tests/test_query_tenant_guard.py` (new, **failing first**) —
         `assert_tenant_predicate()`: a top-level `AND` containing `tenant_id == X` passes; a bare
         `tenant_id == X` passes; `status == "x"` alone raises `TenantFilterError` naming the
         entity and the field; `tenant_id == X OR status == "public"` **raises** (the predicate
@@ -643,27 +659,27 @@ policies without Phase 2's GUC-setter mean zero rows for an app that has not wir
         a custom `tenant_field="org_id"` (`README.md:543-547`) works; `node=None` raises; and
         **the docstring contains the "not a security control" disclaimer** (§D-S15-shape's ⛔
         wording rule, asserted mechanically).
-27. [ ] `varco_core/varco_core/query/applicator/tenant_guard.py` (new) — the pure walker plus
+27. [x] `varco_core/varco_core/query/applicator/tenant_guard.py` (new) — the pure walker plus
         `TenantFilterError` (a `ServiceException` subclass with a `code` and a `message_key`, per
         `varco_core.exception`'s taxonomy). **No AST node gains a field**; nothing is mutated.
         Module docstring carries the §D-S15-shape comparison table and the brief 007 §7 /
         brief 006 Evidence Gap 2 citations for why the compiled-SQL variant was rejected.
-28. [ ] `varco_core/varco_core/tenancy/settings.py` — `assert_tenant_filter: bool = False`
+28. [x] `varco_core/varco_core/tenancy/settings.py` — `assert_tenant_filter: bool = False`
         (`VARCO_TENANCY_ASSERT_TENANT_FILTER`), documented as **development-time only**.
-29. [ ] `varco_sa/varco_sa/repository.py` — call the guard at the four `params.node` sites
+29. [x] `varco_sa/varco_sa/repository.py` — call the guard at the four `params.node` sites
         (`:190`, `:225`, `:301`, `:489`) when enabled and the entity is `TenantScope.TENANT`,
         reading the scope from the mapper's `ParsedMeta`. `varco_beanie`'s equivalent sites get
         the identical two-line call (grep `params.node` in `varco_beanie/varco_beanie/`).
-30. [ ] `varco_core/varco_core/query/applicator/applicator.py` — an optional
+30. [x] `varco_core/varco_core/query/applicator/applicator.py` — an optional
         `tenant_guard=None` keyword on `QueryApplicator.__init__` (`:46-56`) for custom
         applicators, defaulting to no assertion. Byte-identical when unset.
-31. [ ] `varco_sa/tests/test_rls_tenant_guard.py` + the Beanie mirror (new) — with the flag off,
+31. [x] `varco_sa/tests/test_rls_tenant_guard.py` + the Beanie mirror (new) — with the flag off,
         a tenant-less `list()` behaves **exactly as today** (the byte-identical proof); with it on,
         the same call raises; a `TenantAwareService`-scoped call passes on both backends; a
         `TenantScope.GLOBAL` entity is never asserted; a raw `session.execute(text(...))` is
         **documented and asserted to pass unguarded** — the false negative, proven rather than
         claimed.
-32. [ ] `technical_docs/features/multitenancy.md` + README — the guard, its single false-negative
+32. [x] `technical_docs/features/multitenancy.md` + README — the guard, its single false-negative
         class, and the sentence that it is a dev aid and **RLS is the security control**.
         CHANGELOG `### Added` with the same framing. `scripts/api_surface.py` regenerated.
 

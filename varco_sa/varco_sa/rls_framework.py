@@ -33,9 +33,70 @@ Async safety:   N/A — Alembic's ``op`` proxy is synchronous.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Final
+from typing import Any
 
-FRAMEWORK_RLS_TABLES: Final[tuple[str, ...]] = ("varco_audit_log", "varco_dead_letters")
+# Plan 037 / Step 4 — §"What already exists" table: this table set was a
+# hand-listed constant of exactly two names and had gone stale — at least
+# varco_schedules, varco_webhook_subscriptions and the encryption-key-store
+# table also carry a tenant_id column (schedule.py:67, webhook.py:61,
+# encryption_store.py:100) and were silently missing. framework_rls_tables()
+# below re-derives the set every call by walking framework_metadata() for
+# tables carrying the tenant column, so a fourteenth framework table with a
+# tenant_id column cannot be silently forgotten again — Step 5's completeness
+# walk is the permanent regression test for that guarantee.
+#
+# varco_tenants is hard-excluded (never a candidate, §D-S12-autogen): its
+# tenant_id is the table's PRIMARY KEY, not a filterable tenant column — an
+# RLS policy there would show every connection exactly one row and break
+# provisioning/fan-out and assert_rls_enabled() itself.
+_HARD_EXCLUDED_TABLES: frozenset[str] = frozenset({"varco_tenants"})
+
+
+def framework_rls_tables(*, tenant_column: str = "tenant_id") -> tuple[str, ...]:
+    """
+    Derive the framework tables carrying a tenant column, for RLS purposes.
+
+    Walks ``varco_sa.metadata.framework_metadata()`` and selects every table
+    that has a ``tenant_column`` column, excluding ``varco_tenants`` (its
+    tenant id is a primary key, not a filterable column — see the module-level
+    ``_HARD_EXCLUDED_TABLES`` comment).
+
+    DESIGN: derive, never hand-list (Plan 037 / §D-S12-autogen)
+        ✅ A hand-listed constant silently drifted for years — see the
+           comment above this function. Re-deriving on every call means a
+           newly registered framework table is picked up automatically.
+        ✅ Cheap — ``framework_metadata()`` is already an in-memory
+           ``MetaData`` walk; no I/O.
+        ❌ A framework table that names its tenant column something other
+           than ``tenant_id`` would be missed silently. Filed as an
+           ASSUMPTION in the plan's Risks table; mitigated by
+           ``test_framework_rls.py``'s completeness walk, which fails loudly
+           the day a fourteenth table appears unaccounted for.
+
+    Args:
+        tenant_column: Column name identifying a tenant-carrying table.
+                       Default: ``"tenant_id"``.
+
+    Returns:
+        A sorted tuple of table names (deterministic — Alembic revisions and
+        tests should not depend on ``dict`` iteration order).
+    """
+    from varco_sa.metadata import framework_metadata
+
+    metadata = framework_metadata()
+    return tuple(
+        sorted(
+            table.name
+            for table in metadata.tables.values()
+            if tenant_column in table.columns and table.name not in _HARD_EXCLUDED_TABLES
+        )
+    )
+
+
+#: Back-compat: computed from framework_rls_tables() so existing imports of
+#: the constant keep working — Step 4's "keep the old constant as a module
+#: attribute computed from it so no import breaks".
+FRAMEWORK_RLS_TABLES: tuple[str, ...] = framework_rls_tables()
 
 
 def framework_rls_upgrade(
@@ -99,4 +160,9 @@ def framework_rls_downgrade(op: Any, *, tables: Sequence[str] = FRAMEWORK_RLS_TA
         op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
 
 
-__all__ = ["FRAMEWORK_RLS_TABLES", "framework_rls_downgrade", "framework_rls_upgrade"]
+__all__ = [
+    "FRAMEWORK_RLS_TABLES",
+    "framework_rls_downgrade",
+    "framework_rls_tables",
+    "framework_rls_upgrade",
+]

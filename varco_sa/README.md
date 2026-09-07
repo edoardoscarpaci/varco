@@ -325,6 +325,36 @@ PgBouncer-transaction-mode-safe pattern as `SAXactAdvisoryLock` above — a sess
 `SET LOCAL` vs `SET`, the `search_path` hazard, and why `TenantAwareService._scoped_params`
 fails open and RLS is the recommended defense-in-depth.
 
+### Generated-for-you RLS: `varco_sa.rls_autogen` (Plan 037 / S12)
+
+For more than a handful of tables, working out each one's Postgres cast/nullability by hand does
+not scale. `varco_sa.rls_autogen` walks a set of domain classes and produces an inspectable plan
+before any DDL exists — still nothing applies automatically:
+
+```python
+from varco_sa.rls_autogen import plan_tenant_rls, tenant_rls_upgrade, tenant_rls_downgrade
+
+plans = plan_tenant_rls([User, Order, Invoice], base=Base)   # pure — print() it in review
+print(plans)                                                  # resolve every skip/nullable first
+
+def upgrade() -> None:
+    tenant_rls_upgrade(op, plans=plans)   # your own Alembic revision
+
+def downgrade() -> None:
+    tenant_rls_downgrade(op, plans=plans)
+```
+
+A `TenantScope.GLOBAL` class is silently absent (never a candidate); a `TENANT` class with no
+tenant column, an unregistered domain class, or an unmappable column type is present with a
+`skipped_reason` and no DDL — never a silent omission. A nullable tenant column raises
+`ValueError` by default (`NullTenantPolicy.REFUSE`) — pass `NullTenantPolicy.VISIBLE`/`HIDDEN`
+explicitly once you've decided which. `varco_sa.tenancy.rls_session.install_rls_tenant_hook()`
+sets the `set_tenant_local()` GUC automatically via an `after_begin` listener, so
+`TenancySettings(rls_set_tenant=True)` replaces the manual `async with session.begin(): await
+set_tenant_local(...)` pattern above. `varco_sa.tenancy.rls_check.inspect_rls_posture()` reports
+whether the connecting role (superuser/`BYPASSRLS`/table owner) is actually subject to the
+policies you've created. Full guide: `technical_docs/features/postgres-rls.md`.
+
 ### Schema Guard — detect drift
 
 ```python

@@ -136,26 +136,33 @@ async with engine.connect() as conn:
 see [Postgres RLS](postgres-rls.md) for the full guide, including why
 `(SELECT current_setting(...))` matters and the `SET`-vs-`SET LOCAL` hazard.
 
-**Framework tables — `varco_audit_log` and `varco_dead_letters` (Plan 009,
-Phase 6 / R4).** Both tables gained a `tenant_id` column in the
-`0002_dlq_audit_tenant_id` revision and are RLS-eligible the same way any
-app table is; `framework_table_names()` already includes them, so passing it
-as `framework_tables=` to `assert_rls_enabled()` covers both automatically.
-Applying RLS to them uses a dedicated one-call helper rather than the
-generic `rls_upgrade(op, "orders")` shown above, since there are two fixed
-table names to enable in one revision:
+**Framework tables** (`varco_audit_log`, `varco_dead_letters`, Plan 009 Phase 6 / R4, plus
+`varco_schedules`/`varco_webhook_subscriptions`/the encryption-key-store table, derived rather
+than hand-listed since Plan 037 / S12a). Every such table gained a `tenant_id` column and is
+RLS-eligible the same way any app table is; `framework_table_names()` already includes all of
+them, so passing it as `framework_tables=` to `assert_rls_enabled()` covers the whole set
+automatically. `varco_sa.rls_framework.framework_rls_tables()` re-derives the true, current set
+by walking `framework_metadata()` for tables carrying the tenant column (`varco_tenants` is
+hard-excluded — its `tenant_id` is a primary key, not a filterable column) — never hand-list this
+set yourself. Applying RLS to them uses a dedicated one-call helper rather than the generic
+`rls_upgrade(op, "orders")` shown above:
 
 ```python
 from varco_sa.rls_framework import framework_rls_upgrade, framework_rls_downgrade
 
 
 def upgrade() -> None:
-    framework_rls_upgrade(op)  # varco_audit_log + varco_dead_letters, both by default
+    framework_rls_upgrade(op)  # every framework_rls_tables() member, by default
 
 
 def downgrade() -> None:
     framework_rls_downgrade(op)
 ```
+
+Three of these tables have a **nullable** `tenant_id` — see
+[Postgres RLS's nullable-tenant-column section](postgres-rls.md#nullable-tenant-columns-are-refused-not-silently-hidden-d-s12-nullable)
+before enabling RLS on them by hand; `varco_sa.rls_autogen.plan_tenant_rls()` is the generator
+that surfaces this choice for any table set, framework or app-owned.
 
 Same rule as every other RLS helper in this codebase: nothing calls this
 automatically — paste it into a reviewed migration. See
@@ -909,6 +916,41 @@ pressure fails open; isolation never does.
 
 ---
 
+## Database-enforced isolation (Postgres RLS, Plan 037 / S12)
+
+Strategy 2 (shared schema + RLS asserted) has a full guide of its own —
+[Postgres RLS](postgres-rls.md) — covering the generated-for-you DDL path
+(`varco_sa.rls_autogen`), the automatic per-transaction GUC-setter
+(`install_rls_tenant_hook`), the `BYPASSRLS`/owner posture check
+(`inspect_rls_posture()`), connection-pooler survival, and the migration/rollback
+story. Not restated here — that document is the primary home.
+
+## The tenant-filter guard — a dev aid, not a security control (Plan 037 / S15)
+
+`varco_core.query.applicator.tenant_guard.assert_tenant_predicate()` is a development-time
+assertion that a tenant-scoped query was built with a tenant filter; **it is not a security
+control — Postgres RLS (above) is.** It walks varco's own typed, frozen query AST *before* any
+backend compiles it, and raises `TenantFilterError` unless an equality comparison on the tenant
+field appears on the top-level `AND` spine. (`tenant_id = X OR status = 'public'` therefore
+*fails*: the predicate is present but constrains nothing.)
+
+Off by default, on both backends:
+
+```python
+from varco_core.tenancy.settings import TenancySettings
+
+TenancySettings(assert_tenant_filter=True)   # VARCO_TENANCY_ASSERT_TENANT_FILTER=true
+```
+
+With the flag off, every query path behaves exactly as it did before this feature existed.
+
+**Its single false-negative class, documented rather than claimed:** the guard sees a query only
+when that query builds a `QueryParams` AST. Anything that does not — a raw
+`session.execute(text(...))`, a hand-written `Select`, `get(pk)`, a Mongo aggregation pipeline —
+passes unguarded, and `varco_sa/tests/test_rls_tenant_guard.py` asserts that it does. This is
+precisely why the guard is a dev aid: it catches a forgotten filter while you are writing the
+query, and it cannot be relied on to catch one at runtime. The database-level backstop is RLS.
+
 ## Pitfalls
 
 | Pitfall | Symptom | Root Cause | Fix |
@@ -930,6 +972,8 @@ pressure fails open; isolation never does.
 | **Literal DSN stored in `varco_tenants`** | `ValueError` on `catalog.add()` naming RD-2 | `dsn_ref` must be a secret **reference** (resolved by your own secret-manager hook), never a literal connection string | Store a reference, not a credential; pass `allow_literal_dsn=True` only for tests/bootstrap |
 | **Admin DSN present in an app pod that never mounted the admin surface** | Nothing is actually exposed — but the credential sits unused in the wrong process | `VARCO_TENANCY_ADMIN_DSN` alone grants no route; only `mount_tenant_admin()` mounts one | One WARNING is logged recommending the standalone topology; prefer moving the DSN to a dedicated control-plane deployment |
 | **`mount_tenant_admin()` without `acknowledge_bundled_admin=True`** | `ValueError` at mount time, nothing mounted | The friction is intentional — bundling puts admin-adjacent privilege in the app pod's own environment | Pass `acknowledge_bundled_admin=True` only after confirming the standalone deployment genuinely isn't justified |
+| **`assert_tenant_filter=True` mistaken for tenant enforcement** | A cross-tenant read reaches the database even though the guard is enabled and no `TenantFilterError` was raised | The guard only sees queries that build a `QueryParams` AST — raw `session.execute(text(...))`, a hand-written `Select`, `get(pk)` and Mongo aggregation pipelines bypass it entirely. It is a development-time assertion, never a security control | Enable Postgres RLS (S12) as the actual backstop; treat the guard as a fast feedback loop while writing queries, not as a gate |
+| **`enforce_rls=True` mistaken for "RLS is protecting me"** | Deployment passes `assert_rls_enabled()` on every startup, yet a query from the app's own connection returns every tenant's rows | `enforce_rls` only asserts that a policy **exists** (`pg_class.relrowsecurity`) — it never checks whether the connecting role is actually subject to it (superuser/`BYPASSRLS`/table owner without `FORCE`) | Run `inspect_rls_posture()` — see [Postgres RLS](postgres-rls.md#finding-a-silent-no-op-inspect_rls_posture-plan-037--s12d-d-s12-posture) — and fix the connecting role before trusting the assertion |
 | **Bundled admin router left ungated at the ingress** | The `/tenancy/*` admin surface is reachable from wherever the app itself is reachable | Role-guarding (`admin_role="tenant-admin"`) is an application-layer control, not a network one | Use the dedicated `prefix=` to deny it at the ingress, and/or pass `dependencies=[Depends(ip_allowlist)]`/an mTLS check |
 | **Redelivered `TenantProvisionRequested` assumed unique** | Worry about double-provisioning on broker redelivery | `provision()` is idempotent (status is the check) and the consumer additionally dedups same-process redelivery by `event_id`; compose with the durable inbox for cross-restart idempotency | No action needed for the common case — redelivery is a documented, tested no-op, not a hazard to work around manually |
 | **Bus-onboarded tenant 404s** | A tenant provisioned purely via `TenantProvisionRequested` is unroutable forever, even though its schema/database was created | Pre-Plan-008: the consumer called the provisioner directly, never wrote the catalog row `routing.py`/`TenantResolutionMiddleware` look up | Upgrade to a `control_service=`-based `TenantProvisionConsumer` (Plan 008), then repair each affected tenant with one idempotent `POST /tenancy/tenants` — re-running `provision()` finds the missing catalog row, adds it, and the provisioner's own idempotency means no duplicate/destructive DDL runs |

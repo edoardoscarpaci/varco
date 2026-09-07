@@ -117,13 +117,14 @@ def render_rls_ddl(
     Returns:
         DDL statements, in the order they must be executed:
 
-        1. ``ALTER TABLE ... ENABLE ROW LEVEL SECURITY``
-        2. ``ALTER TABLE ... FORCE ROW LEVEL SECURITY`` — so the policy also
+        1. ``CREATE POLICY ...`` — the InitPlan-form ``USING`` clause, applied
+            to both read (``USING``) and write (``WITH CHECK``) paths. Created
+            BEFORE RLS is enabled — see the ``DESIGN:`` block below for why.
+        2. ``ALTER TABLE ... ENABLE ROW LEVEL SECURITY``
+        3. ``ALTER TABLE ... FORCE ROW LEVEL SECURITY`` — so the policy also
             applies to the table owner (Postgres exempts owners by default,
             which silently defeats RLS for any connection using the migration
             role or an ORM configured with owner credentials).
-        3. ``CREATE POLICY ...`` — the InitPlan-form ``USING`` clause, applied
-            to both read (``USING``) and write (``WITH CHECK``) paths.
 
     Edge cases:
         - Calling this twice for the same table produces a second
@@ -171,14 +172,32 @@ def render_rls_ddl(
     tenant_filter = (
         f"{tenant_column} = (SELECT NULLIF(current_setting('{setting}', true), '')::{cast_type})"
     )
+    # DESIGN: CREATE POLICY before ENABLE, before FORCE (§D-S12-order, Plan 037).
+    #   Brief 007 §5: "When RLS is enabled without a policy, a default-deny
+    #   policy applies — all rows become invisible and immutable to
+    #   non-superuser roles", and "If policies are created before RLS is
+    #   enabled, no gap exists." render_rls_ddl() is a documented standalone
+    #   generator (this docstring, postgres-rls.md's "Using the helpers
+    #   directly") — a caller that does not run all three statements inside
+    #   one transaction previously had an unbounded default-deny window
+    #   between ENABLE and CREATE POLICY. CREATE POLICY on a table with RLS
+    #   still disabled is legal Postgres — the policy simply has no effect
+    #   until ENABLE runs — so reordering closes the gap for every caller.
+    #   ✅ Same three statements, same text — only the index changes; every
+    #      in-repo caller executes the whole list in order (verified: Step 1's
+    #      grep), so this is not a behavior change for them.
+    #   ❌ A caller that indexes the returned list positionally (e.g.
+    #      render_rls_ddl(t)[0]) now gets a different statement. No such
+    #      caller exists in-repo; documented as a CHANGELOG ### Changed entry
+    #      for out-of-repo consumers.
     return [
+        (f"CREATE POLICY {name} ON {table} USING ({tenant_filter}) WITH CHECK ({tenant_filter})"),
         f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY",
         # FORCE: without this, Postgres exempts the table owner (often the
         # migration/ORM role) from RLS entirely — a silent bypass, not a
         # loud one, which is exactly the fail-open failure mode U-5 warns
         # about at the application layer (TenantAwareService._scoped_params).
         f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY",
-        (f"CREATE POLICY {name} ON {table} USING ({tenant_filter}) WITH CHECK ({tenant_filter})"),
     ]
 
 

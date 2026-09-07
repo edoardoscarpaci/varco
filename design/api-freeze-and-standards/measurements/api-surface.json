@@ -1929,9 +1929,21 @@
         "kind": "class",
         "module": "varco_sa.inbox"
       },
+      "NullTenantPolicy": {
+        "kind": "class",
+        "module": "varco_sa.rls_autogen"
+      },
       "OutboxEntryModel": {
         "kind": "class",
         "module": "varco_sa.outbox"
+      },
+      "RlsPosture": {
+        "kind": "class",
+        "module": "varco_sa.tenancy.rls_check"
+      },
+      "RlsTablePlan": {
+        "kind": "class",
+        "module": "varco_sa.rls_autogen"
       },
       "SAAdvisoryLock": {
         "kind": "class",
@@ -2063,6 +2075,11 @@
         "module": "varco_sa.metadata",
         "signature": "() -> 'MetaData'"
       },
+      "framework_rls_tables": {
+        "kind": "function",
+        "module": "varco_sa.rls_framework",
+        "signature": "(*, tenant_column: 'str' = 'tenant_id') -> 'tuple[str, ...]'"
+      },
       "framework_table_names": {
         "kind": "function",
         "module": "varco_sa.metadata",
@@ -2081,6 +2098,16 @@
         "kind": "constant",
         "module": "sqlalchemy.sql.schema"
       },
+      "inspect_rls_posture": {
+        "kind": "function",
+        "module": "varco_sa.tenancy.rls_check",
+        "signature": "(conn: 'AsyncConnection', *, tables: 'Iterable[str]') -> 'RlsPosture'"
+      },
+      "install_rls_tenant_hook": {
+        "kind": "function",
+        "module": "varco_sa.tenancy.rls_session",
+        "signature": "(target: 'Any', *, setting: 'str' = 'rls.tenant_id', require_tenant: 'bool' = False, _set_tenant_local: 'Callable[..., Coroutine[Any, Any, None]] | None' = None) -> 'Callable[[], None]'"
+      },
       "jobs_metadata": {
         "kind": "constant",
         "module": "sqlalchemy.sql.schema"
@@ -2088,6 +2115,11 @@
       "outbox_metadata": {
         "kind": "constant",
         "module": "sqlalchemy.sql.schema"
+      },
+      "plan_tenant_rls": {
+        "kind": "function",
+        "module": "varco_sa.rls_autogen",
+        "signature": "(domain_classes: 'Sequence[type]', *, base: 'type', tenant_column: 'str' = 'tenant_id', table_lookup: 'Callable[[type], sa.Table] | None' = None, null_tenant: 'NullTenantPolicy' = <NullTenantPolicy.REFUSE: 'refuse'>) -> 'list[RlsTablePlan]'"
       },
       "print_create_ddl": {
         "kind": "function",
@@ -2104,9 +2136,24 @@
         "module": "varco_sa.type_coercion",
         "signature": "(model: 'type[DeclarativeBase]', field_coercions: 'dict[str, Callable[[Any], Any]] | None' = None) -> 'TypeCoercionRegistry'"
       },
+      "render_tenant_rls_ddl": {
+        "kind": "function",
+        "module": "varco_sa.rls_autogen",
+        "signature": "(plans: 'Sequence[RlsTablePlan]', *, setting: 'str' = 'rls.tenant_id', null_tenant: 'NullTenantPolicy' = <NullTenantPolicy.REFUSE: 'refuse'>) -> 'list[str]'"
+      },
       "sagas_metadata": {
         "kind": "constant",
         "module": "sqlalchemy.sql.schema"
+      },
+      "tenant_rls_downgrade": {
+        "kind": "function",
+        "module": "varco_sa.rls_autogen",
+        "signature": "(op: 'Any', *, plans: 'Sequence[RlsTablePlan]') -> 'None'"
+      },
+      "tenant_rls_upgrade": {
+        "kind": "function",
+        "module": "varco_sa.rls_autogen",
+        "signature": "(op: 'Any', *, plans: 'Sequence[RlsTablePlan]', setting: 'str' = 'rls.tenant_id', null_tenant: 'NullTenantPolicy' = <NullTenantPolicy.REFUSE: 'refuse'>) -> 'None'"
       }
     },
     "varco_ws": {

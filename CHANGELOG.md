@@ -40,8 +40,55 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ErrorMessage.detail` (`str(exc)`) echo on every mapped `ServiceException`. Defaults to `True`
   (byte-identical to 3.1) — a 4.0 flip candidate, reported by `inspect_http_edge()` as
   `http.error.detail_exposed`.
+- **`varco_sa.rls_autogen` — the generated-for-you RLS DDL path (Plan 037 / S12).**
+  `plan_tenant_rls()`/`render_tenant_rls_ddl()`/`tenant_rls_upgrade()`/`tenant_rls_downgrade()`
+  build a reviewable, printable RLS plan for every `TenantScope.TENANT` table, deriving each
+  table's Postgres cast type from its column and refusing (by default) to silently hide a
+  nullable tenant column (`NullTenantPolicy`). Nothing is applied automatically — the caller's
+  own reviewed Alembic revision still calls `tenant_rls_upgrade()`.
+- **`install_rls_tenant_hook()` (Plan 037 / S12).** A SQLAlchemy `after_begin` listener
+  (`varco_sa.tenancy.rls_session`) that sets the `rls.tenant_id` GUC from `current_tenant()` at
+  the start of every transaction — covers `SQLAlchemyUnitOfWork`, `get_repository()`, and app
+  code holding the session factory directly, including across a commit boundary. Opt-in via the
+  new `TenancySettings.rls_set_tenant` (`VARCO_TENANCY_RLS_SET_TENANT`); wired automatically by
+  `varco_sa.di.SAModule` when set.
+- **`inspect_rls_posture()` (Plan 037 / S12).** `varco_sa.tenancy.rls_check` — reports whether the
+  connecting role is a superuser/`BYPASSRLS` (bypasses RLS unconditionally) or owns a table
+  without `FORCE` (bypasses that table), the two ways a correctly-created policy can be a silent
+  no-op. Never raises; a report, not an assertion — `assert_rls_enabled()`'s existing raise
+  condition is unchanged.
+- **Two new `TenancySettings` fields, both `False` by default (Plan 037 / S12):
+  `rls_set_tenant` (`VARCO_TENANCY_RLS_SET_TENANT`) and `rls_require_tenant`
+  (`VARCO_TENANCY_RLS_REQUIRE_TENANT`, raise instead of clearing the GUC when no tenant is
+  ambient).**
+- **`assert_tenant_predicate()` (Plan 037 / S15, droppable, shipped).** An opt-in,
+  **development-time** AST walk (`varco_core.query.applicator.tenant_guard`) asserting that a
+  tenant-scoped query's `QueryParams` carries an equality filter on the tenant field. It is a
+  development-time assertion that a tenant-scoped query was built with a tenant filter; **it is
+  not a security control — Postgres RLS (S12, above) is.** Its one documented false-negative
+  class is any query path that never builds a `QueryParams` AST at all (raw
+  `session.execute(text(...))`, a hand-written `Select`, `get(pk)`, a Mongo aggregation
+  pipeline). Opt in via `TenancySettings.assert_tenant_filter`
+  (`VARCO_TENANCY_ASSERT_TENANT_FILTER`) plus `assert_tenant_filter=True` on
+  `AsyncSQLAlchemyRepository`/`AsyncBeanieRepository`.
 
 ### Changed
+
+- **`render_rls_ddl()`'s returned statement order (Plan 037 / §D-S12-order).** Now
+  `CREATE POLICY`, `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY` — previously
+  `ENABLE`, `FORCE`, `CREATE POLICY`. Same three statements, same text, only the index changes;
+  every in-repo caller executes the whole list in order and is unaffected. Fixes a default-deny
+  window (Postgres denies all rows the instant RLS is enabled with no policy yet present) for any
+  standalone caller of `render_rls_ddl()` that does not run all three statements in one
+  transaction. ⚠️ A caller that indexes the returned list positionally (e.g.
+  `render_rls_ddl(t)[0]`) now gets a different statement — no such caller exists in this repo.
+- **`varco_sa.rls_framework.FRAMEWORK_RLS_TABLES` is now derived, and wider (Plan 037 / S12a).**
+  Previously a hand-listed two-table constant (`varco_audit_log`, `varco_dead_letters`); now
+  computed by `framework_rls_tables()` walking `framework_metadata()` for every table carrying a
+  tenant column — five-plus tables, including `varco_schedules`,
+  `varco_webhook_subscriptions`, and the encryption-key-store table (`varco_tenants` remains
+  hard-excluded — its `tenant_id` is a primary key, not a filterable column). The old constant
+  name still resolves, computed from the new function, so no import breaks.
 
 - The unmapped-exception fallback body no longer contains `str(exc)` (see Security, above) — no
   revert; this is the security fix.

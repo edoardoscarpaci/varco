@@ -57,12 +57,13 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING, Any
 
-from providify import Configuration, Inject, Provider
+from providify import Configuration, Inject, PostConstruct, Provider
 from varco_core.lock import AbstractDistributedLock
 from varco_core.model import DomainModel
 from varco_core.providers import RepositoryProvider
 from varco_core.repository import AsyncRepository
 from varco_core.service.base import IUoWProvider
+from varco_core.tenancy.settings import TenancySettings
 
 from varco_sa.advisory_lock import SAAdvisoryLock, SAXactAdvisoryLock
 from varco_sa.config import SAConfig
@@ -107,6 +108,70 @@ class SAModule:
     Thread safety:  ✅ Module instance is created once at install() time.
     Async safety:   ✅ All providers are synchronous.
     """
+
+    def __init__(self, settings: TenancySettings | None) -> None:
+        """
+        Args:
+            settings: The app's ``TenancySettings``, injected as *optional*
+                      (``TenancySettings | None``) specifically so an app
+                      that never provides ``TenancySettings`` at all — the
+                      byte-identical-by-default case — sees no error and
+                      ``_install_rls_tenant_hook_if_enabled`` below installs
+                      nothing. ``@PostConstruct`` methods take no injected
+                      parameters of their own (providify calls them with no
+                      arguments) — constructor injection is the only way a
+                      ``@Configuration`` module can see a dependency before
+                      its ``@PostConstruct`` hook runs.
+        """
+        self._tenancy_settings = settings
+
+    @PostConstruct
+    def _install_rls_tenant_hook_if_enabled(self) -> None:
+        """
+        Install the RLS ``after_begin`` GUC-setter hook when
+        ``TenancySettings.rls_set_tenant`` is ``True`` (Plan 037 / S12c,
+        §D-S12-hook).
+
+        Runs eagerly at ``container.scan("varco_sa", recursive=True)``/
+        ``container.install(SAModule)`` time — a ``@Configuration``'s
+        ``@PostConstruct`` executes as soon as the module itself is
+        installed, unlike a ``@Singleton``'s ``@PostConstruct`` (deferred
+        until first resolution).
+
+        DESIGN: scope the hook to ``AsyncSession`` itself, not a specific
+        session factory (Plan 037 / §D-S12-hook)
+            ✅ Avoids resolving ``SQLAlchemyRepositoryProvider`` (and
+               therefore ``SAConfig``) from this ``@PostConstruct`` —
+               ``SAConfig`` is provided by the *application*, often after
+               ``varco_sa`` is scanned, and a hard dependency here would
+               force construction order that today's docs and tests do not
+               require.
+            ✅ ``install_rls_tenant_hook(AsyncSession, ...)`` resolves to
+               ``AsyncSession.sync_session_class`` — the shared base
+               ``Session`` class every ``async_sessionmaker`` uses unless it
+               overrides ``sync_session_class`` itself — so this covers
+               every session an app builds from any engine, the common
+               single-database-per-process shape this flag targets.
+            ❌ A process with multiple, independently-configured session
+               factories that want different RLS behaviour cannot get that
+               from this DI wiring path — call
+               ``varco_sa.tenancy.rls_session.install_rls_tenant_hook()``
+               directly against the specific factory instead; this
+               ``@PostConstruct`` is the common-case default, not the only
+               way to install the hook.
+
+        Thread safety:  ✅ Runs once, at single-threaded startup (scan time).
+        Async safety:   ✅ Synchronous — no I/O.
+        """
+        settings = self._tenancy_settings
+        if settings is None or not settings.rls_set_tenant:
+            return
+
+        from sqlalchemy.ext.asyncio import AsyncSession  # noqa: PLC0415
+
+        from varco_sa.tenancy.rls_session import install_rls_tenant_hook  # noqa: PLC0415
+
+        install_rls_tenant_hook(AsyncSession, require_tenant=settings.rls_require_tenant)
 
     @Provider(singleton=True, priority=-sys.maxsize - 1)
     def uow_provider(
