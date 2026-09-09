@@ -494,7 +494,7 @@ recorded in `design/api-freeze-and-standards/measurements/asyncapi-validate.txt`
 
 Usage + the local `npx` invocation: `technical_docs/features/asyncapi-export.md`.
 
-### Outbound webhooks (varco_core.webhook, Plan 031 / D4)
+### Outbound and inbound webhooks (varco_core.webhook[.inbound], Plan 031 / D4, Plan 038 / S19)
 
 `varco_core.webhook` holds everything portable — the `WebhookSubscription`/`WebhookDelivery`
 entities, `WebhookSubscriptionRepository` ABC (+ `InMemoryWebhookSubscriptionRepository`), the
@@ -523,6 +523,14 @@ becomes a lie. Explicit constructor keywords remain per-instance overrides and a
 **Rule**: `active_secrets` are encrypted via the existing `FieldEncryptor` when a repository is
 constructed with `encryptor=` — no new crypto path. `encryptor=None` is a documented dev/test-only
 default; production wiring must pass a real encryptor.
+
+**Rule (Plan 038 / S19)**: inbound webhook verification reuses `StandardWebhooksSigner.verify()`
+(via delegation, for the scheme varco already ships) and `AbstractIdempotencyStore` (via
+`WebhookReplayGuard`) — never a second HMAC path for Standard Webhooks and never a new
+replay-cache ABC. `varco_core.webhook.inbound` (`WebhookVerifier` ABC + four provider adapters +
+`get_verifier`) is fully portable; `varco_fastapi.webhook.verify_webhook` is a **route
+dependency**, never a middleware (the secret and algorithm are per-route facts) — see
+`technical_docs/features/inbound-webhooks.md`.
 
 Full design (signing-scheme choice, the five-layer SSRF model, retry-schedule convention, a
 Pitfalls table): `technical_docs/features/outbound-webhooks.md`. Usage: README's "Outbound
@@ -599,6 +607,33 @@ to `Schedule` to match the job store's model.
 Full design (the fenced-lease deviation in detail, a Pitfalls table for DST gaps/catch-up
 surprise/materializer downtime): `technical_docs/features/recurring-schedules.md`. Usage:
 README's "Recurring schedules" section.
+
+**Note (Plan 039 / S20)**: `Schedule.task_name: str | None = None` — set it and `_build_job`
+emits a `TaskPayload`, making a materialized `Job` reachable through `JobRunner.recover()`;
+`None` (the default) stays byte-identical to every pre-3.2 `Schedule` row. This is what
+`varco_core.retention`'s `RetentionScheduler` rides — see below.
+
+### Retention & purge automation (varco_core.retention, Plan 039 / S20)
+
+A `RetentionPolicy` registry materialized onto the cron→`Job` path above — adapters over five
+shipped bulk-delete verbs (`AbstractDeadLetterQueue.delete_where`, `AuditRepository.delete_where`,
+`AbstractIdempotencyStore.delete_expired`, `AbstractTokenRevocationStore.delete_expired`,
+`AbstractJobStore.delete_where`), a scheduler that materializes+dispatches, an opt-in DI binding,
+a posture inspector, and a `varco retention --policy`/`list` CLI. Full design + a Pitfalls table:
+`technical_docs/features/retention-and-purge.md`. Usage: README's "Retention & purge automation"
+section.
+
+**Rules**:
+- Retention is **adapters over shipped verbs, never a new abstract method** — not on
+  `AbstractDeadLetterQueue`, `AbstractIdempotencyStore`, `AbstractTokenRevocationStore`,
+  `AuditRepository`, or `AbstractJobStore`. Same standing rule that keeps `BulkCache` off
+  `AsyncCache` and `remaining()` off `RateLimiter`.
+- `RetentionPolicy.dry_run` has **no default and never will** — a policy that does not state its
+  own blast radius, in the source, greppable, cannot be constructed at all.
+- The scheduler adds **no lease** — `varco_core/varco_core/schedule/materializer.py:24-30`'s
+  DESIGN block is why: a synthetic lease row saved through `AbstractJobStore.save()` would be
+  indistinguishable from a real job to `JobRetentionTarget`'s own `delete_where()`, i.e. the
+  feature would delete its own coordination row.
 
 ### SBOM and regulatory posture (scripts/sbom.py, Plan 030 / D5)
 
@@ -1301,6 +1336,14 @@ Am I adding a new capability?
 │     ↳ RRULE/RFC 5545? → still parked — needs dateutil.rrule, a new
 │       runtime dependency (technical_docs/features/recurring-schedules.md)
 │
+├─ Scheduled cleanup of a framework table (DLQ, audit log, idempotency
+│  store, revocation store, job store)?
+│  └─ → varco_core.retention (Plan 039 / S20) — bind_retention_registry(container,
+│         registry) + create_varco_app(retention=RetentionLifecycle(...)), never a
+│         hand-written job and never a second scheduler
+│     ↳ Outbox? → NOT a target — deleting an unpublished event is event
+│       loss by construction (technical_docs/features/retention-and-purge.md)
+│
 ├─ Feature flag / runtime toggle?
 │  └─ → varco_core.flags.AbstractFeatureFlags (Plan 032 / D7) —
 │       NullFeatureFlags is the DI default; enable_feature_flags()
@@ -1459,6 +1502,20 @@ Am I adding a new capability?
 │                            (never a create_varco_app kwarg, never an env var — RD-9)
 │       ⚠️ Never weaken ssrf.validate_target()'s resolve-then-pin behaviour — a
 │         validate-the-URL-string-only shortcut reopens DNS rebinding
+│
+├─ Receiving a signed webhook (verify a Stripe/GitHub/Slack/Svix/Standard
+│  Webhooks delivery) (Plan 038 / S19)?
+│  └─ → varco_core.webhook.inbound (WebhookVerifier ABC, four provider
+│         adapters, get_verifier(), WebhookReplayGuard over the existing
+│         AbstractIdempotencyStore — never a second HMAC path and never a
+│         new replay-cache ABC)
+│       + varco_fastapi.webhook.verify_webhook — a route dependency,
+│         never a middleware (the secret/algorithm are per-route facts)
+│       ↳ New provider? → subclass HmacWebhookVerifier; register in
+│                            get_verifier()
+│       ⚠️ GitHub ships no timestamp — GitHubWebhookVerifier refuses
+│         construction without replay_guard= or
+│         acknowledge_no_replay_protection=True
 │
 ├─ Startup security check (is BaseAuthorizer still bound, is an admin mount
 │  unauthenticated, is RLS actually enforced, ...)?

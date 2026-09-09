@@ -25,9 +25,21 @@ in-process double-materialization safety
        ``(schedule_id, wall)``. Two materializers computing the same
        occurrence converge on the same physical row (an idempotent upsert
        via ``AbstractJobStore.save()``'s own documented semantics), not two
-       rows — this is the real cross-process backstop, reinforced by the
-       ``UNIQUE(schedule_id, run_at)`` index on the SA/Beanie repositories
-       (Step 10).
+       rows — this is the **sole** cross-process backstop.
+    ⚠️ **GOTCHA — there is no ``UNIQUE(schedule_id, run_at)`` index, and
+       there cannot be.** An earlier revision of this docstring claimed one
+       existed on the SA/Beanie repositories and reinforced the deterministic
+       id. It does not: the ``schedules`` table has no ``run_at`` column at
+       all (only materialized ``Job`` rows carry ``run_at``), so the
+       constraint is not merely missing but structurally impossible on that
+       table. Verified against
+       ``varco_sa/varco_sa/migrations/versions/0007_schedules_table.py``,
+       which creates only ``UNIQUE(schedule_id)``. Cross-process convergence
+       therefore rests entirely on the deterministic ``uuid5`` id plus
+       ``save()``'s upsert semantics plus the ``get()``-then-skip below —
+       which does hold — and **not** on any database uniqueness constraint.
+       Do not weaken the deterministic id on the assumption that a unique
+       index is standing behind it. See BACKLOG.
     ✅ A lazily-created, per-schedule ``asyncio.Lock`` (module-level
        registry, keyed by ``schedule_id`` — never a ``Lock()`` constructed
        at import time or in ``__init__``, per CLAUDE.md's rule) serializes
@@ -36,10 +48,10 @@ in-process double-materialization safety
        idempotent id alone would still leave open for two materializers
        racing inside the same event loop.
     ❌ The lock only coordinates one process — a genuinely distributed
-       double-run still relies on the deterministic id + DB unique index,
-       not this lock. Accepted: that is exactly what the unique index is
-       for, and duplicating its job in Python would be the "second locking
-       model" the plan explicitly warns against.
+       double-run relies on the deterministic id + the idempotent upsert
+       alone (see the ⚠️ GOTCHA above: there is no DB unique index behind
+       it), not on this lock. Accepted: duplicating that job in Python would
+       be the "second locking model" the plan explicitly warns against.
 """
 
 from __future__ import annotations
@@ -50,6 +62,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from zoneinfo import ZoneInfo
 
 from varco_core.job.base import AbstractJobStore, Job
+from varco_core.job.task import TaskPayload
 from varco_core.schedule.cron import parse_cron
 from varco_core.schedule.entity import CatchUpPolicy, Schedule
 from varco_core.tz.schedule import resolve_zoned
@@ -223,6 +236,19 @@ class ScheduleMaterializer:
             gap=schedule.gap_policy,
             overlap=schedule.overlap_policy,
         )
+        # Plan 039 (S20) / §D-S20-driver "(1)": task_name=None (the default)
+        # emits task_payload=None — byte-identical to every Schedule row and
+        # every test that predates this field (pinned by
+        # test_schedule_materializer.py's
+        # test_task_name_none_produces_no_task_payload_pinned, which asserts
+        # this BEFORE the change landed). Without this, a materialized Job
+        # carries no executable body: JobRunner.recover() filters on
+        # `task_payload is not None` (runner.py:524) and would never see it.
+        task_payload = (
+            TaskPayload(task_name=schedule.task_name, kwargs=dict(schedule.payload))
+            if schedule.task_name
+            else None
+        )
         return Job(
             job_id=_occurrence_job_id(schedule.schedule_id, wall),
             run_at=resolved.astimezone(UTC),
@@ -231,4 +257,5 @@ class ScheduleMaterializer:
             run_at_fold=resolved.fold,
             callback_url=schedule.callback_url,
             metadata={"schedule_id": str(schedule.schedule_id), **schedule.payload},
+            task_payload=task_payload,
         )

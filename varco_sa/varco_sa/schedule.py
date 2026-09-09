@@ -75,6 +75,9 @@ _schedules_table = Table(
     Column("last_materialized_at", DateTime(timezone=True), nullable=True),
     Column("payload", JSON, nullable=False),
     Column("callback_url", String(2048), nullable=True),
+    # Plan 039 (S20) / Step 12: nullable, no backfill — added by migration
+    # 0008_schedule_task_name.py, after 0007_schedules_table.py.
+    Column("task_name", String(255), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
@@ -146,6 +149,7 @@ class SAScheduleRepository(AbstractScheduleRepository):
             last_materialized_at=_ensure_tz_optional(row.last_materialized_at),
             payload=dict(row.payload),
             callback_url=row.callback_url,
+            task_name=row.task_name,
             created_at=_ensure_tz(row.created_at),
             updated_at=_ensure_tz(row.updated_at),
         )
@@ -176,6 +180,7 @@ class SAScheduleRepository(AbstractScheduleRepository):
                         last_materialized_at=schedule.last_materialized_at,
                         payload=dict(schedule.payload),
                         callback_url=schedule.callback_url,
+                        task_name=schedule.task_name,
                         created_at=now,
                         updated_at=now,
                     )
@@ -197,6 +202,7 @@ class SAScheduleRepository(AbstractScheduleRepository):
                         last_materialized_at=schedule.last_materialized_at,
                         payload=dict(schedule.payload),
                         callback_url=schedule.callback_url,
+                        task_name=schedule.task_name,
                         updated_at=now,
                     )
                 )

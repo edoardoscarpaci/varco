@@ -11,6 +11,7 @@ Tests cover:
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from varco_core.job.base import Job, JobStatus
@@ -297,3 +298,125 @@ class TestRecover:
 
         await runner1.stop()
         await runner2.stop()
+
+
+# ── recover() honours run_at (Plan 039 / Phase 1, Step 1) ──────────────────────
+
+
+class TestRecoverHonoursRunAt:
+    """recover() must not claim PENDING task-payload jobs whose run_at is in the
+    future — Job.run_at is documented as "earliest time this job is eligible to
+    be claimed" (job/base.py:252-255) and claim_next()'s own predicate enforces
+    this; recover() currently uses try_claim() unconditionally and violates it."""
+
+    async def test_future_run_at_is_not_claimed(self):
+        """A job scheduled an hour from now must not fire immediately."""
+        store = InMemoryJobStore()
+        future = datetime.now(UTC) + timedelta(hours=1)
+        job = Job(
+            job_id=uuid4(),
+            task_payload=TaskPayload(task_name="fn"),
+            run_at=future,
+        )
+        await store.save(job)
+
+        registry = TaskRegistry()
+        runner = JobRunner(store=store)
+        await runner.start()
+
+        count = await runner.recover(registry)
+        assert count == 0
+
+        stored = await store.get(job.job_id)
+        assert stored is not None
+        assert stored.status == JobStatus.PENDING  # never claimed
+
+        await runner.stop()
+
+    async def test_past_run_at_is_claimed(self):
+        """A job whose run_at has already elapsed is claimed normally."""
+        store = InMemoryJobStore()
+        past = datetime.now(UTC) - timedelta(seconds=1)
+
+        results: list[int] = []
+
+        async def fn() -> None:
+            results.append(1)
+
+        registry = TaskRegistry()
+        registry.register(VarcoTask(name="fn", fn=fn))
+
+        job = Job(
+            job_id=uuid4(),
+            task_payload=TaskPayload(task_name="fn"),
+            run_at=past,
+        )
+        await store.save(job)
+
+        runner = JobRunner(store=store)
+        await runner.start()
+
+        count = await runner.recover(registry)
+        assert count == 1
+
+        await asyncio.sleep(0.05)
+        assert results == [1]
+
+        await runner.stop()
+
+    async def test_run_at_none_is_claimed_today_behaviour_pinned(self):
+        """run_at=None (the default) is claimed immediately — today's behaviour,
+        pinned so Phase 1's fix cannot regress the common case."""
+        store = InMemoryJobStore()
+
+        results: list[int] = []
+
+        async def fn() -> None:
+            results.append(1)
+
+        registry = TaskRegistry()
+        registry.register(VarcoTask(name="fn", fn=fn))
+
+        job = Job(job_id=uuid4(), task_payload=TaskPayload(task_name="fn"))
+        assert job.run_at is None
+        await store.save(job)
+
+        runner = JobRunner(store=store)
+        await runner.start()
+
+        count = await runner.recover(registry)
+        assert count == 1
+
+        await asyncio.sleep(0.05)
+        assert results == [1]
+
+        await runner.stop()
+
+    async def test_returned_count_reflects_only_claimed_jobs(self):
+        """A mix of future and eligible jobs — the count must reflect eligible only."""
+        store = InMemoryJobStore()
+        past = datetime.now(UTC) - timedelta(seconds=1)
+        future = datetime.now(UTC) + timedelta(hours=1)
+
+        async def fn() -> None:
+            pass
+
+        registry = TaskRegistry()
+        registry.register(VarcoTask(name="fn", fn=fn))
+
+        eligible = Job(job_id=uuid4(), task_payload=TaskPayload(task_name="fn"), run_at=past)
+        not_eligible = Job(job_id=uuid4(), task_payload=TaskPayload(task_name="fn"), run_at=future)
+        await store.save(eligible)
+        await store.save(not_eligible)
+
+        runner = JobRunner(store=store)
+        await runner.start()
+
+        count = await runner.recover(registry)
+        assert count == 1
+
+        stored_not_eligible = await store.get(not_eligible.job_id)
+        assert stored_not_eligible is not None
+        assert stored_not_eligible.status == JobStatus.PENDING
+
+        await runner.stop()

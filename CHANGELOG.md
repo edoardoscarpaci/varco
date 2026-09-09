@@ -53,6 +53,39 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Retention & purge automation (Plan 039, S20).** `varco_core.retention` — `RetentionPolicy`/
+  `RetentionRegistry`/`RetentionOutcome`/`RetentionResult` (`retention/policy.py`),
+  `RetentionTarget` ABC + `CallableRetentionTarget` escape hatch (`retention/base.py`), six
+  in-tree adapters over shipped bulk-delete verbs — `DlqRetentionTarget`/`AuditRetentionTarget`/
+  `IdempotencyRetentionTarget`/`RevocationRetentionTarget`/`JobRetentionTarget`
+  (`retention/targets.py`, no new abstract method on any shipped ABC),
+  `RetentionScheduler`/`execute_policy()`/`RetentionPolicyNotFoundError`
+  (`retention/scheduler.py`), `inspect_retention_posture()`/`RetentionPostureReport`
+  (`retention/posture.py`), `bind_retention_registry()` (`retention/di.py`),
+  `install_retention_metrics()` (`observability/retention.py`). `varco_fastapi.RetentionLifecycle`
+  + `create_varco_app(retention=...)` (appended, never prepended). `varco retention` gains
+  `--policy <name>` (a third resolution mode alongside `--type`/`--target`) and a `list` verb —
+  `--type`/`--target` invocations are unchanged. `Schedule.task_name: str | None = None`
+  (`varco_core.schedule.entity`, byte-identical when unset) plus SA migration
+  `0008_schedule_task_name` — closes the gap where a materialized `Job` had no executable body.
+  Eight safety guards (`dry_run` has no default and never will; `older_than` floors; capability
+  mismatches raise at wiring; a `dry_run=True` sweep provably deletes nothing, including on the
+  two verbs with no preview) — see `technical_docs/features/retention-and-purge.md`.
+- **Inbound webhook signature verification (Plan 038, S19).**
+  `varco_core.webhook.inbound` — `WebhookVerifier` (ABC), `VerificationResult`/
+  `VerificationFailure`/`SecretEncoding`, and four provider adapters
+  (`StandardWebhooksVerifier`/`SvixWebhookVerifier` — delegates to the shipped
+  `StandardWebhooksSigner`, `StripeWebhookVerifier`, `GitHubWebhookVerifier`,
+  `SlackWebhookVerifier`) plus `get_verifier()`. `WebhookReplayGuard`
+  (`varco_core.webhook.inbound.replay`) adapts the existing
+  `AbstractIdempotencyStore` into a message-id replay guard — no new ABC, no new backend.
+  `WebhookSignatureError`/`WebhookReplayError` (`varco_core.exception.webhook`, 401/409).
+  `varco_fastapi.webhook.verify_webhook`/`VerifiedWebhook` is the FastAPI route dependency
+  (never a middleware — the secret/algorithm are per-route facts).
+  `WebhookSettings` gains `inbound_tolerance_seconds` (`VARCO_WEBHOOK_INBOUND_TOLERANCE_SECONDS`,
+  default `300.0`) and `inbound_replay_ttl_seconds`
+  (`VARCO_WEBHOOK_INBOUND_REPLAY_TTL_SECONDS`, default `600.0`). Nothing enabled by default;
+  see `technical_docs/features/inbound-webhooks.md`.
 - **`SecurityPosture` startup preflight (Plan 036, S9).** `SecurityPostureLifecycle`
   (`varco_fastapi.posture`) aggregates 033's `inspect_tenant_provenance()`, 034's
   `inspect_auth_posture()`/`inspect_revocation_posture()`, 035's `inspect_http_edge()`, and 037's
@@ -124,8 +157,26 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`VARCO_TENANCY_ASSERT_TENANT_FILTER`) plus `assert_tenant_filter=True` on
   `AsyncSQLAlchemyRepository`/`AsyncBeanieRepository`.
 
+### Fixed
+
+- **`JobRunner.recover()` now honours `Job.run_at` (Plan 039, Phase 1).** `Job.run_at` is
+  documented as *"earliest time this job is eligible to be claimed"* and the ABC's own
+  `claim_next()` default enforces exactly this predicate — `recover()` used `try_claim()`
+  unconditionally and skipped the check, so a job scheduled for the future would fire immediately
+  on process restart. ⚠️ **Behaviour change, narrow in practice**: `InMemoryJobStore.try_claim()`
+  already enforced `run_at IS NULL OR run_at <= now` internally, so this was not observable
+  through the in-memory store every unit test in this repo uses — the fix is a defence-in-depth
+  filter at the runner layer, closing the gap for any `AbstractJobStore` whose own `try_claim()`
+  does not filter. An app relying on `recover()` firing future-dated jobs at startup (against
+  `run_at`'s own documented contract) will see a behaviour change; `run_at=None` (the common case)
+  is unaffected.
+
 ### Changed
 
+- **`StandardWebhooksSigner.sign()`/`verify()` accept `bytes` (Plan 038, S19, §D-S19-gap).**
+  `payload` is now `str | bytes` on both methods — additive, byte-identical for an existing `str`
+  caller. A `bytes` payload lets a raw inbound body that is not valid UTF-8 be verified directly,
+  without a lossy decode.
 - **`render_rls_ddl()`'s returned statement order (Plan 037 / §D-S12-order).** Now
   `CREATE POLICY`, `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY` — previously
   `ENABLE`, `FORCE`, `CREATE POLICY`. Same three statements, same text, only the index changes;

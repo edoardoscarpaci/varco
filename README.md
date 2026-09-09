@@ -191,8 +191,10 @@ policy engine, field encryption, observability, profiling, …) — see
 - [CloudEvents envelope](#cloudevents-envelope)
 - [AsyncAPI export](#asyncapi-export)
 - [Outbound webhooks](#outbound-webhooks)
+- [Inbound webhook verification](#inbound-webhook-verification)
 - [Feature flags](#feature-flags)
 - [Recurring schedules](#recurring-schedules)
+- [Retention & purge automation](#retention--purge-automation)
 - [File watching and hot reload](#file-watching-and-hot-reload)
 - [Security headers](#security-headers)
 - [Request body limits](#request-body-limits)
@@ -4305,6 +4307,67 @@ convention, a Pitfalls table): `technical_docs/features/outbound-webhooks.md`.
 
 ---
 
+## Inbound webhook verification
+
+Plan 038 / S19 — the receiving half of the pair above: verify a webhook sent *to* a varco app
+(Stripe, GitHub, Slack, Svix, or any Standard Webhooks-conformant sender) with one route
+dependency instead of hand-rolling `hmac`. `varco_core.webhook.inbound` (`WebhookVerifier` ABC +
+four adapters + `get_verifier`) is fully portable; `varco_fastapi.webhook.verify_webhook` is the
+only FastAPI-specific piece.
+
+```python
+from fastapi import Depends, FastAPI
+from varco_core.webhook.inbound import get_verifier
+from varco_fastapi.webhook import VerifiedWebhook, verify_webhook
+
+app = FastAPI()
+verifier = get_verifier("stripe", secrets=["whsec_..."])
+verify_stripe = verify_webhook(verifier)
+
+
+@app.post("/hooks/stripe")
+async def receive_stripe(webhook: VerifiedWebhook = Depends(verify_stripe)) -> dict:
+    # webhook.body is the exact raw bytes that were verified -- never re-parsed.
+    return {"received": True, "provider": webhook.provider}
+```
+
+A route dependency, not a middleware — the secret and the algorithm are per-route facts
+(`/hooks/stripe` and `/hooks/github` need different secrets *and* different schemes), which a
+middleware would need a path→verifier map to handle. `await request.body()` caches into
+Starlette's `Request._body`, so a downstream pydantic body model on the *same* route still parses
+correctly. `BodyLimitMiddleware` (on by default at 10 MiB) rejects an over-limit body with a 413
+*before* this dependency ever buffers anything.
+
+Add a replay guard — reused from the existing `AbstractIdempotencyStore` seam, no new ABC — to
+reject a message id that arrives twice (mandatory, or an explicit acknowledgement, for GitHub,
+which ships no timestamp at all):
+
+```python
+from varco_core.webhook.inbound import WebhookReplayGuard
+from varco_core.idempotency.memory import InMemoryIdempotencyStore  # or a Redis/SA/Beanie backend
+
+guard = WebhookReplayGuard(store=InMemoryIdempotencyStore(), ttl_seconds=600.0)
+github_verifier = get_verifier(
+    "github", secrets=["..."], replay_guard=guard
+)  # or acknowledge_no_replay_protection=True to accept the risk
+verify_github = verify_webhook(github_verifier, replay_guard=guard)
+```
+
+A tampered/expired signature raises `WebhookSignatureError` (401); a replayed message id raises
+`WebhookReplayError` (409). Both render through the standard error envelope with a
+`correlation_id`, and neither ever includes the secret or the signature value.
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `VARCO_WEBHOOK_INBOUND_TOLERANCE_SECONDS` | `300.0` | Clock-skew tolerance accepted on an inbound delivery's timestamp — separate from the outbound `signature_tolerance_seconds` |
+| `VARCO_WEBHOOK_INBOUND_REPLAY_TTL_SECONDS` | `600.0` | Default TTL for `WebhookReplayGuard` entries — pass an explicit, longer `ttl_seconds=` for GitHub's multi-hour retry window |
+
+Full design (the provider divergence table, why Standard Webhooks/Svix delegates to the shipped
+signer, the replay model, secret sourcing, the raw-body/body-limit story, a Pitfalls table):
+`technical_docs/features/inbound-webhooks.md`.
+
+---
+
 ## Feature flags
 
 Plan 032 / D7. `varco_core.flags` is a varco-shaped `AbstractFeatureFlags` seam — **not** a
@@ -4387,6 +4450,83 @@ Postgres/Mongo, both with a `UNIQUE(schedule_id)` constraint.
 ⚠️ Cross-process double-materialization safety does **not** reuse the job store's fenced-lease
 primitives — see `technical_docs/features/recurring-schedules.md` for what the materializer
 actually does instead (a deterministic occurrence id + a per-schedule in-process lock) and why.
+
+---
+
+## Retention & purge automation
+
+Plan 039 (S20). A `RetentionPolicy` registry materialized onto the cron→`Job` path above —
+declare *"prune dead letters older than 30 days at 03:00 Europe/Rome"* once, and varco schedules
+and runs it with the same DST-safe cron semantics and `AbstractJobRunner`. **Nothing is scheduled
+and nothing is deleted by default.**
+
+```python
+from datetime import timedelta
+
+from varco_core.retention.di import bind_retention_registry
+from varco_core.retention.policy import RetentionPolicy, RetentionRegistry
+from varco_core.retention.targets import AuditRetentionTarget, DlqRetentionTarget
+from varco_fastapi.app import create_varco_app
+from varco_fastapi.retention import RetentionLifecycle
+
+registry = RetentionRegistry()
+registry.register(
+    RetentionPolicy(
+        name="nightly-dlq",
+        target=DlqRetentionTarget(dlq=my_dlq, acknowledge_dead_letter_deletion=True),
+        cron_expr="0 3 * * *",
+        timezone="Europe/Rome",
+        dry_run=True,                  # preview first — would_delete, deletes nothing
+        older_than=timedelta(days=30),
+    )
+)
+registry.register(
+    RetentionPolicy(
+        name="audit-1y",
+        target=AuditRetentionTarget(repo=my_audit_repo),
+        cron_expr="0 4 * * *",
+        timezone="UTC",
+        dry_run=False,
+        older_than=timedelta(days=365),
+    )
+)
+
+bind_retention_registry(container, registry)
+app = create_varco_app(
+    container,
+    retention=RetentionLifecycle(registry, container=container, interval=300.0),
+)
+```
+
+| Target | Wraps | Cutoff? | Preview? |
+|---|---|---|---|
+| `DlqRetentionTarget` | `AbstractDeadLetterQueue.delete_where` | ✅ | ✅ |
+| `AuditRetentionTarget` | `AuditRepository.delete_where` | ✅ | ✅ |
+| `IdempotencyRetentionTarget` | `AbstractIdempotencyStore.delete_expired` | ❌ | ❌ (skipped under `dry_run=True`) |
+| `RevocationRetentionTarget` | `AbstractTokenRevocationStore.delete_expired` | ❌ | ❌ (skipped under `dry_run=True`) |
+| `JobRetentionTarget` | `AbstractJobStore.delete_where` | ✅ | ✅ |
+| `CallableRetentionTarget` | any `async (older_than, limit, dry_run) -> int` | declared by caller | declared by caller |
+
+⚠️ **`dry_run` has no default — every policy must say it.** ⚠️ A DLQ policy needs
+`acknowledge_dead_letter_deletion=True` — dead letters are the last remaining copy of a failed
+event. ⚠️ `older_than < 24h` needs `acknowledge_short_retention=True`. ⚠️ The outbox, encryption
+keys, and webhook deliveries are **not** retention targets — see
+`technical_docs/features/retention-and-purge.md`'s Pitfalls table for why.
+
+CLI, one policy, one run, no scheduler process needed (e.g. a Kubernetes `CronJob`):
+
+```bash
+varco retention prune --policy nightly-dlq --target myapp.wiring:build_retention_registry
+varco retention list --target myapp.wiring:build_retention_registry
+```
+
+`inspect_retention_posture(registry=registry)` reports `destructive_count`, `dry_run_count`,
+`platform_wide_policies` (policies with `tenant_ids=None` — a cross-tenant purge), `dlq_policies`,
+and `short_retention_policies` — a pure, never-raising read, same shape as
+`inspect_revocation_posture()`.
+
+Full design (the eight safety guards, the three Plan-032 driver gaps this closed, multi-process
+convergence, tenancy scoping): `technical_docs/features/retention-and-purge.md`.
 
 ---
 

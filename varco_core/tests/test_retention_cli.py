@@ -127,3 +127,101 @@ class TestRetentionPruneDryRun:
 
         dlq = asyncio.run(_dlq_with_entries())
         assert asyncio.run(dlq.count()) == 5
+
+
+# ── Plan 039 (S20) / Step 23 — --policy and list verb ───────────────────────
+# RED until varco_core/varco_core/cli/retention.py (Step 24) gains --policy
+# and the list verb. Existing --type/--target invocations above must stay
+# byte-identical (already asserted by TestRetentionPruneExitCodes/DryRun).
+
+
+def _policy_registry_factory():
+    from datetime import timedelta  # noqa: PLC0415
+
+    from varco_core.retention.policy import RetentionPolicy, RetentionRegistry  # noqa: PLC0415
+    from varco_core.retention.targets import DlqRetentionTarget  # noqa: PLC0415
+
+    dlq = InMemoryDeadLetterQueue()
+    target = DlqRetentionTarget(dlq=dlq, acknowledge_dead_letter_deletion=True)
+    registry = RetentionRegistry()
+    registry.register(
+        RetentionPolicy(
+            name="nightly-dlq",
+            target=target,
+            cron_expr="0 3 * * *",
+            timezone="UTC",
+            dry_run=True,
+            older_than=timedelta(days=30),
+        )
+    )
+    return registry
+
+
+class TestRetentionCliPolicyMode:
+    def test_policy_runs_one_policy_once(self) -> None:
+        from varco_core.cli.main import main
+
+        exit_code = main(
+            [
+                "retention",
+                "prune",
+                "--policy",
+                "nightly-dlq",
+                "--target",
+                "tests.test_retention_cli:_policy_registry_factory",
+            ]
+        )
+        assert exit_code == 0
+
+    def test_policy_together_with_type_is_usage_error(self) -> None:
+        from varco_core.cli.main import main
+
+        exit_code = main(
+            [
+                "retention",
+                "prune",
+                "--policy",
+                "nightly-dlq",
+                "--type",
+                "dlq",
+                "--target",
+                "tests.test_retention_cli:_policy_registry_factory",
+            ]
+        )
+        assert exit_code == 2
+
+    def test_unknown_policy_name_exits_2_naming_it(self, capsys) -> None:
+        from varco_core.cli.main import main
+
+        exit_code = main(
+            [
+                "retention",
+                "prune",
+                "--policy",
+                "ghost",
+                "--target",
+                "tests.test_retention_cli:_policy_registry_factory",
+            ]
+        )
+        assert exit_code == 2
+        captured = capsys.readouterr()
+        assert "ghost" in (captured.err + captured.out)
+
+
+class TestRetentionCliListVerb:
+    def test_list_prints_one_line_per_policy_including_dry_run(self, capsys) -> None:
+        from varco_core.cli.main import main
+
+        exit_code = main(
+            [
+                "retention",
+                "list",
+                "--target",
+                "tests.test_retention_cli:_policy_registry_factory",
+            ]
+        )
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        out = captured.out + captured.err
+        assert "nightly-dlq" in out
+        assert "dry_run" in out.lower() or "dry-run" in out.lower() or "True" in out

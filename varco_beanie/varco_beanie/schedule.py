@@ -59,6 +59,10 @@ class ScheduleDocument(Document):
     last_materialized_at: datetime | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     callback_url: str | None = None
+    # Plan 039 (S20) / Step 12: nullable, no backfill, mirrors varco_sa's
+    # migration 0008_schedule_task_name.py — Beanie has no schema migration
+    # so an existing document simply lacks the field until next save().
+    task_name: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -122,6 +126,7 @@ class BeanieScheduleRepository(AbstractScheduleRepository):
             last_materialized_at=doc.last_materialized_at,
             payload=dict(doc.payload),
             callback_url=doc.callback_url,
+            task_name=doc.task_name,
             created_at=doc.created_at,
             updated_at=doc.updated_at,
         )
@@ -146,6 +151,7 @@ class BeanieScheduleRepository(AbstractScheduleRepository):
                 last_materialized_at=schedule.last_materialized_at,
                 payload=dict(schedule.payload),
                 callback_url=schedule.callback_url,
+                task_name=schedule.task_name,
                 created_at=now,
                 updated_at=now,
             )
@@ -166,6 +172,7 @@ class BeanieScheduleRepository(AbstractScheduleRepository):
             doc.last_materialized_at = schedule.last_materialized_at
             doc.payload = dict(schedule.payload)
             doc.callback_url = schedule.callback_url
+            doc.task_name = schedule.task_name
             doc.updated_at = now
             await doc.save()
         return self._doc_to_entity(doc)

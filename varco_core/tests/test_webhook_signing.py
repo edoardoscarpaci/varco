@@ -215,3 +215,73 @@ def test_verify_helper_dispatch_by_scheme_name(scheme_name: str) -> None:
 
     signer = get_signer(scheme_name, secrets=["s3cr3t"])
     assert signer is not None
+
+
+# ── Plan 038 (S19) / Phase 1, Steps 1 & 3 — bytes payload widening ──────────
+#
+# ``StandardWebhooksSigner.sign()``/``verify()`` currently accept only
+# ``payload: str`` (signing.py:124, :145). §D-S19-gap widens both to
+# ``str | bytes``. These tests fail today with a UnicodeDecodeError /
+# str-encode TypeError until Step 2 lands.
+
+
+class TestBytesPayloadWidening:
+    SECRET = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"
+
+    def test_verify_accepts_bytes_payload_same_result_as_str(self, monkeypatch) -> None:
+        from varco_core.webhook import signing
+        from varco_core.webhook.signing import StandardWebhooksSigner
+
+        monkeypatch.setattr(signing.time, "time", lambda: 1700000000.0)
+        signer = StandardWebhooksSigner(secrets=[self.SECRET])
+        payload_str = '{"hello": "world"}'
+        headers = signer.sign(msg_id="msg_1", timestamp="1700000000", payload=payload_str)
+
+        result_str = signer.verify(payload=payload_str, headers=headers)
+        result_bytes = signer.verify(payload=payload_str.encode("utf-8"), headers=headers)
+        assert result_str == result_bytes is True
+
+    def test_verify_accepts_non_utf8_body_only_via_bytes_path(self, monkeypatch) -> None:
+        from varco_core.webhook import signing
+        from varco_core.webhook.signing import StandardWebhooksSigner
+
+        monkeypatch.setattr(signing.time, "time", lambda: 1700000000.0)
+        signer = StandardWebhooksSigner(secrets=[self.SECRET])
+
+        # A lone 0xFF byte is not valid UTF-8 -- would raise on any
+        # bytes->str decode attempt; the bytes path must handle it directly.
+        non_utf8_body = b"prefix-\xff-suffix"
+        signed_content = b"msg_1.1700000000." + non_utf8_body
+        import hashlib
+        import hmac as hmac_module
+
+        digest = hmac_module.new(
+            signer._secret_bytes(self.SECRET), signed_content, hashlib.sha256
+        ).digest()
+        import base64
+
+        signature = f"v1,{base64.b64encode(digest).decode('ascii')}"
+        headers = {
+            "webhook-id": "msg_1",
+            "webhook-timestamp": "1700000000",
+            "webhook-signature": signature,
+        }
+        assert signer.verify(payload=non_utf8_body, headers=headers) is True
+
+
+class TestSignVerifyRoundTripBytesVsStr:
+    SECRET = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"
+
+    def test_sign_then_verify_bytes_byte_identical_to_str_for_non_ascii_utf8(
+        self, monkeypatch
+    ) -> None:
+        from varco_core.webhook import signing
+        from varco_core.webhook.signing import StandardWebhooksSigner
+
+        monkeypatch.setattr(signing.time, "time", lambda: 1700000000.0)
+        signer = StandardWebhooksSigner(secrets=[self.SECRET])
+        payload = '{"emoji": "éèê"}'  # non-ASCII UTF-8
+
+        headers = signer.sign(msg_id="msg_1", timestamp="1700000000", payload=payload)
+        assert signer.verify(payload=payload.encode("utf-8"), headers=headers) is True
+        assert signer.verify(payload=payload, headers=headers) is True

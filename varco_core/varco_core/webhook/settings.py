@@ -68,6 +68,31 @@ class WebhookSettings(VarcoSettings):
                                  (default) — deny-list-only posture.
         extra_deny_ranges:       Additional CIDR ranges to block, beyond the
                                  built-in private/loopback/link-local set.
+        inbound_tolerance_seconds: Clock-skew tolerance accepted from an
+                                 *inbound* delivery's signed timestamp
+                                 (Plan 038 / S19, §D-S19-config). Deliberately
+                                 a **separate** field from
+                                 ``signature_tolerance_seconds`` — that one
+                                 governs what we ask receivers of *our own*
+                                 outbound deliveries to tolerate; this one
+                                 governs what we accept from a possibly
+                                 clock-skewed upstream provider. Loosening
+                                 one must never loosen the other. Default
+                                 ``300.0`` — brief 013 §2's de-facto
+                                 Stripe/Svix/Slack convention (identical to
+                                 the outbound default, so nothing surprising
+                                 out of the box).
+        inbound_replay_ttl_seconds: Default TTL, in seconds, for
+                                 ``varco_core.webhook.inbound.replay.WebhookReplayGuard``
+                                 entries. Default ``600.0`` — brief 013 §46:
+                                 "with a 5-minute tolerance window, a cache
+                                 with 5-10 minute TTL covers it". ⚠️ GitHub
+                                 (no timestamp, §D-S19-github) needs a much
+                                 longer window — brief 013 §47 suggests
+                                 24-48h — which is why a GitHub route passes
+                                 ``ttl_seconds=`` to ``WebhookReplayGuard``
+                                 explicitly rather than relying on this
+                                 default (Open question 4).
 
     Thread safety:  ✅ Immutable after construction.
     Async safety:   ✅ Pure value object — no I/O.
@@ -85,3 +110,5 @@ class WebhookSettings(VarcoSettings):
     persist_all_deliveries: bool = False
     allow_list: tuple[str, ...] | None = None
     extra_deny_ranges: tuple[str, ...] = ()
+    inbound_tolerance_seconds: float = 300.0
+    inbound_replay_ttl_seconds: float = 600.0

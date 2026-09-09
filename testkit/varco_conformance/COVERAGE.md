@@ -146,6 +146,40 @@ These are legitimate, permanent absences — not TODOs, not backlog rows.
   adds), rather than through a shared suite `testkit/varco_conformance` (never packaged) could not
   usefully serve an out-of-tree authorizer implementer anyway.
 
+## No conformance suite (Plan 038, §D-S19-conformance)
+
+- **Stated absence — `WebhookVerifier`** (`varco_core.webhook.inbound.base`, added by Plan 038 /
+  S19). Not a ninth `testkit/varco_conformance` module. All five in-tree classes, across four
+  provider families (`StandardWebhooksVerifier`/`SvixWebhookVerifier`/`StripeWebhookVerifier`/
+  `GitHubWebhookVerifier`/`SlackWebhookVerifier` — Standard Webhooks and Svix are one family,
+  since `SvixWebhookVerifier` only overrides `.provider`), are pure-CPU, Docker-free, in-tree
+  classes with no I/O — the "does this backend really behave the same under a real server"
+  question a conformance suite exists to answer does not apply, unlike the eight ABCs above
+  (every one of which has at least one durable, I/O-performing backend). A parametrized table in
+  `varco_core/tests/test_webhook_inbound_verifiers.py` already runs the same contract assertions
+  (missing/malformed header, timestamp tolerance, signature mismatch, rotation) against all five
+  in-tree classes — identical coverage to a shared suite, for a package (`testkit`) that is
+  never distributed and therefore could not reach an out-of-tree implementer anyway (the same
+  argument Plan 016 / §RL-3d used to decline re-exporting providify's own pytest fixtures).
+  **Un-park trigger:** the first out-of-tree `WebhookVerifier`, or a fifth in-tree provider
+  family.
+
+## No conformance suite (Plan 039, §D-S20-conformance)
+
+- **Stated absence — `RetentionTarget`** (`varco_core.retention.base`, added by Plan 039 / S20).
+  Not a ninth/tenth `testkit/varco_conformance` module. All six in-tree implementations
+  (`DlqRetentionTarget`/`AuditRetentionTarget`/`IdempotencyRetentionTarget`/
+  `RevocationRetentionTarget`/`JobRetentionTarget`/`CallableRetentionTarget`) are thin, in-tree
+  adapters exercised against in-memory backends already covered by the eight shipped conformance
+  suites (or, for `CallableRetentionTarget`, no backend at all — it wraps a caller-supplied
+  function). A parametrized table in `varco_core/tests/test_retention_targets.py` already runs
+  the same contract assertions (non-empty `kind`, the dry-run-calls-no-delete-method safety
+  property, `limit` forwarding, no ValueError-swallowing) across all six — identical coverage to
+  a shared suite, for a package (`testkit`) that is never distributed and therefore could not
+  reach an out-of-tree implementer anyway (the same argument Plan 038 / §D-S19-conformance and
+  Plan 016 / §RL-3d used before it). **Un-park trigger:** the first out-of-tree `RetentionTarget`,
+  or a seventh in-tree one.
+
 ## What Plan 024 filled
 
 - **`RedisStreamDLQ` → subclassed.** `varco_redis/tests/test_redis_conformance.py` gained

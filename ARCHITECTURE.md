@@ -46,6 +46,9 @@ varco_core/              — Domain model, service layer, event system, resilien
   ├── webhook/            — WebhookSubscription, WebhookDelivery, WebhookSubscriptionRepository,
   │                         WebhookSigner, validate_target(), WebhookDispatcher (Plan 031 / D4 —
   │                         admin mount lives in varco_fastapi.webhook, not here)
+  │   └── inbound/        — WebhookVerifier ABC, VerificationResult, four provider adapters,
+  │                         get_verifier(), WebhookReplayGuard (Plan 038 / S19 — the FastAPI
+  │                         verify_webhook() dependency lives in varco_fastapi.webhook, not here)
   ├── flags/              — AbstractFeatureFlags, FlagEvaluationContext, InMemoryFeatureFlags,
   │                         NullFeatureFlags (Plan 032 / D7 — opt-in via
   │                         varco_core.flags.di.enable_feature_flags(); OpenFeature provider
@@ -53,6 +56,10 @@ varco_core/              — Domain model, service layer, event system, resilien
   ├── schedule/           — Schedule, CatchUpPolicy, parse_cron()/CronSchedule,
   │                         ScheduleMaterializer, AbstractScheduleRepository (Plan 032 / D6 — no
   │                         execution path; the existing AbstractJobRunner runs materialized jobs)
+  ├── retention/          — RetentionPolicy, RetentionRegistry, RetentionTarget + six adapters,
+  │                         RetentionScheduler, inspect_retention_posture(),
+  │                         bind_retention_registry() (Plan 039 / S20 — no @Singleton/@Provider/
+  │                         @Configuration anywhere in this package, ever; see its own docstring)
   ├── authority/         — JwtAuthority, TrustedIssuerRegistry, key rotation
   ├── auth/              — AbstractAuthorizer, user/role/permission models
   ├── repository.py      — AsyncRepository[D, PK] protocol
@@ -113,7 +120,8 @@ varco_sa/                — SQLAlchemy async ORM backend
   │                        Plan 031 / D4a, the twelfth framework table)
   ├── schedule.py        — SAScheduleRepository (table: schedules; UNIQUE(schedule_id);
   │                        Plan 032 / D6, the thirteenth framework table, migration
-  │                        0007_schedules_table)
+  │                        0007_schedules_table; task_name column added by migration
+  │                        0008_schedule_task_name, Plan 039 / S20)
   ├── health.py          — SAHealthCheck (SELECT 1 probe)
   ├── di.py              — SAModule (@Configuration)
   └── (auto-generated)   — ORM models created from DomainModel subclasses at import time
@@ -1182,6 +1190,56 @@ through the existing DlqRedriver.
 Full design (signing-scheme decision, the SSRF model, retry-schedule convention, a Pitfalls
 table): `technical_docs/features/outbound-webhooks.md`. Usage: README's "Outbound webhooks"
 section.
+
+### Inbound webhook verification (varco_core.webhook.inbound, Plan 038 / S19)
+
+```
+WebhookVerifier (ABC) — varco_core.webhook.inbound.base
+  ├── provider: str                                       (property, e.g. "stripe")
+  └── verify(*, body: bytes, headers: Mapping[str, str]) → VerificationResult
+
+VerificationResult (frozen dataclass) — verified, provider, message_id, timestamp_checked, failure
+VerificationFailure (StrEnum) — MISSING_HEADER / MALFORMED_HEADER /
+                                 TIMESTAMP_OUT_OF_TOLERANCE / SIGNATURE_MISMATCH
+SecretEncoding (StrEnum)      — STANDARD_WEBHOOKS_B64 / RAW_UTF8
+
+HmacWebhookVerifier (WebhookVerifier) — varco_core.webhook.inbound.verifiers
+  shared template: case-insensitive header lookup, tolerance-window check, constant-time
+  any-secret-matches loop. Subclassed by:
+  ├── StripeWebhookVerifier   — Stripe-Signature: t=<ts>,v1=<hex>[,v1=<hex>...]
+  ├── GitHubWebhookVerifier   — X-Hub-Signature-256: sha256=<hex>; timestamp_checked always
+  │                             False; refuses construction without replay_guard= or
+  │                             acknowledge_no_replay_protection=True
+  └── SlackWebhookVerifier    — X-Slack-Signature + X-Slack-Request-Timestamp
+
+StandardWebhooksVerifier (WebhookVerifier) — delegates the signature decision to a held
+  StandardWebhooksSigner (§D-S19-gap — no second HMAC implementation for the scheme varco
+  already ships). Accepts both webhook-*/svix-* header names.
+  └── SvixWebhookVerifier (StandardWebhooksVerifier) — provider == "svix" only; identical logic
+
+get_verifier(provider, *, secrets, settings=None, **kwargs) → WebhookVerifier
+  mirrors signing.get_signer; threads WebhookSettings.inbound_tolerance_seconds unless an
+  explicit tolerance_seconds= override wins.
+
+WebhookReplayGuard (frozen dataclass) — varco_core.webhook.inbound.replay
+  ├── holds an AbstractIdempotencyStore (no new ABC — §D-S19-replay)
+  ├── claim(provider, message_id, body)   — reserve(); IN_FLIGHT/REPLAY → WebhookReplayError
+  ├── complete(provider, message_id, body) — call after a clean handler return
+  └── release(provider, message_id)        — call on handler failure; makes a provider retry
+                                              acceptable again
+
+WebhookSignatureError (ServiceException, 401) / WebhookReplayError (ServiceConflictError, 409)
+  — varco_core.exception.webhook; both error_params() → {} (never leak the secret/signature)
+```
+
+`varco_fastapi.webhook.verify_webhook(verifier, *, replay_guard=None)` builds a `yield`
+dependency (`VerifiedWebhook`) — the only FastAPI-specific piece; no middleware, no ordering-table
+edit (owned by a sibling plan). `varco_core/webhook/__init__.py` carries no new top-level name for
+any of this — reached via `varco_core.webhook.inbound` directly.
+
+Full design (the provider divergence table, the replay model, secret sourcing, the raw-body/
+body-limit story, a Pitfalls table): `technical_docs/features/inbound-webhooks.md`. Usage:
+README's "Inbound webhook verification" section.
 ```
 
 ### Feature flags (varco_core.flags, Plan 032 / D7)
@@ -1226,6 +1284,9 @@ Schedule (DomainModel) — varco_core.schedule.entity
   gap_policy: GapPolicy = NEXT_VALID       overlap_policy: OverlapPolicy = FIRST
   catchup_policy: CatchUpPolicy = SKIP     max_backfill: int = 100
   last_materialized_at: datetime | None    payload: dict[str, Any]   callback_url: str | None
+  task_name: str | None = None   (Plan 039/S20 — set ⇒ _build_job emits a TaskPayload, making a
+                                   materialized Job reachable through JobRunner.recover(); None
+                                   (default) ⇒ task_payload=None, byte-identical to pre-3.2)
   (no execution path here — the existing AbstractJobRunner runs materialized Job rows unchanged)
 
 CatchUpPolicy (StrEnum) — varco_core.schedule.entity
@@ -1252,12 +1313,74 @@ AbstractScheduleRepository (ABC) — varco_core.schedule.repository
   ├── find_all_enabled() → list[Schedule]   └── delete(pk) → None
   Implementations:
   ├── InMemoryScheduleRepository (varco_core) — single-process, lazily-created lock
-  ├── SAScheduleRepository (varco_sa)          — own Table/MetaData, migration 0007_schedules_table
+  ├── SAScheduleRepository (varco_sa)          — own Table/MetaData, migrations 0007_schedules_table
+  │                                                + 0008_schedule_task_name (Plan 039/S20)
   └── BeanieScheduleRepository (varco_beanie)  — self-managed Motor client + init_beanie
 
 Full design (the fenced-lease deviation, a Pitfalls table for DST gaps/catch-up surprise/
 materializer downtime): `technical_docs/features/recurring-schedules.md`. Usage: README's
 "Recurring schedules" section.
+```
+
+### Retention & purge automation (varco_core.retention, Plan 039 / S20)
+
+```
+RetentionPolicy (frozen dataclass) — varco_core.retention.policy
+  name: str   target: RetentionTarget   cron_expr: str   timezone: str
+  dry_run: bool  (REQUIRED, no default)
+  older_than: timedelta | None = None   enabled: bool = True
+  batch_size: int = 1000   max_batches: int = 100
+  acknowledge_short_retention: bool = False   tenant_ids: tuple[str, ...] | None = None
+
+RetentionRegistry — varco_core.retention.policy
+  .register(policy)   .get(name)   .__contains__(name)   .__iter__()
+  .schedule_id_for(name) → UUID   (uuid5 seed — the Schedule.schedule_id this policy materializes onto)
+
+RetentionOutcome (frozen) — one RetentionTarget.purge() call's result
+RetentionResult (frozen)  — one policy execution's aggregate (across every batch/tenant)
+  policy  kind  examined: int | None  deleted  would_delete  batches  truncated  dry_run
+  skipped_reason: str | None   duration_s: float   error: str | None
+
+RetentionTarget (ABC) — varco_core.retention.base
+  kind: str (property)   supports_older_than: ClassVar[bool]   supports_dry_run: ClassVar[bool]
+  .purge(*, older_than, limit, dry_run) → RetentionOutcome
+  Implementations — varco_core.retention.targets:
+  ├── DlqRetentionTarget          — wraps AbstractDeadLetterQueue.delete_where; requires
+  │                                  acknowledge_dead_letter_deletion=True
+  ├── AuditRetentionTarget        — wraps AuditRepository.delete_where; allow_chain_break ctor arg
+  ├── IdempotencyRetentionTarget  — wraps AbstractIdempotencyStore.delete_expired (no cutoff/preview)
+  ├── RevocationRetentionTarget   — wraps AbstractTokenRevocationStore.delete_expired (same shape)
+  └── JobRetentionTarget          — wraps AbstractJobStore.delete_where
+  CallableRetentionTarget — the out-of-tree escape hatch (varco_core.retention.base)
+
+RetentionScheduler(registry, *, schedule_repo, job_store, task_registry, job_runner=None,
+                    interval=0.0) — varco_core.retention.scheduler
+  .start()/.stop()   .ensure_schedules()   .sweep_once() → int   .purge_policy(*, policy) → RetentionResult
+  ⚠️ No fenced lease — relies on the materializer's uuid5+upsert convergence and
+     JobRunner.recover()'s try_claim(), exactly like any other Schedule.
+  job_runner=None ⇒ materialize only, never dispatch (an app with its own dispatch loop).
+execute_policy(policy) → RetentionResult   — the shared implementation behind both
+  RetentionScheduler.purge_policy() and `varco retention prune --policy`
+RetentionPolicyNotFoundError — raised when a dispatched policy name is no longer registered
+
+inspect_retention_posture(registry=None) → RetentionPostureReport — varco_core.retention.posture
+  configured  policy_count  destructive_count  dry_run_count
+  platform_wide_policies: tuple[str, ...]   dlq_policies   short_retention_policies   kinds: frozenset[str]
+
+bind_retention_registry(container, registry) — varco_core.retention.di (bind_* verb, no lifecycle
+  side effect, same shape as varco_core.tls.bind_trust_store)
+install_retention_metrics() — varco_core.observability.retention (install_* verb, opt-in counters)
+
+RetentionLifecycle(registry, *, container, interval=0.0) — varco_fastapi.retention
+  .startup()/.shutdown()  +  .start()/.stop() aliases (ReliabilityLifecycle shape)
+  create_varco_app(retention=RetentionLifecycle(...))  — appended, never prepended
+
+⛔ No module-level @Singleton/@Provider/@Configuration anywhere under varco_core.retention —
+   a scanned @Configuration would start a deletion loop in every app scanning varco_core.
+
+Full design (the eight safety guards, the three cron→Job driver gaps this closed, multi-process
+convergence, tenancy scoping, a Pitfalls table): `technical_docs/features/retention-and-purge.md`.
+Usage: README's "Retention & purge automation" section.
 ```
 
 ### WebSocket / SSE Push Adapters (varco_ws)
@@ -1511,8 +1634,10 @@ unresolvable return annotation) and `varco_core/tests/test_observability_di.py`.
 | `query/policy.py` | T3's declared datetime coercion contract | `DatetimeCoercionPolicy` |
 | `idempotency/` | D1a (Plan 029) — HTTP idempotency storage contract, framework-agnostic | `AbstractIdempotencyStore`, `ReserveOutcome`, `IdempotencyRecord`, `InMemoryIdempotencyStore`, `compute_fingerprint()`, `IdempotencySettings` |
 | `webhook/` | D4 (Plan 031) — outbound webhook subscription, signing, SSRF guard, dispatcher | `WebhookSubscription`, `WebhookDelivery`, `WebhookSubscriptionRepository`, `InMemoryWebhookSubscriptionRepository`, `WebhookSigner`, `StandardWebhooksSigner`, `Rfc9421Signer`, `validate_target()`, `WebhookDispatcher`, `WebhookSettings`, `install_webhook_metrics()` |
+| `webhook/inbound/` | S19 (Plan 038) — inbound webhook signature verification, replay guard | `WebhookVerifier`, `VerificationResult`, `VerificationFailure`, `StandardWebhooksVerifier`, `SvixWebhookVerifier`, `StripeWebhookVerifier`, `GitHubWebhookVerifier`, `SlackWebhookVerifier`, `get_verifier()`, `WebhookReplayGuard` |
 | `flags/` | D7 (Plan 032) — feature-flag evaluation seam, varco-shaped (not OpenFeature-shaped); OpenFeature provider deferred | `AbstractFeatureFlags`, `FlagEvaluationContext`, `FlagResolution`, `InMemoryFeatureFlags`, `NullFeatureFlags`, `enable_feature_flags()` |
 | `schedule/` | D6 (Plan 032) — recurring cron `Schedule` → `Job` materialization, zero new dependencies | `Schedule`, `CatchUpPolicy`, `parse_cron()`, `CronSchedule`, `ScheduleMaterializer`, `AbstractScheduleRepository`, `InMemoryScheduleRepository` |
+| `retention/` | S20 (Plan 039) — a `RetentionPolicy` registry materialized onto the shipped cron→`Job` path; adapters over shipped bulk-delete verbs, no new abstract methods | `RetentionPolicy`, `RetentionRegistry`, `RetentionOutcome`, `RetentionResult`, `RetentionTarget`, `CallableRetentionTarget`, `DlqRetentionTarget`, `AuditRetentionTarget`, `IdempotencyRetentionTarget`, `RevocationRetentionTarget`, `JobRetentionTarget`, `RetentionScheduler`, `execute_policy()`, `RetentionPolicyNotFoundError`, `inspect_retention_posture()`, `bind_retention_registry()` |
 | `revocation/` | S13 (Plan 034) — invalidate a JWT before its `exp`, per token/subject/tenant/issuer | `AbstractTokenRevocationStore`, `RevocationScope`, `RevocationEntry`, `RevocationVerdict`, `RevocationFailureMode`, `NullTokenRevocationStore`, `InMemoryTokenRevocationStore`, `enable_token_revocation()`, `inspect_revocation_posture()` |
 | `auth/api_key.py` | S14 (Plan 034) — stdlib-only (`hashlib`/`hmac`) offline API-key hashing behind `ApiKeyAuth`'s `hashed_keys=` path | `hash_api_key()`, `verify_api_key()` |
 

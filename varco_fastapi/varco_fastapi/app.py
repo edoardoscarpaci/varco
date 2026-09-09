@@ -126,6 +126,7 @@ def create_varco_app(
     migration_settings: MigrationSettings | None = None,
     tenancy: Any | None = None,
     reliability: Any | None = None,
+    retention: Any | None = None,
     i18n: I18nSettings | None = None,
     timezone: TimezoneSettings | None = None,
     validate: bool = True,
@@ -456,6 +457,17 @@ def create_varco_app(
             _catalog = None
         if _catalog is not None:
             lifespan_components = [*lifespan_components, I18nLifecycle(_catalog)]
+
+    # ── Retention & purge automation (Plan 039 / S20, §D-S20-lifecycle) ───────
+    # retention=None (the default) registers nothing — byte-identical to
+    # today. Appended last (not prepended) — it resolves an
+    # AbstractJobRunner/AbstractJobStore/AbstractScheduleRepository other
+    # lifecycle components create, same reasoning as `reliability` above.
+    # Unlike `reliability` (which wraps a ReliabilityPreset), the caller
+    # passes an ALREADY-CONSTRUCTED `RetentionLifecycle` here — retention has
+    # no preset-vs-lifecycle split to bridge.
+    if retention is not None:
+        lifespan_components = [*lifespan_components, retention]
 
     # ── Container teardown (Plan 022 / RL-8a, §D-8a2(a)) ──────────────────────
     # Hand VarcoLifespan a plain coroutine factory — never the container itself,
