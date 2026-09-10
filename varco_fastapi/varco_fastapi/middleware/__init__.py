@@ -24,8 +24,9 @@ entries from Plan 035 in bold**::
     ErrorMiddleware
     **BodyLimitMiddleware**             (opt-out: body_limit=False)
     RequestLoggingMiddleware
-    MetricsMiddleware
     TracingMiddleware
+    MetricsMiddleware                   (INSIDE Tracing — Plan 041 / §D-S17-decision:
+                                          exemplars need a current span)
     **RateLimitMiddleware(stage=PRE_AUTH)**   (opt-in: rate_limit=RateLimitBundle(...);
                                                 only IP/GLOBAL-scoped rules legal here)
     RequestContextMiddleware            (populates AuthContext / current_tenant())

@@ -197,7 +197,12 @@ def test_all_list_is_unchanged_in_length() -> None:
     # from 235 to 260; drift-repair Decision 4 added one more
     # (TenantMembershipSettings), taking it to 261. Plan 036 / S11 added
     # three more (AuditDecisionPolicy, AuditingAuthorizer,
-    # enable_authorization_audit), taking it to 264. Bump this number (with
+    # enable_authorization_audit), taking it to 264. Plan 040 / S21 added
+    # thirteen more (Redactor, PolicyRedactor, RedactionPolicy,
+    # is_sensitive_key, redact_mapping, redact_query_string, json_safe,
+    # default_redactor, set_default_redactor, reset_redaction_state,
+    # DEFAULT_REDACT_PATTERNS, EXTENDED_REDACT_PATTERNS,
+    # PII_REDACT_PATTERNS), taking it to 277. Bump this number (with
     # a reason) whenever a plan legitimately adds/removes a top-level export.
-    assert len(varco_core.__all__) == 264
+    assert len(varco_core.__all__) == 277
     assert len(set(varco_core.__all__)) == len(varco_core.__all__)

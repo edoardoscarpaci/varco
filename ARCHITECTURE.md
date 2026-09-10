@@ -731,6 +731,52 @@ AuditConsumer (EventConsumer)
             "must not lose an audit record" guarantees
 ```
 
+### Redaction (varco_core.redaction, Plan 040 / S21)
+
+One small, key-name-based seam shared by span capture, `error_params()`, the audit trail, and
+request logging. Full design + a Pitfalls table: `technical_docs/features/redaction.md`.
+
+```
+Redactor (Protocol, runtime_checkable) — ONE method
+  └── redact(key: str, value: Any) -> Any
+
+PolicyRedactor (@dataclass(frozen=True))  — the default implementation
+  └── policy: RedactionPolicy = RedactionPolicy()
+
+RedactionPolicy (@dataclass(frozen=True))
+  ├── patterns: tuple[str, ...] = DEFAULT_REDACT_PATTERNS   (the incumbent 15, byte-identical)
+  ├── match_mode: "substring" (default) | "word"            (§D-S21-falsepos)
+  └── max_depth: int = 6, max_items: int = 1000, render_non_json: bool = True
+
+Free functions (varco_core.redaction, NOT on the Redactor Protocol)
+  ├── is_sensitive_key(key, policy) -> bool          — the leaf predicate, functools.lru_cache'd
+  ├── redact_mapping(data, redactor=None, *, policy=None) -> dict
+  │     — the ONLY nested walk; depth/item/cycle-safe; fail-safe: any failure anywhere in the
+  │       walk degrades the WHOLE result to {k: "[REDACTED]" for k in data}, never a partial pass
+  ├── redact_query_string(query, redactor=None) -> str    — URL query-string helper
+  ├── json_safe(value) -> Any                              — untruncated JSON-shape rendering
+  └── default_redactor() / set_default_redactor(r) / reset_redaction_state()
+        — module-level process default, same shape as
+          varco_core.observability.params.param_capture_defaults()
+
+DEFAULT_REDACT_PATTERNS / EXTENDED_REDACT_PATTERNS / PII_REDACT_PATTERNS (varco_core.redaction.patterns)
+  — only DEFAULT_REDACT_PATTERNS is ever a default anywhere (span capture, PolicyRedactor())
+
+varco_core.redaction.posture
+  └── inspect_redaction_posture(*, service_classes=(), envelope_settings=None) -> RedactionPosture
+        — pure, never-raising; check ids: redaction.audit.disabled (warn),
+          redaction.error_params.disabled (warn), redaction.default.custom (info),
+          redaction.patterns.substring_mode (info)
+        — ⛔ NOT wired into varco_fastapi.posture.SecurityPosture (Plan 036's harness)
+
+Consumers, all opt-in except error_params:
+  ├── varco_core.observability.params        — DEFAULT_REDACT_PATTERNS re-exported, same object
+  ├── varco_core.exception.http.error_message_for — ErrorEnvelopeSettings.redact_params=True (default)
+  ├── varco_core.service.audit.AuditLogMixin  — _audit_redactor: Redactor | None = None (opt-in),
+  │                                             _audit_diff(action, diff) hook, called pre-_produce
+  └── varco_fastapi.middleware.logging.RequestLoggingMiddleware — redactor=None (opt-in)
+```
+
 ### Distributed Locking
 
 ```
@@ -1640,6 +1686,8 @@ unresolvable return annotation) and `varco_core/tests/test_observability_di.py`.
 | `retention/` | S20 (Plan 039) — a `RetentionPolicy` registry materialized onto the shipped cron→`Job` path; adapters over shipped bulk-delete verbs, no new abstract methods | `RetentionPolicy`, `RetentionRegistry`, `RetentionOutcome`, `RetentionResult`, `RetentionTarget`, `CallableRetentionTarget`, `DlqRetentionTarget`, `AuditRetentionTarget`, `IdempotencyRetentionTarget`, `RevocationRetentionTarget`, `JobRetentionTarget`, `RetentionScheduler`, `execute_policy()`, `RetentionPolicyNotFoundError`, `inspect_retention_posture()`, `bind_retention_registry()` |
 | `revocation/` | S13 (Plan 034) — invalidate a JWT before its `exp`, per token/subject/tenant/issuer | `AbstractTokenRevocationStore`, `RevocationScope`, `RevocationEntry`, `RevocationVerdict`, `RevocationFailureMode`, `NullTokenRevocationStore`, `InMemoryTokenRevocationStore`, `enable_token_revocation()`, `inspect_revocation_posture()` |
 | `auth/api_key.py` | S14 (Plan 034) — stdlib-only (`hashlib`/`hmac`) offline API-key hashing behind `ApiKeyAuth`'s `hashed_keys=` path | `hash_api_key()`, `verify_api_key()` |
+| `redaction/` | S21 (Plan 040) — the unified, key-name-based redaction seam behind spans, `error_params()`, the audit trail, and request logging | `Redactor`, `PolicyRedactor`, `RedactionPolicy`, `is_sensitive_key()`, `redact_mapping()`, `redact_query_string()`, `json_safe()`, `default_redactor()`, `set_default_redactor()`, `reset_redaction_state()`, `DEFAULT_REDACT_PATTERNS`, `EXTENDED_REDACT_PATTERNS`, `PII_REDACT_PATTERNS` |
+| `redaction/posture.py` | S21 (Plan 040) — pure, never-raising posture read; not wired into `SecurityPosture` | `RedactionFinding`, `RedactionPosture`, `inspect_redaction_posture()` |
 
 ---
 

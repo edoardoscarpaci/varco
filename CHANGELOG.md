@@ -11,6 +11,15 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- **`error_params()` is now redacted and shape-guarded by default (Plan 040, S21).**
+  `error_message_for()` routes `error_params()`'s return value through the new
+  `varco_core.redaction.redact_mapping()`/`json_safe()` before emitting it on the error envelope
+  (`ErrorEnvelopeSettings.redact_params`, default `True`) — a secret-named key (matching one of
+  `DEFAULT_REDACT_PATTERNS`) is replaced with `"[REDACTED]"`, and a non-JSON value (e.g. a live
+  object from a `vars(exc)` dump) is replaced with `"<TypeName>"`. Byte-identical for every
+  in-tree `ServiceException`. **Not** closed: a secret *value* under a key that does not match a
+  pattern — redaction is key-name-based only, never value scanning. Revert with
+  `VARCO_ERROR_REDACT_PARAMS=false`.
 - **Closed the unmapped-exception information leak (Plan 035 / S3).** Two fallback sites —
   `ErrorMiddleware._service_error_response`'s `except` branch and `add_exception_handlers`'s
   `_make_error_response`'s `except` branch (reached when `error_message_for()` itself raises, e.g.
@@ -53,6 +62,43 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **JWKS background refresh (Plan 041, S22).**
+  `TrustedIssuerRegistry.start_refresh()`/`stop_refresh()` — a single background task that
+  periodically calls the same internal refresh path `get_key()`'s reactive/proactive checks
+  already use, so keysets can refresh without ever receiving a `verify()` call. The effective
+  period derives from `ttl_seconds` (no third env var); `<= 0` (the `VARCO_JWKS_TTL_SECONDS`
+  default) means **off** — nothing changes for an existing app. A period below
+  `min_refresh_interval` is clamped up with one WARNING naming both values. A failing source
+  never kills the loop and never crashes startup (`JwksRefreshLifecycle.start()` never calls
+  `load_all()`). `varco_fastapi.JwksRefreshLifecycle` + `create_varco_app(jwks_refresh=...)`
+  wires it into the ASGI lifespan (appended, never prepended).
+  `varco_core.authority.inspect_jwks_posture()`/`JwksPostureReport` report whether a refresher
+  is actually running for a registry's remote sources — pure read, not wired into
+  `SecurityPosture` (BACKLOG row filed). Full design:
+  `technical_docs/features/jwt-claim-transformer.md`'s "JWKS caching knobs, and the background
+  refresher" section.
+- **`http.server.request.duration` can now carry OTel exemplars (Plan 041, S17).**
+  `MetricsMiddleware` moved inside `TracingMiddleware` (see Changed, above) so its duration
+  histogram is now recorded with a live, sampled span current in OTel context — the SDK's
+  default `TraceBasedExemplarFilter` (unconfigured, unchanged) can attach an exemplar linking a
+  latency data point back to the request's own trace. Reachable at the SDK layer only; whether
+  `opentelemetry-exporter-prometheus` translates it into OpenMetrics output end-to-end is
+  unverified (BACKLOG row filed). No new dependency, no dependency-floor bump — the exemplar
+  assertion is capability-guarded, skipping on an `opentelemetry-sdk` install below 1.28.0.
+- **Unified redaction seam (Plan 040, S21).** `varco_core.redaction` — `Redactor` (a
+  one-method, `runtime_checkable` Protocol), `PolicyRedactor` (the default implementation),
+  `RedactionPolicy` (frozen — `patterns`/`match_mode`/`max_depth`/`max_items`), `is_sensitive_key()`,
+  `redact_mapping()` (the depth/cycle/item-safe nested walk), `redact_query_string()`,
+  `json_safe()`, `default_redactor()`/`set_default_redactor()`/`reset_redaction_state()`,
+  `DEFAULT_REDACT_PATTERNS` (the incumbent 15 span-capture patterns, extracted byte-identical
+  from `varco_core.observability.params`), `EXTENDED_REDACT_PATTERNS`/`PII_REDACT_PATTERNS`
+  (both opt-in, never a default), and `inspect_redaction_posture()`
+  (`varco_core.redaction.posture`, not wired into `SecurityPosture`). New consumers:
+  `AuditLogMixin._audit_redactor`/`_audit_diff()` (opt-in, class attribute — a `password_hash` on
+  a read DTO is redacted going forward once set), `RequestLoggingMiddleware(redactor=...)`
+  (opt-in, `varco_fastapi`), and `ErrorEnvelopeSettings.redact_params` (on by default — see
+  Security). Span capture's behaviour is byte-identical — Phase 1 is a pure extraction. Full
+  design: `technical_docs/features/redaction.md`.
 - **Retention & purge automation (Plan 039, S20).** `varco_core.retention` — `RetentionPolicy`/
   `RetentionRegistry`/`RetentionOutcome`/`RetentionResult` (`retention/policy.py`),
   `RetentionTarget` ABC + `CallableRetentionTarget` escape hatch (`retention/base.py`), six
@@ -159,6 +205,11 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`AuditLogMixin`'s docstring named a `_get_audit_diff_create()` redaction hook that never
+  existed (Plan 040, S21).** The docstring at `service/audit.py` has promised, since Plan 009,
+  that a caller could "redact sensitive fields by overriding `_get_audit_diff_create()` if
+  needed" — that method existed nowhere in the repo. Corrected to name the real hook,
+  `_audit_diff()` (plus the `_audit_redactor` class attribute), which is now real and callable.
 - **`JobRunner.recover()` now honours `Job.run_at` (Plan 039, Phase 1).** `Job.run_at` is
   documented as *"earliest time this job is eligible to be claimed"* and the ABC's own
   `claim_next()` default enforces exactly this predicate — `recover()` used `try_claim()`
@@ -173,6 +224,14 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`MetricsMiddleware` now records INSIDE `TracingMiddleware` (Plan 041, S17,
+  §D-S17-decision).** `http.server.request.duration` no longer includes `TracingMiddleware`'s
+  own overhead; expect a small, one-time **downward** step in every latency series at upgrade.
+  Attribute sets are unchanged — `http.request.method`, `http.route`,
+  `http.response.status_code` — so this is **not** a cardinality or schema change, and no
+  dashboard query needs rewriting. HTTP metrics now carry OTel exemplars when a sampled span
+  exists, which is new capability, not a regression. See
+  `technical_docs/features/http-edge-hardening.md`'s "Metrics inside tracing" section.
 - **`StandardWebhooksSigner.sign()`/`verify()` accept `bytes` (Plan 038, S19, §D-S19-gap).**
   `payload` is now `str | bytes` on both methods — additive, byte-identical for an existing `str`
   caller. A `bytes` payload lets a raw inbound body that is not valid UTF-8 be verified directly,

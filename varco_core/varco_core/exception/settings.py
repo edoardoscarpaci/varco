@@ -48,6 +48,19 @@ class ErrorEnvelopeSettings(VarcoSettings):
             reports ``http.error.detail_exposed`` so an operator can flip it
             per-deployment. **4.0 flip candidate** — the default is planned
             to become ``False`` in varco 4.0.
+        redact_params: Plan 040 / S21, §D-S21-errparams. Route
+            ``error_params()``'s return value through
+            ``varco_core.redaction.redact_mapping()`` (secret-named keys ->
+            ``"[REDACTED]"``) and ``json_safe()`` (non-JSON values ->
+            ``"<TypeName>"``) before emitting them on the envelope. Default
+            ``True`` — byte-identical for every in-tree ``ServiceException``
+            (none of their params match a redaction pattern or carry a
+            non-JSON value); changes only an out-of-tree exception whose
+            ``error_params()`` returns a secret-named key or a live object.
+            **Does not** catch a secret *value* under a benign key — see
+            ``ServiceException.error_params()``'s docstring for the
+            documented residue. ``VARCO_ERROR_REDACT_PARAMS=false`` restores
+            the pre-3.2 body byte-for-byte.
     """
 
     model_config = SettingsConfigDict(env_prefix="VARCO_ERROR_", extra="ignore")
@@ -57,3 +70,4 @@ class ErrorEnvelopeSettings(VarcoSettings):
     problem_details: bool = False
     problem_type_base: str | None = None
     include_detail: bool = True
+    redact_params: bool = True

@@ -156,6 +156,10 @@ class TrustedIssuerRegistry:
         "_ttl_seconds",
         "_loaded_at",
         "_revocation_store",
+        "_refresh_task",
+        "_refresh_stop",
+        "_refresh_interval",
+        "_refresh_in_error",
     )
 
     # ── DI injection handles ───────────────────────────────────────────────────
@@ -236,6 +240,19 @@ class TrustedIssuerRegistry:
 
         # Plan 034 / S13 — None means "no check, no await, no cost".
         self._revocation_store = revocation_store
+
+        # Plan 041 / S22, §D-S22-loop — background JWKS refresher state.
+        # DESIGN: lazy construction, same rule as self._lock above.
+        #   ✅ No asyncio.Event/Task is created here — only inside start_refresh(),
+        #      which is `async def` and therefore always has a running loop.
+        #   ✅ A registry constructed and never `start_refresh()`ed (the default —
+        #      ttl_seconds=0.0) carries zero background-task footprint.
+        self._refresh_task: asyncio.Task[None] | None = None
+        self._refresh_stop: asyncio.Event | None = None
+        self._refresh_interval: float = 0.0
+        # §D-S22-failure — log-once-per-transition latch, same shape as
+        # StatPollWatcher._in_error (varco_core/watch/poll.py:73).
+        self._refresh_in_error: bool = False
 
     def _get_lock(self) -> asyncio.Lock:
         """
@@ -549,6 +566,202 @@ class TrustedIssuerRegistry:
         now = time.monotonic()
         self._last_refresh = now
         self._loaded_at = now
+
+    # ── Background refresh (Plan 041 / S22) ──────────────────────────────────
+
+    @property
+    def refresh_running(self) -> bool:
+        """
+        Whether the background refresher task is currently running.
+
+        Returns:
+            ``True`` iff ``start_refresh()`` created a task that has not since
+            completed/been stopped. ``False`` before the first ``start_refresh()``
+            call, after ``stop_refresh()``, or when the effective period was
+            ``<= 0`` (no task was ever created).
+        """
+        return self._refresh_task is not None and not self._refresh_task.done()
+
+    @property
+    def refresh_interval(self) -> float:
+        """
+        The background refresher's effective tick period, in seconds.
+
+        Returns:
+            ``0.0`` when the refresher has never run (the "off" sentinel —
+            matches ``ttl_seconds``'s own "0.0 = disabled" convention). Once
+            ``start_refresh()`` has run at least once, this is the resolved,
+            possibly-clamped period from that call — it is **not** reset to
+            ``0.0`` by ``stop_refresh()``, so a caller can inspect what period
+            was last used even after stopping.
+        """
+        return self._refresh_interval
+
+    async def start_refresh(self, *, interval: float | None = None) -> None:
+        """
+        Start a background task that periodically calls ``_refresh_all_sources()``.
+
+        This makes ``ttl_seconds``/``min_refresh_interval`` deliver their
+        documented intent even when no ``verify()`` call ever arrives — see
+        ``varco_core.authority.registry`` module docstring and
+        ``technical_docs/features/jwt-claim-transformer.md`` for the full
+        design (§D-S22-seam/§D-S22-interval/§D-S22-loop/§D-S22-failure).
+
+        Args:
+            interval: Explicit tick period in seconds. ``None`` (default)
+                uses ``self._ttl_seconds`` (§D-S22-interval — the knob
+                already means "the age at which the cached keyset is
+                considered stale"; ticking at that period delivers exactly
+                that intent). A resolved period ``<= 0`` means "off" — no
+                task is created, and this is a silent no-op (the same
+                off-by-default posture as ``ttl_seconds=0.0`` itself). A
+                resolved period below ``min_refresh_interval`` is clamped up
+                to it (a period below it provably produces ticks that do
+                nothing at all — ``JwksUrlSource.refresh()`` returns the
+                cache without a network call inside its own
+                ``min_refresh_interval``) and logs one WARNING naming both
+                values.
+
+        Returns:
+            None.
+
+        Raises:
+            Never raises — a misconfigured period is clamped, not rejected;
+            an already-running refresher makes this call an idempotent no-op.
+
+        Edge cases:
+            - Called twice: idempotent — the second call is a no-op and the
+              original task keeps running with its original period.
+            - Zero registered issuers: still creates a task (if the period is
+              positive) — each tick's ``_refresh_all_sources()`` gathers
+              nothing and stamps timestamps, which is harmless.
+            - Never calls ``load_all()`` — a down issuer at construction time
+              must not prevent the refresher from starting (§D-S22-failure);
+              the initial load remains the caller's own explicit
+              ``await registry.load_all()``.
+
+        Async safety: ✅ ``async def`` — always has a running event loop, so
+            the ``asyncio.Event``/``asyncio.Task`` created here are always
+            constructed inside it (the same lazy-primitive rule as
+            ``_get_lock()``).
+        """
+        if self.refresh_running:
+            return  # idempotent — one task per registry
+
+        effective_interval = interval if interval is not None else self._ttl_seconds
+        if effective_interval <= 0:
+            return  # "off" — no task, no log noise beyond DEBUG
+
+        if effective_interval < self._min_refresh_interval:
+            _registry_logger.warning(
+                "TrustedIssuerRegistry.start_refresh: requested interval=%.3fs is below "
+                "min_refresh_interval=%.3fs — clamping up to min_refresh_interval, because "
+                "a tick faster than it would re-read the same cache without a network call.",
+                effective_interval,
+                self._min_refresh_interval,
+            )
+            effective_interval = self._min_refresh_interval
+
+        self._refresh_interval = effective_interval
+        self._refresh_stop = asyncio.Event()
+        self._refresh_task = asyncio.create_task(self._refresh_loop())
+
+    async def stop_refresh(self) -> None:
+        """
+        Stop the background refresher task, if running.
+
+        Idempotent — safe to call before ``start_refresh()`` and safe to call
+        twice. Always awaits the cancelled task, so no orphaned task survives
+        this call (§D-S22-loop — "no `Task was destroyed but it is pending`").
+
+        Returns:
+            None.
+
+        Edge cases:
+            - A tick mid-fetch when this is called: the task is cancelled and
+              awaited; the in-flight fetch is abandoned, and the resulting
+              ``CancelledError`` is swallowed here only (never inside
+              ``_refresh_loop`` itself, which re-raises it).
+
+        Async safety: ✅ Sets the stop event, then cancels and awaits the
+            task — the same set→cancel→await→swallow shape as
+            ``AbstractPathWatcher.stop()`` (``varco_core/watch/base.py``).
+        """
+        if self._refresh_stop is not None:
+            self._refresh_stop.set()
+        task, self._refresh_task = self._refresh_task, None
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass  # expected — stop_refresh() owns cancellation
+
+    async def _refresh_loop(self) -> None:
+        """
+        Background tick loop — calls ``_refresh_all_sources()`` on a fixed
+        period until ``stop_refresh()`` is called.
+
+        DESIGN: one task for all issuers, no retry inside a tick (§D-S22-loop,
+        §D-S22-failure)
+            ✅ ``_refresh_all_sources()`` already gathers with
+               ``return_exceptions=True`` and commits only successes — one
+               dead issuer cannot stop another from refreshing, and a task
+               per issuer would buy isolation that already exists.
+            ✅ The periodic loop *is* the retry cadence — an immediate retry
+               inside a tick would be a provable no-op:
+               ``JwksUrlSource.refresh()`` returns the cached keyset without
+               a network call inside its own ``min_refresh_interval``, so a
+               second attempt in the same window "retries" by re-reading the
+               same cache.
+            ❌ A pathologically slow issuer delays the next tick for all of
+               them. Bounded in practice — ``JwksUrlSource`` carries its own
+               ``timeout`` (default 10s).
+            ❌ No exponential backoff for a permanently dead issuer — the
+               rate is the operator's own resolved interval, and a JWKS
+               fetch is a single small GET.
+
+        The whole tick body is wrapped in ``try/except Exception`` so no
+        failure — including one raised by ``_refresh_all_sources()`` itself,
+        which should not happen given its own internal ``return_exceptions``,
+        but this loop must never die regardless — can ever kill the loop.
+        ``asyncio.CancelledError`` is deliberately NOT caught here; it must
+        propagate so ``stop_refresh()``'s ``await task`` observes it.
+
+        Async safety: ✅ ``asyncio.wait_for(stop_event.wait(), timeout=period)``
+            means shutdown is immediate on ``stop_refresh()``, never up to one
+            period late (the same shape as ``StatPollWatcher._run()``).
+        """
+        assert self._refresh_stop is not None  # set by start_refresh()
+        stop_event = self._refresh_stop
+
+        while not stop_event.is_set():
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=self._refresh_interval)
+                break  # stop_refresh() was called during the sleep
+            except TimeoutError:
+                pass  # normal tick
+
+            if stop_event.is_set():
+                break
+
+            try:
+                await self._refresh_all_sources()
+            except Exception:  # noqa: BLE001 — the loop must never die
+                if not self._refresh_in_error:
+                    _registry_logger.warning(
+                        "TrustedIssuerRegistry: background JWKS refresh tick failed",
+                        exc_info=True,
+                    )
+                    self._refresh_in_error = True
+                continue
+
+            if self._refresh_in_error:
+                _registry_logger.info(
+                    "TrustedIssuerRegistry: background JWKS refresh tick recovered"
+                )
+                self._refresh_in_error = False
 
     # ── Verification ──────────────────────────────────────────────────────────
 

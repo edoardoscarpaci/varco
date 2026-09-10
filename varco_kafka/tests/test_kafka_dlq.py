@@ -507,6 +507,17 @@ class TestKafkaDLQDeleteWhereRaises:
         with pytest.raises(NotImplementedError, match="retention.ms"):
             await dlq.delete_where(older_than=datetime.now())
 
+    async def test_delete_where_with_no_predicate_raises_value_error(
+        self, settings: KafkaEventBusSettings
+    ) -> None:
+        # KI-2 regression, Docker-free — the ABC's no-predicate refusal must be
+        # reached BEFORE the backend-support NotImplementedError
+        # (varco_kafka/varco_kafka/dlq.py:575-580). The inherited conformance
+        # guard for this ordering is -m integration only.
+        dlq = KafkaDLQ(settings)
+        with pytest.raises(ValueError):
+            await dlq.delete_where()
+
 
 class TestKafkaDLQGetRaises:
     async def test_get_raises_not_implemented(self, settings: KafkaEventBusSettings) -> None:

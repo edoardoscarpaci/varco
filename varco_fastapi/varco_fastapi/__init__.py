@@ -176,6 +176,7 @@ from varco_fastapi.job import (
 )
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
+from varco_fastapi.jwks import JwksRefreshLifecycle
 from varco_fastapi.lifespan import VarcoLifespan
 from varco_fastapi.middleware.cors import CORSConfig, install_cors
 
@@ -349,6 +350,7 @@ __all__ = [
     # Lifecycle
     "VarcoLifespan",
     "MigrationLifecycle",
+    "JwksRefreshLifecycle",
     # Plan 036 / S9 — security posture preflight
     "PostureSeverity",
     "PostureFinding",

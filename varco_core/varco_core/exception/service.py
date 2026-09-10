@@ -49,6 +49,23 @@ class ServiceException(Exception):
         Deliberately excludes anything sensitive — see subclass overrides.
         A params dict is exactly the kind of thing someone later fills with
         ``vars(exc)``; don't.
+
+        Plan 040 / S21, §D-S21-errparams: as of 3.2, ``error_message_for()``
+        routes this return value through ``varco_core.redaction.redact_mapping()``
+        before emitting it (``ErrorEnvelopeSettings.redact_params``, default
+        ``True``), which makes **two of the three** leak shapes this
+        docstring warns about mechanical rather than merely advisory:
+
+        - **Mechanical now:** a secret-*named* key (matching one of
+          ``DEFAULT_REDACT_PATTERNS``) is replaced with ``"[REDACTED]"``.
+        - **Mechanical now:** a non-JSON value (e.g. a live object from a
+          ``vars(exc)`` dump) is replaced with ``"<TypeName>"``.
+        - **Still advisory — no mechanism catches this:** a secret *value*
+          under a key that does not match any pattern (e.g.
+          ``{"internal_reason": "postgres://user:pw@host/db"}``) is still
+          emitted verbatim. Redaction in 3.2 is key-name-based only
+          (§D-S21-shape) — it does not scan values. Do not return a secret
+          value under a benign key and rely on this mechanism to catch it.
         """
         return {}
 

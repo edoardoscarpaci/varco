@@ -258,12 +258,12 @@ its edits are two test files, `COVERAGE.md`, `CLAUDE.md`, and a `testkit/` modul
 
 ### Phase 1 — the register (`COVERAGE.md`) — independently verifiable, no test change
 
-1. [ ] `testkit/varco_conformance/COVERAGE.md` — append a `## Conformance findings register`
+1. [x] `testkit/varco_conformance/COVERAGE.md` — append a `## Conformance findings register`
        section after "What Plan 024 filled" and before the trailing audit-date line. Open with one
        sentence stating this is the durable home the convention points at, and that
        **BACKLOG.md is not** (it is trimmed by design — `BACKLOG.md:5-13`). Table columns:
        `ID | Suite | Backend | Symptom | Kind (A/B/C) | Status | Fix | Guard`.
-2. [ ] Same file — populate the five recovered rows from §D-premise, each with the `file:line`
+2. [x] Same file — populate the five recovered rows from §D-premise, each with the `file:line`
        citations from §D-premise **and** the guard citations from §D-fast (KI-2 and KI-7's guard
        cells reference the tests Phase 2 adds — write them as the final names):
 
@@ -275,12 +275,12 @@ its edits are two test files, `COVERAGE.md`, `CLAUDE.md`, and a `testkit/` modul
        | KI-6 | `BeanieDeadLetterQueue.count_by_channel()` | A (upstream) | WORKED AROUND |
        | KI-7 | `NatsDLQ.delete_where()` | A | FIXED |
 
-3. [ ] Same file — add a short "How to file a new finding" subsection carrying §D-kinds' three-row
+3. [x] Same file — add a short "How to file a new finding" subsection carrying §D-kinds' three-row
        decision table verbatim (A/B/C, action, may-you-edit-`testkit/`, in-tree precedent), plus:
        *the next free ID is `KI-13`* (KI-8…KI-12 were non-conformance BACKLOG rows resolved by
        Plans 020/024 — recorded so the series is never restarted at a colliding number), and the
        rule that every `BUG:` xfail `reason=` must name its `KI-N`.
-4. [ ] Same file — under "Stated absences", add one bullet recording §D-kinds **Kind B**'s live
+4. [x] Same file — under "Stated absences", add one bullet recording §D-kinds **Kind B**'s live
        example: `test_count_reflects_pushed_entries` asserts only `after >= before`, which
        trivially holds at `KafkaDLQ.count()`'s constant `-1`
        (`varco_kafka/varco_kafka/dlq.py:544`; noted at
@@ -292,17 +292,17 @@ present. Then open each cited `file:line` and confirm it says what the row claim
 
 ### Phase 2 — close the two fast-leg gaps (TDD: both tests fail if the fix is reverted)
 
-5. [ ] `varco_kafka/tests/test_kafka_dlq.py` — in `TestKafkaDLQDeleteWhereRaises` (`:502`), add
+5. [x] `varco_kafka/tests/test_kafka_dlq.py` — in `TestKafkaDLQDeleteWhereRaises` (`:502`), add
        `test_delete_where_with_no_predicate_raises_value_error`: construct `KafkaDLQ(settings)`
        and assert `pytest.raises(ValueError)` on a bare `await dlq.delete_where()`. Comment: *KI-2
        regression, Docker-free — the ABC's no-predicate refusal must be reached BEFORE the
        backend-support `NotImplementedError` (`varco_kafka/varco_kafka/dlq.py:575-580`). The
        inherited conformance guard is `-m integration` only.* **No container, no `pytestmark`** —
        the method raises on its first statement.
-6. [ ] `varco_nats/tests/test_nats_dlq.py` — in `TestNatsDLQDeleteWhereRaises` (`:202`), add the
+6. [x] `varco_nats/tests/test_nats_dlq.py` — in `TestNatsDLQDeleteWhereRaises` (`:202`), add the
        identical `test_delete_where_with_no_predicate_raises_value_error`, citing
        `varco_nats/varco_nats/dlq.py:558-563` and KI-7.
-7. [ ] Confirm both new tests are collected **without** the `integration` marker (neither file
+7. [x] Confirm both new tests are collected **without** the `integration` marker (neither file
        declares `pytestmark`; do not add one).
 
 **Verify (must pass with no Docker running):**
@@ -317,15 +317,15 @@ Restore.
 
 ### Phase 3 — repoint CLAUDE.md and the testkit docstring
 
-8. [ ] `CLAUDE.md:1217-1223` — replace the quoted paragraph with §D-claude's exact replacement.
-9. [ ] `CLAUDE.md:1203-1204` — *"the other four suites (`event_bus`, `cache`, `job_store`, `dlq`)"*
+8. [x] `CLAUDE.md:1217-1223` — replace the quoted paragraph with §D-claude's exact replacement.
+9. [x] `CLAUDE.md:1203-1204` — *"the other four suites (`event_bus`, `cache`, `job_store`, `dlq`)"*
        → **five**, adding `token_revocation` (`varco_core/tests/test_conformance_inmemory.py:46,165`).
-10. [ ] `CLAUDE.md:1210` and `:1214` — *"one of the five ABCs"* → *"one of the eight ABCs"* (both
+10. [x] `CLAUDE.md:1210` and `:1214` — *"one of the five ABCs"* → *"one of the eight ABCs"* (both
         occurrences), matching `COVERAGE.md:6,15`.
-11. [ ] `testkit/varco_conformance/__init__.py:5-7` — extend the ABC list from five to eight
+11. [x] `testkit/varco_conformance/__init__.py:5-7` — extend the ABC list from five to eight
         (`AbstractIdempotencyStore`, `WebhookSubscriptionRepository`,
         `AbstractTokenRevocationStore`).
-12. [ ] `testkit/varco_conformance/__init__.py:24-28` — replace *"plus a BACKLOG entry"* with a
+12. [x] `testkit/varco_conformance/__init__.py:24-28` — replace *"plus a BACKLOG entry"* with a
         pointer to `COVERAGE.md`'s findings register, and add the one-line A/B/C summary. This is
         the second copy of the dangling pointer; both must move together.
 
@@ -343,13 +343,13 @@ command in `COVERAGE.md` so a future reader does not "fix" it into the register.
 
 ### Phase 4 — full green
 
-13. [ ] `make lint` — `ruff check` + `ruff format --check` + `api-check` + `asyncapi-check` +
+13. [x] `make lint` — `ruff check` + `ruff format --check` + `api-check` + `asyncapi-check` +
         `import-budget`. `api-check` cannot trip (§D-changelog: no `__all__` touched).
-14. [ ] `make test` — all eleven suites, including the two new Docker-free tests.
-15. [ ] Optional, Docker required — prove the conformance path itself is still green end-to-end:
+14. [x] `make test` — all eleven suites, including the two new Docker-free tests.
+15. [x] Optional, Docker required — prove the conformance path itself is still green end-to-end:
         `make integration-test-clean PKG=varco_kafka` and `make integration-test-clean PKG=varco_nats`.
         Not required to merge (integration is not a required check); run if Docker is available.
-16. [ ] Confirm **no** CHANGELOG edit and **no** `scripts/api_surface.py` regeneration were needed
+16. [x] Confirm **no** CHANGELOG edit and **no** `scripts/api_surface.py` regeneration were needed
         (§D-changelog). If either turns out to be required, this plan's scope was exceeded — stop
         and re-check.
 

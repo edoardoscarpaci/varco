@@ -71,6 +71,7 @@ from uuid import UUID, uuid4
 from varco_core.event.audit_event import AuditEvent
 from varco_core.event.base import AbstractEventBus, Event, Subscription
 from varco_core.event.consumer import EventConsumer, listen
+from varco_core.redaction import redact_mapping
 from varco_core.resilience import RetryPolicy
 from varco_core.service.mixin import ServiceMixin
 
@@ -79,6 +80,7 @@ if TYPE_CHECKING:
     from varco_core.dto import ReadDTO
     from varco_core.event.dlq import AbstractDeadLetterQueue
     from varco_core.model import DomainModel
+    from varco_core.redaction import Redactor
 
 # Sentinel distinguishing "retry_policy/dlq kwarg omitted" (apply the
 # class-level safe-by-default policy) from "explicitly passed None" (a
@@ -489,6 +491,78 @@ class AuditLogMixin(ServiceMixin):
         - ``_get_audit_actor`` is NOT async — keep it pure / synchronous.
     """
 
+    #: Plan 040 / S21, §D-S21-audit — the docstring's promise, finally kept.
+    #: ``None`` (default) means "no redaction" — every ``diff`` is written
+    #: byte-identical to pre-3.2 behaviour. Set to a ``Redactor`` (e.g.
+    #: ``PolicyRedactor()``) on a concrete service to redact sensitive
+    #: fields in that service's audit diffs going forward.
+    #:
+    #: A class attribute, not a constructor parameter: ``AuditLogMixin`` has
+    #: no ``__init__``, and adding one would break MRO composition with
+    #: ``ValidatorServiceMixin``/``TenantAwareService``/``SoftDeleteService``
+    #: (CLAUDE.md's mixin-composition rule). Deliberately **opt-in**, not
+    #: on by default — three independent reasons, all argued in
+    #: §D-S21-audit: (1) the incumbent substring matcher has real false
+    #: positives on domain-named fields (``"pin"`` matches
+    #: ``shipping_address``) that would corrupt audit data by default; (2)
+    #: flipping this changes what is *persisted*, which is irreversible for
+    #: rows already written — it fails the "cheap caller-side fix" test a
+    #: safe default must pass; (3) it interacts with the hash chain
+    #: (§D-S21-hashchain) and deserves the deliberateness of an explicit
+    #: opt-in rather than a silent default flip.
+    _audit_redactor: Redactor | None = None
+
+    def _audit_diff(self, action: str, diff: dict[str, Any]) -> dict[str, Any]:
+        """
+        Transform a diff before it is emitted as an ``AuditEvent`` — the
+        real hook the previous docstring here promised as
+        ``_get_audit_diff_create()``, a method that never existed anywhere
+        in the repo (Plan 040 / S21, §D-S21-audit).
+
+        DESIGN: one hook for all three actions, not three
+            ✅ ``_after_delete`` writes ``{}`` and ``_after_update`` writes a
+               two-key ``{"before": ..., "after": ...}`` nesting — three
+               hooks named after the docstring's phantom shape would be
+               three near-identical bodies. One hook, dispatched on
+               ``action``, covers all three.
+            ✅ Overriding this hook wins outright — the default body below
+               is the ONLY caller of ``self._audit_redactor``, so a
+               subclass that overrides ``_audit_diff`` controls its own
+               redaction entirely, including ignoring the class attribute.
+
+        DESIGN: called BEFORE ``_produce`` — the only legal redaction point
+        (§D-S21-hashchain)
+            ✅ This is the only point where the diff has not yet crossed the
+               event bus and may not yet sit in a broker/DLQ/outbox row.
+               Redacting in ``AuditConsumer`` or a repository's ``save()``
+               would leave the secret on the wire even if the stored row
+               were clean.
+            ✅ Because redaction happens before ``AuditEntry.from_event()``,
+               it happens before ``seq``/``prev_hash``/``entry_hash()``
+               exist — the chain always hashes exactly what is stored, so a
+               chain spanning the redactor's enablement verifies as
+               ``True`` (asserted:
+               ``varco_core/tests/test_audit_redaction.py``).
+            ⛔ **Never call this — or apply any redaction — on the READ
+               path** (``list()``/``list_for_entity()``/an admin router).
+               ``AuditRepository.verify_chain()`` recomputes ``entry_hash()``
+               from returned fields; mutating a returned entry's ``diff``
+               before verification produces a spurious ``HashMismatch`` on
+               every row that looks like tampering.
+
+        Args:
+            action: ``"create"``, ``"update"``, or ``"delete"``.
+            diff: The freshly built diff dict for this emission.
+
+        Returns:
+            ``diff`` unchanged when ``self._audit_redactor is None``
+            (byte-identical to pre-3.2); otherwise
+            ``redact_mapping(diff, self._audit_redactor)``.
+        """
+        if self._audit_redactor is None:
+            return diff
+        return redact_mapping(diff, self._audit_redactor)
+
     def _get_audit_actor(self, ctx: AuthContext) -> str | None:
         """
         Extract the actor identity from the auth context.
@@ -525,8 +599,11 @@ class AuditLogMixin(ServiceMixin):
 
         Edge cases:
             - ``diff`` contains the full ``read_dto.model_dump()`` — every field
-              visible to the caller is recorded.  Redact sensitive fields by
-              overriding ``_get_audit_diff_create()`` if needed.
+              visible to the caller is recorded, UNLESS redacted: set
+              ``self._audit_redactor`` (e.g. ``PolicyRedactor()``) or
+              override ``_audit_diff()`` (Plan 040 / S21, §D-S21-audit).
+              Default (``_audit_redactor is None``) is byte-identical to
+              pre-3.2 — the full, unredacted diff.
         """
         await self._producer._produce(  # type: ignore[attr-defined]
             AuditEvent(
@@ -534,8 +611,9 @@ class AuditLogMixin(ServiceMixin):
                 entity_id=str(entity.pk),
                 action="create",
                 actor_id=self._get_audit_actor(ctx),
-                # Record the full read_dto fields as the creation diff.
-                diff=read_dto.model_dump(),
+                # Record the full read_dto fields as the creation diff,
+                # through _audit_diff() (no-op unless a redactor is set).
+                diff=self._audit_diff("create", read_dto.model_dump()),
                 tenant_id=ctx.metadata.get("tenant_id") if ctx else None,
             ),
             channel=_AUDIT_CHANNEL,
@@ -562,6 +640,10 @@ class AuditLogMixin(ServiceMixin):
             - ``diff["before"]`` and ``diff["after"]`` contain the full
               ``model_dump()`` of each DTO — not just changed fields.  A
               field-level diff can be computed by comparing the two dicts.
+            - Redaction (``self._audit_redactor``/``_audit_diff()``) is
+              applied to the assembled ``{"before": ..., "after": ...}``
+              dict, so a sensitive field is redacted in both halves
+              (Plan 040 / S21, §D-S21-audit).
         """
         await self._producer._produce(  # type: ignore[attr-defined]
             AuditEvent(
@@ -569,10 +651,13 @@ class AuditLogMixin(ServiceMixin):
                 entity_id=str(entity.pk),
                 action="update",
                 actor_id=self._get_audit_actor(ctx),
-                diff={
-                    "before": before_dto.model_dump(),
-                    "after": read_dto.model_dump(),
-                },
+                diff=self._audit_diff(
+                    "update",
+                    {
+                        "before": before_dto.model_dump(),
+                        "after": read_dto.model_dump(),
+                    },
+                ),
                 tenant_id=ctx.metadata.get("tenant_id") if ctx else None,
             ),
             channel=_AUDIT_CHANNEL,
@@ -598,7 +683,9 @@ class AuditLogMixin(ServiceMixin):
                 entity_id=str(pk),
                 action="delete",
                 actor_id=self._get_audit_actor(ctx),
-                diff={},  # Entity is gone — no fields to record.
+                # Entity is gone — no fields to record; _audit_diff({}) is
+                # a no-op through redact_mapping's empty-mapping fast path.
+                diff=self._audit_diff("delete", {}),
                 tenant_id=ctx.metadata.get("tenant_id") if ctx else None,
             ),
             channel=_AUDIT_CHANNEL,

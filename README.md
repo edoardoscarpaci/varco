@@ -181,6 +181,7 @@ policy engine, field encryption, observability, profiling, …) — see
   - [@counter and @histogram](#counter-and-histogram)
   - [TracingServiceMixin](#tracingservicemixin)
   - [OtelConfig and DI wiring](#otelconfig-and-di-wiring)
+- [Redaction](#redaction)
 - [Profiling](#profiling)
 - [Background Jobs](#background-jobs)
 - [Database Auditing](#database-auditing)
@@ -2835,6 +2836,31 @@ registry = config.to_registry()
 await registry.load_all()
 ```
 
+### JWKS background refresh (Plan 041 / S22)
+
+`TrustedIssuerRegistry` can refresh its JWKS caches on a timer, without ever
+waiting for a `verify()` call:
+
+```python
+from varco_core.authority import TrustedIssuerRegistry
+from varco_fastapi import JwksRefreshLifecycle, create_varco_app
+
+registry = TrustedIssuerRegistry.from_env()
+await registry.load_all()  # unchanged — the documented startup step
+
+app = create_varco_app(
+    ...,
+    jwks_refresh=JwksRefreshLifecycle(registry),  # None (default) = off
+)
+```
+
+Off by default — `VARCO_JWKS_TTL_SECONDS` (default `0.0`) also sets the
+background refresher's period; `0.0` means the refresher never starts. See
+`technical_docs/features/jwt-claim-transformer.md`'s "JWKS caching knobs, and
+the background refresher" section for the full design, and
+`varco_core.authority.inspect_jwks_posture()` to check whether one is
+actually running.
+
 ### Key sources
 
 | Source class | Import | Description |
@@ -2868,8 +2894,8 @@ VARCO_TRUSTED_ISSUERS='[
 | `VARCO_JWT_TRANSFORM_*` | — | claim-transform mapping (global) — see the claim-transformer feature doc |
 | `VARCO_JWT_TRANSFORM__<LABEL>__*` | — | per-issuer claim-transform override, keyed by `iss` |
 | `VARCO_JWT_PROFILE__<NAME>__*` | — | named token profile declaration |
-| `VARCO_JWKS_MIN_REFRESH_SECONDS` | `10.0` | rate limit between kid-miss JWKS refreshes |
-| `VARCO_JWKS_TTL_SECONDS` | `0.0` | proactive JWKS reload age threshold (`0` = disabled) |
+| `VARCO_JWKS_MIN_REFRESH_SECONDS` | `10.0` | rate limit between kid-miss JWKS refreshes; also the floor a background refresher's period is clamped up to (Plan 041 / S22) |
+| `VARCO_JWKS_TTL_SECONDS` | `0.0` | proactive JWKS reload age threshold (`0` = disabled); also the background refresher's tick period when `interval=` is not passed explicitly (Plan 041 / S22) — `0` means the refresher never starts |
 
 **Common pitfalls:**
 
@@ -3789,6 +3815,39 @@ register_global_attribute_provider(
 `varco_beanie`. See the
 [Database Auditing guide](technical_docs/features/database-auditing.md) for
 wiring, the Alembic/Beanie setup, and the per-backend idempotency behaviour.
+
+---
+
+## Redaction
+
+`varco_core.redaction` is one small, key-name-based redaction seam shared by span capture,
+`error_params()`, the audit trail, and request logging — `Redactor` (a one-method Protocol),
+`PolicyRedactor` (the default), `RedactionPolicy`, and `redact_mapping()`/`redact_query_string()`/
+`json_safe()`. Span capture's byte-identical 15-pattern list moved here; nothing else it does
+changed.
+
+```python
+from varco_core.redaction import PolicyRedactor
+from varco_core.service.audit import AuditLogMixin
+
+# Opt in per service — closes the one live leak this seam exists to fix
+# (a secret-shaped field on a read DTO stored verbatim in the audit table):
+class OrderService(AuditLogMixin, AsyncService[...]):
+    _audit_redactor = PolicyRedactor()
+```
+
+`error_params()` is redacted on the error envelope by default
+(`ErrorEnvelopeSettings.redact_params=True`) — a secret-named key becomes `"[REDACTED]"` and a
+non-JSON value becomes `"<TypeName>"`. `RequestLoggingMiddleware(redactor=...)` gives a
+body/header/URL-logging subclass something to call; the default (`redactor=None`) is
+byte-identical to pre-3.2 logging.
+
+| Env var | Default | Effect |
+|---|---|---|
+| `VARCO_ERROR_REDACT_PARAMS` | `true` | Route `error_params()` through `redact_mapping()` + `json_safe()` before emitting it on the error envelope. |
+
+Full design (the pattern-constant table, the substring matcher's documented false positives, the
+hash-chain write-path-only rule, a Pitfalls table): `technical_docs/features/redaction.md`.
 
 ---
 

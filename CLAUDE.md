@@ -572,6 +572,10 @@ every out-of-tree implementation, the same `BulkCache`-off-`AsyncCache` rule). A
 cannot report remaining quota must never emit a header that lies about it; the parked design is an
 optional `RateLimitIntrospection` Protocol.
 
+**S17 outcome (Plan 041)**: `MetricsMiddleware` now executes INSIDE `TracingMiddleware` — see
+"Metrics inside tracing" in `http-edge-hardening.md` for the decision and its operator-facing
+latency-series step-change note.
+
 ### Admin surface tenancy, security posture preflight, authorization-decision audit (Plan 036 / S4, S9, S11)
 
 Cross-tenant write guard on the webhook and reliability admin surfaces (S4), the startup
@@ -717,7 +721,38 @@ claiming `code` itself was the i18n key was wrong and is corrected.
 
 ⚠️ `error_params()` (default `{}`) returns structured interpolation data — treat it as a **new
 exfiltration surface**: `ServiceAuthorizationError` deliberately excludes `reason` from its
-params, and any override must apply the same scrutiny, never `vars(exc)`.
+params, and any override must apply the same scrutiny, never `vars(exc)`. **As of Plan 040 / S21,
+two of the three leak shapes this warns about are mechanical, not just advisory**:
+`error_message_for()` routes `error_params()` through `varco_core.redaction.redact_mapping()`
+(secret-named key -> `"[REDACTED]"`) and `json_safe()` (non-JSON value -> `"<TypeName>"`) by
+default (`ErrorEnvelopeSettings.redact_params=True`). **Still advisory** — no mechanism catches
+it — a secret *value* under a key that does not match a redaction pattern (redaction in 3.2 is
+key-name-based only, never value scanning).
+
+### Redaction (varco_core.redaction, Plan 040 / S21)
+
+One small, key-name-based seam shared by span capture, `error_params()`, the audit trail, and
+request logging (`Redactor`, `PolicyRedactor`, `RedactionPolicy`, `redact_mapping()`). Full
+design + a Pitfalls table: `technical_docs/features/redaction.md`. Usage: README's "Redaction"
+section.
+
+**Rules**:
+- Redaction is **key-name-based only, never value scanning** — no card/JWT/`whsec_`-prefix
+  detection. A denylist over payload strings is wrong-once-is-a-leak territory; parked with a
+  trigger (a real leak key-name matching structurally cannot catch, plus a false-positive budget).
+- ⛔ **Never redact on the audit read path** (`list()`/`list_for_entity()`/an admin router) —
+  `AuditRepository.verify_chain()` recomputes `entry_hash()` from returned fields; mutating a
+  returned entry's `diff` produces a spurious `HashMismatch` on every row. Redact only inside
+  `AuditLogMixin._audit_diff()`, before `_produce()`.
+- ⛔ **Never add a scanned `@Singleton`/`@Provider`/`@Configuration` to `varco_core.redaction`** —
+  the standing `varco_core.tls`/`cloudevents` scan rule; `container.scan("varco_core",
+  recursive=True)` is a documented, in-use pattern.
+- **A redactor that raises redacts** — any failure anywhere in `redact_mapping()`'s walk degrades
+  the whole result to `{k: "[REDACTED]" for k in data}`, never a partial pass-through and never
+  the original input.
+- Audit redaction is **opt-in** (`AuditLogMixin._audit_redactor`) — the incumbent substring
+  matcher has real false positives on domain-named fields (`"pin"` matches `shipping_address`;
+  `"auth"` matches `author`), so an on-by-default flip would corrupt audit data.
 
 ### Profiling (varco_core.profiling)
 
@@ -891,10 +926,19 @@ Key sources (`varco_core.authority.sources`): `PemFile`, `PemFolder`, `JwksUrl`,
 **JWKS caching knobs**: `TrustedIssuerRegistry(min_refresh_interval=..., ttl_seconds=...)`
 (env: `VARCO_JWKS_MIN_REFRESH_SECONDS` default `10.0`, `VARCO_JWKS_TTL_SECONDS` default `0.0` =
 disabled) tune when the in-memory keyset cache refreshes. `ttl_seconds` makes `get_key()`
-proactively reload once the cache is stale, without waiting for a `kid` miss. ⚠️ **There is no
-background refresher task** — a registry that never receives a `verify()` call never refreshes
-on its own regardless of these knobs; a real background-refresh task is deliberately deferred
-(needs its own lifespan start/stop wiring).
+proactively reload once the cache is stale, without waiting for a `kid` miss.
+
+**Background JWKS refresh (Plan 041 / S22)**: `TrustedIssuerRegistry.start_refresh()`/
+`stop_refresh()` run a background task on the same `ttl_seconds`-derived period, so a registry
+can refresh without ever receiving a `verify()` call. **Off unless** `VARCO_JWKS_TTL_SECONDS`/
+`interval=` is positive, and it must be started explicitly — via
+`create_varco_app(jwks_refresh=JwksRefreshLifecycle(registry))` or a direct
+`await registry.start_refresh()` call — **never** by a scanned `@Configuration` (the same
+`varco_core.tls`/`cloudevents` rule: `container.scan("varco_core", recursive=True)` must never
+auto-start a background HTTPS-fetching task). `varco_core.authority.inspect_jwks_posture()`
+reports whether one is actually running. Full design:
+`technical_docs/features/jwt-claim-transformer.md`'s "JWKS caching knobs, and the background
+refresher" section.
 
 #### Claim transformation + token profiles (varco_core.jwt.transform / varco_core.jwt.profile)
 
@@ -1235,27 +1279,30 @@ class TestRedisEventBusConformance(EventBusConformance):
 
 The base classes are deliberately not named `Test*` — pytest never collects them standalone, so
 an unimplemented fixture fails loudly (`NotImplementedError`) instead of silently passing.
-`varco_core/tests/test_conformance_inmemory.py` runs the other four suites (`event_bus`, `cache`,
-`job_store`, `dlq`) against every in-process implementation with no Docker required — the fast
-feedback loop. `channel_manager.py` has no in-process implementation to run there (there is no
-`InMemoryChannelManager` — `ChannelManager` is inherently a broker-admin concern) and is
-subclassed only by the three real-broker backends (`varco_kafka`, `varco_redis`, `varco_nats`).
+`varco_core/tests/test_conformance_inmemory.py` runs the other five suites (`event_bus`, `cache`,
+`job_store`, `dlq`, `token_revocation`) against every in-process implementation with no Docker
+required — the fast feedback loop. `channel_manager.py` has no in-process implementation to run
+there (there is no `InMemoryChannelManager` — `ChannelManager` is inherently a broker-admin
+concern) and is subclassed only by the three real-broker backends (`varco_kafka`, `varco_redis`,
+`varco_nats`).
 
 **`testkit/varco_conformance/COVERAGE.md`** (Plan 024 / C7) is the authoritative, audited coverage
-matrix — for every implementation of one of the five ABCs, whether it subclasses the matching
+matrix — for every implementation of one of the eight ABCs, whether it subclasses the matching
 suite and, if not, the written reason (`NoopEventBus`'s Null Object shape, `varco_ws`'s push-adapter
 resolution, `varco_memcached`/`varco_casbin`'s legitimate partial/zero-ABC surface,
 `channel_manager`'s lack of an in-process implementation). **Rule**: a new implementation of one of
-the five ABCs either subclasses its suite or gets a row in `COVERAGE.md` explaining why not — a
+the eight ABCs either subclasses its suite or gets a row in `COVERAGE.md` explaining why not — a
 future absence must be argued against a written record, not rediscovered.
 
-**A conformance failure that reveals a genuine backend ABC-contract violation becomes
-`@pytest.mark.xfail(reason="BUG: ...", strict=True)` plus a one-line BACKLOG.md entry — never an
-in-place production-code fix.** `strict=True` means the xfail itself fails loudly if the
-underlying bug is ever fixed, so the marker doesn't silently rot. See BACKLOG.md's "Known issues
-found while implementing Plan 012" table for the accumulated findings (e.g. `RedisCache`/
-`MemcachedCache` truncating a sub-second `ttl` to `int()`, `KafkaDLQ`/`NatsDLQ.delete_where()`
-never reaching the ABC's "no predicate → `ValueError`" check).
+**A red conformance run means one of three things, and they take different actions** — a genuine
+backend ABC violation (`@pytest.mark.xfail(reason="BUG: KI-N …", strict=True)` + a register row,
+**never** an in-place production fix and **never** a weakened shared assertion), a gap in the
+suite itself (fix it in `testkit/`, no marker), or a legitimate backend capability divergence
+(override the one test in the subclass, with a docstring). The decision table and an in-tree
+example of each: `testkit/varco_conformance/COVERAGE.md`'s **Conformance findings register**,
+which is also where accumulated findings live — **not BACKLOG.md**, which is trimmed by design.
+`strict=True` means the marker fails loudly the moment the bug is fixed, so it cannot rot;
+`rg -n 'BUG:' varco_*/tests/ testkit/` lists every live marker and each must name a register row.
 
 **providify's `pytest11` plugin fixtures** (providify ≥ 2.0.0, Plan 016 / RL-3d) — installing
 `providify` activates its own `pytest11` entry point (`providify/pytest_plugin.py`) in every
@@ -1396,6 +1443,12 @@ Am I adding a new capability?
 │  └─ → varco_core.asyncapi (runtime introspection of wired consumers)
 │     + varco_core/cli/asyncapi.py for a CLI verb
 │     ↳ ⛔ never a static import walk, and never a new AsyncAPI dependency
+│
+├─ Hiding a secret from a span/log/audit payload/error body?
+│  └─ → varco_core.redaction (Redactor / PolicyRedactor / redact_mapping()), never a
+│       second pattern list
+│     ↳ Need the value back later (crypto-shredding, key rotation)? → that is
+│       varco_core.encryption, NOT redaction — redaction destroys
 │
 ├─ Authentication/JWT feature?
 │  └─ → varco_core.authority (protocol) + varco_core.authority.sources (key sources)

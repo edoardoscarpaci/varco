@@ -88,6 +88,7 @@ from varco_core.tz.settings import TimezoneSettings
 from varco_fastapi.validation import validate_container_bindings, validate_router_class
 
 if TYPE_CHECKING:
+    from varco_fastapi.jwks import JwksRefreshLifecycle
     from varco_fastapi.middleware.body_limit import BodyLimitSettings
     from varco_fastapi.middleware.rate_limit import RateLimitBundle
     from varco_fastapi.middleware.security_headers import SecurityHeadersSettings
@@ -127,6 +128,7 @@ def create_varco_app(
     tenancy: Any | None = None,
     reliability: Any | None = None,
     retention: Any | None = None,
+    jwks_refresh: JwksRefreshLifecycle | None = None,
     i18n: I18nSettings | None = None,
     timezone: TimezoneSettings | None = None,
     validate: bool = True,
@@ -270,6 +272,16 @@ def create_varco_app(
                                     ``RequestContextMiddleware``, before
                                     auth) and its ``SUBJECT``/``TENANT``
                                     rules at position 11 (inside it).
+        jwks_refresh:                Plan 041 / S22, §D-S22-lifecycle.
+                                    ``None`` (default) registers nothing —
+                                    byte-identical to before this parameter
+                                    existed. Pass a ``JwksRefreshLifecycle``
+                                    (wrapping a ``TrustedIssuerRegistry``) to
+                                    start its background JWKS refresh task on
+                                    startup and stop it on shutdown.
+                                    Appended (not prepended) — the registry
+                                    it drives is built by the app, not by an
+                                    earlier lifecycle component.
 
     Returns:
         A fully configured ``fastapi.FastAPI`` instance.
@@ -469,6 +481,14 @@ def create_varco_app(
     if retention is not None:
         lifespan_components = [*lifespan_components, retention]
 
+    # ── JWKS background refresh (Plan 041 / S22, §D-S22-lifecycle) ────────────
+    # jwks_refresh=None (the default) registers nothing — byte-identical to
+    # today. Appended, not prepended — the registry it drives is built by the
+    # app, not by an earlier lifecycle component (same reasoning as
+    # `reliability`/`retention` above).
+    if jwks_refresh is not None:
+        lifespan_components = [*lifespan_components, jwks_refresh]
+
     # ── Container teardown (Plan 022 / RL-8a, §D-8a2(a)) ──────────────────────
     # Hand VarcoLifespan a plain coroutine factory — never the container itself,
     # which the lifespan's own DESIGN block refuses ("a plain orchestrator — no
@@ -591,17 +611,14 @@ def create_varco_app(
             has_error_middleware=enable_error_middleware,
         )
 
-    # Tracing (correlation ID + OTel span)
-    if enable_tracing:
-        app.add_middleware(TracingMiddleware)
-
-    # Metrics — verified position: OUTSIDE TracingMiddleware (§D-order-bugs
-    # corrects the prior "sits INSIDE Tracing" claim here, which did not
-    # match what add_middleware() actually builds — see
+    # Metrics — verified position: INSIDE TracingMiddleware (Plan 041 /
+    # §D-S17-decision). add_middleware() prepends, so registering Metrics
+    # BEFORE Tracing (below) makes Tracing the outer of the two — every
+    # HTTP server metric is recorded with a live, sampled span current in
+    # OTel context, which is what makes an exemplar possible at all (see
     # varco_fastapi.middleware's module docstring for the full, verified
-    # order and BACKLOG.md for the filed "is this the right position?"
-    # question). Sits OUTSIDE RequestContextMiddleware so it does not
-    # depend on auth ContextVars.
+    # order). Degrades to today's pre-3.2 behaviour (metrics recorded,
+    # no exemplar) when enable_tracing=False.
     if enable_metrics:
         try:
             from varco_fastapi.middleware.metrics import (
@@ -614,6 +631,11 @@ def create_varco_app(
                 "create_varco_app: enable_metrics=True but MetricsMiddleware "
                 "could not be imported — metrics middleware skipped."
             )
+
+    # Tracing (correlation ID + OTel span) — registered AFTER Metrics so it
+    # ends up OUTER (Plan 041 / §D-S17-decision).
+    if enable_tracing:
+        app.add_middleware(TracingMiddleware)
 
     # Logging (structured request/response log)
     if enable_logging:

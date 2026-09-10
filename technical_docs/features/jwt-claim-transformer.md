@@ -289,9 +289,9 @@ does not check it) — use `JwtUtil(token).is_issuer(...)` after verification, o
 
 ---
 
-## JWKS caching knobs (deferred background refresh)
+## JWKS caching knobs, and the background refresher (Plan 041 / S22)
 
-`TrustedIssuerRegistry` gained two constructor args (mirrored by env vars) that tune
+`TrustedIssuerRegistry` has two constructor args (mirrored by env vars) that tune
 when its in-memory keyset cache refreshes:
 
 ```python
@@ -307,11 +307,67 @@ TrustedIssuerRegistry(
   reload every registered source once the cached keyset's age exceeds this many
   seconds, even without a miss.
 
-⚠️ **There is no background refresher task.** Both knobs only change refresh timing
-*inside* `get_key()` calls — a registry that never receives a `verify()` call never
-refreshes on its own, proactive TTL or not. A real background-refresh task needs its
-own start/stop lifecycle wiring in the app's lifespan and a failure policy; it is
-deliberately **deferred** to a future plan rather than bolted on here.
+**A background refresher can now tick on its own, without ever waiting for a
+`verify()` call** — `TrustedIssuerRegistry.start_refresh()`/`stop_refresh()` (Plan 041
+/ S22) run a single background task that periodically calls the same internal
+`_refresh_all_sources()` `get_key()`'s reactive/proactive paths already use, so the
+keep-last-good/per-source-failure-tolerance behaviour is identical either way — no
+second refresh model was written.
+
+```python
+registry = TrustedIssuerRegistry.from_env()
+await registry.load_all()          # the documented startup step — unchanged
+await registry.start_refresh()     # NEW — background tick at ttl_seconds' period
+...
+await registry.stop_refresh()      # NEW — idempotent, always awaits the cancelled task
+```
+
+The effective period is derived from the two knobs above — **no third env var**:
+
+- `start_refresh(interval=None)` (the default) uses `ttl_seconds` as the tick period
+  — the knob already means "the age at which the cached keyset is considered stale";
+  ticking at that period delivers exactly that intent instead of only firing inside a
+  `get_key()` call.
+- `interval <= 0` (which is `ttl_seconds`'s own default, `0.0`) means **off** — no
+  task is created. The refresher is **off by default**; nothing changes for an
+  existing app until it opts in.
+- An explicit `interval=` below `min_refresh_interval` is clamped up to it, with one
+  WARNING naming both values — a tick faster than `min_refresh_interval` provably
+  re-reads the cache without a network call (`JwksUrlSource.refresh()`'s own
+  rate limit), so it would silently do nothing.
+
+**FastAPI wiring** — `varco_fastapi.JwksRefreshLifecycle` + `create_varco_app`:
+
+```python
+from varco_fastapi import JwksRefreshLifecycle, create_varco_app
+
+registry = TrustedIssuerRegistry.from_env()
+app = create_varco_app(
+    ...,
+    jwks_refresh=JwksRefreshLifecycle(registry),  # None (default) = off
+)
+```
+
+`JwksRefreshLifecycle.start()`/`.stop()` call only `start_refresh()`/`stop_refresh()`
+— it never calls `load_all()`, so a JWKS endpoint that is down at boot cannot fail
+startup. The initial load stays the app's own explicit `await registry.load_all()`.
+
+**Is anything actually refreshing my JWKS?** — `varco_core.authority.posture.inspect_jwks_posture(registry)`
+is a pure, side-effect-free read reporting `refresher_running`/`remote_source_count`/
+`effective_interval`/`keysets_loaded` as facts — `refresher_running=False` with
+`remote_source_count > 0` is the security-relevant finding: a key an issuer removed
+from its JWKS stays trusted in this process indefinitely, because nothing will ever
+re-fetch. It reports, never judges — `SecurityPosture` (Plan 036) is the eventual
+consumer (BACKLOG row filed, not yet wired).
+
+**Pitfalls**
+
+| Pitfall | Why it happens | Fix |
+|---|---|---|
+| `ttl_seconds=0` (the default) and nothing ever refreshes proactively | `start_refresh()`'s effective period resolves to `0.0` and creates no task — this is the documented "off" state, not a bug | Pass `ttl_seconds=` (or `interval=` explicitly) to `TrustedIssuerRegistry`/`start_refresh()`/`JwksRefreshLifecycle` |
+| Binding a `TrustedIssuerRegistry` in DI does not start the refresher | `start_refresh()` is only ever reached by an explicit call — there is deliberately no scanned `@Configuration` in `varco_core.authority` (a background HTTPS-fetching task must never start just because an app scans `varco_core`) | Wire `JwksRefreshLifecycle(registry)` into `create_varco_app(jwks_refresh=...)`, or call `await registry.start_refresh()` yourself |
+| A period below `min_refresh_interval` is silently clamped | `JwksUrlSource.refresh()` returns the cache with no network call inside its own `min_refresh_interval` — a faster tick would provably do nothing | Check the one WARNING logged at `start_refresh()` naming both values, or raise `min_refresh_interval` if the faster cadence is genuinely needed |
+| `JwksRefreshLifecycle.start()` does not fail even when the JWKS endpoint is permanently down | Deliberate — it never calls `load_all()`; only individual ticks fail (logged, not raised) | Call `await registry.load_all()` yourself at startup if you need a down endpoint to fail fast |
 
 ---
 

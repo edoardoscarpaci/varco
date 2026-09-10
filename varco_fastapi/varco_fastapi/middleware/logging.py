@@ -20,7 +20,9 @@ DESIGN: single-line structured log over two lines (request + response)
     ✅ One log line per request — easy to grep and correlate
     ✅ ``duration_ms`` in the same entry — no join query needed
     ✅ Uses stdlib ``logging`` — integrates with any handler (file, JSON, OTel)
-    ❌ No request/response body logging (PII risk) — add a subclass if needed
+    ❌ No request/response body logging (PII risk) — a subclass that adds
+       one now has something to call: ``redactor=`` (Plan 040 / S21,
+       §D-S21-logging) — see ``RequestLoggingMiddleware``'s docstring.
 
 Thread safety:  ✅ Stateless — each request is logged independently.
 Async safety:   ✅ ``dispatch`` is ``async def``.
@@ -35,6 +37,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import ASGIApp
+from varco_core.redaction import Redactor, redact_mapping
 
 _logger = logging.getLogger("varco_fastapi.access")
 
@@ -50,6 +53,19 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         log_level:      Logging level for successful requests.  Default: ``INFO``.
         error_level:    Logging level for 5xx responses.  Default: ``ERROR``.
         skip_paths:     Set of path prefixes to skip (e.g. ``{"/health", "/metrics"}``).
+        redactor:       Plan 040 / S21, §D-S21-logging. A ``Redactor`` (e.g.
+                        ``PolicyRedactor()``) applied to the assembled
+                        ``log_entry`` before it is logged. Default ``None``
+                        — the log entry is byte-identical to pre-3.2. Today's
+                        entry carries no user data (``method``/``path``
+                        excludes the query string, no headers, no body), so
+                        this is sized as a prophylactic for the subclass this
+                        middleware's own docstring invites — a body/header/
+                        full-URL-logging subclass finally has something to
+                        call. Does NOT fall back to ``default_redactor()``
+                        when omitted — a per-request dict walk that can
+                        never find anything sensitive is pure hot-path cost
+                        for an explicit opt-in feature.
 
     Thread safety:  ✅ Stateless.
     Async safety:   ✅ ``dispatch`` is ``async def``.
@@ -59,6 +75,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
           the log entry still records the failure.
         - Paths matching any prefix in ``skip_paths`` are not logged (useful
           for health check spam).
+        - ``redact_query_string()`` (``varco_core.redaction``) is the
+          companion helper for a subclass that logs a full URL rather than
+          just ``request.url.path``.
     """
 
     def __init__(
@@ -69,12 +88,14 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         log_level: int = logging.INFO,
         error_level: int = logging.ERROR,
         skip_paths: set[str] | None = None,
+        redactor: Redactor | None = None,
     ) -> None:
         super().__init__(app)
         self._log = logger or _logger
         self._log_level = log_level
         self._error_level = error_level
         self._skip_paths = skip_paths or set()
+        self._redactor = redactor
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """
@@ -132,8 +153,22 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             if tenant_id:
                 log_entry["tenant_id"] = str(tenant_id)
 
+            if self._redactor is not None:
+                log_entry = redact_mapping(log_entry, self._redactor)
+
             level = self._error_level if status_code >= 500 else self._log_level
-            self._log.log(level, "%s", log_entry)
+            # DESIGN: pass log_entry as the `msg` itself, not as a "%s" arg.
+            #   ✅ stdlib logging special-cases a SINGLE dict positional arg
+            #      by collapsing LogRecord.args to that dict (for %(key)s
+            #      style formatting) rather than keeping it as a `(dict,)`
+            #      tuple — `"%s" % log_entry` would still render correctly,
+            #      but `record.args` would then be the dict, not a tuple, an
+            #      easy-to-miss surprise for any handler/test introspecting
+            #      `record.args`. Passing the dict as `msg` sidesteps this
+            #      entirely: `record.msg` is the dict object itself (for a
+            #      JSON-aware handler), and `record.getMessage()`/`str()`
+            #      still renders identically for any plain-text handler.
+            self._log.log(level, log_entry)
 
 
 __all__ = ["RequestLoggingMiddleware"]

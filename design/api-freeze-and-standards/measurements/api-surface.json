@@ -388,6 +388,10 @@
         "kind": "class",
         "module": "varco_core.tenancy.provenance"
       },
+      "DEFAULT_REDACT_PATTERNS": {
+        "kind": "constant",
+        "module": "varco_core.observability.params"
+      },
       "DTOSet": {
         "kind": "class",
         "module": "varco_core.dto.factory"
@@ -419,6 +423,10 @@
       "DynamicTenantUoWProvider": {
         "kind": "class",
         "module": "varco_core.tenancy.provider"
+      },
+      "EXTENDED_REDACT_PATTERNS": {
+        "kind": "constant",
+        "module": "varco_core.redaction"
       },
       "EntityCreatedEvent": {
         "kind": "class",
@@ -700,6 +708,10 @@
         "kind": "class",
         "module": "varco_core.auth.helpers"
       },
+      "PII_REDACT_PATTERNS": {
+        "kind": "constant",
+        "module": "varco_core.redaction"
+      },
       "PROFILE_METADATA_KEY": {
         "kind": "constant",
         "module": "varco_core.jwt"
@@ -716,6 +728,10 @@
         "kind": "class",
         "module": "varco_core.migration.errors"
       },
+      "PolicyRedactor": {
+        "kind": "class",
+        "module": "varco_core.redaction.redactor"
+      },
       "QueryBuilder": {
         "kind": "class",
         "module": "varco_core.query.builder"
@@ -731,6 +747,14 @@
       "ReadDTO": {
         "kind": "class",
         "module": "varco_core.dto.base"
+      },
+      "RedactionPolicy": {
+        "kind": "class",
+        "module": "varco_core.redaction.policy"
+      },
+      "Redactor": {
+        "kind": "class",
+        "module": "varco_core.redaction.redactor"
       },
       "RepositoryProvider": {
         "kind": "class",
@@ -1136,6 +1160,11 @@
         "module": "varco_core.context.request",
         "signature": "() -> 'ZoneInfo | None'"
       },
+      "default_redactor": {
+        "kind": "function",
+        "module": "varco_core.redaction.redactor",
+        "signature": "() -> 'Redactor'"
+      },
       "deprecated": {
         "kind": "function",
         "module": "varco_core.deprecation",
@@ -1186,6 +1215,16 @@
         "module": "varco_core.tenancy.posture",
         "signature": "(chain: 'TenantSourceChain | None', *, membership: 'AbstractTenantMembership | None' = None, delegation: 'DelegationPolicy | None' = None, request_context_sets_tenant: 'bool' = True) -> 'TenantProvenancePosture'"
       },
+      "is_sensitive_key": {
+        "kind": "function",
+        "module": "varco_core.redaction.policy",
+        "signature": "(key: 'str', policy: 'RedactionPolicy') -> 'bool'"
+      },
+      "json_safe": {
+        "kind": "function",
+        "module": "varco_core.redaction.redactor",
+        "signature": "(value: 'Any') -> 'Any'"
+      },
       "listen": {
         "kind": "function",
         "module": "varco_core.event.consumer",
@@ -1205,6 +1244,16 @@
         "kind": "function",
         "module": "varco_core.jwt.transform.path",
         "signature": "(claims: 'Mapping[str, Any]', spec: 'str', *, default: 'Any' = None, separator: 'str' = '.') -> 'Any'"
+      },
+      "redact_mapping": {
+        "kind": "function",
+        "module": "varco_core.redaction.redactor",
+        "signature": "(data: 'Mapping[str, Any]', redactor: 'Redactor | None' = None, *, policy: 'RedactionPolicy | None' = None) -> 'dict[str, Any]'"
+      },
+      "redact_query_string": {
+        "kind": "function",
+        "module": "varco_core.redaction.redactor",
+        "signature": "(query: 'str', redactor: 'Redactor | None' = None) -> 'str'"
       },
       "register": {
         "kind": "function",
@@ -1231,6 +1280,11 @@
         "module": "varco_core.jwt.transform.runtime",
         "signature": "() -> 'None'"
       },
+      "reset_redaction_state": {
+        "kind": "function",
+        "module": "varco_core.redaction.redactor",
+        "signature": "() -> 'None'"
+      },
       "reset_token_profiles": {
         "kind": "function",
         "module": "varco_core.jwt.profile",
@@ -1255,6 +1309,11 @@
         "kind": "function",
         "module": "varco_core.resilience.retry",
         "signature": "(policy: 'RetryPolicy') -> 'Callable[..., Any]'"
+      },
+      "set_default_redactor": {
+        "kind": "function",
+        "module": "varco_core.redaction.redactor",
+        "signature": "(redactor: 'Redactor') -> 'None'"
       },
       "span": {
         "kind": "function",
@@ -1412,6 +1471,10 @@
       "JobStatusResponse": {
         "kind": "class",
         "module": "varco_fastapi.job.response"
+      },
+      "JwksRefreshLifecycle": {
+        "kind": "class",
+        "module": "varco_fastapi.jwks"
       },
       "JwtBearerAuth": {
         "kind": "class",
@@ -1663,7 +1726,7 @@
       "create_varco_app": {
         "kind": "function",
         "module": "varco_fastapi.app",
-        "signature": "(container: 'Any | None' = None, *, routers: 'list[type] | None' = None, scan_packages: 'list[str] | None' = None, title: 'str' = 'Varco API', version: 'str' = '0.1.0', description: 'str' = '', cors: 'Any | None' = None, enable_tracing: 'bool' = True, enable_logging: 'bool' = True, enable_error_middleware: 'bool' = True, enable_metrics: 'bool' = False, enable_profiling: 'bool' = False, mcp_adapter: 'MCPAdapter | None' = None, mcp_path: 'str' = '/mcp', skill_adapter: 'SkillAdapter | None' = None, skill_base_url: 'str' = '', skill_agent_card_path: 'str' = '/.well-known/agent.json', skill_tasks_prefix: 'str' = '/tasks', extra_middleware: 'list[Any] | None' = None, extra_lifespan_components: 'list[Any] | None' = None, migrations: 'AbstractMigrator | Sequence[AbstractMigrator] | None' = None, migration_settings: 'MigrationSettings | None' = None, tenancy: 'Any | None' = None, reliability: 'Any | None' = None, retention: 'Any | None' = None, i18n: 'I18nSettings | None' = None, timezone: 'TimezoneSettings | None' = None, validate: 'bool' = True, strict_validation: 'bool' = False, openapi_url: 'str' = '/openapi.json', docs_url: 'str' = '/docs', configure_jwt: 'bool' = True, global_attributes: 'Mapping[str, str] | None' = None, capture_params: 'bool | None' = None, security_headers: 'SecurityHeadersSettings | bool | None' = None, body_limit: 'BodyLimitSettings | bool | None' = None, rate_limit: 'RateLimitBundle | None' = None) -> 'Any'"
+        "signature": "(container: 'Any | None' = None, *, routers: 'list[type] | None' = None, scan_packages: 'list[str] | None' = None, title: 'str' = 'Varco API', version: 'str' = '0.1.0', description: 'str' = '', cors: 'Any | None' = None, enable_tracing: 'bool' = True, enable_logging: 'bool' = True, enable_error_middleware: 'bool' = True, enable_metrics: 'bool' = False, enable_profiling: 'bool' = False, mcp_adapter: 'MCPAdapter | None' = None, mcp_path: 'str' = '/mcp', skill_adapter: 'SkillAdapter | None' = None, skill_base_url: 'str' = '', skill_agent_card_path: 'str' = '/.well-known/agent.json', skill_tasks_prefix: 'str' = '/tasks', extra_middleware: 'list[Any] | None' = None, extra_lifespan_components: 'list[Any] | None' = None, migrations: 'AbstractMigrator | Sequence[AbstractMigrator] | None' = None, migration_settings: 'MigrationSettings | None' = None, tenancy: 'Any | None' = None, reliability: 'Any | None' = None, retention: 'Any | None' = None, jwks_refresh: 'JwksRefreshLifecycle | None' = None, i18n: 'I18nSettings | None' = None, timezone: 'TimezoneSettings | None' = None, validate: 'bool' = True, strict_validation: 'bool' = False, openapi_url: 'str' = '/openapi.json', docs_url: 'str' = '/docs', configure_jwt: 'bool' = True, global_attributes: 'Mapping[str, str] | None' = None, capture_params: 'bool | None' = None, security_headers: 'SecurityHeadersSettings | bool | None' = None, body_limit: 'BodyLimitSettings | bool | None' = None, rate_limit: 'RateLimitBundle | None' = None) -> 'Any'"
       },
       "get_auth_context": {
         "kind": "function",

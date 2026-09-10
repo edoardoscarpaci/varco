@@ -20,8 +20,8 @@ extra_middleware=[...]               (caller-supplied — OUTSIDE ErrorMiddlewar
 ErrorMiddleware
 **BodyLimitMiddleware**              (opt-out: body_limit=False)
 RequestLoggingMiddleware
-MetricsMiddleware
 TracingMiddleware
+MetricsMiddleware                    (INSIDE Tracing — Plan 041 / §D-S17-decision)
 **RateLimitMiddleware(stage=PRE_AUTH)**   (opt-in via rate_limit=RateLimitBundle(...))
 RequestContextMiddleware             (populates AuthContext / current_tenant())
 **RateLimitMiddleware(stage=POST_AUTH)**  (opt-in, same bundle)
@@ -57,12 +57,20 @@ shares.
 Verifying the order above found three in-repo comments/docstrings that contradicted what
 `create_varco_app` actually builds (`app.py:537`'s "extra_middleware lands inside ErrorMiddleware"
 was backwards; `app.py:500-504` and `middleware/__init__.py:16-25` both claimed
-`MetricsMiddleware` sits inside `TracingMiddleware`, also backwards). All three comments are now
-corrected to state the verified reality. **The underlying positions were not moved** — this is a
-security release, not a metrics-correctness fix, and moving `MetricsMiddleware` would change
-observable OTel behaviour for every existing app. Two BACKLOG rows (`S17`, `S18`) file the
-resulting open questions ("is the comment wrong or the position?", "should `extra_middleware=` land
-inside `ErrorMiddleware`?") as questions with evidence, explicitly not resolved by this plan.
+`MetricsMiddleware` sits inside `TracingMiddleware`, also backwards). All three comments were
+corrected at the time to state the then-verified reality. **The underlying positions were not
+moved by Plan 035** — it was a security release, not a metrics-correctness fix, and moving
+`MetricsMiddleware` would have changed observable OTel behaviour for every existing app. Two
+BACKLOG rows (`S17`, `S18`) filed the resulting open questions ("is the comment wrong or the
+position?", "should `extra_middleware=` land inside `ErrorMiddleware`?") as questions with
+evidence, explicitly not resolved by Plan 035.
+
+**`S17` resolved by Plan 041.** A **third** stale comment Plan 035 missed
+(`varco_fastapi/varco_fastapi/middleware/metrics.py:262-270`'s "Recommended position" paragraph,
+which still recommended `Tracing → MetricsMiddleware` and claimed the tracing context was active
+at record time — describing exactly the order Plan 041 went on to create) was found while writing
+Plan 041 and corrected. See "Metrics inside tracing (Plan 041 / S17)" below for the decision, its
+argument, and the operator-facing consequences. `S18` (`extra_middleware=` position) remains open.
 
 ⛔ **Never register a varco edge middleware via `extra_middleware=`.** It is verified to land
 **outside** `ErrorMiddleware` (`app.py:538` runs after `:531`) — a `ServiceException` raised there
@@ -262,6 +270,40 @@ warn-only** knob for a **different** echo — `ErrorMessage.detail`, populated u
 every `ServiceException` and deliberately kept because it is the only actionable channel for
 `RouteGuard` denial messages. `inspect_http_edge()` reports it as a `warn`-severity
 `http.error.detail_exposed` finding — 4.0's flip candidate, not 3.2's.
+
+## Metrics inside tracing (Plan 041 / S17)
+
+`MetricsMiddleware` now records `http.server.request.duration`/`http.server.active_requests`/
+`http.server.request.body.size` **INSIDE** `TracingMiddleware` (§D-S17-decision) — every HTTP
+server metric is recorded with a live, sampled span current in OTel context, which is what makes
+an OTel exemplar on the duration histogram possible at all (the SDK's default
+`TraceBasedExemplarFilter`, unconfigured and unchanged, attaches an exemplar only when a sampled
+span is current). `varco_fastapi/varco_fastapi/router/metrics.py` has sold this capability in its
+OpenMetrics-negotiation docstring since it shipped; before this plan varco could not deliver it.
+
+**Before/after** (§D-S17-histogram):
+
+| | Before (metrics outer) | After (metrics inner) |
+|---|---|---|
+| `http.server.request.duration` covers | `TracingMiddleware`'s own overhead **+** everything inner | everything inner only |
+| Exemplars | Never attached — no span is current at record time | Attached when the request's span is sampled |
+| Attribute set | `http.request.method`, `http.route`, `http.response.status_code` | Unchanged — not a cardinality or schema change |
+
+**What this means for an operator upgrading to 3.2**: `http.server.request.duration` no longer
+includes `TracingMiddleware`'s own overhead, so every latency series takes a small, one-time
+**downward** step at upgrade (brief 012 §5 puts ASGI tracing instrumentation overhead at <2% of
+request time, and varco's `TracingMiddleware` does strictly less than the reference
+instrumentation it was measured against). Nothing about the attribute set changed, so no dashboard
+query needs rewriting. HTTP metrics gaining exemplars is new capability, not a regression.
+
+With `enable_tracing=False`, metrics still record exactly as before — no span, no exemplar, no
+error, no warning. The dependency is one-directional and degrades to pre-3.2 behaviour.
+
+**Pitfalls**
+
+| Pitfall | Why it happens | Fix |
+|---|---|---|
+| A latency alert with an absolute threshold fires (or a trained anomaly detector flags a drop) right after upgrading to 3.2 | `http.server.request.duration` steps down once, permanently, because it no longer double-counts `TracingMiddleware`'s own overhead | Expected, one-time; re-baseline the alert/detector rather than treating it as a regression |
 
 ## The seam Plan 036 consumes — `inspect_http_edge()`
 

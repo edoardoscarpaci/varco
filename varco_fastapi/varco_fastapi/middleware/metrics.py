@@ -259,15 +259,23 @@ class MetricsMiddleware(BaseHTTPMiddleware):
     ``__init__`` time — so they are obtained from the live ``MeterProvider``
     set by ``OtelConfiguration``.
 
-    Recommended position in the middleware stack (inside ``create_varco_app``):
+    Position in the middleware stack: see ``varco_fastapi.middleware``'s
+    normative order table (module docstring) — this middleware is registered
+    INSIDE ``TracingMiddleware``.
 
-    ``CORS → Error → Tracing → MetricsMiddleware → Logging → RequestContext``
-
-    This ensures:
-    - The OTel tracing context is active (set by ``TracingMiddleware``) when
-      metrics are recorded.
-    - ``/metrics`` and ``/health`` paths are skipped before reaching
-      ``RequestLoggingMiddleware``, so access logs don't spam the log.
+    DESIGN: §D-S17-decision (Plan 041) — ``MetricsMiddleware`` must sit
+    INSIDE ``TracingMiddleware`` so ``record()`` runs with a live, sampled
+    span current in OTel context, which is what makes an OTel exemplar on
+    ``http.server.request.duration`` possible at all
+    (``TraceBasedExemplarFilter`` is the SDK default; no exemplar is ever
+    attached to a data point recorded with no current span).
+    ✅ Matches both reference OTel ASGI/FastAPI instrumentations, which record
+       their duration histogram from inside the span they create.
+    ✅ Mechanically trivial and reversible — one ``add_middleware`` block
+       moved in ``app.py``.
+    ❌ Creates a one-directional dependency: with ``enable_tracing=False``,
+       metrics still record correctly but never carry an exemplar — this is
+       exactly today's (pre-3.2) behaviour, so nothing regresses.
 
     Args:
         app:        The ASGI application to wrap.

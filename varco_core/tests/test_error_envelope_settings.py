@@ -49,3 +49,23 @@ def test_error_message_for_default_detail_equals_str_exc_exactly() -> None:
     exc = _BoomException()
     msg = error_message_for(exc)
     assert msg.detail == str(exc)
+
+
+# ── Plan 040 / S21, Phase 2, Step 7 — redact_params (§D-S21-errparams) ────────
+
+
+def test_redact_params_defaults_to_true() -> None:
+    settings = ErrorEnvelopeSettings()
+    assert settings.redact_params is True
+
+
+def test_redact_params_env_var_parses_false(monkeypatch) -> None:
+    monkeypatch.setenv("VARCO_ERROR_REDACT_PARAMS", "false")
+    settings = ErrorEnvelopeSettings()
+    assert settings.redact_params is False
+
+
+def test_redact_params_env_var_parses_true_explicitly(monkeypatch) -> None:
+    monkeypatch.setenv("VARCO_ERROR_REDACT_PARAMS", "true")
+    settings = ErrorEnvelopeSettings()
+    assert settings.redact_params is True

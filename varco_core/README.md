@@ -226,11 +226,11 @@ a `kid` cache miss, rate-limited by `VARCO_JWKS_MIN_REFRESH_SECONDS`. Setting
 `VARCO_JWKS_TTL_SECONDS` makes `get_key()` proactively reload all sources once the
 cached keyset exceeds that age, even without a miss.
 
-⚠️ **There is no background refresher task.** Both knobs only affect refresh timing
-*inside* `get_key()` calls — a registry that receives no traffic never refreshes on
-its own. A real background-refresh task (with its own start/stop lifecycle) is
-deliberately deferred; see `technical_docs/features/jwt-claim-transformer.md` for the
-rationale.
+A background refresher can now tick on its own too (Plan 041 / S22) —
+`registry.start_refresh()`/`stop_refresh()`, off by default (`VARCO_JWKS_TTL_SECONDS=0`),
+wired via `varco_fastapi.JwksRefreshLifecycle` + `create_varco_app(jwks_refresh=...)`. See
+`technical_docs/features/jwt-claim-transformer.md`'s "JWKS caching knobs, and the background
+refresher" section for the full design.
 
 ### Cache — in-memory with TTL
 

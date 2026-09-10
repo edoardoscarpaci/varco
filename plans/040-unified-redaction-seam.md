@@ -659,7 +659,7 @@ the un-park trigger: **a second in-tree `Redactor` implementation**. With exactl
 
 ### Phase 1 — extract the seam with **zero** behaviour change (🟢 S) — **independently mergeable, must merge first**
 
-1. [ ] `varco_core/tests/test_redaction.py` (new, **failing first**) — the seam's own contract:
+1. [x] `varco_core/tests/test_redaction.py` (new, **failing first**) — the seam's own contract:
        `RedactionPolicy()` is frozen and its `patterns` **are** `DEFAULT_REDACT_PATTERNS`;
        `is_sensitive_key` is case-insensitive substring by default; `PolicyRedactor` satisfies
        `isinstance(x, Redactor)`; `redact_mapping` handles nesting, a cycle (`"<cycle>"`), depth
@@ -672,7 +672,7 @@ the un-park trigger: **a second in-tree `Redactor` implementation**. With exactl
        containers through **untruncated** and renders an arbitrary object as `"<TypeName>"`;
        `match_mode="word"` does **not** match `shipping`/`author` while `"substring"` does
        (§D-S21-falsepos, asserted as a literal so the finding cannot be lost).
-2. [ ] `varco_core/varco_core/redaction/{__init__,patterns,policy,redactor,posture}.py` (new) —
+2. [x] `varco_core/varco_core/redaction/{__init__,patterns,policy,redactor,posture}.py` (new) —
        stdlib only, `from __future__ import annotations` in each, frozen dataclasses,
        `DESIGN:` blocks citing §D-S21-shape / §D-S21-patterns / §D-S21-failsafe / §D-S21-perf,
        docstrings with `Args:`/`Returns:`/`Raises:`/`Edge cases:`/`Thread safety:`/`Async safety:`.
@@ -680,7 +680,7 @@ the un-park trigger: **a second in-tree `Redactor` implementation**. With exactl
        `params.py:92-108` (comment included), plus `EXTENDED_REDACT_PATTERNS` and
        `PII_REDACT_PATTERNS`. ⛔ No `@Singleton`/`@Provider`/`@Configuration` anywhere in the
        package (§D-S21-di).
-3. [ ] `varco_core/tests/test_redaction_extraction.py` (new, **the characterization test**) —
+3. [x] `varco_core/tests/test_redaction_extraction.py` (new, **the characterization test**) —
        `varco_core.observability.params.DEFAULT_REDACT_PATTERNS is
        varco_core.redaction.DEFAULT_REDACT_PATTERNS` (object identity, not equality); the tuple
        equals the 15 literals **written out in the test**; `"DEFAULT_REDACT_PATTERNS" in
@@ -688,15 +688,15 @@ the un-park trigger: **a second in-tree `Redactor` implementation**. With exactl
        import-direction guard — `varco_core.redaction` and its submodules import **nothing** from
        `varco_core.observability` (assert over `ast`-parsed imports, the shape
        `varco_core/tests/test_tls_no_hard_client_deps.py` uses).
-4. [ ] `varco_core/varco_core/observability/params.py` — replace the literal tuple at `:92-108`
+4. [x] `varco_core/varco_core/observability/params.py` — replace the literal tuple at `:92-108`
        with the import from `varco_core.redaction.patterns`, keeping the name in `__all__`
        (`:685`); reduce `_is_redacted` (`:307-309`) to a call to `is_sensitive_key`. **`sanitize_value`,
        `ParamCaptureConfig`, `_render_captured`, `CapturePlan` are not touched.**
-5. [ ] `varco_core/varco_core/observability/params.py:13-16` — amend the *"imports only stdlib"*
+5. [x] `varco_core/varco_core/observability/params.py:13-16` — amend the *"imports only stdlib"*
        docstring promise to state precisely what is now true: *only stdlib and
        `varco_core.redaction` (itself stdlib-only); never another `varco_core.observability`
        module.* A stale promise here becomes the next §D-order-bugs.
-6. [ ] Run the **untouched** incumbent suites and require zero diff in expectations:
+6. [x] Run the **untouched** incumbent suites and require zero diff in expectations:
        `varco_core/tests/test_observability_params.py` (the parametrized substring/case-insensitive
        cases at `:204-240`) and `varco_core/tests/test_observability.py::…test_password_kwarg_is_redacted`
        (`:1347-1355`).
@@ -707,9 +707,9 @@ varco_core/tests/test_observability.py -q`. **Phase 1 ships on its own and chang
 
 ### Phase 2 — `error_params()` made mechanical (🟡 M)
 
-7. [ ] `varco_core/tests/test_error_envelope_settings.py` (extend, **failing first**) —
+7. [x] `varco_core/tests/test_error_envelope_settings.py` (extend, **failing first**) —
        `ErrorEnvelopeSettings().redact_params is True`; `VARCO_ERROR_REDACT_PARAMS=false` parses.
-8. [ ] `varco_core/tests/test_redaction_error_params.py` (new, **failing first**) — an out-of-tree
+8. [x] `varco_core/tests/test_redaction_error_params.py` (new, **failing first**) — an out-of-tree
        `ServiceException` whose `error_params()` returns `{"api_key": "sk_live_x", "page": 2}`
        emits `{"api_key": "[REDACTED]", "page": 2}` through `error_message_for()`
        (D-S21-errparams-a); one returning `{"_session": <object with a live repr>}` emits
@@ -717,18 +717,18 @@ varco_core/tests/test_observability.py -q`. **Phase 1 ships on its own and chang
        **still emits it verbatim** — the documented residue, asserted so the limitation is a
        tested fact and not a hopeful sentence (D-S21-errparams-c); `redact_params=False` restores
        the pre-3.2 body byte-for-byte.
-9. [ ] `varco_core/tests/test_redaction_error_params.py` (same file) — **the no-regression proof**:
+9. [x] `varco_core/tests/test_redaction_error_params.py` (same file) — **the no-regression proof**:
        for **every** in-tree `ServiceException` subclass that overrides `error_params()`
        (`exception/service.py:106`, `:166`, `:218`, `:270`; `exception/idempotency.py:85`, `:121`,
        `:149`; `exception/body_limit.py:64`; `exception/rate_limit.py:122`), the emitted `params`
        is byte-identical to the pre-change value. Include the explicit
        `ServiceAuthorizationError` case: `reason` is still absent and `operation`/`entity` are
        untouched (`exception/service.py:166-173`).
-10. [ ] `varco_core/varco_core/exception/settings.py` — add `redact_params: bool = True` with an
+10. [x] `varco_core/varco_core/exception/settings.py` — add `redact_params: bool = True` with an
         `Attributes:` entry citing §D-S21-errparams. `varco_core/varco_core/exception/http.py:302`
         — route `params` through `redact_mapping()` + `json_safe()` when
         `settings.redact_params`, with a `DESIGN:` comment. **No other default moves.**
-11. [ ] `varco_core/varco_core/exception/service.py:45-53` — rewrite the base `error_params()`
+11. [x] `varco_core/varco_core/exception/service.py:45-53` — rewrite the base `error_params()`
         docstring: state exactly what is now enforced (secret-named keys, non-JSON values) and
         exactly what is **not** (a secret under a benign key with a scalar value), and point at the
         feature doc. The `"never `vars(exc)`"` sentence stays — it is now backed by a mechanism for
@@ -740,7 +740,7 @@ varco_fastapi/tests/test_error_leak_s3.py varco_fastapi/tests/test_exception_env
 
 ### Phase 3 — the audit hook the docstring already promised (🟡 M)
 
-12. [ ] `varco_core/tests/test_audit_redaction.py` (new, **failing first**) — default
+12. [x] `varco_core/tests/test_audit_redaction.py` (new, **failing first**) — default
         `_audit_redactor = None` → `diff` is byte-identical to today for create/update/delete
         (`audit.py:538`, `:572-575`, `:601`); with `_audit_redactor = PolicyRedactor()`, a
         `password` field in `before`/`after` is `"[REDACTED]"` while sibling fields survive; a
@@ -752,7 +752,7 @@ varco_fastapi/tests/test_error_leak_s3.py varco_fastapi/tests/test_exception_env
         `entry_hash()` is a function of its **stored** `diff` (recomputing after mutating a
         returned `AuditEntry.diff` produces a `HashMismatch`, proving why read-path redaction is
         forbidden).
-13. [ ] `varco_core/varco_core/service/audit.py` — add the class attribute `_audit_redactor:
+13. [x] `varco_core/varco_core/service/audit.py` — add the class attribute `_audit_redactor:
         Redactor | None = None` and the `_audit_diff(action, diff)` hook to `AuditLogMixin`; call
         it from `_after_create` (`:538`), `_after_update` (`:572-575`) and `_after_delete`
         (`:601`). **Fix the stale docstring at `:527-529`** — it names `_get_audit_diff_create()`,
@@ -760,7 +760,7 @@ varco_fastapi/tests/test_error_leak_s3.py varco_fastapi/tests/test_exception_env
         equivalent `Edge cases:` note to `_after_update`. `Redactor` is imported under
         `TYPE_CHECKING` beside the existing block (`audit.py:77-81`).
         ⛔ **Nothing inside `audit.py:267-444` is touched** — 039's half (§Scope and siblings).
-14. [ ] `varco_core/varco_core/service/audit.py` — a `DESIGN:` block on `_audit_diff` citing
+14. [x] `varco_core/varco_core/service/audit.py` — a `DESIGN:` block on `_audit_diff` citing
         §D-S21-audit (why one hook, why a class attribute, why opt-in) and §D-S21-hashchain (why
         pre-emission is the only legal point, and the ⛔ read-path prohibition).
 
@@ -770,13 +770,13 @@ varco_core/tests/test_audit.py varco_core/tests/test_audit_chain.py -q`, plus
 
 ### Phase 4 — the logging hook (🟢 S) — ⛔ zero diff in Plan 041's files
 
-15. [ ] `varco_fastapi/tests/test_logging_redaction.py` (new, **failing first**) — with
+15. [x] `varco_fastapi/tests/test_logging_redaction.py` (new, **failing first**) — with
         `redactor=None` (the default) the emitted log entry is byte-identical to today
         (`logging.py:122-133`); with a `PolicyRedactor`, a subclass that adds
         `{"authorization": …}` to the entry logs `"[REDACTED]"` while `method`/`path`/`status`/
         `duration_ms`/`request_id`/`user_id`/`tenant_id` survive; `skip_paths` behaviour
         (`logging.py:91-93`) is unchanged.
-16. [ ] `varco_fastapi/varco_fastapi/middleware/logging.py` — add the `redactor` keyword, apply it
+16. [x] `varco_fastapi/varco_fastapi/middleware/logging.py` — add the `redactor` keyword, apply it
         to `log_entry` before `self._log.log(...)` (`:136`), and update the class docstring plus
         the module `DESIGN:` note at `:24` to point at the seam. ⛔ **No other file in
         `varco_fastapi` is edited in this phase**; `varco_fastapi/tests/test_middleware_order.py`
@@ -788,24 +788,24 @@ varco_fastapi/varco_fastapi/app.py varco_fastapi/varco_fastapi/middleware/__init
 
 ### Phase 5 — posture inspector (🟢 S)
 
-17. [ ] `varco_core/tests/test_redaction_posture.py` (new, **failing first**) — the `check`-id set
+17. [x] `varco_core/tests/test_redaction_posture.py` (new, **failing first**) — the `check`-id set
         is asserted as a **literal** against §D-S21-posture's table, so a future consumer can be
         written against the table without reading the code (035 DoD 4's precedent); a service class
         with no redactor emits `redaction.audit.disabled`; one with a redactor does not;
         `redact_params=False` emits `redaction.error_params.disabled`; a custom `default_redactor()`
         emits `redaction.default.custom`; the function **never raises** on a nonsense input and
         returns an all-`False` posture instead.
-18. [ ] `varco_core/varco_core/redaction/posture.py` — `RedactionFinding` / `RedactionPosture`
+18. [x] `varco_core/varco_core/redaction/posture.py` — `RedactionFinding` / `RedactionPosture`
         (frozen) / `inspect_redaction_posture()`, pure, never raising, no I/O.
         ⛔ **`varco_fastapi/varco_fastapi/posture.py` is not touched** (§D-S21-posture).
 
 ### Phase 6 — docs, benchmark, snapshots, BACKLOG (🟢 S)
 
-19. [ ] `benchmarks/bench_redaction.py` (new) — `redact_mapping()` over a representative nested
+19. [x] `benchmarks/bench_redaction.py` (new) — `redact_mapping()` over a representative nested
         audit diff, and `is_sensitive_key()` cold vs. cached. ⛔ No time assertion, no
         container-backed import, no `pytest.ini` change (`benchmarks/pytest.ini` already collects
         `bench_*.py`).
-20. [ ] `technical_docs/features/redaction.md` (new) — the full design: what redaction is and is
+20. [x] `technical_docs/features/redaction.md` (new) — the full design: what redaction is and is
         not (vs. crypto-shredding), the seam's four names, per-surface posture and why each,
         the pattern-constant table with **every** rejected pattern listed, the §D-S21-falsepos
         evidence, the hash-chain rule, and a **Pitfalls** table with at least these rows:
@@ -816,13 +816,13 @@ varco_fastapi/varco_fastapi/app.py varco_fastapi/varco_fastapi/middleware/__init
         you set `_audit_redactor`* · *`error_params()` still leaks a secret under a benign key* ·
         *a broken custom redactor redacts everything, by design* · *`PII_REDACT_PATTERNS` in an
         audit trail may destroy the record you are keeping*.
-21. [ ] `README.md` — a "Redaction" section between the observability and auditing sections: the
+21. [x] `README.md` — a "Redaction" section between the observability and auditing sections: the
         four-line opt-in for audit, the `error_params` default, the `redactor=` logging keyword,
         and a `VARCO_ERROR_REDACT_PARAMS` row in the existing `VARCO_ERROR_*` table.
-22. [ ] `ARCHITECTURE.md` — a "Redaction" type hierarchy (`Redactor` Protocol → `PolicyRedactor`;
+22. [x] `ARCHITECTURE.md` — a "Redaction" type hierarchy (`Redactor` Protocol → `PolicyRedactor`;
         `RedactionPolicy`; the free functions) and the `varco_core.redaction` module listing in the
         package map.
-23. [ ] `CLAUDE.md` — **pointer-only**: (a) a one-line "Redaction (Plan 040 / S21)" entry under Key
+23. [x] `CLAUDE.md` — **pointer-only**: (a) a one-line "Redaction (Plan 040 / S21)" entry under Key
         Abstractions pointing at the feature doc and carrying the rules that change agent
         behaviour — *redaction is key-name-based only, never value scanning* · *never redact on the
         audit read path* · *never add a scanned decorator to `varco_core.redaction`* · *a redactor
@@ -831,20 +831,20 @@ varco_fastapi/varco_fastapi/app.py varco_fastapi/varco_fastapi/middleware/__init
         later? → that is `varco_core.encryption` (crypto-shredding), not redaction*; (c) amend the
         existing ⚠️ on `error_params()` in §Error taxonomy to say what is now **mechanical** and
         what remains advisory.
-24. [ ] `testkit/varco_conformance/COVERAGE.md` — the note row for `Redactor` (§D-S21-conformance),
+24. [x] `testkit/varco_conformance/COVERAGE.md` — the note row for `Redactor` (§D-S21-conformance),
         with the un-park trigger. ⚠️ Coordinate with Plans 039 and 042, which also append rows;
         whichever lands last rebases.
-25. [ ] `CHANGELOG.md` `## [Unreleased]` — `### Added`: `varco_core.redaction`
+25. [x] `CHANGELOG.md` `## [Unreleased]` — `### Added`: `varco_core.redaction`
         (`Redactor`/`PolicyRedactor`/`RedactionPolicy`/`redact_mapping`/`redact_query_string`/
         `json_safe`/`inspect_redaction_posture`), `AuditLogMixin._audit_diff`/`_audit_redactor`,
         `RequestLoggingMiddleware(redactor=…)`, `ErrorEnvelopeSettings.redact_params`.
         `### Security`: `error_params()` is now redacted and shape-guarded by default.
         `### Fixed`: `audit.py`'s docstring named a `_get_audit_diff_create()` hook that never
         existed. `BACKLOG.md`: mark `S21` `✅ planned → plans/040…` and add the rows below.
-26. [ ] `varco_core/varco_core/__init__.py` — export the new public names by editing **all three**
+26. [x] `varco_core/varco_core/__init__.py` — export the new public names by editing **all three**
         places together (`__all__`, `_LAZY` at `:494`, and the `TYPE_CHECKING` block at `:105`) —
         the footgun the file's own comment at `:74` names. ⛔ No eager import is added.
-27. [ ] `uv run python scripts/api_surface.py` then `--check`; **commit both snapshot files in this
+27. [x] `uv run python scripts/api_surface.py` then `--check`; **commit both snapshot files in this
         commit** (CI gate on `make lint`'s no-`PKG` path). Then `uv run python
         scripts/import_budget.py --check --warn-only` — `varco_core` is at `6.6 ms` against a
         `25.0 ms` ceiling (`import-budget.json:2-6`); the new package is stdlib-only and reachable
@@ -1003,11 +1003,15 @@ make lint && make type-check && make test
    (§D-S21-falsepos). A defensible alternative is `PolicyRedactor.for_payloads()` — a named
    constructor that returns the word-matching policy — so the recommendation is one call rather
    than a paragraph. Decide at Step 13; lean the named constructor if it reads well.
-3. **Does `EXTENDED_REDACT_PATTERNS` need `"cookie"`-adjacent HTTP names** (`set-cookie`, `x-api-key`)
-   for the logging surface? `"cookie"` and `"api_key"`/`"apikey"` are already in the 15, and
-   `"x-api-key"` substring-matches `"api_key"`… **only if the key uses an underscore**. Verify the
-   hyphen case at Step 1 and add `"api-key"` to `EXTENDED_REDACT_PATTERNS` if it does not match —
-   header names are hyphenated and the incumbent list is underscore-shaped.
+3. **RESOLVED (repair round).** Does `EXTENDED_REDACT_PATTERNS` need `"cookie"`-adjacent HTTP names
+   (`set-cookie`, `x-api-key`) for the logging surface? `"cookie"` and `"api_key"`/`"apikey"` are
+   already in the 15, and `"x-api-key"` substring-matches `"api_key"`… **only if the key uses an
+   underscore**. Verified: `"api_key" in "x-api-key"` is `False` — the hyphenated header name was
+   NOT caught by DEFAULT or EXTENDED. Fix: `"api-key"` added to `EXTENDED_REDACT_PATTERNS`
+   (`varco_core/varco_core/redaction/patterns.py`), never to `DEFAULT_REDACT_PATTERNS`. Regression
+   tests: `test_hyphenated_api_key_header_not_caught_by_default_alone` and
+   `test_hyphenated_api_key_header_caught_with_extended_patterns` in
+   `varco_core/tests/test_redaction.py`.
 
 ## BACKLOG entries this plan files
 

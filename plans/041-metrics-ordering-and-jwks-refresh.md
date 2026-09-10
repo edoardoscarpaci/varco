@@ -416,7 +416,7 @@ Each phase is independently verifiable and ends with a green `make lint`.
 
 ### Phase 1 — S17: move `MetricsMiddleware` inside `TracingMiddleware` (independently mergeable)
 
-1. [ ] `varco_fastapi/tests/test_metrics_span_context.py` — **new, red**. Build an app via
+1. [x] `varco_fastapi/tests/test_metrics_span_context.py` — **new, red**. Build an app via
        `create_varco_app(enable_tracing=True, enable_metrics=True, …)` against an
        `InMemoryMetricReader` + a real `TracerProvider` with an always-on sampler (the fixture
        shape already used at `varco_fastapi/tests/milestone_g/test_metrics_middleware.py:30,54`
@@ -430,34 +430,34 @@ Each phase is independently verifiable and ends with a green `make lint`.
        §D-S17-sdkfloor) — the collected `http.server.request.duration` histogram data point has a
        non-empty `.exemplars` whose `trace_id` matches the request's span.
        **Must fail before Step 3.**
-2. [ ] `varco_fastapi/tests/test_middleware_order.py:32-33` — swap `"MetricsMiddleware"` and
+2. [x] `varco_fastapi/tests/test_middleware_order.py:32-33` — swap `"MetricsMiddleware"` and
        `"TracingMiddleware"` in `_PHASE_2_BASELINE_ORDER`. **This edit is the decision's permanent
        record.** Every Plan-035 test compares by slice against this list
        (`:118,124,130+`), so no other test list changes. **Must fail before Step 3.**
-3. [ ] `varco_fastapi/varco_fastapi/app.py:582-604` — move the `if enable_metrics:` block so it is
+3. [x] `varco_fastapi/varco_fastapi/app.py:582-604` — move the `if enable_metrics:` block so it is
        registered **before** the `if enable_tracing:` block (`add_middleware` prepends, so the
        later call is outer → tracing outer, metrics inner). Replace the `:586-592` comment with a
        short §D-S17-decision rationale + a pointer to the normative table; delete the
        "BACKLOG.md's filed question" sentence — it is now answered.
-4. [ ] `varco_fastapi/varco_fastapi/middleware/metrics.py:262-270` — rewrite the stale
+4. [x] `varco_fastapi/varco_fastapi/middleware/metrics.py:262-270` — rewrite the stale
        "Recommended position" paragraph (⚠️ the **third** wrong comment, which Plan 035 missed) as
        a one-line pointer to `varco_fastapi.middleware`'s normative table, per the one-home rule.
        Add a `DESIGN:` block naming §D-S17-decision: why this middleware must sit inside
        `TracingMiddleware` (exemplars) and what it degrades to when `enable_tracing=False`.
-5. [ ] `varco_fastapi/varco_fastapi/middleware/__init__.py:27-28` — swap the two lines in the
+5. [x] `varco_fastapi/varco_fastapi/middleware/__init__.py:27-28` — swap the two lines in the
        normative table; annotate `MetricsMiddleware` with `(INSIDE Tracing — Plan 041 / §D-S17-decision:
        exemplars need a current span)`.
-6. [ ] `technical_docs/features/http-edge-hardening.md:23-24` — swap the same two lines in the
+6. [x] `technical_docs/features/http-edge-hardening.md:23-24` — swap the same two lines in the
        mirrored table; `:55-65` (§D-order-bugs) — mark `S17` **resolved by Plan 041**, state that a
        **third** stale comment (`middleware/metrics.py:262-270`) was found and corrected, and link
        the new feature doc section.
-7. [ ] `technical_docs/features/http-edge-hardening.md` — new section
+7. [x] `technical_docs/features/http-edge-hardening.md` — new section
        *"Metrics inside tracing (Plan 041 / S17)"*: the §D-S17-histogram before/after table, the
        three-sentence operator note, and a **Pitfalls** row (*"latency alerts with absolute
        thresholds see a one-time downward step"*).
-8. [ ] `CHANGELOG.md` — the three sentences from §D-S17-histogram verbatim, under Changed, plus
+8. [x] `CHANGELOG.md` — the three sentences from §D-S17-histogram verbatim, under Changed, plus
        the new exemplar capability under Added.
-9. [ ] `BACKLOG.md` — move `S17` from Live to *Shipped this cycle* with the one-line outcome
+9. [x] `BACKLOG.md` — move `S17` from Live to *Shipped this cycle* with the one-line outcome
        (*"moved inside `TracingMiddleware`; exemplars now reachable"*); add the two new rows from
        §BACKLOG entries.
 10. [ ] Verify:
@@ -470,7 +470,7 @@ Each phase is independently verifiable and ends with a green `make lint`.
 
 ### Phase 2 — S22: `start_refresh()`/`stop_refresh()` + `JwksRefreshLifecycle`
 
-11. [ ] `varco_core/tests/test_jwks_refresh.py` — **new, red**. Against a fake `KeySource` whose
+11. [x] `varco_core/tests/test_jwks_refresh.py` — **new, red**. Against a fake `KeySource` whose
         `refresh()` counts calls:
         - `start_refresh()` with an effective period `<= 0` creates **no** task
           (`registry._refresh_task is None`) and is a silent no-op;
@@ -485,7 +485,7 @@ Each phase is independently verifiable and ends with a green `make lint`.
           healthy source keeps being refreshed across ≥2 ticks (§D-S22-failure);
         - a period below `min_refresh_interval` is clamped up and logs one WARNING naming both
           values (`caplog`).
-12. [ ] `varco_core/varco_core/authority/registry.py` — extend `__slots__` (`:151-159`) with
+12. [x] `varco_core/varco_core/authority/registry.py` — extend `__slots__` (`:151-159`) with
         `_refresh_task`, `_refresh_stop`, `_refresh_interval`, `_refresh_in_error`; initialise all
         four to `None`/`False` in `__init__` (**no `Event`, no `Task` constructed here** — same
         rule as `_get_lock()` at `:240-256`). Add:
@@ -503,38 +503,38 @@ Each phase is independently verifiable and ends with a green `make lint`.
           §D-S22-posture reads.
         Full docstrings with **Args / Returns / Raises / Edge cases / Async safety**, plus a
         `DESIGN:` block per §D-S22-loop and §D-S22-failure with ✅/❌.
-13. [ ] `varco_core/tests/test_jwks_posture.py` — **new, red**: `inspect_jwks_posture()` with no
+13. [x] `varco_core/tests/test_jwks_posture.py` — **new, red**: `inspect_jwks_posture()` with no
         argument, with a registry that has only PEM sources, with a remote source and no refresher
         (`refresher_running=False`, `remote_source_count=1` — the finding the row exists for), and
         with a running refresher. Assert it never raises for any input, including a registry with
         zero entries.
-14. [ ] `varco_core/varco_core/authority/posture.py` — **new**. `@dataclass(frozen=True)
+14. [x] `varco_core/varco_core/authority/posture.py` — **new**. `@dataclass(frozen=True)
         JwksPostureReport` + `inspect_jwks_posture(registry=None)`, modelled line-for-line on
         `varco_core/varco_core/revocation/posture.py:1-17,31-99` including its "reports facts,
         036 owns the judgement" module docstring. Add both names to
         `varco_core/varco_core/authority/__init__.py`'s `__all__`; **do not** add them to
         `varco_core/varco_core/__init__.py` (matches `inspect_revocation_posture`; keeps the PEP
         562 lazy `__init__` and the import budget untouched).
-15. [ ] `varco_fastapi/tests/test_jwks_refresh_lifecycle.py` — **new, red**: `start()` starts the
+15. [x] `varco_fastapi/tests/test_jwks_refresh_lifecycle.py` — **new, red**: `start()` starts the
         refresher and `stop()` stops it; `start()` **never** calls `load_all()` (a registry whose
         only source always raises still starts cleanly — §D-S22-failure); `interval=None` with
         `ttl_seconds=0.0` starts nothing; a full `create_varco_app(jwks_refresh=…)` lifespan cycle
         via `TestClient` leaves no pending task.
-16. [ ] `varco_fastapi/varco_fastapi/jwks.py` — **new**. `JwksRefreshLifecycle(registry, *,
+16. [x] `varco_fastapi/varco_fastapi/jwks.py` — **new**. `JwksRefreshLifecycle(registry, *,
         interval=None)` with `startup()`/`shutdown()` and `start()`/`stop()` aliases, carrying the
         same explanatory comment as `varco_fastapi/varco_fastapi/reliability.py:114-118`.
         ⛔ `varco_fastapi/varco_fastapi/lifespan.py` is **not** touched.
-17. [ ] `varco_fastapi/varco_fastapi/app.py` — add `jwks_refresh: JwksRefreshLifecycle | None =
+17. [x] `varco_fastapi/varco_fastapi/app.py` — add `jwks_refresh: JwksRefreshLifecycle | None =
         None` to `create_varco_app`, documented in the `Args:` block; **append** it to
         `lifespan_components` when non-`None`, in the style of the reliability block at
         `:411-422`. Import inside the branch (`# noqa: PLC0415`), like every sibling.
-18. [ ] `varco_fastapi/varco_fastapi/__init__.py` — export `JwksRefreshLifecycle` in the
+18. [x] `varco_fastapi/varco_fastapi/__init__.py` — export `JwksRefreshLifecycle` in the
         `# ── Lifecycle ──` group beside `MigrationLifecycle` (`:189,351`) and add it to `__all__`.
-19. [ ] `uv run python scripts/api_surface.py` — regenerate
+19. [x] `uv run python scripts/api_surface.py` — regenerate
         `design/api-freeze-and-standards/measurements/api-surface.{json,md}` and commit both.
         **Hard requirement**: `__all__` grew in three packages' surfaces; `--check` fails the next
         `make lint`/CI run otherwise (CLAUDE.md §Public API surface snapshot).
-20. [ ] Docs, all in this change:
+20. [x] Docs, all in this change:
         - `technical_docs/features/jwt-claim-transformer.md:310-314` — ⛔ **delete the ⚠️ "There is
           no background refresher task" paragraph** and replace it with the refresher's usage,
           the §D-S22-interval derivation, the off-by-default statement, and a **Pitfalls** table
@@ -552,7 +552,7 @@ Each phase is independently verifiable and ends with a green `make lint`.
         - `CHANGELOG.md` — Added: `start_refresh()`/`stop_refresh()`, `JwksRefreshLifecycle`,
           `inspect_jwks_posture()`; note the unchanged default.
         - `BACKLOG.md` — move `S22` to *Shipped this cycle*; add the §D-S22-posture wiring row.
-21. [ ] Verify:
+21. [x] Verify:
         `uv run pytest varco_core/tests/test_jwks_refresh.py varco_core/tests/test_jwks_posture.py varco_fastapi/tests/test_jwks_refresh_lifecycle.py -v`
         → green with **zero** `Task was destroyed but it is pending` lines in captured output;
         then `uv run pytest varco_core/tests/ varco_fastapi/tests/ -q`; then `make lint`

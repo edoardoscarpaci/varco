@@ -205,6 +205,15 @@ class TestNatsDLQDeleteWhereRaises:
         with pytest.raises(NotImplementedError, match="MaxAge"):
             await dlq.delete_where(older_than=datetime.now(UTC))
 
+    async def test_delete_where_with_no_predicate_raises_value_error(self) -> None:
+        # KI-7 regression, Docker-free — the ABC's no-predicate refusal must be
+        # reached BEFORE the backend-support NotImplementedError
+        # (varco_nats/varco_nats/dlq.py:558-563). The inherited conformance
+        # guard for this ordering is -m integration only.
+        dlq = NatsDLQ(NatsEventBusSettings())
+        with pytest.raises(ValueError):
+            await dlq.delete_where()
+
 
 class TestNatsDLQGetRaises:
     async def test_get_raises_not_implemented(self) -> None:
