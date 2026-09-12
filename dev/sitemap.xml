@@ -2,2130 +2,2382 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/common-pitfalls/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/a2a-surface/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/features/admin-surface-tenancy/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/asyncapi-export/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/features/authorization-audit/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/cache-hardening/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/casbin-authorization/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/cloudevents-envelope/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/composite-deployment/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/features/credential-and-token-lifecycle/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/crypto-shredding/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/custom-routes/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/database-auditing/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/dead-letter-queues/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/distributed-locks/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/error-taxonomy-and-i18n/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/feature-flags/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/generic-router/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/features/http-edge-hardening/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/i18n-and-localization/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/idempotency-key/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/features/inbound-webhooks/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/job-scheduling-and-leases/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/jwt-claim-transformer/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/multitenancy/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/observability-attributes/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/opa-design/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/outbound-webhooks/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/portable-contracts/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/postgres-rls/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/recurring-schedules/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/features/redaction/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/reliability-preset/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/features/retention-and-purge/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/route-guard/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/schema-migrations/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/features/security-posture/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/features/tenant-provenance/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/timezone-handling/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/tls-trust-and-hot-reload/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/features/token-profiles/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/guides/client-code-generation/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/guides/client/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/guides/peer-service-integration/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/guides/regulatory-posture/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/known-issues/plan-002-followups/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/migrations/009-reliability-and-integration/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/SUMMARY/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/_bson_time/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/audit/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/bootstrap/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/config/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/conversation/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/deduplication/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/di/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/dlq/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/encryption_store/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/factory/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/health/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/idempotency/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/inbox/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/index_guard/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/job_store/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/outbox/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/provider/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/repository/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/saga/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/schedule/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/uow/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/webhook/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/migration/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/migration/base/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/migration/cli/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/migration/framework/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/migration/indexes/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/migration/migrator/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/migration/store/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/query/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/query/aggregation/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/query/compiler/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/tenancy/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/tenancy/binding/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/tenancy/catalog/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/tenancy/pool/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_beanie/tenancy/provisioner/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_casbin/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_casbin/adapter/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_casbin/beanie_adapter/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_casbin/config/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_casbin/di/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_casbin/engine/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_casbin/router/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/assembler/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/config/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/deprecation/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/encryption/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/encryption_store/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/health/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/lock/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/mapper/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/meta/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/migrator/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/model/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/providers/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/registry/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/reload/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/repository/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/serialization/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tracing/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/uow/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/validation/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/asyncapi/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/asyncapi/generator/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/auth/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/auth/api_key/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/auth/audit/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/auth/authorizer/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/auth/base/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/auth/delegation/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/auth/di/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/auth/helpers/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/auth/policy/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/authority/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/authority/config/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/authority/exceptions/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/authority/jwt_authority/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/authority/multi_key_authority/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/authority/posture/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/authority/registry/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/authority/sources/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/authority/sources/authority/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/authority/sources/factory/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/authority/sources/jwks_url/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/authority/sources/oidc/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/authority/sources/pem_file/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/authority/sources/pem_folder/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/authority/sources/protocol/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cache/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cache/backplane/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cache/base/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cache/config/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cache/consumer/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cache/decorator/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cache/envelope/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cache/invalidation/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cache/layered/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cache/memory/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cache/mixin/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cache/policy/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cache/readthrough/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cache/service/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cache/singleflight/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cache/warming/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cli/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cli/asyncapi/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cli/dlq/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cli/main/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cli/migrate/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cli/retention/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/cli/tenant/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/connection/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/connection/auth/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/connection/base/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/connection/ssl/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/context/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/context/ambient/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/context/defaults/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/context/precedence/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/context/request/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/dto/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/dto/base/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/dto/encryption/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/dto/factory/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/dto/pagination/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/event/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/event/audit_event/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/event/base/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/event/channel/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/event/cloudevents/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/event/config/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/event/consumer/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/event/deduplication/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/event/dlq/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/event/domain/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/event/memory/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/event/middleware/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/event/producer/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/event/redrive/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/event/serializer/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/exception/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/exception/body_limit/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/exception/codes/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/exception/http/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/exception/idempotency/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/exception/query/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/exception/rate_limit/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/exception/repository/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/exception/service/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/exception/settings/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/exception/webhook/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/flags/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/flags/base/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/flags/di/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/flags/memory/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/flags/null/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/i18n/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/i18n/cache_key/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/i18n/catalog/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/i18n/gettext_catalog/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/i18n/negotiation/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/i18n/resolve/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/i18n/settings/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/idempotency/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/idempotency/base/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/idempotency/fingerprint/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/idempotency/memory/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/idempotency/record/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/idempotency/settings/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/job/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/job/base/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/job/reschedule/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/job/serializer/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/job/task/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwk/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwk/builder/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwk/model/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/builder/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/config/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/exceptions/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/model/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/parser/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/profile/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/util/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/transform/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/transform/config/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/transform/mapper/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/transform/mapping/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/transform/path/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/transform/protocol/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/transform/registry/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/transform/runtime/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/jwt/transform/shape/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/migration/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/migration/base/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/migration/errors/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/migration/fanout/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/migration/inmemory/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/migration/settings/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/observability/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/observability/attributes/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/observability/cache/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/observability/config/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/observability/di/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/observability/helpers/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/observability/metric/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/observability/metrics/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/observability/mixin/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/observability/params/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/observability/reliability/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/observability/repository_mixin/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/observability/retention/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/observability/span/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/profiling/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/profiling/backend/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/profiling/config/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/profiling/decorator/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/profiling/engine/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/profiling/otel/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/profiling/report/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/profiling/backends/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/profiling/backends/cprofile/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/profiling/backends/tracemalloc_backend/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/query/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/query/aggregation/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/query/builder/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/query/params/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/query/parser/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/query/policy/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/query/transformer/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/query/type/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/query/applicator/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/query/applicator/applicator/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/query/applicator/tenant_guard/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/query/visitor/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/query/visitor/ast_visitor/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/query/visitor/query_optimizer/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/query/visitor/type_coercion/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/query/visitor/walking/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/redaction/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/redaction/patterns/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/redaction/policy/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/redaction/posture/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/redaction/redactor/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/reliability/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/reliability/preset/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/reliability/wiring/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/resilience/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/resilience/bulkhead/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/resilience/circuit_breaker/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/resilience/hedge/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/resilience/rate_limit/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/resilience/retry/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/resilience/timeout/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/retention/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/retention/base/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/retention/di/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/retention/policy/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/retention/posture/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/retention/scheduler/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/retention/targets/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/revocation/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/revocation/base/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/revocation/di/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/revocation/memory/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/revocation/model/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/revocation/null/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/revocation/posture/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/schedule/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/schedule/cron/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/schedule/entity/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/schedule/materializer/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/schedule/repository/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/service/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/service/async_validation/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/service/audit/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/service/base/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/service/bulk/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/service/conversation/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/service/inbox/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/service/mixin/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/service/outbox/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/service/saga/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/service/soft_delete/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/service/tenant/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/service/types/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/service/validation/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/cache_key/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/cached_catalog/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/catalog/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/di/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/fanout/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/global_scope/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/membership/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/pool/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/posture/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/provenance/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/provider/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/provisioner/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/routing/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/scope_guard/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/settings/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/source/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/sources/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/control/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/control/consumer/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/control/events/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/control/readiness/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tenancy/control/service/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tls/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tls/clients/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tls/di/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tls/discovery/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tls/install/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tls/pkcs12/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tls/reload/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tls/store/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tz/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tz/format/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tz/resolve/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tz/schedule/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tz/settings/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/tz/zones/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/watch/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/watch/base/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/watch/poll/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/watch/snapshot/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/watch/wfiles/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/webhook/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/webhook/base/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/webhook/dispatcher/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/webhook/metrics/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/webhook/models/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/webhook/settings/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/webhook/signing/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/webhook/ssrf/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/webhook/transport/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/webhook/inbound/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/webhook/inbound/base/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/webhook/inbound/replay/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_core/webhook/inbound/verifiers/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/app/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/composite/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/connection/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/context/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/di/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/exceptions/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/i18n/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/jwks/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/lifespan/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/migrate/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/posture/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/reliability/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/retention/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/validation/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/admin/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/admin/_tenant_scope/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/admin/audit_router/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/admin/dlq_router/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/admin/mount/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/auth/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/auth/client_auth/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/auth/guard/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/auth/posture/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/auth/server_auth/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/auth/trust_store/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/client/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/client/advanced/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/client/base/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/client/config/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/client/configurator/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/client/front_door/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/client/generic/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/client/handle/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/client/method/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/client/middleware/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/client/openapi/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/client/openapi_gen/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/client/peer/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/client/protocol/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/client/stubs/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/client/sync/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/contract/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/contract/build/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/contract/cli/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/contract/codegen/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/contract/model/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/contract/runtime/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/contract/schema/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/job/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/job/poller/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/job/response/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/job/runner/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/job/store/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/_forwarded/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/_json_response/</loc>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/body_limit/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/cors/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/error/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/idempotency/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/introspect/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/localization/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/logging/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/metrics/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/profiling/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/rate_limit/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/request_context/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/security_headers/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/session/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/tenant_resolution/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/middleware/tracing/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/base/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/crud/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/endpoint/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/health/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/introspection/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/mcp/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/metrics/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/mixins/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/pagination/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/presets/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/skill/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/a2a/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/a2a/card/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/a2a/jsonrpc/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/a2a/router_source/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/router/a2a/source/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/tenancy/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/tenancy/lifecycle/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/tenancy/mount/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/tenancy/router/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/webhook/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/webhook/inbound/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/webhook/mount/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_fastapi/webhook/router/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_kafka/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_kafka/bus/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_kafka/channel/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_kafka/config/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_kafka/connection/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_kafka/di/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_kafka/dlq/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_kafka/health/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_memcached/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_memcached/cache/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_memcached/di/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_memcached/health/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_nats/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_nats/bus/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_nats/channel/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_nats/config/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_nats/connection/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_nats/di/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_nats/dlq/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_nats/health/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/backplane/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/bulkhead/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/bus/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/cache/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/channel/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/config/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/connection/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/conversation/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/deduplication/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/di/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/dlq/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/encryption_store/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/health/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/idempotency/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/job_store/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/lock/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/rate_limit/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/revocation/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/stream_dlq/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_redis/streams/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/advisory_lock/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/alembic_helpers/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/audit/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/bootstrap/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/config/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/connection/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/conversation/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/deduplication/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/di/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/dlq/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/encryption_store/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/factory/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/health/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/idempotency/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/inbox/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/job_store/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/metadata/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/models/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/outbox/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/pool_metrics/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/provider/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/repository/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/rls/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/rls_autogen/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/rls_framework/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/saga/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/schedule/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/schema_guard/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/sqlalchemy_session/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/type_coercion/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/uow/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/webhook/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/migration/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/migration/cli/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/migration/env_template/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/migration/lock/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/migration/migrator/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/migration/ops/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/query/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/query/aggregation/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/query/applicator/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/query/compiler/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/tenancy/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/tenancy/catalog/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/tenancy/engine_registry/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/tenancy/global_dsn/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/tenancy/global_scope/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/tenancy/guard/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/tenancy/models/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/tenancy/provisioner/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/tenancy/rls_check/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
+    </url>
+    <url>
+         <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/tenancy/rls_session/</loc>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/tenancy/router/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/tenancy/admin/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/tenancy/admin/db_provisioner/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/tenancy/admin/engine/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_sa/tenancy/admin/guard/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_ws/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_ws/di/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_ws/sse/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
     <url>
          <loc>https://edoardoscarpaci.github.io/varco/dev/reference/varco_ws/websocket/</loc>
-         <lastmod>2026-09-05</lastmod>
+         <lastmod>2026-09-12</lastmod>
     </url>
 </urlset>
