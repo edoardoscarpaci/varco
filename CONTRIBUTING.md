@@ -129,8 +129,9 @@ not scheduled for removal.
 committed snapshot (`design/api-freeze-and-standards/measurements/api-surface.json`) and detects a
 **removal** or a **function signature narrowing**. Run it by hand after touching any `__all__` or
 any exported function's signature, and commit the regenerated snapshot alongside the change.
-Honestly: it is **not yet a CI gate** (see CLAUDE.md's own caveat), and it cannot see a narrowed
-class `__init__` (class signatures are not recorded — see the same section for why).
+It **is** a CI gate as of 3.0.1 (Plan 024 / C5 — wired into `make lint`'s no-`PKG` path and
+`test.yml`'s `lint` job); it still cannot see a narrowed class `__init__` (class signatures are
+not recorded — see the same section for why).
 
 ### Python support
 

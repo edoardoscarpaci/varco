@@ -157,6 +157,7 @@ policy engine, field encryption, observability, profiling, …) — see
   - [JwtAuthority — signing](#jwtauthority--signing)
   - [MultiKeyAuthority — key rotation](#multikeyauthority--key-rotation)
   - [TrustedIssuerRegistry — verification](#trustedissuerregistry--verification)
+  - [JWKS background refresh](#jwks-background-refresh-plan-041--s22)
   - [Key sources](#key-sources)
   - [Verification hardening (VARCO_JWT_*)](#verification-hardening-varco_jwt_)
 - [Connection Settings](#connection-settings)
