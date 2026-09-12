@@ -47,7 +47,7 @@ beanie = "varco_beanie.migration.cli:register"
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.24",
     "pymongo>=4.0",
     # testcontainers[mongodb] spins up a real MongoDB instance via Docker for

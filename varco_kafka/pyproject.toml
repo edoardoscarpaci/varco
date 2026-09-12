@@ -45,7 +45,7 @@ varco-core = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.24",
     # testcontainers[kafka] spins up a real Kafka broker via Docker for
     # integration tests.  Marked with @pytest.mark.integration and skipped

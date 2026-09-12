@@ -46,7 +46,7 @@ varco-fastapi = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.24",
     "casbin-async-sqlalchemy-adapter>=1.4",
     "sqlalchemy[asyncio]>=2.0",

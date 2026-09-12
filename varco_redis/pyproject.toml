@@ -42,7 +42,7 @@ varco-core = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.24",
     # testcontainers[redis] spins up a real Redis instance via Docker for
     # integration tests.  Marked with @pytest.mark.integration and skipped

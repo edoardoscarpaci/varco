@@ -89,7 +89,7 @@ varco-fastapi = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.24",
     # tests/test_conformance_inmemory.py imports InMemoryJobStore from
     # varco_fastapi.job.store to exercise the shared JobStoreConformance suite

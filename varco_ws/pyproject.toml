@@ -36,7 +36,7 @@ varco-core = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.24",
     # RT4: real WebSocket/SSE integration harness — a small FastAPI app served by
     # uvicorn on an ephemeral port, driven by real websockets/httpx clients.

@@ -45,7 +45,7 @@ migrations = ["alembic>=1.13"]
 dev = [
     # aiosqlite is included here (not just sqlite group) so tests run without
     # needing a separate --extra flag during local development.
-    "pytest>=8.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.24",
     "aiosqlite>=0.20",
     "alembic>=1.13",

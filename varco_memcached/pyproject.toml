@@ -39,7 +39,7 @@ varco-core = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.24",
     # testcontainers[memcached] spins up a real Memcached instance via Docker for
     # integration tests.  Marked @pytest.mark.integration — run with: pytest -m integration
