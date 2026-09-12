@@ -52,6 +52,7 @@ def mount_reliability_admin(
     acknowledge_bundled_admin: bool = False,
     server_auth: Any | None = None,
     admin_role: str = "reliability-admin",
+    cross_tenant_role: str = "cross-tenant-admin",
     prefix: str = "/reliability",
     dependencies: Sequence[Any] | None = None,
 ) -> None:
@@ -70,6 +71,10 @@ def mount_reliability_admin(
                      deliberate, friction-gated choice, not a default.
         server_auth: Auth strategy forwarded to both routers.
         admin_role:  Documented role requirement.
+        cross_tenant_role: Role required to reach every tenant with an
+                     omitted ``tenant_id``, or a ``tenant_id`` other than
+                     the resolved one (§D-S4-scope). Forwarded unchanged to
+                     both routers.
         prefix:      URL prefix for the whole admin surface.
         dependencies: Extra FastAPI dependencies (e.g. an IP allowlist,
                      an mTLS check) applied to every mounted route.
@@ -127,6 +132,7 @@ def mount_reliability_admin(
                 audit_repo,
                 server_auth=server_auth,
                 admin_role=admin_role,
+                cross_tenant_role=cross_tenant_role,
                 prefix=f"{prefix}/audit",
             ),
             dependencies=list(dependencies) if dependencies else None,
@@ -142,6 +148,7 @@ def mount_reliability_admin(
                 redriver=redriver,
                 server_auth=server_auth,
                 admin_role=admin_role,
+                cross_tenant_role=cross_tenant_role,
                 prefix=f"{prefix}/dlq",
             ),
             dependencies=list(dependencies) if dependencies else None,

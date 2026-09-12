@@ -89,6 +89,20 @@ class Schedule(DomainModel):
         payload: Arbitrary data merged into each materialized ``Job``'s
             ``metadata`` — the schedule owner's own invocation arguments.
         callback_url: Forwarded verbatim to each materialized ``Job``.
+        task_name: Plan 039 (S20) / §D-S20-driver "(1)" — the ``TaskRegistry``
+            name to invoke for each materialized occurrence. ``None`` (the
+            default) is **byte-identical to today**: ``_build_job`` emits
+            ``task_payload=None``, exactly as before this field existed —
+            pinned by
+            ``test_schedule_materializer.py::TestTaskNameProducesTaskPayload
+            ::test_task_name_none_produces_no_task_payload_pinned`` before
+            the change landed. When set, ``_build_job`` emits
+            ``TaskPayload(task_name=schedule.task_name,
+            kwargs=dict(schedule.payload))``, which is what makes a
+            ``Schedule`` (previously "when", never "what") reachable through
+            ``JobRunner.recover()``'s ``task_payload is not None`` filter —
+            closing the gap Plan 032 left open (nothing called
+            ``materialize()`` and nothing it produced was executable).
 
     Edge cases:
         - ``last_materialized_at=None`` is treated as "never run" — the
@@ -114,6 +128,7 @@ class Schedule(DomainModel):
 
     payload: dict[str, Any] = field(default_factory=dict)
     callback_url: str | None = None
+    task_name: str | None = None
 
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))

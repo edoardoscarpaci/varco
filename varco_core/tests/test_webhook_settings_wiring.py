@@ -137,3 +137,59 @@ async def test_omitting_settings_uses_env_backed_defaults(repo, monkeypatch) -> 
 
     assert dispatcher._disable_after_failures == 3
     assert dispatcher._request_timeout_seconds == 1.25
+
+
+# ── Plan 038 (S19) / Phase 5, Step 16 — inbound_* settings threading ────────
+
+
+def test_inbound_settings_have_documented_defaults() -> None:
+    settings = WebhookSettings()
+    assert settings.inbound_tolerance_seconds == 300.0
+    assert settings.inbound_replay_ttl_seconds == 600.0
+
+
+def test_inbound_tolerance_env_var_parses(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VARCO_WEBHOOK_INBOUND_TOLERANCE_SECONDS", "60")
+    settings = WebhookSettings()
+    assert settings.inbound_tolerance_seconds == 60.0
+
+
+async def test_get_verifier_with_settings_rejects_a_90s_old_delivery_at_60s_tolerance() -> None:
+    import time
+
+    from varco_core.webhook.inbound.verifiers import get_verifier
+
+    settings = WebhookSettings(inbound_tolerance_seconds=60.0)
+    verifier = get_verifier("stripe", secrets=["whsec_stripe_test_secret"], settings=settings)
+
+    import hashlib
+    import hmac as hmac_module
+
+    ts = str(int(time.time()) - 90)
+    body = b'{"id": "evt_1"}'
+    sig = hmac_module.new(
+        b"whsec_stripe_test_secret", f"{ts}.{body.decode()}".encode(), hashlib.sha256
+    ).hexdigest()
+    result = verifier.verify(body=body, headers={"Stripe-Signature": f"t={ts},v1={sig}"})
+    assert result.verified is False
+
+
+def test_explicit_tolerance_seconds_kwarg_wins_over_settings() -> None:
+    from varco_core.webhook.inbound.verifiers import get_verifier
+
+    settings = WebhookSettings(inbound_tolerance_seconds=60.0)
+    verifier = get_verifier(
+        "stripe",
+        secrets=["whsec_stripe_test_secret"],
+        settings=settings,
+        tolerance_seconds=9999.0,
+    )
+    assert verifier._tolerance_seconds == 9999.0
+
+
+def test_settings_none_constructs_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VARCO_WEBHOOK_INBOUND_TOLERANCE_SECONDS", "45")
+    from varco_core.webhook.inbound.verifiers import get_verifier
+
+    verifier = get_verifier("stripe", secrets=["whsec_stripe_test_secret"], settings=None)
+    assert verifier._tolerance_seconds == 45.0

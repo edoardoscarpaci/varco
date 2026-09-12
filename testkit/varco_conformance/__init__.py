@@ -4,7 +4,8 @@ varco_conformance
 
 Shared, test-only conformance suites for ``varco_core`` ABCs
 (``AbstractEventBus``, ``CacheBackend``, ``AbstractJobStore``,
-``AbstractDeadLetterQueue``, ``ChannelManager``).
+``AbstractDeadLetterQueue``, ``ChannelManager``, ``AbstractIdempotencyStore``,
+``WebhookSubscriptionRepository``, ``AbstractTokenRevocationStore``).
 
 This package lives at the repo root under ``testkit/`` — it is **never**
 packaged or published, and is reached only via each participating package's
@@ -21,11 +22,16 @@ Contract for every class in this package:
   ``store``/``dlq``) raises ``NotImplementedError`` by default — a backend
   subclass that forgets to override the fixture fails loudly and
   immediately, rather than silently skipping the whole suite.
-- A genuine backend contract violation discovered by these suites is
-  recorded by the *consuming* per-backend test module as
-  ``@pytest.mark.xfail(reason="BUG: ...", strict=True)`` plus a BACKLOG
-  entry — these base classes never weaken an assertion to work around a
-  known bug (Plan 012 Non-goals).
+- A red run means one of three things, and only one may edit this package: a
+  genuine backend ABC violation (``@pytest.mark.xfail(strict=True)`` on the
+  consuming per-backend test module, with a ``reason=`` naming its finding
+  ID — never an in-place production fix, never a weakened assertion here), a
+  gap in a suite itself (fix it in this package, no marker), or a legitimate
+  backend capability divergence (override the one test in the subclass, with
+  a docstring). See ``COVERAGE.md``'s **Conformance findings register** for
+  the full decision table, an in-tree example of each, and where
+  accumulated findings live — not BACKLOG.md, which is trimmed by design
+  (Plan 012 Non-goals; Plan 042).
 """
 
 from __future__ import annotations

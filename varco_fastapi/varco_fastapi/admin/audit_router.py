@@ -18,7 +18,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+
+from varco_fastapi.admin._tenant_scope import resolve_ctx, resolve_tenant_scope
 
 if TYPE_CHECKING:
     from varco_core.service.audit import AuditRepository
@@ -43,11 +45,18 @@ def build_audit_router(
     *,
     server_auth: Any | None = None,
     admin_role: str = "reliability-admin",
+    cross_tenant_role: str = "cross-tenant-admin",
     prefix: str = "/audit",
     allow_delete: bool = False,
 ) -> APIRouter:
     """
     Build the audit-log admin ``APIRouter``.
+
+    Args:
+        cross_tenant_role: Role required to omit ``tenant_id`` and reach
+            every tenant, or to supply a ``tenant_id`` other than the
+            resolved one (§D-S4-scope). Same semantics as
+            ``build_dlq_router``'s kwarg of the same name.
 
     Routes:
         GET  {prefix}/entries                          all list() filters as query params
@@ -60,6 +69,7 @@ def build_audit_router(
 
     @router.get("/entries")
     async def list_entries(
+        request: Request,
         actor_id: str | None = None,
         action: str | None = None,
         entity_type: str | None = None,
@@ -71,6 +81,9 @@ def build_audit_router(
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
+        ctx = await resolve_ctx(server_auth, request)
+        scoped_tenant_id = resolve_tenant_scope(tenant_id, ctx, cross_tenant_role)
+
         limit = min(limit, 1000)
         if occurred_from and occurred_to and occurred_from > occurred_to:
             raise HTTPException(status_code=422, detail="occurred_from must be <= occurred_to.")
@@ -80,7 +93,7 @@ def build_audit_router(
                 action=action,
                 entity_type=entity_type,
                 entity_id=entity_id,
-                tenant_id=tenant_id,
+                tenant_id=scoped_tenant_id,
                 correlation_id=correlation_id,
                 occurred_from=(datetime.fromisoformat(occurred_from) if occurred_from else None),
                 occurred_to=(datetime.fromisoformat(occurred_to) if occurred_to else None),
@@ -111,6 +124,7 @@ def build_audit_router(
 
     @router.post("/verify-chain")
     async def verify_chain(
+        request: Request,
         entity_type: str | None = None,
         entity_id: str | None = None,
         tenant_id: str | None = None,
@@ -128,11 +142,14 @@ def build_audit_router(
         """
         from varco_core.service.audit import AuditRepository, ChainGap, HashMismatch
 
+        ctx = await resolve_ctx(server_auth, request)
+        scoped_tenant_id = resolve_tenant_scope(tenant_id, ctx, cross_tenant_role)
+
         try:
             entries = await audit_repo.list(
                 entity_type=entity_type,
                 entity_id=entity_id,
-                tenant_id=tenant_id,
+                tenant_id=scoped_tenant_id,
                 limit=min(limit, 10_000),
             )
         except NotImplementedError as exc:
@@ -167,16 +184,20 @@ def build_audit_router(
 
         @router.delete("/entries")
         async def delete_where(
+            request: Request,
             older_than: str | None = None,
             entity_type: str | None = None,
             tenant_id: str | None = None,
             limit: int | None = None,
         ) -> dict[str, Any]:
+            ctx = await resolve_ctx(server_auth, request)
+            scoped_tenant_id = resolve_tenant_scope(tenant_id, ctx, cross_tenant_role)
+
             try:
                 count = await audit_repo.delete_where(
                     older_than=(datetime.fromisoformat(older_than) if older_than else None),
                     entity_type=entity_type,
-                    tenant_id=tenant_id,
+                    tenant_id=scoped_tenant_id,
                     limit=limit,
                 )
             except NotImplementedError as exc:

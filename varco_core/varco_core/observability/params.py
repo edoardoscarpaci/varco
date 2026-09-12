@@ -10,10 +10,11 @@ extraction), ``sanitize_value`` (the value-rendering table), and the
 process-wide capture kill switch (``capture_enabled`` / ``set_capture_enabled``)
 plus its env-var bootstrap (``param_capture_from_env``).
 
-Import direction is strictly one-way — this module imports **only stdlib**,
-never any other ``varco_core.observability`` module.  It is imported BY
-``span.py`` / ``mixin.py`` / ``repository_mixin.py`` / ``helpers.py``, never
-the other way around.
+Import direction is strictly one-way — this module imports only stdlib and
+``varco_core.redaction`` (itself stdlib-only), never any other
+``varco_core.observability`` module.  It is imported BY ``span.py`` /
+``mixin.py`` / ``repository_mixin.py`` / ``helpers.py``, never the other way
+around.
 
 DESIGN: decoration time vs. call time
     ``@span`` decorators run at *import* time, before ``OtelConfiguration``
@@ -83,29 +84,20 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
+from varco_core.redaction.patterns import DEFAULT_REDACT_PATTERNS
+from varco_core.redaction.policy import RedactionPolicy
+from varco_core.redaction.policy import is_sensitive_key as _redaction_is_sensitive_key
+
 _logger = logging.getLogger(__name__)
 
 # ── Redaction ────────────────────────────────────────────────────────────────
-
-# Case-insensitive **substring** match on the parameter name.  Fail-closed:
-# redaction wins even over an explicit `include=(...)` allow-list entry.
-DEFAULT_REDACT_PATTERNS: tuple[str, ...] = (
-    "password",
-    "passwd",
-    "secret",
-    "token",
-    "authorization",
-    "auth",
-    "api_key",
-    "apikey",
-    "credential",
-    "private_key",
-    "cookie",
-    "session_id",
-    "otp",
-    "pin",
-    "ssn",
-)
+#
+# Plan 040 / S21, §D-S21-compat: DEFAULT_REDACT_PATTERNS now lives in
+# varco_core.redaction.patterns — this is a re-export of the SAME object
+# (identity, not equality; asserted by
+# varco_core/tests/test_redaction_extraction.py), not a duplicate copy or a
+# deprecated alias. The two names denote the same tuple with the same
+# semantics — no DeprecationWarning, no removal planned (§D-S21-compat).
 
 _REDACTION_PLACEHOLDER_DEFAULT = "[REDACTED]"
 
@@ -305,8 +297,14 @@ def _sanitize_value_inner(
 
 
 def _is_redacted(name: str, config: ParamCaptureConfig) -> bool:
-    lname = name.lower()
-    return any(pattern.lower() in lname for pattern in config.redact_patterns)
+    # Plan 040 / S21, §D-S21-compat: the decision now delegates to
+    # varco_core.redaction.is_sensitive_key — byte-identical
+    # case-insensitive substring semantics (RedactionPolicy's default
+    # match_mode), against whatever patterns THIS config carries (which may
+    # differ from DEFAULT_REDACT_PATTERNS if the caller overrode
+    # redact_patterns=). Rendering (sanitize_value) is untouched — only the
+    # decision half of the incumbent split moves.
+    return _redaction_is_sensitive_key(name, RedactionPolicy(patterns=config.redact_patterns))
 
 
 def _is_eligible(name: str, config: ParamCaptureConfig) -> bool:

@@ -90,7 +90,16 @@ async def test_cross_tenant_subscription_list_never_leaks_across_tenants(repo) -
     """
     A subscription list must never leak across tenants — the plan calls this
     out explicitly as a merge-gate-adjacent assertion for Step 19.
+
+    Updated by Plan 036 (S4a) / §D-S4-bola, Step 3: ``list_subscriptions``
+    no longer trusts a caller-supplied ``X-Tenant-Id`` header (that was
+    itself the leak this test exists to catch — a header the middleware
+    never validated) — it scopes to the ambient, resolved
+    ``current_tenant()`` instead. A spoofed header alongside the real
+    ``tenant_context()`` must have no effect, which is exactly what this
+    test now asserts.
     """
+    from varco_core.service.tenant import tenant_context
     from varco_fastapi.webhook import mount_webhook_admin
 
     await repo.save(_subscription("tenant-a"))
@@ -100,7 +109,8 @@ async def test_cross_tenant_subscription_list_never_leaks_across_tenants(repo) -
     mount_webhook_admin(app, repository=repo, acknowledge_bundled_admin=True)
 
     client = TestClient(app)
-    resp = client.get("/webhooks/subscriptions", headers={"X-Tenant-Id": "tenant-a"})
+    with tenant_context("tenant-a"):
+        resp = client.get("/webhooks/subscriptions", headers={"X-Tenant-Id": "tenant-b"})
     assert resp.status_code == 200
     body = resp.json()
     returned_tenants = {item["tenant_id"] for item in body}

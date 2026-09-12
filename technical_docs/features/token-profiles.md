@@ -109,7 +109,7 @@ base token — the same funnel both SEAM 1 (`JwtParser.parse()`) and SEAM 2
   unchanged unless the profile actually grants something.
 
 ```python
-tok = JwtParser.parse(raw_token, secret)
+tok = JwtParser.parse(raw_token, secret, algorithms=["HS256"])
 tok.auth_ctx.metadata["token_profile"]  # "internal" (if matched)
 tok.auth_ctx.roles  # includes any implied_roles merged in
 ```

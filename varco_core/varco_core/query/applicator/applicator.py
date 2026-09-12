@@ -41,19 +41,42 @@ class QueryApplicator(ABC):
     Args:
         allowed_fields: Optional whitelist of field names permitted in queries
                         and sort directives.  Empty set means no restriction.
+        tenant_guard:   Optional callable — usually
+                        ``varco_core.query.applicator.tenant_guard.assert_tenant_predicate``
+                        partially applied, or an equivalent
+                        ``(node) -> None`` callable — invoked by a custom
+                        applicator's own ``apply_query()`` when it wants the
+                        opt-in, dev-time-only AST tenant-filter guard
+                        (Plan 037 / S15). ``None`` (the default) means no
+                        assertion — byte-identical to before this plan.
+                        **This base class never calls it itself** — varco's
+                        own repositories are not on this applicator's code
+                        path at all (§D-S15-hook: they call
+                        ``SQLAlchemyQueryCompiler``/``BeanieQueryCompiler``
+                        directly), so wiring the call is a subclass's own
+                        decision, not this ABC's.
     """
 
-    def __init__(self, *args: Any, allowed_fields: set[str] | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        allowed_fields: set[str] | None = None,
+        tenant_guard: Any = None,
+        **kwargs: Any,
+    ) -> None:
         """
         Initialise the applicator.
 
         Args:
             allowed_fields: Field name whitelist.  ``None`` means unrestricted.
+            tenant_guard:   See the class docstring. ``None`` by default —
+                            byte-identical to before Plan 037.
             args:           Passed to super (cooperative multiple inheritance).
             kwargs:         Passed to super.
         """
         # Store a copy so external mutation cannot affect us
         self.allowed_fields: set[str] = set(allowed_fields) if allowed_fields else set()
+        self.tenant_guard = tenant_guard
 
     @abstractmethod
     def apply_query(self, query: _T, node: TransformerNode, *args: Any, **kwargs: Any) -> _T:

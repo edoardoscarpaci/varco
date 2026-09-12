@@ -42,6 +42,7 @@ Async safety:   ✅ Safe — asyncio.Lock serialises concurrent verify() calls.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from dataclasses import dataclass, field
@@ -68,12 +69,18 @@ if TYPE_CHECKING:
 from varco_core.authority.exceptions import (
     IssuerNotFoundError,
     KeyLoadError,
+    RevocationStoreUnavailableError,
+    TokenRevokedError,
     UnknownKidError,
 )
 from varco_core.authority.sources.protocol import IssuerSource
 from varco_core.jwk.model import JsonWebKey, JsonWebKeySet
-from varco_core.jwt.model import JsonWebToken
+from varco_core.jwt.model import JsonWebToken, _from_utc_timestamp
 from varco_core.jwt.parser import JwtParser
+from varco_core.revocation.base import AbstractTokenRevocationStore
+from varco_core.revocation.model import RevocationFailureMode, RevocationScope
+
+_registry_logger = logging.getLogger(__name__)
 
 # ── TrustedIssuerEntry ────────────────────────────────────────────────────────
 
@@ -148,6 +155,11 @@ class TrustedIssuerRegistry:
         "_min_refresh_interval",
         "_ttl_seconds",
         "_loaded_at",
+        "_revocation_store",
+        "_refresh_task",
+        "_refresh_stop",
+        "_refresh_interval",
+        "_refresh_in_error",
     )
 
     # ── DI injection handles ───────────────────────────────────────────────────
@@ -176,6 +188,7 @@ class TrustedIssuerRegistry:
         *,
         min_refresh_interval: float | None = None,
         ttl_seconds: float | None = None,
+        revocation_store: AbstractTokenRevocationStore | None = None,
     ) -> None:
         """
         Args:
@@ -190,6 +203,15 @@ class TrustedIssuerRegistry:
                 ``VARCO_JWKS_TTL_SECONDS`` (default ``0.0`` — disabled,
                 identical to pre-Plan-002 behaviour: only kid-miss triggers
                 a refresh).
+            revocation_store: Optional ``AbstractTokenRevocationStore``
+                (Plan 034 / S13, §D-S13-hook). ``None`` (the default) means
+                **no check, no await, no cost** — zero-config ``verify()``
+                behaviour is byte-identical to before this parameter
+                existed. Binding a store in DI (``enable_token_revocation``/
+                ``enable_redis_token_revocation``) does NOT by itself wire
+                it here — that binding must be passed to this constructor
+                explicitly (§D-S13-di's two-step; ``varco_core`` never
+                reaches for ``DIContainer.current()``).
         """
         # label → TrustedIssuerEntry
         self._entries: dict[str, TrustedIssuerEntry] = {}
@@ -215,6 +237,22 @@ class TrustedIssuerRegistry:
         # 0.0 sentinel = "never loaded" — _should_proactively_reload() never
         # fires from the initial (unloaded) state.
         self._loaded_at: float = 0.0
+
+        # Plan 034 / S13 — None means "no check, no await, no cost".
+        self._revocation_store = revocation_store
+
+        # Plan 041 / S22, §D-S22-loop — background JWKS refresher state.
+        # DESIGN: lazy construction, same rule as self._lock above.
+        #   ✅ No asyncio.Event/Task is created here — only inside start_refresh(),
+        #      which is `async def` and therefore always has a running loop.
+        #   ✅ A registry constructed and never `start_refresh()`ed (the default —
+        #      ttl_seconds=0.0) carries zero background-task footprint.
+        self._refresh_task: asyncio.Task[None] | None = None
+        self._refresh_stop: asyncio.Event | None = None
+        self._refresh_interval: float = 0.0
+        # §D-S22-failure — log-once-per-transition latch, same shape as
+        # StatPollWatcher._in_error (varco_core/watch/poll.py:73).
+        self._refresh_in_error: bool = False
 
     def _get_lock(self) -> asyncio.Lock:
         """
@@ -529,6 +567,202 @@ class TrustedIssuerRegistry:
         self._last_refresh = now
         self._loaded_at = now
 
+    # ── Background refresh (Plan 041 / S22) ──────────────────────────────────
+
+    @property
+    def refresh_running(self) -> bool:
+        """
+        Whether the background refresher task is currently running.
+
+        Returns:
+            ``True`` iff ``start_refresh()`` created a task that has not since
+            completed/been stopped. ``False`` before the first ``start_refresh()``
+            call, after ``stop_refresh()``, or when the effective period was
+            ``<= 0`` (no task was ever created).
+        """
+        return self._refresh_task is not None and not self._refresh_task.done()
+
+    @property
+    def refresh_interval(self) -> float:
+        """
+        The background refresher's effective tick period, in seconds.
+
+        Returns:
+            ``0.0`` when the refresher has never run (the "off" sentinel —
+            matches ``ttl_seconds``'s own "0.0 = disabled" convention). Once
+            ``start_refresh()`` has run at least once, this is the resolved,
+            possibly-clamped period from that call — it is **not** reset to
+            ``0.0`` by ``stop_refresh()``, so a caller can inspect what period
+            was last used even after stopping.
+        """
+        return self._refresh_interval
+
+    async def start_refresh(self, *, interval: float | None = None) -> None:
+        """
+        Start a background task that periodically calls ``_refresh_all_sources()``.
+
+        This makes ``ttl_seconds``/``min_refresh_interval`` deliver their
+        documented intent even when no ``verify()`` call ever arrives — see
+        ``varco_core.authority.registry`` module docstring and
+        ``technical_docs/features/jwt-claim-transformer.md`` for the full
+        design (§D-S22-seam/§D-S22-interval/§D-S22-loop/§D-S22-failure).
+
+        Args:
+            interval: Explicit tick period in seconds. ``None`` (default)
+                uses ``self._ttl_seconds`` (§D-S22-interval — the knob
+                already means "the age at which the cached keyset is
+                considered stale"; ticking at that period delivers exactly
+                that intent). A resolved period ``<= 0`` means "off" — no
+                task is created, and this is a silent no-op (the same
+                off-by-default posture as ``ttl_seconds=0.0`` itself). A
+                resolved period below ``min_refresh_interval`` is clamped up
+                to it (a period below it provably produces ticks that do
+                nothing at all — ``JwksUrlSource.refresh()`` returns the
+                cache without a network call inside its own
+                ``min_refresh_interval``) and logs one WARNING naming both
+                values.
+
+        Returns:
+            None.
+
+        Raises:
+            Never raises — a misconfigured period is clamped, not rejected;
+            an already-running refresher makes this call an idempotent no-op.
+
+        Edge cases:
+            - Called twice: idempotent — the second call is a no-op and the
+              original task keeps running with its original period.
+            - Zero registered issuers: still creates a task (if the period is
+              positive) — each tick's ``_refresh_all_sources()`` gathers
+              nothing and stamps timestamps, which is harmless.
+            - Never calls ``load_all()`` — a down issuer at construction time
+              must not prevent the refresher from starting (§D-S22-failure);
+              the initial load remains the caller's own explicit
+              ``await registry.load_all()``.
+
+        Async safety: ✅ ``async def`` — always has a running event loop, so
+            the ``asyncio.Event``/``asyncio.Task`` created here are always
+            constructed inside it (the same lazy-primitive rule as
+            ``_get_lock()``).
+        """
+        if self.refresh_running:
+            return  # idempotent — one task per registry
+
+        effective_interval = interval if interval is not None else self._ttl_seconds
+        if effective_interval <= 0:
+            return  # "off" — no task, no log noise beyond DEBUG
+
+        if effective_interval < self._min_refresh_interval:
+            _registry_logger.warning(
+                "TrustedIssuerRegistry.start_refresh: requested interval=%.3fs is below "
+                "min_refresh_interval=%.3fs — clamping up to min_refresh_interval, because "
+                "a tick faster than it would re-read the same cache without a network call.",
+                effective_interval,
+                self._min_refresh_interval,
+            )
+            effective_interval = self._min_refresh_interval
+
+        self._refresh_interval = effective_interval
+        self._refresh_stop = asyncio.Event()
+        self._refresh_task = asyncio.create_task(self._refresh_loop())
+
+    async def stop_refresh(self) -> None:
+        """
+        Stop the background refresher task, if running.
+
+        Idempotent — safe to call before ``start_refresh()`` and safe to call
+        twice. Always awaits the cancelled task, so no orphaned task survives
+        this call (§D-S22-loop — "no `Task was destroyed but it is pending`").
+
+        Returns:
+            None.
+
+        Edge cases:
+            - A tick mid-fetch when this is called: the task is cancelled and
+              awaited; the in-flight fetch is abandoned, and the resulting
+              ``CancelledError`` is swallowed here only (never inside
+              ``_refresh_loop`` itself, which re-raises it).
+
+        Async safety: ✅ Sets the stop event, then cancels and awaits the
+            task — the same set→cancel→await→swallow shape as
+            ``AbstractPathWatcher.stop()`` (``varco_core/watch/base.py``).
+        """
+        if self._refresh_stop is not None:
+            self._refresh_stop.set()
+        task, self._refresh_task = self._refresh_task, None
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass  # expected — stop_refresh() owns cancellation
+
+    async def _refresh_loop(self) -> None:
+        """
+        Background tick loop — calls ``_refresh_all_sources()`` on a fixed
+        period until ``stop_refresh()`` is called.
+
+        DESIGN: one task for all issuers, no retry inside a tick (§D-S22-loop,
+        §D-S22-failure)
+            ✅ ``_refresh_all_sources()`` already gathers with
+               ``return_exceptions=True`` and commits only successes — one
+               dead issuer cannot stop another from refreshing, and a task
+               per issuer would buy isolation that already exists.
+            ✅ The periodic loop *is* the retry cadence — an immediate retry
+               inside a tick would be a provable no-op:
+               ``JwksUrlSource.refresh()`` returns the cached keyset without
+               a network call inside its own ``min_refresh_interval``, so a
+               second attempt in the same window "retries" by re-reading the
+               same cache.
+            ❌ A pathologically slow issuer delays the next tick for all of
+               them. Bounded in practice — ``JwksUrlSource`` carries its own
+               ``timeout`` (default 10s).
+            ❌ No exponential backoff for a permanently dead issuer — the
+               rate is the operator's own resolved interval, and a JWKS
+               fetch is a single small GET.
+
+        The whole tick body is wrapped in ``try/except Exception`` so no
+        failure — including one raised by ``_refresh_all_sources()`` itself,
+        which should not happen given its own internal ``return_exceptions``,
+        but this loop must never die regardless — can ever kill the loop.
+        ``asyncio.CancelledError`` is deliberately NOT caught here; it must
+        propagate so ``stop_refresh()``'s ``await task`` observes it.
+
+        Async safety: ✅ ``asyncio.wait_for(stop_event.wait(), timeout=period)``
+            means shutdown is immediate on ``stop_refresh()``, never up to one
+            period late (the same shape as ``StatPollWatcher._run()``).
+        """
+        assert self._refresh_stop is not None  # set by start_refresh()
+        stop_event = self._refresh_stop
+
+        while not stop_event.is_set():
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=self._refresh_interval)
+                break  # stop_refresh() was called during the sleep
+            except TimeoutError:
+                pass  # normal tick
+
+            if stop_event.is_set():
+                break
+
+            try:
+                await self._refresh_all_sources()
+            except Exception:  # noqa: BLE001 — the loop must never die
+                if not self._refresh_in_error:
+                    _registry_logger.warning(
+                        "TrustedIssuerRegistry: background JWKS refresh tick failed",
+                        exc_info=True,
+                    )
+                    self._refresh_in_error = True
+                continue
+
+            if self._refresh_in_error:
+                _registry_logger.info(
+                    "TrustedIssuerRegistry: background JWKS refresh tick recovered"
+                )
+                self._refresh_in_error = False
+
     # ── Verification ──────────────────────────────────────────────────────────
 
     async def verify(
@@ -538,6 +772,9 @@ class TrustedIssuerRegistry:
         audience: str | list[str] | None = None,
         leeway: float | None = None,
         enforce_issuer: bool | None = None,
+        check_revocation: bool | None = None,
+        revocation_require_jti: bool | None = None,
+        revocation_failure_mode: RevocationFailureMode | str | None = None,
     ) -> JsonWebToken:
         """
         Verify a JWT string against all registered issuers' public keys.
@@ -566,6 +803,23 @@ class TrustedIssuerRegistry:
                             (env ``VARCO_JWT_ENFORCE_ISS``, default ``True``).
                             Pass ``False`` (or set the env var to ``false``)
                             to restore the pre-Phase-2 behaviour.
+            check_revocation: Whether to consult ``self._revocation_store``
+                            (Plan 034 / S13, §D-S13-hook). ``None`` (default)
+                            reads ``JwtVerificationSettings.revocation_enabled``
+                            (default ``True``). Has no effect at all when no
+                            store is bound — pass ``False`` as an explicit,
+                            per-call bypass (e.g. for an internal health
+                            check route).
+            revocation_require_jti: Per-call override of
+                            ``JwtVerificationSettings.revocation_require_jti``
+                            (§D-S13-jti). ``None`` (default) reads the
+                            setting (default ``False`` — Auth0/Keycloak/
+                            Cognito do not emit ``jti`` by default, brief
+                            009 §2).
+            revocation_failure_mode: Per-call override of
+                            ``JwtVerificationSettings.revocation_failure_mode``
+                            (§D-S13-fail). ``None`` (default) reads the
+                            setting (default ``FAIL_CLOSED``).
 
         Returns:
             ``JsonWebToken`` with all claims populated.
@@ -576,6 +830,18 @@ class TrustedIssuerRegistry:
             jwt.ExpiredSignatureError:  Token has passed its ``exp`` time.
             jwt.InvalidSignatureError:  Signature verification failed.
             jwt.DecodeError:            Token is malformed.
+            TokenRevokedError:          The resolved revocation store reports
+                                        the token as revoked (``jti``
+                                        denylist, or a ``SUBJECT``/``TENANT``/
+                                        ``ISSUER`` watermark), or
+                                        ``revocation_require_jti`` is in
+                                        effect and the token has no ``jti``.
+            RevocationStoreUnavailableError: The bound store raised during
+                                        ``is_revoked()`` and
+                                        ``RevocationFailureMode.FAIL_CLOSED``
+                                        is in effect. Mapped to HTTP 503 by
+                                        ``JwtBearerAuth`` — an outage, not a
+                                        bad credential.
             jwt.InvalidAudienceError:   ``aud`` mismatch when ``audience``
                                         is provided.
             jwt.InvalidIssuerError:     ``iss`` claim does not match the
@@ -639,6 +905,14 @@ class TrustedIssuerRegistry:
 
             leeway = JwtVerificationSettings.from_env().leeway_seconds
 
+        # verify_iat=False (PyJWT >= 2.10 added this check, default True):
+        # varco's own revocation watermark rule (§D-S13-nvb) deliberately
+        # allows a future `iat` (clock skew between issuer and verifier —
+        # "not revoked" is the documented Edge case) and interprets it
+        # itself; PyJWT's blanket ImmatureSignatureError would reject such
+        # a token before it ever reaches that logic, which is stricter than
+        # any behaviour varco has ever documented for `iat`.
+        decode_options: dict[str, Any] = {"verify_iat": False}
         decode_kwargs: dict[str, Any] = {
             "algorithms": [pyjwk.algorithm_name],
             "leeway": leeway,
@@ -652,7 +926,8 @@ class TrustedIssuerRegistry:
             # means NOT enforced") requires explicitly disabling aud
             # verification in this case — otherwise "not enforced" would
             # only be true for tokens that happen to omit "aud" entirely.
-            decode_kwargs["options"] = {"verify_aud": False}
+            decode_options["verify_aud"] = False
+        decode_kwargs["options"] = decode_options
 
         # Delegate to PyJWT for the actual signature + claims verification.
         # Any jwt.exceptions.* propagates unchanged — callers may catch them.
@@ -678,8 +953,119 @@ class TrustedIssuerRegistry:
                     f"VARCO_JWT_ENFORCE_ISS=false to opt out."
                 )
 
+        # Plan 034 / S13, §D-S13-hook — revocation check, AFTER iss
+        # enforcement (§D-S13-order): a forged/misrouted token must fail on
+        # its signature/issuer, never reach the store. This also means an
+        # unauthenticated request never costs a store round trip.
+        if self._revocation_store is not None:
+            effective_check_revocation = check_revocation
+            if effective_check_revocation is None:
+                from varco_core.jwt.config import JwtVerificationSettings
+
+                effective_check_revocation = JwtVerificationSettings.from_env().revocation_enabled
+
+            if effective_check_revocation:
+                await self._check_revocation(
+                    raw,
+                    require_jti=revocation_require_jti,
+                    failure_mode=revocation_failure_mode,
+                )
+
         # Reuse JwtParser's claim reconstruction — AuthContext, timestamps, etc.
         return JwtParser._from_raw_claims(raw)
+
+    async def _check_revocation(
+        self,
+        raw: dict[str, Any],
+        *,
+        require_jti: bool | None,
+        failure_mode: RevocationFailureMode | str | None,
+    ) -> None:
+        """
+        Consult ``self._revocation_store`` for the already-verified claims.
+
+        Called only after signature + ``iss`` enforcement have both
+        succeeded (§D-S13-order) and only when a store is actually bound
+        (§D-S13-hook) — callers never pay this cost otherwise.
+
+        Args:
+            raw:          The raw, verified claim dict from ``_jwt.decode()``.
+            require_jti:  Per-call override of
+                          ``JwtVerificationSettings.revocation_require_jti``.
+            failure_mode: Per-call override of
+                          ``JwtVerificationSettings.revocation_failure_mode``.
+
+        Raises:
+            TokenRevokedError:               The store reports the token
+                                              revoked, or ``require_jti`` is
+                                              in effect and the token has no
+                                              ``jti``.
+            RevocationStoreUnavailableError: The store raised and
+                                              ``FAIL_CLOSED`` is in effect.
+
+        Edge cases:
+            - ``tenant_id`` is read from the token's own ``tenant_id``
+              claim, **never** ``current_tenant()`` (§D-S13-scope) — this
+              runs before any ambient tenant is necessarily resolved, and a
+              compromised token must not be able to dodge a tenant kill
+              switch by being presented on a request that resolves a
+              different ambient tenant.
+        """
+        from varco_core.jwt.config import JwtVerificationSettings
+
+        settings = JwtVerificationSettings.from_env()
+        effective_require_jti = (
+            require_jti if require_jti is not None else settings.revocation_require_jti
+        )
+        effective_failure_mode = (
+            RevocationFailureMode(failure_mode)
+            if failure_mode is not None
+            else settings.revocation_failure_mode
+        )
+
+        jti = raw.get("jti")
+        if effective_require_jti and jti is None:
+            raise TokenRevokedError(
+                scope=RevocationScope.TOKEN,
+                key="<no-jti>",
+                reason="revocation_require_jti=True and token has no jti claim",
+            )
+
+        iss = raw.get("iss")
+        sub = raw.get("sub")
+        subject_key = f"{iss}|{sub}" if iss is not None and sub is not None else None
+        tenant_id = raw.get("tenant_id")
+        iat_ts = raw.get("iat")
+        issued_at = _from_utc_timestamp(iat_ts) if iat_ts is not None else None
+
+        assert self._revocation_store is not None  # narrowed by caller
+        try:
+            verdict = await self._revocation_store.is_revoked(
+                jti=jti,
+                subject=subject_key,
+                issuer=iss,
+                tenant_id=tenant_id,
+                issued_at=issued_at,
+            )
+        except Exception as exc:
+            if effective_failure_mode == RevocationFailureMode.FAIL_OPEN:
+                _registry_logger.error(
+                    "TrustedIssuerRegistry: revocation store %s raised during "
+                    "is_revoked() — FAIL_OPEN in effect, verification proceeds: %s",
+                    type(self._revocation_store).__name__,
+                    exc,
+                )
+                return
+            raise RevocationStoreUnavailableError(
+                "Token verification is temporarily unavailable (revocation store error)."
+            ) from exc
+
+        if verdict.revoked:
+            raise TokenRevokedError(
+                scope=verdict.scope,  # type: ignore[arg-type]
+                key=verdict.key or "",
+                reason=verdict.reason,
+            )
 
     # ── JWKS exposure ──────────────────────────────────────────────────────────
 
@@ -768,7 +1154,9 @@ class TrustedIssuerRegistry:
     )
 
     @classmethod
-    def from_env(cls) -> TrustedIssuerRegistry:
+    def from_env(
+        cls, *, revocation_store: AbstractTokenRevocationStore | None = None
+    ) -> TrustedIssuerRegistry:
         """
         Construct a ``TrustedIssuerRegistry`` from environment variables.
 
@@ -793,6 +1181,14 @@ class TrustedIssuerRegistry:
             FASTREST_AUTHORIZATION__SYSTEM_SVC__ISS = system-svc
             FASTREST_AUTHORIZATION__GOOGLE__URL = https://accounts.google.com
             FASTREST_AUTHORIZATION__GOOGLE__ISS = https://accounts.google.com
+
+        Args:
+            revocation_store: Optional ``AbstractTokenRevocationStore``
+                (Plan 034 / S13). **No env var constructs a store** — a
+                store is an object with a connection, not a string; pass
+                an already-constructed one explicitly, e.g. one obtained
+                from DI (``enable_token_revocation``/
+                ``enable_redis_token_revocation``).
         """
         from varco_core.authority.config import AuthorizationConfig
         from varco_core.tls.store import TrustStore
@@ -801,7 +1197,9 @@ class TrustedIssuerRegistry:
         if any(os.environ.get(name) for name in cls._CA_TRIGGER_ENV_VARS):
             ssl_context = TrustStore.from_env().build_ssl_context()
 
-        return AuthorizationConfig.from_env().to_registry(ssl_context=ssl_context)
+        registry = AuthorizationConfig.from_env().to_registry(ssl_context=ssl_context)
+        registry._revocation_store = revocation_store
+        return registry
 
     @classmethod
     async def from_container(

@@ -56,7 +56,7 @@ class TestGlobalRolesField:
     def test_roles_field_env_var_maps_foreign_claim(self, monkeypatch):
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_ROLES_FIELD", "sofy-roles")
         signed = _sign(**{"sofy-roles": ["editor"]})
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.auth_ctx is not None
         assert token.auth_ctx.roles == frozenset({"editor"})
 
@@ -65,14 +65,14 @@ class TestFallbackChainAndMerge:
     def test_comma_chain_first_non_empty_wins(self, monkeypatch):
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_ROLES_FIELD", "sofy-roles,realm_access.roles")
         signed = _sign(realm_access={"roles": ["viewer"]})
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.auth_ctx.roles == frozenset({"viewer"})
 
     def test_merge_sources_true_unions_chain(self, monkeypatch):
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_ROLES_FIELD", "sofy-roles,realm_access.roles")
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_MERGE_SOURCES", "true")
         signed = _sign(**{"sofy-roles": ["editor"]}, realm_access={"roles": ["viewer"]})
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.auth_ctx.roles == frozenset({"editor", "viewer"})
 
 
@@ -80,7 +80,7 @@ class TestScopesField:
     def test_scopes_field_space_delimited(self, monkeypatch):
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_SCOPES_FIELD", "scope")
         signed = _sign(scope="read write")
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.auth_ctx.scopes == frozenset({"read", "write"})
 
 
@@ -88,7 +88,7 @@ class TestTenantField:
     def test_tenant_field_lands_in_metadata(self, monkeypatch):
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_TENANT_FIELD", "org.id")
         signed = _sign(org={"id": "t_1"})
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.auth_ctx.metadata["tenant_id"] == "t_1"
 
     def test_tenant_field_satisfies_tenant_aware_service_requirement(self, monkeypatch):
@@ -96,7 +96,7 @@ class TestTenantField:
 
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_TENANT_FIELD", "org.id")
         signed = _sign(org={"id": "t_1"})
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         # Just proves the metadata key TenantAwareService reads is populated —
         # not exercising the full service instantiation here.
         assert "tenant_id" in token.auth_ctx.metadata
@@ -108,14 +108,14 @@ class TestStripPrefixShapeRequired:
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_ROLES_FIELD", "roles")
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_ROLES_STRIP_PREFIX", "ROLE_")
         signed = _sign(roles=["ROLE_admin"])
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.auth_ctx.roles == frozenset({"admin"})
 
     def test_roles_shape_csv(self, monkeypatch):
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_ROLES_FIELD", "roles")
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_ROLES_SHAPE", "csv")
         signed = _sign(roles="admin,editor")
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.auth_ctx.roles == frozenset({"admin", "editor"})
 
     def test_roles_required_true_missing_raises(self, monkeypatch):
@@ -125,7 +125,7 @@ class TestStripPrefixShapeRequired:
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_ROLES_REQUIRED", "true")
         signed = _sign(sub_marker=True)  # no sofy-roles claim
         with pytest.raises(ClaimTransformError):
-            JwtParser.parse(signed, _SECRET)
+            JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
 
 
 class TestSeparatorAndStrict:
@@ -133,7 +133,7 @@ class TestSeparatorAndStrict:
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_ROLES_FIELD", "realm_access:roles")
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_PATH_SEPARATOR", ":")
         signed = _sign(realm_access={"roles": ["editor"]})
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.auth_ctx.roles == frozenset({"editor"})
 
     def test_strict_true_raises_on_bad_shape(self, monkeypatch):
@@ -143,7 +143,7 @@ class TestSeparatorAndStrict:
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_STRICT", "true")
         signed = _sign(roles=5)
         with pytest.raises(ClaimTransformError):
-            JwtParser.parse(signed, _SECRET)
+            JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
 
 
 class TestPerIssuerMapping:
@@ -151,7 +151,7 @@ class TestPerIssuerMapping:
         monkeypatch.setenv("VARCO_JWT_TRANSFORM__KEYCLOAK__ISS", "kc-issuer")
         monkeypatch.setenv("VARCO_JWT_TRANSFORM__KEYCLOAK__ROLES_FIELD", "realm_access.roles")
         signed = _sign(iss="kc-issuer", realm_access={"roles": ["kc-role"]})
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.auth_ctx.roles == frozenset({"kc-role"})
 
     def test_other_issuer_gets_global_mapping(self, monkeypatch):
@@ -159,7 +159,7 @@ class TestPerIssuerMapping:
         monkeypatch.setenv("VARCO_JWT_TRANSFORM__KEYCLOAK__ROLES_FIELD", "realm_access.roles")
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_ROLES_FIELD", "roles")
         signed = _sign(iss="some-other-issuer", roles=["global-role"])
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.auth_ctx.roles == frozenset({"global-role"})
 
     def test_per_issuer_inherits_unspecified_global_fields(self, monkeypatch):
@@ -172,7 +172,7 @@ class TestPerIssuerMapping:
             realm_access={"roles": ["kc-role"]},
             scope="read write",
         )
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.auth_ctx.roles == frozenset({"kc-role"})
         assert token.auth_ctx.scopes == frozenset({"read", "write"})
 
@@ -182,20 +182,20 @@ class TestPerIssuerMapping:
         monkeypatch.setenv("FASTREST_AUTHORIZATION__KEYCLOAK__ISS", "kc-fallback-iss")
         monkeypatch.setenv("VARCO_JWT_TRANSFORM__KEYCLOAK__ROLES_FIELD", "realm_access.roles")
         signed = _sign(iss="kc-fallback-iss", realm_access={"roles": ["kc-role"]})
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.auth_ctx.roles == frozenset({"kc-role"})
 
     def test_iss_fallback_to_normalised_label_when_neither_set(self, monkeypatch):
         monkeypatch.setenv("VARCO_JWT_TRANSFORM__KEYCLOAK__ROLES_FIELD", "realm_access.roles")
         signed = _sign(iss="keycloak", realm_access={"roles": ["kc-role"]})
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.auth_ctx.roles == frozenset({"kc-role"})
 
     def test_unmapped_issuer_falls_back_to_identity_no_error(self, monkeypatch):
         monkeypatch.setenv("VARCO_JWT_TRANSFORM__KEYCLOAK__ISS", "kc-issuer")
         monkeypatch.setenv("VARCO_JWT_TRANSFORM__KEYCLOAK__ROLES_FIELD", "realm_access.roles")
         signed = _sign(iss="unrelated-issuer", roles=["editor"])
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         # Canonical "roles" claim parses normally via IDENTITY.
         assert token.auth_ctx.roles == frozenset({"editor"})
 
@@ -213,7 +213,7 @@ class TestUnknownClaimPath:
     def test_unknown_path_non_required_yields_empty_roles(self, monkeypatch):
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_ROLES_FIELD", "nope.nada")
         signed = _sign(sub_marker=True)
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.auth_ctx is None or token.auth_ctx.roles == frozenset()
 
     def test_unknown_path_required_raises(self, monkeypatch):
@@ -223,7 +223,7 @@ class TestUnknownClaimPath:
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_ROLES_REQUIRED", "true")
         signed = _sign(sub_marker=True)
         with pytest.raises(ClaimTransformError):
-            JwtParser.parse(signed, _SECRET)
+            JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
 
 
 class TestExtraEnvSafety:
@@ -263,7 +263,7 @@ class TestConfigureAndResetOverride:
         configure_claim_transforms(reg)
 
         signed = _sign(**{"other-roles": ["from-override"]})
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.auth_ctx.roles == frozenset({"from-override"})
 
     def test_reset_claim_transforms_restores_lazy_env_resolution(self, monkeypatch):
@@ -278,5 +278,5 @@ class TestConfigureAndResetOverride:
 
         monkeypatch.setenv("VARCO_JWT_TRANSFORM_ROLES_FIELD", "sofy-roles")
         signed = _sign(**{"sofy-roles": ["editor"]})
-        token = JwtParser.parse(signed, _SECRET)
+        token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])
         assert token.auth_ctx.roles == frozenset({"editor"})

@@ -62,7 +62,7 @@ class JwtParser:
         token: str,
         secret: str | bytes | None = None,
         *,
-        algorithms: list[str] | None = None,
+        algorithms: list[str],
         audience: str | list[str] | None = None,
         options: dict[str, Any] | None = None,
         transformer: ClaimTransformer | None = None,
@@ -77,9 +77,16 @@ class JwtParser:
             secret:      Verification key.  Pass ``None`` only when
                          ``options={"verify_signature": False}`` — unverified
                          inspection is for debugging only, never production.
-            algorithms:  Accepted algorithms.  Defaults to ``["HS256"]``.
-                         Always specify explicitly in production — accepting
-                         any algorithm is a known JWT attack vector.
+            algorithms:  Accepted algorithms.  **Required, keyword-only.**
+                         There is no default and never will be — see the
+                         ``DESIGN:`` block below (§D-S1-required). Pass the
+                         algorithm(s) the token was actually signed with,
+                         e.g. ``["HS256"]``; accepting an unbounded/implicit
+                         set of algorithms is a known JWT attack vector
+                         (algorithm confusion — a token signed with an
+                         asymmetric key can be forged if a verifier will also
+                         accept ``HS256`` using the public key as an HMAC
+                         secret).
             audience:    Expected ``aud`` value(s).  ``None`` skips audience
                          verification (safe only for internal tokens that don't
                          carry an ``aud`` claim).
@@ -132,11 +139,42 @@ class JwtParser:
             tok = JwtParser.parse(raw, "my-secret", algorithms=["HS256"])
             util = JwtUtil(tok)
             util.has_auth_ctx()  # True when auth claims were present
-        """
-        if algorithms is None:
-            # Default HS256; always pass algorithms explicitly in production
-            algorithms = ["HS256"]
 
+        DESIGN: required keyword over a defaulted-to-``None``-that-raises (§D-S1-required)
+            ✅ The failure is *static*: mypy (``strict = true``) flags every
+               in-repo omission at ``make type-check`` time, before a test
+               runs. A ``ValueError`` raised from a ``None`` default is only
+               found at runtime, on the unhappy path — possibly in
+               production.
+            ✅ ``inspect.signature()``/an IDE state the requirement directly;
+               the previous docstring's "always specify explicitly in
+               production" becomes enforced, not advisory.
+            ✅ Keyword-only, so no positional reshuffling: every existing
+               call gains one keyword argument and nothing else changes.
+            ❌ A bare ``TypeError`` is less self-explanatory than a curated
+               message. Mitigated by this docstring, the CHANGELOG BREAKING
+               entry, and the parameter name appearing verbatim in Python's
+               own error message.
+            ❌ A caller invoking ``parse(*args, **kwargs)`` dynamically fails
+               at runtime, not at type-check time — verified absent in this
+               repository (Plan 034 Step 1's grep).
+            Rejected — keep ``algorithms`` optional and raise ``ValueError``
+              on ``None``: gives up the mypy-time catch, which is the whole
+              point, and trades a ``TypeError`` at dev time for a
+              ``ValueError`` in a hot auth path at request time.
+            Rejected — default to ``["RS256"]`` instead of ``["HS256"]``:
+              still a silent default, still algorithm confusion in the other
+              direction, and does not close the row.
+            Rejected — derive ``algorithms`` from the token header's own
+              ``alg``: that *is* the algorithm-confusion attack this row
+              exists to close.
+
+            There is deliberately no environment-variable escape hatch
+            (e.g. ``VARCO_JWT_DEFAULT_ALGORITHMS``) — that would restore
+            exactly the ambient, invisible default this change removes,
+            settable by an operator who never reads this code. The fix is
+            always the explicit keyword at the call site.
+        """
         if leeway is None:
             # Local import — avoids a hard import-time dependency between
             # parser.py (imported very early, by authority/registry.py too)
@@ -348,6 +386,10 @@ class JwtParser:
               carrying only ``tenant_id``/``actor`` (no roles/scopes/grants)
               now also materialises an ``AuthContext`` — see the plan's
               Edge cases table and Risks section.
+            - ⚠️ Plan 033 / S5 widens the trigger again, the same way: a
+              token carrying only a ``tenants`` claim (no roles/scopes/
+              grants/tenant_id/actor) now also materialises an
+              ``AuthContext`` where it previously produced ``None``.
         """
         roles_raw: list[str] = canonical.get("roles", [])
         scopes_raw: list[str] = canonical.get("scopes", [])
@@ -360,6 +402,13 @@ class JwtParser:
 
         tenant_id = canonical.get("tenant_id")
         actor = canonical.get("actor")
+        # normalize() here (not just via a ClaimRule) so the zero-config
+        # IDENTITY path — a raw scalar "tenants" claim with no
+        # VARCO_JWT_TRANSFORM_TENANTS_FIELD configured — still produces a
+        # list, matching the ROLES/SCOPES shape family §D-S5-claim promises.
+        tenants_raw: list[str] = normalize(
+            canonical.get("tenants"), ValueShape.AUTO, target="tenants"
+        )
 
         if (
             not roles_raw
@@ -367,6 +416,7 @@ class JwtParser:
             and not grants_raw
             and tenant_id is None
             and actor is None
+            and not tenants_raw
         ):
             return None
 
@@ -385,6 +435,8 @@ class JwtParser:
             metadata["tenant_id"] = tenant_id
         if actor is not None:
             metadata["actor"] = actor
+        if tenants_raw:
+            metadata["tenants"] = tenants_raw
 
         return AuthContext(
             user_id=canonical.get("user_id", canonical.get("sub")),

@@ -78,6 +78,7 @@ from varco_core.exception.service import (
     ServiceValidationError,
 )
 from varco_core.exception.settings import ErrorEnvelopeSettings
+from varco_core.redaction import redact_mapping
 
 logger = logging.getLogger(__name__)
 
@@ -321,13 +322,35 @@ def error_message_for(
         else:
             message = error_code.default_message
 
-    # Normalize empty str(exc) to None — avoids {"detail": ""} in JSON output
+    # Normalize empty str(exc) to None — avoids {"detail": ""} in JSON output.
+    # Plan 035 / §D-S3b: `include_detail` gates this echo of str(exc). It
+    # defaults to True (byte-identical to pre-3.2 behaviour) because
+    # suppressing it by default breaks the one documented consumer
+    # (RouteGuard denial messages, exceptions.py:135-141) — a warn-only
+    # `inspect_http_edge()` finding covers deployments that want it off.
     raw_detail = str(exc)
-    detail: str | None = raw_detail if raw_detail else None
+    detail: str | None = raw_detail if (raw_detail and settings.include_detail) else None
 
     # D-4's kill switch: VARCO_ERROR_INCLUDE_MESSAGE_KEY / _INCLUDE_PARAMS.
+    # Plan 040 / S21, §D-S21-errparams: `redact_params` (default True) is a
+    # SEPARATE, later transform — it never affects `message_resolver`'s
+    # interpolation input (`params`, above), only what is emitted on the
+    # wire. `redact_mapping()` handles the name-based leak shape (a
+    # secret-named key -> "[REDACTED]"); `json_safe()` handles the
+    # shape-based one (a non-JSON value, e.g. a `vars(exc)` live object ->
+    # "<TypeName>"). Neither truncates — see json_safe()'s own docstring
+    # for why sanitize_value's 256-char ceiling is deliberately not reused
+    # here. The one documented residue this does NOT catch: a secret VALUE
+    # under a non-matching key (e.g. {"internal_reason": "postgres://..."})
+    # — no mechanism catches that; see ServiceException.error_params().
+    output_params = params
+    if settings.redact_params and output_params:
+        # redact_mapping() already applies json_safe() to every surviving
+        # leaf (RedactionPolicy.render_non_json defaults to True) — no
+        # separate pass needed.
+        output_params = redact_mapping(output_params)
     emitted_message_key = message_key if settings.include_message_key else None
-    emitted_params = params if (settings.include_params and params) else None
+    emitted_params = output_params if (settings.include_params and output_params) else None
 
     return ErrorMessage(
         code=error_code.code,

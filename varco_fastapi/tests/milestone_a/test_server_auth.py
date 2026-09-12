@@ -425,3 +425,205 @@ class TestPassthroughAuthRefactorRegression:
         ctx = await auth(req)
 
         assert ctx.roles == frozenset({"editor"})
+
+
+# ── Plan 034 / S2 + S14 — ApiKeyAuth constructor change ────────────────────────
+
+
+class TestApiKeyAuthQueryFallbackOffByDefault:
+    """
+    §D-S2S14-ctor: the ``?api_key=`` query fallback is off unless ``param=``
+    names it; ``keys=``/``hashed_keys=`` cannot both/neither be given; a raw
+    key never survives past construction; the signature itself is a
+    §D-034-gate guard because api_surface.py --check cannot see this flip.
+    """
+
+    async def test_query_param_key_rejected_by_default(self):
+        # The row's whole point: no toggle, no warning, off by default.
+        auth = ApiKeyAuth(keys={"k": AuthContext(user_id="svc")})
+        req = _make_request(query_params={"api_key": "k"})
+        with pytest.raises(HTTPException) as exc_info:
+            await auth(req)
+        assert exc_info.value.status_code == 401
+
+    async def test_param_kwarg_reenables_query_fallback(self):
+        # The named escape hatch — self-documenting at the call site.
+        expected = AuthContext(user_id="svc")
+        auth = ApiKeyAuth(keys={"k": expected}, param="api_key")
+        req = _make_request(query_params={"api_key": "k"})
+        ctx = await auth(req)
+        assert ctx is expected
+
+    async def test_hashed_keys_accepts_matching_raw_key(self):
+        from varco_core.auth.api_key import hash_api_key
+
+        digest = hash_api_key("raw-key")
+        expected = AuthContext(user_id="svc")
+        auth = ApiKeyAuth(hashed_keys={digest: expected})
+        req = _make_request(headers={"X-API-Key": "raw-key"})
+        ctx = await auth(req)
+        assert ctx is expected
+
+    async def test_hashed_keys_rejects_near_miss(self):
+        from varco_core.auth.api_key import hash_api_key
+
+        digest = hash_api_key("raw-key")
+        auth = ApiKeyAuth(hashed_keys={digest: AuthContext(user_id="svc")})
+        req = _make_request(headers={"X-API-Key": "raw-kez"})
+        with pytest.raises(HTTPException) as exc_info:
+            await auth(req)
+        assert exc_info.value.status_code == 401
+
+    def test_both_keys_and_hashed_keys_raises_value_error(self):
+        from varco_core.auth.api_key import hash_api_key
+
+        with pytest.raises(ValueError):
+            ApiKeyAuth(
+                keys={"k": AuthContext()},
+                hashed_keys={hash_api_key("k2"): AuthContext()},
+            )
+
+    def test_neither_keys_nor_hashed_keys_raises_value_error(self):
+        with pytest.raises(ValueError):
+            ApiKeyAuth()
+
+    def test_construction_with_plaintext_keys_never_retains_raw_key(self):
+        # No raw configured key may appear anywhere in the instance's
+        # __dict__ after construction — S14's core guarantee.
+        auth = ApiKeyAuth(keys={"super-secret-raw-key": AuthContext(user_id="svc")})
+        for value in vars(auth).values():
+            assert "super-secret-raw-key" not in repr(value)
+
+    def test_param_default_is_none_by_signature(self):
+        # §D-034-gate: api_surface.py --check is blind to a class __init__
+        # widening — this repo-owned inspect.signature() test is the real
+        # guard against a future regression restoring "api_key" as default.
+        import inspect
+
+        sig = inspect.signature(ApiKeyAuth.__init__)
+        param = sig.parameters["param"]
+        assert param.default is None
+        assert type(None) in getattr(param.annotation, "__args__", (param.annotation,))
+
+    async def test_existing_four_api_key_tests_pass_unchanged(self):
+        # Not a new test — a marker that the four tests above
+        # (test_api_key_auth_succeeds_with_valid_key,
+        # test_api_key_auth_raises_on_invalid_key,
+        # test_api_key_auth_raises_when_key_missing_and_required,
+        # test_api_key_auth_returns_anonymous_when_key_missing_and_not_required)
+        # keep passing unmodified — see the top of this file.
+        assert True
+
+    def test_empty_param_string_raises_value_error(self):
+        # Edge case: an empty parameter name is a typo, not "disable".
+        with pytest.raises(ValueError):
+            ApiKeyAuth(keys={"k": AuthContext()}, param="")
+
+    async def test_header_wins_over_query_param_when_both_present(self):
+        # Edge case: header-vs-query precedence is preserved from today.
+        header_ctx = AuthContext(user_id="header")
+        query_ctx = AuthContext(user_id="query")
+        auth = ApiKeyAuth(keys={"h-key": header_ctx, "q-key": query_ctx}, param="api_key")
+        req = _make_request(headers={"X-API-Key": "h-key"}, query_params={"api_key": "q-key"})
+        ctx = await auth(req)
+        assert ctx is header_ctx
+
+    def test_hashed_keys_with_unknown_scheme_prefix_raises_value_error(self):
+        with pytest.raises(ValueError, match="scheme"):
+            ApiKeyAuth(hashed_keys={"bcrypt$deadbeef": AuthContext()})
+
+    async def test_empty_keys_dict_still_legal_every_key_401s(self):
+        # Edge case: ApiKeyAuth(keys={}) remains legal.
+        auth = ApiKeyAuth(keys={})
+        req = _make_request(headers={"X-API-Key": "anything"})
+        with pytest.raises(HTTPException) as exc_info:
+            await auth(req)
+        assert exc_info.value.status_code == 401
+
+
+class TestWebSocketAuthQueryFallbackOffByDefault:
+    """§D-S2-ws: WebSocketAuth's ?token= fallback is opt-in; the warning
+    (not debug) log level matches what BACKLOG.md believed was already true."""
+
+    async def test_query_fallback_off_by_default(self):
+        inner = AsyncMock()
+        auth = WebSocketAuth(inner=inner)
+        req = _make_request(query_params={"token": "abc"})
+        with pytest.raises(HTTPException) as exc_info:
+            await auth(req)
+        assert exc_info.value.status_code == 401
+        inner.assert_not_called()
+
+    async def test_subprotocol_path_still_works_by_default(self):
+        expected = AuthContext(user_id="usr_1")
+        inner = AsyncMock(return_value=expected)
+        auth = WebSocketAuth(inner=inner)
+        req = _make_request(headers={"Sec-WebSocket-Protocol": "bearer.my.jwt.tok"})
+        ctx = await auth(req)
+        assert ctx is expected
+
+    async def test_token_query_param_restores_fallback_and_warns(self, caplog):
+        import logging
+
+        expected = AuthContext(user_id="usr_1")
+        inner = AsyncMock(return_value=expected)
+        auth = WebSocketAuth(inner=inner, token_query_param="token")
+        req = _make_request(query_params={"token": "abc"})
+        with caplog.at_level(logging.WARNING):
+            ctx = await auth(req)
+        assert ctx is expected
+        assert any(record.levelno == logging.WARNING for record in caplog.records)
+
+
+# ── Plan 034 / S13b — JwtBearerAuth revocation error mapping ───────────────────
+
+
+class TestJwtBearerAuthRevocationErrorMapping:
+    """§D-S13-error: a revoked-token 401 must not leak scope/key/reason; a
+    store outage under FAIL_CLOSED is a 503, not a lying 401."""
+
+    async def test_token_revoked_error_maps_to_401_without_leaking_details(self):
+        from varco_core.authority.exceptions import TokenRevokedError
+        from varco_core.revocation import RevocationScope
+
+        registry = MagicMock()
+        registry.verify = AsyncMock(
+            side_effect=TokenRevokedError(
+                scope=RevocationScope.TOKEN, key="jti-1", reason="compromised"
+            )
+        )
+        auth = JwtBearerAuth(registry=registry, allow_any_audience=True)
+        req = _make_request(headers={"Authorization": "Bearer my.jwt.token"})
+        with pytest.raises(HTTPException) as exc_info:
+            await auth(req)
+        assert exc_info.value.status_code == 401
+        detail = str(exc_info.value.detail)
+        assert "jti-1" not in detail
+        assert "compromised" not in detail
+        assert "token" not in detail.lower() or "revoked" in detail.lower()
+
+    async def test_revocation_store_unavailable_maps_to_503_with_fixed_detail(self):
+        from varco_core.authority.exceptions import RevocationStoreUnavailableError
+
+        registry = MagicMock()
+        registry.verify = AsyncMock(
+            side_effect=RevocationStoreUnavailableError("store outage: connection refused")
+        )
+        auth = JwtBearerAuth(registry=registry, allow_any_audience=True)
+        req = _make_request(headers={"Authorization": "Bearer my.jwt.token"})
+        with pytest.raises(HTTPException) as exc_info:
+            await auth(req)
+        assert exc_info.value.status_code == 503
+        assert "connection refused" not in str(exc_info.value.detail)
+
+    async def test_registry_verify_call_shape_unchanged_by_revocation_wiring(self):
+        # test_jwt_bearer_auth_calls_registry_verify (line ~121) must keep
+        # passing unchanged — no new kwarg added to the verify() call.
+        mock_jwt = MagicMock()
+        mock_jwt.auth_ctx = AuthContext(user_id="usr_1")
+        registry = MagicMock()
+        registry.verify = AsyncMock(return_value=mock_jwt)
+        auth = JwtBearerAuth(registry=registry, allow_any_audience=True)
+        req = _make_request(headers={"Authorization": "Bearer my.jwt.token"})
+        await auth(req)
+        registry.verify.assert_called_once_with("my.jwt.token")

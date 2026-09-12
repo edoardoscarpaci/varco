@@ -214,3 +214,64 @@ class TestConcurrentMaterializers:
         total_jobs = sum(len(r) for r in results)
         assert total_jobs == 1
         assert len(store.all_jobs()) == 1
+
+
+# ── Schedule.task_name / Job.task_payload (Plan 039 §D-S20-driver, Step 10) ──
+
+
+class TestTaskNameProducesTaskPayload:
+    async def test_task_name_none_produces_no_task_payload_pinned(self, schedule_module) -> None:
+        """task_name=None (the default) must be byte-identical to today: a
+        materialized Job carries task_payload=None. Pinned BEFORE the change
+        lands — this sub-test must PASS right now."""
+        Schedule, _, ScheduleMaterializer = schedule_module
+        store = FakeJobStore()
+        schedule = Schedule(
+            cron_expr="* * * * *",
+            timezone="UTC",
+        )
+        materializer = ScheduleMaterializer(job_store=store)
+        jobs = await materializer.materialize(schedule, now=datetime(2026, 1, 1, tzinfo=UTC))
+        assert len(jobs) == 1
+        assert jobs[0].task_payload is None
+
+    async def test_task_name_set_produces_task_payload(self, schedule_module) -> None:
+        """task_name="x" + payload={"a": 1} produces
+        TaskPayload(task_name="x", kwargs={"a": 1})."""
+        from varco_core.job.task import TaskPayload  # noqa: PLC0415
+
+        Schedule, _, ScheduleMaterializer = schedule_module
+        store = FakeJobStore()
+        schedule = Schedule(
+            cron_expr="* * * * *",
+            timezone="UTC",
+            task_name="x",
+            payload={"a": 1},
+        )
+        materializer = ScheduleMaterializer(job_store=store)
+        jobs = await materializer.materialize(schedule, now=datetime(2026, 1, 1, tzinfo=UTC))
+        assert len(jobs) == 1
+        assert jobs[0].task_payload == TaskPayload(task_name="x", kwargs={"a": 1})
+
+    async def test_job_id_unchanged_by_task_name(self, schedule_module) -> None:
+        """The occurrence job id stays uuid5(schedule_id, wall) regardless of
+        task_name — materializer.py:76-78 is the only id source."""
+        Schedule, _, ScheduleMaterializer = schedule_module
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+
+        store_a = FakeJobStore()
+        schedule_a = Schedule(cron_expr="* * * * *", timezone="UTC")
+        materializer_a = ScheduleMaterializer(job_store=store_a)
+        jobs_a = await materializer_a.materialize(schedule_a, now=now)
+
+        store_b = FakeJobStore()
+        schedule_b = Schedule(
+            schedule_id=schedule_a.schedule_id,
+            cron_expr="* * * * *",
+            timezone="UTC",
+            task_name="x",
+        )
+        materializer_b = ScheduleMaterializer(job_store=store_b)
+        jobs_b = await materializer_b.materialize(schedule_b, now=now)
+
+        assert jobs_a[0].job_id == jobs_b[0].job_id

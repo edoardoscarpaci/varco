@@ -121,20 +121,32 @@ class StandardWebhooksSigner(WebhookSigner):
         digest = hmac.new(self._secret_bytes(secret), signed_content, hashlib.sha256).digest()
         return f"v1,{_b64(digest)}"
 
-    def sign(self, *, msg_id: str, timestamp: str, payload: str) -> dict[str, str]:  # type: ignore[override]
+    def sign(self, *, msg_id: str, timestamp: str, payload: str | bytes) -> dict[str, str]:  # type: ignore[override]
         """
         Produce ``webhook-id``/``webhook-timestamp``/``webhook-signature``.
 
         Args:
             msg_id:    Stable delivery id (the receiver's dedup key).
             timestamp: Unix timestamp (seconds, as a string).
-            payload:   The exact JSON body being sent.
+            payload:   The exact JSON body being sent. ``str`` or ``bytes``
+                       (Plan 038 / S19, §D-S19-gap) — widened additively so
+                       a non-UTF-8 body never needs a lossy decode. Byte-
+                       identical to the pre-widening ``str``-only behaviour
+                       for any valid-UTF-8 ``str`` input.
 
         Returns:
             The three Standard Webhooks headers. ``webhook-signature`` is
             space-delimited, one ``v1,<sig>`` entry per active secret.
         """
-        signed_content = f"{msg_id}.{timestamp}.{payload}".encode()
+        # DESIGN (§D-S19-gap, brief 013 §50.2): build the prefix as bytes and
+        # concatenate raw payload bytes directly rather than
+        # f"{...}.{payload}".encode() — the latter requires payload to be a
+        # str, forcing a decode of a raw inbound body that may not be valid
+        # UTF-8. ✅ byte-identical output for a str payload (proved by Step 3's
+        # round-trip test). ❌ one extra branch versus a single f-string.
+        prefix = f"{msg_id}.{timestamp}.".encode()
+        payload_bytes = payload if isinstance(payload, bytes) else payload.encode()
+        signed_content = prefix + payload_bytes
         signatures = [self._sign_one(secret, signed_content) for secret in self._secrets]
         return {
             "webhook-id": msg_id,
@@ -142,11 +154,17 @@ class StandardWebhooksSigner(WebhookSigner):
             "webhook-signature": " ".join(signatures),
         }
 
-    def verify(self, *, payload: str, headers: dict[str, str]) -> bool:  # type: ignore[override]
+    def verify(self, *, payload: str | bytes, headers: dict[str, str]) -> bool:  # type: ignore[override]
         """
         Verify ``headers['webhook-signature']`` against this signer's
         secrets, using a constant-time comparison and rejecting a
         timestamp outside the tolerance window.
+
+        Args:
+            payload: The exact body that was signed. ``str`` or ``bytes``
+                     (§D-S19-gap) — pass ``bytes`` for a raw inbound body
+                     that may not be valid UTF-8.
+            headers: The Standard Webhooks headers to verify.
 
         Returns:
             ``True`` iff the timestamp is within tolerance AND at least one
@@ -167,7 +185,9 @@ class StandardWebhooksSigner(WebhookSigner):
         if abs(time.time() - ts) > self._tolerance_seconds:
             return False
 
-        signed_content = f"{msg_id}.{timestamp}.{payload}".encode()
+        prefix = f"{msg_id}.{timestamp}.".encode()
+        payload_bytes = payload if isinstance(payload, bytes) else payload.encode()
+        signed_content = prefix + payload_bytes
         candidates = [self._sign_one(secret, signed_content) for secret in self._secrets]
         provided = signature_header.split(" ")
 

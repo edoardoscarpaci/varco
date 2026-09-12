@@ -48,7 +48,7 @@ from varco_core.exception.service import (
 )
 from varco_core.exception.settings import ErrorEnvelopeSettings
 from varco_core.i18n.catalog import MessageCatalog
-from varco_core.tracing import current_correlation_id
+from varco_core.tracing import current_correlation_id, generate_correlation_id
 
 _logger = logging.getLogger(__name__)
 
@@ -154,13 +154,27 @@ def _make_error_response(
             body["status"] = status_code
             body["instance"] = None
     except Exception:  # noqa: BLE001
-        # Fallback for exceptions not registered with error_code_for
+        # Fallback if error_message_for() itself raises — e.g. exc.error_params()
+        # or a translator/message_resolver raises. Plan 035 / §D-S3a: this used
+        # to echo str(exc) straight into the body — the identical leak fixed in
+        # ErrorMiddleware._service_error_response (error.py). Same fix here:
+        # opaque message, keep the "SERVICE_ERROR" code (no code string
+        # changes), ERROR-level log with exc_info=True so the operator can
+        # recover the detail via the correlation_id already in the response.
         status_code = _FALLBACK_STATUS.get(type(exc).__mro__[0], 500)
-        body = {"code": "SERVICE_ERROR", "message": str(exc)}
+        _logger.error(
+            "error_message_for() raised while rendering %s: %s",
+            type(exc).__name__,
+            exc,
+            exc_info=True,
+        )
+        body = {"code": "SERVICE_ERROR", "message": "An internal error occurred."}
 
-    cid = current_correlation_id()
-    if cid:
-        body["correlation_id"] = cid
+    # DESIGN (Plan 035 / §D-S3a): correlation_id is the supported correlation
+    # key for every error response, including one rendered before
+    # RequestContextMiddleware ever ran — generate a fresh id rather than
+    # silently omitting the key when no ambient one is set.
+    body["correlation_id"] = current_correlation_id() or generate_correlation_id()
 
     response = JSONResponse(status_code=status_code, content=body, media_type=media_type)
     if set_content_language and locale:

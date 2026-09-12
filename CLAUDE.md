@@ -292,10 +292,14 @@ workflows that never gate a PR (Plan 023 / Phase 5):
   `Signed-Releases`).
 - **`docs.yml`** — versioned docs via `mike`, see the "Versioned documentation" section below.
   Never a required check.
-- **`bench.yml`** — CodSpeed benchmarks (Plan 028 / P2). `pull_request` + `push: [main]`,
+- **`bench.yml`** — CodSpeed benchmarks (Plan 028 / P2). ⛔ **Currently DISABLED —
+  `workflow_dispatch` only**: the `pull_request` + `push: [main]` triggers are commented out in
+  the file because no CodSpeed account / `CODSPEED_TOKEN` exists yet, so an automatic run would
+  upload nothing. Re-enable by uncommenting them (runbook §3b). Otherwise unchanged:
   `permissions: {}` at top level, a `concurrency` group scoped by `github.event_name` as well as
   `github.ref`, and an `if:` that **skips** a fork PR (no `CODSPEED_TOKEN`) rather than failing it.
   Comment-only. Not in `test.yml`'s `needs:`; ⛔ must never become a required check.
+  `make bench` runs the same directory locally, uninstrumented, and is unaffected.
 
 **Branch protection (repository setting, not in the repo tree) — APPLIED.** Plan 023's Phase 9 +
 Appendix A ruleset shape is live: branch ruleset `main-branch-protection` (Settings → Branches →
@@ -338,7 +342,7 @@ System". Usage: README's "Consumer — EventConsumer + @listen".
 
 **`@listen` is declarative / `register_to` is imperative.** The decorator stores metadata on the function object at class-definition time. No subscription is created until `consumer.register_to(bus)` is called (typically in a `@PostConstruct` method). This separation makes the consumer bus-agnostic and testable.
 
-**`ChannelManager` implementations must satisfy `declare_channel(c)` ⟹ `channel_exists(c)` is `True` until `delete_channel(c)`** — declared-or-present, not "carries data". Enforced by `testkit/varco_conformance/channel_manager.py`, one of **five** conformance modules (Plan 019 / RT2-C — see §Test Conventions' conformance paragraph).
+**`ChannelManager` implementations must satisfy `declare_channel(c)` ⟹ `channel_exists(c)` is `True` until `delete_channel(c)`** — declared-or-present, not "carries data". Enforced by `testkit/varco_conformance/channel_manager.py`, one of **eight** conformance modules (Plan 019 / RT2-C — see §Test Conventions' conformance paragraph).
 
 ### Service layer (varco_core.service)
 
@@ -373,9 +377,9 @@ function's own docstring for the "why".
 | `bootstrap(container=None, ...)` | sync, returns container or `None` | one per package; wraps `container.scan(pkg)`; returns `None` if providify is absent | `varco_kafka.di.bootstrap` |
 | `async_bootstrap(...)` | async, returns container | `bootstrap()` + an `await container.ainstall(SomeConfiguration)` step, only where an async connection must open before the singleton is usable | `varco_redis.di.async_bootstrap(setup_cache=True)`, `varco_memcached.di.async_bootstrap` |
 | `bind_*(container, ...)` | sync, mutates container | registers N *typed, per-item* generic bindings unknowable before app startup | `varco_sa.di.bind_repositories`, `varco_fastapi.client.bind_clients_from`, `varco_ws.di.bind_websocket_adapter` |
-| `enable_*(container)` | sync, mutates container | flips on an opt-in DI **binding** that would shadow an app default if auto-registered | `varco_casbin.di.enable_policy_authorizer` |
+| `enable_*(container)` | sync, mutates container | flips on an opt-in DI **binding** that would shadow an app default if auto-registered | `varco_casbin.di.enable_policy_authorizer`, `varco_core.tenancy.di.enable_tenant_membership` |
 | `mount_*(app, ...)` | sync, mutates the ASGI app | flips on an opt-in privileged **HTTP surface**, always behind an explicit acknowledgement kwarg | `varco_fastapi.tenancy.mount_tenant_admin`, `varco_fastapi.admin.mount_reliability_admin` |
-| `install_*(...)` | sync, **container-free**; **two shapes** | ⚠️ one verb, two shapes (Plan 022 / AB-3). **(a)** a process-global side effect (OTel instrument registration), taking no argument at all; **(b)** an ASGI-app mutation, taking and modifying an `app`. Neither takes a container — both are unrelated to `container.install(SomeConfiguration)` | (a) `install_cache_metrics`, `install_reliability_metrics` · (b) `install_middleware_stack`, `install_cors` |
+| `install_*(...)` | sync, **container-free**; **three shapes** | ⚠️ one verb, three shapes (Plan 022 / AB-3, extended Plan 037 / §D-S12-hook). **(a)** a process-global side effect (OTel instrument registration), taking no argument at all; **(b)** an ASGI-app mutation, taking and modifying an `app`; **(c)** a mutation of a caller-supplied SQLAlchemy object (a `Session`/`sessionmaker`/`async_sessionmaker`), container-free, returning an uninstall callable. Neither (a) nor (b) nor (c) takes a container — all are unrelated to `container.install(SomeConfiguration)` | (a) `install_cache_metrics`, `install_reliability_metrics` · (b) `install_middleware_stack`, `install_cors` · (c) `varco_sa.tenancy.rls_session.install_rls_tenant_hook` |
 
 Name collisions this table exists specifically to call out (audited at Plan 022's RL-8
 checkpoint — see `design/api-freeze-and-standards/api-break-candidates.md` for each verdict):
@@ -490,7 +494,7 @@ recorded in `design/api-freeze-and-standards/measurements/asyncapi-validate.txt`
 
 Usage + the local `npx` invocation: `technical_docs/features/asyncapi-export.md`.
 
-### Outbound webhooks (varco_core.webhook, Plan 031 / D4)
+### Outbound and inbound webhooks (varco_core.webhook[.inbound], Plan 031 / D4, Plan 038 / S19)
 
 `varco_core.webhook` holds everything portable — the `WebhookSubscription`/`WebhookDelivery`
 entities, `WebhookSubscriptionRepository` ABC (+ `InMemoryWebhookSubscriptionRepository`), the
@@ -520,6 +524,14 @@ becomes a lie. Explicit constructor keywords remain per-instance overrides and a
 constructed with `encryptor=` — no new crypto path. `encryptor=None` is a documented dev/test-only
 default; production wiring must pass a real encryptor.
 
+**Rule (Plan 038 / S19)**: inbound webhook verification reuses `StandardWebhooksSigner.verify()`
+(via delegation, for the scheme varco already ships) and `AbstractIdempotencyStore` (via
+`WebhookReplayGuard`) — never a second HMAC path for Standard Webhooks and never a new
+replay-cache ABC. `varco_core.webhook.inbound` (`WebhookVerifier` ABC + four provider adapters +
+`get_verifier`) is fully portable; `varco_fastapi.webhook.verify_webhook` is a **route
+dependency**, never a middleware (the secret and algorithm are per-route facts) — see
+`technical_docs/features/inbound-webhooks.md`.
+
 Full design (signing-scheme choice, the five-layer SSRF model, retry-schedule convention, a
 Pitfalls table): `technical_docs/features/outbound-webhooks.md`. Usage: README's "Outbound
 webhooks" section.
@@ -538,6 +550,47 @@ default (always returns the caller's own default); `enable_feature_flags(contain
 not the spec, reaching 1.0.0) had not fired as of the 2026-09-04 check (SDK 0.10.0, spec 0.9.0).
 An `OpenFeatureFlags` adapter is purely additive once it does. Full version evidence and design:
 `technical_docs/features/feature-flags.md`. Usage: README's "Feature flags" section.
+
+### HTTP edge hardening (Plan 035 / S3, S7, S8, S10)
+
+Security headers (`varco_fastapi.middleware.security_headers`, on by default), request body limits
+(`varco_fastapi.middleware.body_limit`, on by default at 10 MiB), and HTTP rate limiting
+(`varco_fastapi.middleware.rate_limit`, one opt-in `create_varco_app(rate_limit=RateLimitBundle(...))`
+row) — plus the unmapped-exception `str(exc)` leak fix (S3) and the `inspect_http_edge()` seam Plan
+036 consumes. Full design (the normative middleware-ordering table, every header/limit default
+argued, a Pitfalls table): `technical_docs/features/http-edge-hardening.md`. Usage: README's
+"Security headers"/"Request body limits"/"HTTP rate limiting" sections.
+
+**Rule**: never register `SecurityHeadersMiddleware`/`BodyLimitMiddleware`/`RateLimitMiddleware`
+via `create_varco_app(extra_middleware=...)` — verified to land at the wrong stack position
+(outside `ErrorMiddleware`, and outside `RequestContextMiddleware`) for all three. Use the
+dedicated `security_headers=`/`body_limit=`/`rate_limit=` keywords instead.
+
+**Rule**: never add a `remaining()`/quota-reporting method to `RateLimiter` to emit
+`X-RateLimit-*`/`RateLimit` headers — the ABC has no such method by design (adding one breaks
+every out-of-tree implementation, the same `BulkCache`-off-`AsyncCache` rule). A limiter that
+cannot report remaining quota must never emit a header that lies about it; the parked design is an
+optional `RateLimitIntrospection` Protocol.
+
+**S17 outcome (Plan 041)**: `MetricsMiddleware` now executes INSIDE `TracingMiddleware` — see
+"Metrics inside tracing" in `http-edge-hardening.md` for the decision and its operator-facing
+latency-series step-change note.
+
+### Admin surface tenancy, security posture preflight, authorization-decision audit (Plan 036 / S4, S9, S11)
+
+Cross-tenant write guard on the webhook and reliability admin surfaces (S4), the startup
+`SecurityPosture` preflight aggregating every sibling plan's exported inspector (S9), and
+`AuditingAuthorizer` recording every authorization denial plus every delegated allow (S11). Full
+design + Pitfalls tables: `technical_docs/features/admin-surface-tenancy.md`,
+`technical_docs/features/security-posture.md`, `technical_docs/features/authorization-audit.md`.
+Usage: README's "Security posture preflight"/"Authorization-decision audit" sections and the
+`mount_webhook_admin`/`mount_reliability_admin` snippets.
+
+**Rule**: `mount_webhook_admin` and `mount_reliability_admin` are now tenant-bound
+(`cross_tenant_role=`, default `"cross-tenant-admin"`) — `mount_tenant_admin` is deliberately
+**not**, because it *is* the tenant control plane (every route addresses a tenant that is by
+definition not the caller's own); see `admin-surface-tenancy.md`'s §D-S4-control for the full
+argument. Do not add a tenant guard to `mount_tenant_admin` without revisiting that decision.
 
 ### Recurring schedules (varco_core.schedule, Plan 032 / D6)
 
@@ -558,6 +611,33 @@ to `Schedule` to match the job store's model.
 Full design (the fenced-lease deviation in detail, a Pitfalls table for DST gaps/catch-up
 surprise/materializer downtime): `technical_docs/features/recurring-schedules.md`. Usage:
 README's "Recurring schedules" section.
+
+**Note (Plan 039 / S20)**: `Schedule.task_name: str | None = None` — set it and `_build_job`
+emits a `TaskPayload`, making a materialized `Job` reachable through `JobRunner.recover()`;
+`None` (the default) stays byte-identical to every pre-3.2 `Schedule` row. This is what
+`varco_core.retention`'s `RetentionScheduler` rides — see below.
+
+### Retention & purge automation (varco_core.retention, Plan 039 / S20)
+
+A `RetentionPolicy` registry materialized onto the cron→`Job` path above — adapters over five
+shipped bulk-delete verbs (`AbstractDeadLetterQueue.delete_where`, `AuditRepository.delete_where`,
+`AbstractIdempotencyStore.delete_expired`, `AbstractTokenRevocationStore.delete_expired`,
+`AbstractJobStore.delete_where`), a scheduler that materializes+dispatches, an opt-in DI binding,
+a posture inspector, and a `varco retention --policy`/`list` CLI. Full design + a Pitfalls table:
+`technical_docs/features/retention-and-purge.md`. Usage: README's "Retention & purge automation"
+section.
+
+**Rules**:
+- Retention is **adapters over shipped verbs, never a new abstract method** — not on
+  `AbstractDeadLetterQueue`, `AbstractIdempotencyStore`, `AbstractTokenRevocationStore`,
+  `AuditRepository`, or `AbstractJobStore`. Same standing rule that keeps `BulkCache` off
+  `AsyncCache` and `remaining()` off `RateLimiter`.
+- `RetentionPolicy.dry_run` has **no default and never will** — a policy that does not state its
+  own blast radius, in the source, greppable, cannot be constructed at all.
+- The scheduler adds **no lease** — `varco_core/varco_core/schedule/materializer.py:24-30`'s
+  DESIGN block is why: a synthetic lease row saved through `AbstractJobStore.save()` would be
+  indistinguishable from a real job to `JobRetentionTarget`'s own `delete_where()`, i.e. the
+  feature would delete its own coordination row.
 
 ### SBOM and regulatory posture (scripts/sbom.py, Plan 030 / D5)
 
@@ -641,7 +721,38 @@ claiming `code` itself was the i18n key was wrong and is corrected.
 
 ⚠️ `error_params()` (default `{}`) returns structured interpolation data — treat it as a **new
 exfiltration surface**: `ServiceAuthorizationError` deliberately excludes `reason` from its
-params, and any override must apply the same scrutiny, never `vars(exc)`.
+params, and any override must apply the same scrutiny, never `vars(exc)`. **As of Plan 040 / S21,
+two of the three leak shapes this warns about are mechanical, not just advisory**:
+`error_message_for()` routes `error_params()` through `varco_core.redaction.redact_mapping()`
+(secret-named key -> `"[REDACTED]"`) and `json_safe()` (non-JSON value -> `"<TypeName>"`) by
+default (`ErrorEnvelopeSettings.redact_params=True`). **Still advisory** — no mechanism catches
+it — a secret *value* under a key that does not match a redaction pattern (redaction in 3.2 is
+key-name-based only, never value scanning).
+
+### Redaction (varco_core.redaction, Plan 040 / S21)
+
+One small, key-name-based seam shared by span capture, `error_params()`, the audit trail, and
+request logging (`Redactor`, `PolicyRedactor`, `RedactionPolicy`, `redact_mapping()`). Full
+design + a Pitfalls table: `technical_docs/features/redaction.md`. Usage: README's "Redaction"
+section.
+
+**Rules**:
+- Redaction is **key-name-based only, never value scanning** — no card/JWT/`whsec_`-prefix
+  detection. A denylist over payload strings is wrong-once-is-a-leak territory; parked with a
+  trigger (a real leak key-name matching structurally cannot catch, plus a false-positive budget).
+- ⛔ **Never redact on the audit read path** (`list()`/`list_for_entity()`/an admin router) —
+  `AuditRepository.verify_chain()` recomputes `entry_hash()` from returned fields; mutating a
+  returned entry's `diff` produces a spurious `HashMismatch` on every row. Redact only inside
+  `AuditLogMixin._audit_diff()`, before `_produce()`.
+- ⛔ **Never add a scanned `@Singleton`/`@Provider`/`@Configuration` to `varco_core.redaction`** —
+  the standing `varco_core.tls`/`cloudevents` scan rule; `container.scan("varco_core",
+  recursive=True)` is a documented, in-use pattern.
+- **A redactor that raises redacts** — any failure anywhere in `redact_mapping()`'s walk degrades
+  the whole result to `{k: "[REDACTED]" for k in data}`, never a partial pass-through and never
+  the original input.
+- Audit redaction is **opt-in** (`AuditLogMixin._audit_redactor`) — the incumbent substring
+  matcher has real false positives on domain-named fields (`"pin"` matches `shipping_address`;
+  `"auth"` matches `author`), so an on-by-default flip would corrupt audit data.
 
 ### Profiling (varco_core.profiling)
 
@@ -815,10 +926,19 @@ Key sources (`varco_core.authority.sources`): `PemFile`, `PemFolder`, `JwksUrl`,
 **JWKS caching knobs**: `TrustedIssuerRegistry(min_refresh_interval=..., ttl_seconds=...)`
 (env: `VARCO_JWKS_MIN_REFRESH_SECONDS` default `10.0`, `VARCO_JWKS_TTL_SECONDS` default `0.0` =
 disabled) tune when the in-memory keyset cache refreshes. `ttl_seconds` makes `get_key()`
-proactively reload once the cache is stale, without waiting for a `kid` miss. ⚠️ **There is no
-background refresher task** — a registry that never receives a `verify()` call never refreshes
-on its own regardless of these knobs; a real background-refresh task is deliberately deferred
-(needs its own lifespan start/stop wiring).
+proactively reload once the cache is stale, without waiting for a `kid` miss.
+
+**Background JWKS refresh (Plan 041 / S22)**: `TrustedIssuerRegistry.start_refresh()`/
+`stop_refresh()` run a background task on the same `ttl_seconds`-derived period, so a registry
+can refresh without ever receiving a `verify()` call. **Off unless** `VARCO_JWKS_TTL_SECONDS`/
+`interval=` is positive, and it must be started explicitly — via
+`create_varco_app(jwks_refresh=JwksRefreshLifecycle(registry))` or a direct
+`await registry.start_refresh()` call — **never** by a scanned `@Configuration` (the same
+`varco_core.tls`/`cloudevents` rule: `container.scan("varco_core", recursive=True)` must never
+auto-start a background HTTPS-fetching task). `varco_core.authority.inspect_jwks_posture()`
+reports whether one is actually running. Full design:
+`technical_docs/features/jwt-claim-transformer.md`'s "JWKS caching knobs, and the background
+refresher" section.
 
 #### Claim transformation + token profiles (varco_core.jwt.transform / varco_core.jwt.profile)
 
@@ -838,6 +958,38 @@ detail: `technical_docs/features/jwt-claim-transformer.md` and
 `VARCO_JWT_ALLOW_ANY_AUDIENCE=true` (`JwtBearerAuth` refuses to construct otherwise); `iss` is
 enforced by default (`VARCO_JWT_ENFORCE_ISS=true`). Full `VARCO_JWT_*` env-var reference:
 README's "Verification hardening (VARCO_JWT_*)" subsection.
+
+**A third BREAKING security default (Plan 034 / S1)**: `JwtParser.parse()` requires
+`algorithms=` — there is no silent `["HS256"]` default any more, and never will be (no env-var
+escape hatch). `JwtBearerAuth`/`PassthroughAuth`/`TrustedIssuerRegistry.verify()` are structurally
+unaffected (they never went through the default). Fix: `algorithms=["HS256"]` (or whatever you
+sign with) at the call site.
+
+#### Credential and token lifecycle (Plan 034 — required `algorithms=`, `?api_key=` off by
+default, token revocation, hashed API keys)
+
+`varco_core.revocation` (`AbstractTokenRevocationStore`, `RevocationScope`/`RevocationEntry`) lets
+an app invalidate a JWT before its `exp` — per token/subject/tenant/issuer —
+through one ABC with three in-tree implementations (`NullTokenRevocationStore` the scanned DI
+default, `InMemoryTokenRevocationStore`, `varco_redis.revocation.RedisTokenRevocationStore` the
+production backend). `varco_core.auth.api_key.hash_api_key()`/`verify_api_key()` are the
+stdlib-only (`hashlib`/`hmac`) primitives behind `ApiKeyAuth`'s `hashed_keys=` path. Full design,
+the revocation scope table, and a Pitfalls table:
+`technical_docs/features/credential-and-token-lifecycle.md`.
+
+**Rule**: revoke a credential before its natural expiry → `varco_core.revocation`, never a second
+verification path. Store an API key → `varco_core.auth.api_key.hash_api_key()`, never a raw dict.
+
+**Rule**: binding a revocation store in DI (`enable_token_revocation`/
+`enable_redis_token_revocation`) does **not** by itself turn checking on — the store must also be
+passed to `TrustedIssuerRegistry(revocation_store=...)`. This two-step is the single most likely
+way to think revocation is on when it is not (`inspect_revocation_posture()`'s
+`registry_wired` field exists specifically to surface it).
+
+**Rule**: `ApiKeyAuth`'s `?api_key=` query fallback and `WebSocketAuth`'s `?token=` fallback are
+both **off by default** — a credential in a URL is already in the access/proxy/`Referer` log by
+the time anything could warn about it. Name `param="api_key"` / `token_query_param="token"`
+explicitly to re-enable either, one line, greppable.
 
 ### Authorization — policy engine (varco_core.auth.policy + varco_casbin)
 
@@ -924,6 +1076,26 @@ registers nothing.
 **Rule**: `mount_tenant_admin(app, control_service, acknowledge_bundled_admin=True,
 server_auth=..., admin_role="tenant-admin")` is the **only** way to expose the admin
 surface — there is deliberately **no** `VARCO_TENANCY_MOUNT_ADMIN` env var, ever.
+
+**Rule**: never ship a varco-owned Alembic revision that enables RLS (Plan 037 / §D-S12-oq4) —
+varco ships the generator (`varco_sa.rls_autogen`), the ordering guarantee, and the posture
+check; enabling RLS on any table, including varco's own framework tables, stays an
+application-authored, reviewed revision. Full detail: `technical_docs/features/postgres-rls.md`.
+
+### Tenant identity provenance & delegation (varco_core.tenancy.source, Plan 033 / S6, S5, S16)
+
+**Rule**: tenant provenance — *where a request's tenant identity is allowed to come from* — is
+`varco_core.tenancy.source` (`TenantSource`/`TenantSourceChain`/`TenantProvenance`).
+`current_tenant()` stays the single source of truth for *who* the tenant is; this plan changes
+only what feeds it. `TenantProvenance` is its own `AmbientVar`
+(`varco_core.tenancy.provenance`) and must never move into `RequestContext` — same rule as
+`current_tenant()` itself never living there.
+
+**Rule**: `TenantResolutionMiddleware(chain=None)` is byte-identical to pre-3.2 header-only
+behaviour (one `DeprecationWarning` at construction) — nothing flips by default. Full design
+(trust ranking, cross-check modes, the subdomain algorithm, membership binding, act-as
+delegation, the 4.0 flip list, a Pitfalls table): `technical_docs/features/tenant-provenance.md`.
+Usage: README's "Tenant identity provenance" section.
 
 ---
 
@@ -1088,8 +1260,9 @@ occasional red run is a BACKLOG/operator-triage signal, not a merge blocker.
 
 **Conformance suite opt-in** (`testkit/varco_conformance`, Plan 012 / RT6, plus
 `channel_manager.py` added by Plan 019 / RT2-C) — a shared, never-packaged suite of behavioral
-contract tests, **five** modules, one per `varco_core` ABC (`event_bus.py`, `cache.py`,
-`job_store.py`, `dlq.py`, `channel_manager.py`). Reached via one `pythonpath =
+contract tests, **eight** modules, one per `varco_core` ABC (`event_bus.py`, `cache.py`,
+`job_store.py`, `dlq.py`, `channel_manager.py`, `idempotency_store.py`, `webhook_subscription.py`,
+`token_revocation.py` — the last added by Plan 034 / S13b). Reached via one `pythonpath =
 ["../testkit"]` line in a package's `[tool.pytest.ini_options]`; a backend opts in with a thin
 subclass overriding the abstract fixture:
 
@@ -1106,27 +1279,30 @@ class TestRedisEventBusConformance(EventBusConformance):
 
 The base classes are deliberately not named `Test*` — pytest never collects them standalone, so
 an unimplemented fixture fails loudly (`NotImplementedError`) instead of silently passing.
-`varco_core/tests/test_conformance_inmemory.py` runs the other four suites (`event_bus`, `cache`,
-`job_store`, `dlq`) against every in-process implementation with no Docker required — the fast
-feedback loop. `channel_manager.py` has no in-process implementation to run there (there is no
-`InMemoryChannelManager` — `ChannelManager` is inherently a broker-admin concern) and is
-subclassed only by the three real-broker backends (`varco_kafka`, `varco_redis`, `varco_nats`).
+`varco_core/tests/test_conformance_inmemory.py` runs the other five suites (`event_bus`, `cache`,
+`job_store`, `dlq`, `token_revocation`) against every in-process implementation with no Docker
+required — the fast feedback loop. `channel_manager.py` has no in-process implementation to run
+there (there is no `InMemoryChannelManager` — `ChannelManager` is inherently a broker-admin
+concern) and is subclassed only by the three real-broker backends (`varco_kafka`, `varco_redis`,
+`varco_nats`).
 
 **`testkit/varco_conformance/COVERAGE.md`** (Plan 024 / C7) is the authoritative, audited coverage
-matrix — for every implementation of one of the five ABCs, whether it subclasses the matching
+matrix — for every implementation of one of the eight ABCs, whether it subclasses the matching
 suite and, if not, the written reason (`NoopEventBus`'s Null Object shape, `varco_ws`'s push-adapter
 resolution, `varco_memcached`/`varco_casbin`'s legitimate partial/zero-ABC surface,
 `channel_manager`'s lack of an in-process implementation). **Rule**: a new implementation of one of
-the five ABCs either subclasses its suite or gets a row in `COVERAGE.md` explaining why not — a
+the eight ABCs either subclasses its suite or gets a row in `COVERAGE.md` explaining why not — a
 future absence must be argued against a written record, not rediscovered.
 
-**A conformance failure that reveals a genuine backend ABC-contract violation becomes
-`@pytest.mark.xfail(reason="BUG: ...", strict=True)` plus a one-line BACKLOG.md entry — never an
-in-place production-code fix.** `strict=True` means the xfail itself fails loudly if the
-underlying bug is ever fixed, so the marker doesn't silently rot. See BACKLOG.md's "Known issues
-found while implementing Plan 012" table for the accumulated findings (e.g. `RedisCache`/
-`MemcachedCache` truncating a sub-second `ttl` to `int()`, `KafkaDLQ`/`NatsDLQ.delete_where()`
-never reaching the ABC's "no predicate → `ValueError`" check).
+**A red conformance run means one of three things, and they take different actions** — a genuine
+backend ABC violation (`@pytest.mark.xfail(reason="BUG: KI-N …", strict=True)` + a register row,
+**never** an in-place production fix and **never** a weakened shared assertion), a gap in the
+suite itself (fix it in `testkit/`, no marker), or a legitimate backend capability divergence
+(override the one test in the subclass, with a docstring). The decision table and an in-tree
+example of each: `testkit/varco_conformance/COVERAGE.md`'s **Conformance findings register**,
+which is also where accumulated findings live — **not BACKLOG.md**, which is trimmed by design.
+`strict=True` means the marker fails loudly the moment the bug is fixed, so it cannot rot;
+`rg -n 'BUG:' varco_*/tests/ testkit/` lists every live marker and each must name a register row.
 
 **providify's `pytest11` plugin fixtures** (providify ≥ 2.0.0, Plan 016 / RL-3d) — installing
 `providify` activates its own `pytest11` entry point (`providify/pytest_plugin.py`) in every
@@ -1207,6 +1383,14 @@ Am I adding a new capability?
 │     ↳ RRULE/RFC 5545? → still parked — needs dateutil.rrule, a new
 │       runtime dependency (technical_docs/features/recurring-schedules.md)
 │
+├─ Scheduled cleanup of a framework table (DLQ, audit log, idempotency
+│  store, revocation store, job store)?
+│  └─ → varco_core.retention (Plan 039 / S20) — bind_retention_registry(container,
+│         registry) + create_varco_app(retention=RetentionLifecycle(...)), never a
+│         hand-written job and never a second scheduler
+│     ↳ Outbox? → NOT a target — deleting an unpublished event is event
+│       loss by construction (technical_docs/features/retention-and-purge.md)
+│
 ├─ Feature flag / runtime toggle?
 │  └─ → varco_core.flags.AbstractFeatureFlags (Plan 032 / D7) —
 │       NullFeatureFlags is the DI default; enable_feature_flags()
@@ -1216,6 +1400,18 @@ Am I adding a new capability?
 │
 ├─ Resilience pattern (new retry/timeout/breaker variant)?
 │  └─ → varco_core.resilience (decorator + config)
+│
+├─ Browser security header (CSP, HSTS, frame options, …)?
+│  └─ → varco_fastapi.middleware.security_headers (SecurityHeadersMiddleware, on by default)
+├─ Request too big / memory-exhaustion ceiling on a request body?
+│  └─ → varco_fastapi.middleware.body_limit (BodyLimitMiddleware, on by default at 10 MiB)
+├─ HTTP rate limit (per IP/subject/tenant/global)?
+│  └─ → varco_fastapi.middleware.rate_limit (RateLimitMiddleware + RateLimitBundle) —
+│       never a new limiter; imports RateLimiter/RateLimitConfig from
+│       varco_core.resilience.rate_limit as-is
+├─ "Is my HTTP edge (headers/body-limit/rate-limit) actually configured?"
+│  └─ → varco_fastapi.middleware.introspect.inspect_http_edge() — a pure read,
+│       never a preflight (Plan 036's SecurityPosture is the preflight)
 │
 ├─ File/dir change detection (config reload, cert rotation, anything watching a path)?
 │  └─ → varco_core.watch — never a hand-rolled mtime dict (misses the K8s `..data` rotation)
@@ -1248,6 +1444,12 @@ Am I adding a new capability?
 │     + varco_core/cli/asyncapi.py for a CLI verb
 │     ↳ ⛔ never a static import walk, and never a new AsyncAPI dependency
 │
+├─ Hiding a secret from a span/log/audit payload/error body?
+│  └─ → varco_core.redaction (Redactor / PolicyRedactor / redact_mapping()), never a
+│       second pattern list
+│     ↳ Need the value back later (crypto-shredding, key rotation)? → that is
+│       varco_core.encryption, NOT redaction — redaction destroys
+│
 ├─ Authentication/JWT feature?
 │  └─ → varco_core.authority (protocol) + varco_core.authority.sources (key sources)
 │
@@ -1256,6 +1458,14 @@ Am I adding a new capability?
 │
 ├─ Named internal/system token recognition (replacing SYSTEM_ISSUER)?
 │  └─ → varco_core.jwt.profile (TokenProfile / TokenProfileRegistry) + varco_fastapi's require_token_profile
+│
+├─ Revoke a credential before its natural expiry (logout, compromise, kill switch)?
+│  └─ → varco_core.revocation (AbstractTokenRevocationStore) — never a second
+│         verification path; wire the store into TrustedIssuerRegistry(revocation_store=...)
+│
+├─ Store an API key (in-memory dict, config, DB column)?
+│  └─ → varco_core.auth.api_key.hash_api_key() / ApiKeyAuth(hashed_keys=...) —
+│         never a raw dict of plaintext keys
 │
 ├─ Service layer feature (mixin, hook, outbox)?
 │  └─ → varco_core.service (ABC + mixin) + varco_sa/beanie (repository impl)
@@ -1284,6 +1494,17 @@ Am I adding a new capability?
 │                            (never a create_varco_app kwarg — RD-9)
 │       ↳ New global/shared entity? → Meta.tenant_scope = TenantScope.GLOBAL,
 │                            never a new mixin (validate_service_scope() guards it)
+│     ↳ Where may a tenant come from (header/subdomain/JWT claim, and what
+│       if two disagree)? → varco_core.tenancy.source (TenantSourceChain)
+│     ↳ Is this subject allowed that tenant? → varco_core.tenancy.membership
+│     ↳ May this service act for that tenant (RFC 8693 act claim)?
+│                            → varco_core.auth.delegation
+│     ↳ Is my deployment still header-only? → inspect_tenant_provenance()
+│     ↳ RLS DDL for tenant tables? → `varco_sa.rls_autogen` (the generated-for-you
+│       path) or `varco_sa.rls.render_rls_ddl` (the per-table escape hatch); the
+│       per-transaction GUC? → `varco_sa.tenancy.rls_session.install_rls_tenant_hook`;
+│       is my deployment actually protected? → `inspect_rls_posture()`
+│       (`technical_docs/features/postgres-rls.md`)
 │
 ├─ Cross-repo service integration (calling a peer whose Python package is
 │  not importable from this repo)?
@@ -1334,6 +1555,32 @@ Am I adding a new capability?
 │                            (never a create_varco_app kwarg, never an env var — RD-9)
 │       ⚠️ Never weaken ssrf.validate_target()'s resolve-then-pin behaviour — a
 │         validate-the-URL-string-only shortcut reopens DNS rebinding
+│
+├─ Receiving a signed webhook (verify a Stripe/GitHub/Slack/Svix/Standard
+│  Webhooks delivery) (Plan 038 / S19)?
+│  └─ → varco_core.webhook.inbound (WebhookVerifier ABC, four provider
+│         adapters, get_verifier(), WebhookReplayGuard over the existing
+│         AbstractIdempotencyStore — never a second HMAC path and never a
+│         new replay-cache ABC)
+│       + varco_fastapi.webhook.verify_webhook — a route dependency,
+│         never a middleware (the secret/algorithm are per-route facts)
+│       ↳ New provider? → subclass HmacWebhookVerifier; register in
+│                            get_verifier()
+│       ⚠️ GitHub ships no timestamp — GitHubWebhookVerifier refuses
+│         construction without replay_guard= or
+│         acknowledge_no_replay_protection=True
+│
+├─ Startup security check (is BaseAuthorizer still bound, is an admin mount
+│  unauthenticated, is RLS actually enforced, ...)?
+│  └─ → varco_fastapi.posture (SecurityPostureLifecycle) — never a second
+│       preflight; it aggregates the sibling plans' own exported inspectors
+│       (technical_docs/features/security-posture.md)
+│
+├─ Authorization decision logging (who was allowed/denied what, including
+│  delegated/impersonated access)?
+│  └─ → AuditingAuthorizer via varco_core.auth.di.enable_authorization_audit()
+│       — never a middleware (authorize() is called from the service layer,
+│       not HTTP) (technical_docs/features/authorization-audit.md)
 │
 └─ ORM/database feature?
    └─ → varco_sa (SQLAlchemy) and/or varco_beanie (MongoDB)

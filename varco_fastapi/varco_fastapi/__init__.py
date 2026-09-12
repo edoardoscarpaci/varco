@@ -97,6 +97,7 @@ from varco_fastapi.auth.guard import (
 )
 
 # ── Auth — server side ────────────────────────────────────────────────────────
+from varco_fastapi.auth.posture import AuthPostureReport, inspect_auth_posture
 from varco_fastapi.auth.server_auth import (
     AbstractServerAuth,
     AnonymousAuth,
@@ -175,16 +176,25 @@ from varco_fastapi.job import (
 )
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
+from varco_fastapi.jwks import JwksRefreshLifecycle
 from varco_fastapi.lifespan import VarcoLifespan
 from varco_fastapi.middleware.cors import CORSConfig, install_cors
 
 # ── Middleware ────────────────────────────────────────────────────────────────
 from varco_fastapi.middleware.error import ErrorMiddleware
+from varco_fastapi.middleware.introspect import HttpEdgeFinding, HttpEdgePosture, inspect_http_edge
 from varco_fastapi.middleware.logging import RequestLoggingMiddleware
 from varco_fastapi.middleware.metrics import MetricsMiddleware
 from varco_fastapi.middleware.request_context import RequestContextMiddleware
 from varco_fastapi.middleware.tracing import TracingMiddleware
 from varco_fastapi.migrate import MigrationLifecycle
+from varco_fastapi.posture import (
+    PostureFinding,
+    PostureSeverity,
+    SecurityPosture,
+    SecurityPostureLifecycle,
+    SecurityPostureSettings,
+)
 
 # ── Router layer ──────────────────────────────────────────────────────────────
 from varco_fastapi.router.base import (
@@ -258,6 +268,8 @@ __all__ = [
     "PassthroughAuth",
     "AnonymousAuth",
     "WebSocketAuth",
+    "AuthPostureReport",
+    "inspect_auth_posture",
     "AbstractClientAuth",
     "JwtClientAuth",
     "TrustStore",
@@ -276,6 +288,10 @@ __all__ = [
     "TracingMiddleware",
     "CORSConfig",
     "install_cors",
+    # Plan 035 / §D-seam — cross-plan contract with Plan 036, top-level too
+    "HttpEdgeFinding",
+    "HttpEdgePosture",
+    "inspect_http_edge",
     # Router
     "VarcoRouter",
     "GenericRouter",
@@ -334,6 +350,13 @@ __all__ = [
     # Lifecycle
     "VarcoLifespan",
     "MigrationLifecycle",
+    "JwksRefreshLifecycle",
+    # Plan 036 / S9 — security posture preflight
+    "PostureSeverity",
+    "PostureFinding",
+    "SecurityPosture",
+    "SecurityPostureSettings",
+    "SecurityPostureLifecycle",
     # Exceptions
     "add_exception_handlers",
     # DI

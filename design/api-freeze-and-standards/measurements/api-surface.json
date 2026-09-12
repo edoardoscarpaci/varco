@@ -200,6 +200,10 @@
         "kind": "class",
         "module": "varco_core.tenancy.catalog"
       },
+      "AbstractTenantMembership": {
+        "kind": "class",
+        "module": "varco_core.tenancy.membership"
+      },
       "AbstractTenantProvisioner": {
         "kind": "class",
         "module": "varco_core.tenancy.provisioner"
@@ -228,9 +232,17 @@
         "kind": "class",
         "module": "varco_core.uow"
       },
+      "AuditDecisionPolicy": {
+        "kind": "class",
+        "module": "varco_core.auth.audit"
+      },
       "AuditedDomainModel": {
         "kind": "class",
         "module": "varco_core.model"
+      },
+      "AuditingAuthorizer": {
+        "kind": "class",
+        "module": "varco_core.auth.audit"
       },
       "AuthorityError": {
         "kind": "class",
@@ -328,6 +340,10 @@
         "kind": "class",
         "module": "varco_core.jwt.transform.mapping"
       },
+      "ClaimTenantMembership": {
+        "kind": "class",
+        "module": "varco_core.tenancy.membership"
+      },
       "ClaimTransformError": {
         "kind": "class",
         "module": "varco_core.jwt.exceptions"
@@ -364,6 +380,18 @@
         "kind": "class",
         "module": "varco_core.dto.base"
       },
+      "CrossCheckMode": {
+        "kind": "class",
+        "module": "varco_core.tenancy.source"
+      },
+      "CrossTenantAccessError": {
+        "kind": "class",
+        "module": "varco_core.tenancy.provenance"
+      },
+      "DEFAULT_REDACT_PATTERNS": {
+        "kind": "constant",
+        "module": "varco_core.observability.params"
+      },
       "DTOSet": {
         "kind": "class",
         "module": "varco_core.dto.factory"
@@ -395,6 +423,10 @@
       "DynamicTenantUoWProvider": {
         "kind": "class",
         "module": "varco_core.tenancy.provider"
+      },
+      "EXTENDED_REDACT_PATTERNS": {
+        "kind": "constant",
+        "module": "varco_core.redaction"
       },
       "EntityCreatedEvent": {
         "kind": "class",
@@ -556,6 +588,10 @@
         "kind": "class",
         "module": "varco_core.jwt.builder"
       },
+      "JwtClaimTenantSource": {
+        "kind": "class",
+        "module": "varco_core.tenancy.sources"
+      },
       "JwtException": {
         "kind": "class",
         "module": "varco_core.jwt.exceptions"
@@ -580,9 +616,17 @@
         "kind": "class",
         "module": "varco_core.cache.layered"
       },
+      "LegacyTenantSource": {
+        "kind": "class",
+        "module": "varco_core.tenancy.sources"
+      },
       "MappingClaimTransformer": {
         "kind": "class",
         "module": "varco_core.jwt.transform.mapper"
+      },
+      "MembershipDecision": {
+        "kind": "class",
+        "module": "varco_core.tenancy.membership"
       },
       "MessageResolver": {
         "kind": "constant",
@@ -616,6 +660,10 @@
         "kind": "class",
         "module": "varco_core.migration.settings"
       },
+      "MissingClaimPolicy": {
+        "kind": "class",
+        "module": "varco_core.tenancy.membership"
+      },
       "MultiKeyAuthority": {
         "kind": "class",
         "module": "varco_core.authority.multi_key_authority"
@@ -635,6 +683,10 @@
       "NullTenantDefaults": {
         "kind": "class",
         "module": "varco_core.context.defaults"
+      },
+      "NullTenantMembership": {
+        "kind": "class",
+        "module": "varco_core.tenancy.membership"
       },
       "OAuth2Config": {
         "kind": "class",
@@ -656,6 +708,10 @@
         "kind": "class",
         "module": "varco_core.auth.helpers"
       },
+      "PII_REDACT_PATTERNS": {
+        "kind": "constant",
+        "module": "varco_core.redaction"
+      },
       "PROFILE_METADATA_KEY": {
         "kind": "constant",
         "module": "varco_core.jwt"
@@ -672,6 +728,10 @@
         "kind": "class",
         "module": "varco_core.migration.errors"
       },
+      "PolicyRedactor": {
+        "kind": "class",
+        "module": "varco_core.redaction.redactor"
+      },
       "QueryBuilder": {
         "kind": "class",
         "module": "varco_core.query.builder"
@@ -687,6 +747,14 @@
       "ReadDTO": {
         "kind": "class",
         "module": "varco_core.dto.base"
+      },
+      "RedactionPolicy": {
+        "kind": "class",
+        "module": "varco_core.redaction.policy"
+      },
+      "Redactor": {
+        "kind": "class",
+        "module": "varco_core.redaction.redactor"
       },
       "RepositoryProvider": {
         "kind": "class",
@@ -788,6 +856,10 @@
         "kind": "class",
         "module": "varco_core.context.defaults"
       },
+      "SubdomainTenantSource": {
+        "kind": "class",
+        "module": "varco_core.tenancy.sources"
+      },
       "Subscription": {
         "kind": "class",
         "module": "varco_core.event.base"
@@ -824,6 +896,10 @@
         "kind": "class",
         "module": "varco_core.service.tenant"
       },
+      "TenantClaim": {
+        "kind": "class",
+        "module": "varco_core.tenancy.source"
+      },
       "TenantDefaultsProvider": {
         "kind": "class",
         "module": "varco_core.context.defaults"
@@ -848,6 +924,14 @@
         "kind": "class",
         "module": "varco_core.context.defaults"
       },
+      "TenantMembershipError": {
+        "kind": "class",
+        "module": "varco_core.tenancy.membership"
+      },
+      "TenantMembershipSettings": {
+        "kind": "class",
+        "module": "varco_core.tenancy.membership"
+      },
       "TenantMixin": {
         "kind": "class",
         "module": "varco_core.model"
@@ -855,6 +939,22 @@
       "TenantNotFoundError": {
         "kind": "class",
         "module": "varco_core.tenancy.catalog"
+      },
+      "TenantProvenance": {
+        "kind": "class",
+        "module": "varco_core.tenancy.source"
+      },
+      "TenantProvenancePosture": {
+        "kind": "class",
+        "module": "varco_core.tenancy.posture"
+      },
+      "TenantProvenanceSettings": {
+        "kind": "class",
+        "module": "varco_core.tenancy.settings"
+      },
+      "TenantRequest": {
+        "kind": "class",
+        "module": "varco_core.tenancy.source"
       },
       "TenantResourcePool": {
         "kind": "class",
@@ -864,9 +964,21 @@
         "kind": "class",
         "module": "varco_core.tenancy.settings"
       },
+      "TenantSource": {
+        "kind": "class",
+        "module": "varco_core.tenancy.source"
+      },
+      "TenantSourceChain": {
+        "kind": "class",
+        "module": "varco_core.tenancy.source"
+      },
       "TenantStatus": {
         "kind": "class",
         "module": "varco_core.tenancy.settings"
+      },
+      "TenantTrust": {
+        "kind": "class",
+        "module": "varco_core.tenancy.source"
       },
       "TenantUoWProvider": {
         "kind": "class",
@@ -948,6 +1060,11 @@
         "kind": "class",
         "module": "varco_core.model"
       },
+      "assert_tenant_matches": {
+        "kind": "function",
+        "module": "varco_core.tenancy.provenance",
+        "signature": "(requested: 'str | None', *, allow_cross_tenant: 'bool' = False) -> 'str'"
+      },
       "auth_context_from_snapshot": {
         "kind": "function",
         "module": "varco_core.job.base",
@@ -957,6 +1074,11 @@
         "kind": "function",
         "module": "varco_core.job.base",
         "signature": "(ctx: 'AuthContext') -> 'dict[str, Any]'"
+      },
+      "build_tenant_source_chain": {
+        "kind": "function",
+        "module": "varco_core.tenancy.settings",
+        "signature": "(settings: 'TenantProvenanceSettings | None' = None, *, delegation_policy: 'DelegationPolicy | None' = None) -> 'TenantSourceChain | None'"
       },
       "cached": {
         "kind": "function",
@@ -1028,10 +1150,20 @@
         "module": "varco_core.service.tenant",
         "signature": "() -> 'str | None'"
       },
+      "current_tenant_provenance": {
+        "kind": "function",
+        "module": "varco_core.tenancy.provenance",
+        "signature": "() -> 'TenantProvenance | None'"
+      },
       "current_timezone": {
         "kind": "function",
         "module": "varco_core.context.request",
         "signature": "() -> 'ZoneInfo | None'"
+      },
+      "default_redactor": {
+        "kind": "function",
+        "module": "varco_core.redaction.redactor",
+        "signature": "() -> 'Redactor'"
       },
       "deprecated": {
         "kind": "function",
@@ -1042,6 +1174,16 @@
         "kind": "function",
         "module": "varco_core.deprecation",
         "signature": "(name: 'str', target: 'object', *, since: 'str', removed_in: 'str', fallback: 'Callable[[str], object] | None' = None) -> 'Callable[[str], object]'"
+      },
+      "enable_authorization_audit": {
+        "kind": "function",
+        "module": "varco_core.auth.di",
+        "signature": "(container: 'DIContainer', *, policy: 'AuditDecisionPolicy' = <AuditDecisionPolicy.DENIALS: 'denials'>) -> 'DIContainer'"
+      },
+      "enable_tenant_membership": {
+        "kind": "function",
+        "module": "varco_core.tenancy.di",
+        "signature": "(container: 'Any', settings: 'TenantMembershipSettings | None' = None) -> 'Any'"
       },
       "error_code_for": {
         "kind": "function",
@@ -1068,6 +1210,21 @@
         "module": "varco_core.observability.metrics",
         "signature": "(cfg: 'HistogramConfig') -> 'Callable[[_F], _F]'"
       },
+      "inspect_tenant_provenance": {
+        "kind": "function",
+        "module": "varco_core.tenancy.posture",
+        "signature": "(chain: 'TenantSourceChain | None', *, membership: 'AbstractTenantMembership | None' = None, delegation: 'DelegationPolicy | None' = None, request_context_sets_tenant: 'bool' = True) -> 'TenantProvenancePosture'"
+      },
+      "is_sensitive_key": {
+        "kind": "function",
+        "module": "varco_core.redaction.policy",
+        "signature": "(key: 'str', policy: 'RedactionPolicy') -> 'bool'"
+      },
+      "json_safe": {
+        "kind": "function",
+        "module": "varco_core.redaction.redactor",
+        "signature": "(value: 'Any') -> 'Any'"
+      },
       "listen": {
         "kind": "function",
         "module": "varco_core.event.consumer",
@@ -1078,10 +1235,25 @@
         "module": "varco_core.dto.pagination",
         "signature": "(results: 'list[T]', *, params: 'QueryParams', total_count: 'int | None' = None, raw_query: 'str | None' = None) -> 'PagedReadDTO[T]'"
       },
+      "provenance_context": {
+        "kind": "function",
+        "module": "varco_core.tenancy.provenance",
+        "signature": "(prov: 'TenantProvenance') -> 'Iterator[None]'"
+      },
       "read_claim": {
         "kind": "function",
         "module": "varco_core.jwt.transform.path",
         "signature": "(claims: 'Mapping[str, Any]', spec: 'str', *, default: 'Any' = None, separator: 'str' = '.') -> 'Any'"
+      },
+      "redact_mapping": {
+        "kind": "function",
+        "module": "varco_core.redaction.redactor",
+        "signature": "(data: 'Mapping[str, Any]', redactor: 'Redactor | None' = None, *, policy: 'RedactionPolicy | None' = None) -> 'dict[str, Any]'"
+      },
+      "redact_query_string": {
+        "kind": "function",
+        "module": "varco_core.redaction.redactor",
+        "signature": "(query: 'str', redactor: 'Redactor | None' = None) -> 'str'"
       },
       "register": {
         "kind": "function",
@@ -1108,6 +1280,11 @@
         "module": "varco_core.jwt.transform.runtime",
         "signature": "() -> 'None'"
       },
+      "reset_redaction_state": {
+        "kind": "function",
+        "module": "varco_core.redaction.redactor",
+        "signature": "() -> 'None'"
+      },
       "reset_token_profiles": {
         "kind": "function",
         "module": "varco_core.jwt.profile",
@@ -1132,6 +1309,11 @@
         "kind": "function",
         "module": "varco_core.resilience.retry",
         "signature": "(policy: 'RetryPolicy') -> 'Callable[..., Any]'"
+      },
+      "set_default_redactor": {
+        "kind": "function",
+        "module": "varco_core.redaction.redactor",
+        "signature": "(redactor: 'Redactor') -> 'None'"
       },
       "span": {
         "kind": "function",
@@ -1185,6 +1367,10 @@
       "AuthForwardMiddleware": {
         "kind": "class",
         "module": "varco_fastapi.client.middleware"
+      },
+      "AuthPostureReport": {
+        "kind": "class",
+        "module": "varco_fastapi.auth.posture"
       },
       "CORSConfig": {
         "kind": "class",
@@ -1242,6 +1428,14 @@
         "kind": "class",
         "module": "varco_fastapi.router.health"
       },
+      "HttpEdgeFinding": {
+        "kind": "class",
+        "module": "varco_fastapi.middleware.introspect"
+      },
+      "HttpEdgePosture": {
+        "kind": "class",
+        "module": "varco_fastapi.middleware.introspect"
+      },
       "HttpQueryParams": {
         "kind": "class",
         "module": "varco_fastapi.router.base"
@@ -1277,6 +1471,10 @@
       "JobStatusResponse": {
         "kind": "class",
         "module": "varco_fastapi.job.response"
+      },
+      "JwksRefreshLifecycle": {
+        "kind": "class",
+        "module": "varco_fastapi.jwks"
       },
       "JwtBearerAuth": {
         "kind": "class",
@@ -1346,6 +1544,14 @@
         "kind": "class",
         "module": "varco_fastapi.router.mixins"
       },
+      "PostureFinding": {
+        "kind": "class",
+        "module": "varco_fastapi.posture"
+      },
+      "PostureSeverity": {
+        "kind": "class",
+        "module": "varco_fastapi.posture"
+      },
       "PreparedRequest": {
         "kind": "class",
         "module": "varco_fastapi.client.middleware"
@@ -1385,6 +1591,18 @@
       "RouterMixin": {
         "kind": "class",
         "module": "varco_fastapi.router.base"
+      },
+      "SecurityPosture": {
+        "kind": "class",
+        "module": "varco_fastapi.posture"
+      },
+      "SecurityPostureLifecycle": {
+        "kind": "class",
+        "module": "varco_fastapi.posture"
+      },
+      "SecurityPostureSettings": {
+        "kind": "class",
+        "module": "varco_fastapi.posture"
       },
       "ServiceMount": {
         "kind": "class",
@@ -1508,7 +1726,7 @@
       "create_varco_app": {
         "kind": "function",
         "module": "varco_fastapi.app",
-        "signature": "(container: 'Any | None' = None, *, routers: 'list[type] | None' = None, scan_packages: 'list[str] | None' = None, title: 'str' = 'Varco API', version: 'str' = '0.1.0', description: 'str' = '', cors: 'Any | None' = None, enable_tracing: 'bool' = True, enable_logging: 'bool' = True, enable_error_middleware: 'bool' = True, enable_metrics: 'bool' = False, enable_profiling: 'bool' = False, mcp_adapter: 'MCPAdapter | None' = None, mcp_path: 'str' = '/mcp', skill_adapter: 'SkillAdapter | None' = None, skill_base_url: 'str' = '', skill_agent_card_path: 'str' = '/.well-known/agent.json', skill_tasks_prefix: 'str' = '/tasks', extra_middleware: 'list[Any] | None' = None, extra_lifespan_components: 'list[Any] | None' = None, migrations: 'AbstractMigrator | Sequence[AbstractMigrator] | None' = None, migration_settings: 'MigrationSettings | None' = None, tenancy: 'Any | None' = None, reliability: 'Any | None' = None, i18n: 'I18nSettings | None' = None, timezone: 'TimezoneSettings | None' = None, validate: 'bool' = True, strict_validation: 'bool' = False, openapi_url: 'str' = '/openapi.json', docs_url: 'str' = '/docs', configure_jwt: 'bool' = True, global_attributes: 'Mapping[str, str] | None' = None, capture_params: 'bool | None' = None) -> 'Any'"
+        "signature": "(container: 'Any | None' = None, *, routers: 'list[type] | None' = None, scan_packages: 'list[str] | None' = None, title: 'str' = 'Varco API', version: 'str' = '0.1.0', description: 'str' = '', cors: 'Any | None' = None, enable_tracing: 'bool' = True, enable_logging: 'bool' = True, enable_error_middleware: 'bool' = True, enable_metrics: 'bool' = False, enable_profiling: 'bool' = False, mcp_adapter: 'MCPAdapter | None' = None, mcp_path: 'str' = '/mcp', skill_adapter: 'SkillAdapter | None' = None, skill_base_url: 'str' = '', skill_agent_card_path: 'str' = '/.well-known/agent.json', skill_tasks_prefix: 'str' = '/tasks', extra_middleware: 'list[Any] | None' = None, extra_lifespan_components: 'list[Any] | None' = None, migrations: 'AbstractMigrator | Sequence[AbstractMigrator] | None' = None, migration_settings: 'MigrationSettings | None' = None, tenancy: 'Any | None' = None, reliability: 'Any | None' = None, retention: 'Any | None' = None, jwks_refresh: 'JwksRefreshLifecycle | None' = None, i18n: 'I18nSettings | None' = None, timezone: 'TimezoneSettings | None' = None, validate: 'bool' = True, strict_validation: 'bool' = False, openapi_url: 'str' = '/openapi.json', docs_url: 'str' = '/docs', configure_jwt: 'bool' = True, global_attributes: 'Mapping[str, str] | None' = None, capture_params: 'bool | None' = None, security_headers: 'SecurityHeadersSettings | bool | None' = None, body_limit: 'BodyLimitSettings | bool | None' = None, rate_limit: 'RateLimitBundle | None' = None) -> 'Any'"
       },
       "get_auth_context": {
         "kind": "function",
@@ -1539,6 +1757,16 @@
         "kind": "function",
         "module": "varco_fastapi.context",
         "signature": "() -> 'str | None'"
+      },
+      "inspect_auth_posture": {
+        "kind": "function",
+        "module": "varco_fastapi.auth.posture",
+        "signature": "(auth: 'AbstractServerAuth') -> 'AuthPostureReport'"
+      },
+      "inspect_http_edge": {
+        "kind": "function",
+        "module": "varco_fastapi.middleware.introspect",
+        "signature": "(app: 'Any') -> 'HttpEdgePosture'"
       },
       "install_cors": {
         "kind": "function",
@@ -1797,9 +2025,21 @@
         "kind": "class",
         "module": "varco_sa.inbox"
       },
+      "NullTenantPolicy": {
+        "kind": "class",
+        "module": "varco_sa.rls_autogen"
+      },
       "OutboxEntryModel": {
         "kind": "class",
         "module": "varco_sa.outbox"
+      },
+      "RlsPosture": {
+        "kind": "class",
+        "module": "varco_sa.tenancy.rls_check"
+      },
+      "RlsTablePlan": {
+        "kind": "class",
+        "module": "varco_sa.rls_autogen"
       },
       "SAAdvisoryLock": {
         "kind": "class",
@@ -1931,6 +2171,11 @@
         "module": "varco_sa.metadata",
         "signature": "() -> 'MetaData'"
       },
+      "framework_rls_tables": {
+        "kind": "function",
+        "module": "varco_sa.rls_framework",
+        "signature": "(*, tenant_column: 'str' = 'tenant_id') -> 'tuple[str, ...]'"
+      },
       "framework_table_names": {
         "kind": "function",
         "module": "varco_sa.metadata",
@@ -1949,6 +2194,16 @@
         "kind": "constant",
         "module": "sqlalchemy.sql.schema"
       },
+      "inspect_rls_posture": {
+        "kind": "function",
+        "module": "varco_sa.tenancy.rls_check",
+        "signature": "(conn: 'AsyncConnection', *, tables: 'Iterable[str]') -> 'RlsPosture'"
+      },
+      "install_rls_tenant_hook": {
+        "kind": "function",
+        "module": "varco_sa.tenancy.rls_session",
+        "signature": "(target: 'Any', *, setting: 'str' = 'rls.tenant_id', require_tenant: 'bool' = False, _set_tenant_local: 'Callable[..., Coroutine[Any, Any, None]] | None' = None) -> 'Callable[[], None]'"
+      },
       "jobs_metadata": {
         "kind": "constant",
         "module": "sqlalchemy.sql.schema"
@@ -1956,6 +2211,11 @@
       "outbox_metadata": {
         "kind": "constant",
         "module": "sqlalchemy.sql.schema"
+      },
+      "plan_tenant_rls": {
+        "kind": "function",
+        "module": "varco_sa.rls_autogen",
+        "signature": "(domain_classes: 'Sequence[type]', *, base: 'type', tenant_column: 'str' = 'tenant_id', table_lookup: 'Callable[[type], sa.Table] | None' = None, null_tenant: 'NullTenantPolicy' = <NullTenantPolicy.REFUSE: 'refuse'>) -> 'list[RlsTablePlan]'"
       },
       "print_create_ddl": {
         "kind": "function",
@@ -1972,9 +2232,24 @@
         "module": "varco_sa.type_coercion",
         "signature": "(model: 'type[DeclarativeBase]', field_coercions: 'dict[str, Callable[[Any], Any]] | None' = None) -> 'TypeCoercionRegistry'"
       },
+      "render_tenant_rls_ddl": {
+        "kind": "function",
+        "module": "varco_sa.rls_autogen",
+        "signature": "(plans: 'Sequence[RlsTablePlan]', *, setting: 'str' = 'rls.tenant_id', null_tenant: 'NullTenantPolicy' = <NullTenantPolicy.REFUSE: 'refuse'>) -> 'list[str]'"
+      },
       "sagas_metadata": {
         "kind": "constant",
         "module": "sqlalchemy.sql.schema"
+      },
+      "tenant_rls_downgrade": {
+        "kind": "function",
+        "module": "varco_sa.rls_autogen",
+        "signature": "(op: 'Any', *, plans: 'Sequence[RlsTablePlan]') -> 'None'"
+      },
+      "tenant_rls_upgrade": {
+        "kind": "function",
+        "module": "varco_sa.rls_autogen",
+        "signature": "(op: 'Any', *, plans: 'Sequence[RlsTablePlan]', setting: 'str' = 'rls.tenant_id', null_tenant: 'NullTenantPolicy' = <NullTenantPolicy.REFUSE: 'refuse'>) -> 'None'"
       }
     },
     "varco_ws": {

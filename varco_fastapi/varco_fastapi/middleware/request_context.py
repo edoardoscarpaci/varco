@@ -46,7 +46,7 @@ from starlette.responses import Response
 from starlette.types import ASGIApp
 
 from varco_fastapi.auth.server_auth import AbstractServerAuth, AnonymousAuth
-from varco_fastapi.context import auth_context, request_scope
+from varco_fastapi.context import auth_context, auth_context_var, request_scope
 
 if TYPE_CHECKING:
     pass
@@ -76,6 +76,28 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     7. Set ``X-Request-ID`` on the response.
     8. Call next middleware / route handler.
     9. On exit: all ContextVars are automatically reset via token-based restore.
+
+    **Deferral to an upstream tenant-provenance chain (Plan 033 / S6,
+    §D-S6-wiring — Correction 1/2 fix).** Steps 4-6 above describe the
+    behaviour when no ``TenantResolutionMiddleware(chain=...)`` ran upstream
+    (``chain=None``, or this middleware installed alone — byte-identical to
+    pre-3.2). When ``current_tenant_provenance()`` is already set (a chain
+    DID run upstream), two sub-cases apply instead:
+
+    - ``auth_context_var`` is **also** already set (the chain middleware ran
+      ``server_auth`` and entered ``auth_context()`` itself) — this
+      middleware calls ``server_auth`` **zero** additional times and does
+      **not** re-enter ``tenant_context()`` from the token claim (the
+      resolved-tenant question is already answered by the chain's winner;
+      re-deriving it from a possibly-disagreeing claim is exactly
+      Correction 2's bug).
+    - ``auth_context_var`` is **not** set (a chain installed with
+      ``server_auth=None``, so nothing upstream authenticated yet) — this
+      middleware still runs ``server_auth`` and enters ``auth_context()``
+      normally (steps 3-5 unchanged), but **still never** re-enters
+      ``tenant_context()`` from the claim — the chain already decided the
+      tenant, and provenance being set is a stronger signal than any claim
+      this middleware could read on its own.
 
     Args:
         app:                    The ASGI application to wrap.
@@ -129,6 +151,14 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             _CORRELATION_ID_HEADER
         )
 
+        # §D-S6-wiring deferral marker: a TenantSourceChain already ran
+        # upstream (TenantResolutionMiddleware(chain=...)) iff provenance is
+        # published. varco owns this ambient var, so this is a structural
+        # signal — not a heuristic on request.state or a Starlette internal.
+        from varco_core.tenancy.provenance import current_tenant_provenance
+
+        chain_already_ran = current_tenant_provenance() is not None
+
         # Steps 2–6: Enter all context managers
         async with request_scope(request_id=request_id) as rid:
             # Step 3: Extract raw Bearer token for forwarding/audit
@@ -137,17 +167,31 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             if authorization.startswith("Bearer "):
                 raw_token = authorization.removeprefix("Bearer ").strip() or None
 
-            # Step 4: Run auth strategy
-            ctx = await self._server_auth(request)
+            if chain_already_ran and auth_context_var.get() is not None:
+                # The chain middleware already ran server_auth AND entered
+                # auth_context() itself — reuse it verbatim. Zero additional
+                # server_auth calls, and (like every chain_already_ran branch
+                # below) no re-entry into tenant_context() from a claim.
+                response = await call_next(request)
+            else:
+                # Step 4: Run auth strategy — unconditionally when no chain
+                # ran, OR when a chain ran with server_auth=None upstream
+                # (nothing has authenticated yet, so this middleware still
+                # must).
+                ctx = await self._server_auth(request)
 
-            # Steps 5–6: Set auth context + optionally enter tenant context
-            async with auth_context(ctx, token=raw_token):
-                if self._enable_tenant_context:
-                    tenant_id = ctx.metadata.get(self._tenant_field)
-                    async with _maybe_tenant_context(tenant_id):
+                # Steps 5–6: Set auth context + optionally enter tenant context.
+                # chain_already_ran is checked again here (not only above) —
+                # once a chain has decided the tenant, this middleware must
+                # never re-derive it from ctx.metadata, even on the "still
+                # authenticates" branch (§D-S6-wiring, Correction 2's fix).
+                async with auth_context(ctx, token=raw_token):
+                    if self._enable_tenant_context and not chain_already_ran:
+                        tenant_id = ctx.metadata.get(self._tenant_field)
+                        async with _maybe_tenant_context(tenant_id):
+                            response = await call_next(request)
+                    else:
                         response = await call_next(request)
-                else:
-                    response = await call_next(request)
 
         # Step 7: Set request ID on response for client-side correlation
         response.headers[_REQUEST_ID_HEADER] = rid

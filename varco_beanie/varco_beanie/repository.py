@@ -14,7 +14,7 @@ Async safety:   ✅ All methods are ``async def``.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from varco_core.mapper import AbstractMapper
 from varco_core.model import DomainModel
@@ -23,6 +23,9 @@ from varco_core.query.type import SortOrder
 from varco_core.repository import AsyncRepository
 
 from varco_beanie.query.compiler import BeanieQueryCompiler
+
+if TYPE_CHECKING:
+    from varco_core.tenancy.settings import TenantScope
 
 D = TypeVar("D", bound=DomainModel)
 PK = TypeVar("PK")
@@ -56,16 +59,68 @@ class AsyncBeanieRepository(AsyncRepository[D, PK], Generic[D, PK]):
 
     Args:
         mapper: Auto-generated mapper produced by ``BeanieModelFactory``.
+        assert_tenant_filter: Opt-in, dev-time-only AST tenant-filter guard
+                 (Plan 037 / S15, §D-S15-hook — the Beanie mirror of
+                 ``varco_sa.repository.AsyncSQLAlchemyRepository``'s same
+                 kwarg). Default ``False`` — byte-identical to pre-3.2
+                 behaviour. **Not a security control** — see
+                 ``varco_core.query.applicator.tenant_guard``.
+        tenant_field: Field name the guard looks for. Default
+                 ``"tenant_id"``.
     """
 
-    def __init__(self, mapper: AbstractMapper[D, Any]) -> None:
+    def __init__(
+        self,
+        mapper: AbstractMapper[D, Any],
+        *,
+        assert_tenant_filter: bool = False,
+        tenant_field: str = "tenant_id",
+    ) -> None:
         """
         Initialise the repository.
 
         Args:
             mapper: Bidirectional domain ↔ Beanie Document mapper.
+            assert_tenant_filter: See the class docstring — opt-in,
+                     dev-time-only, off by default.
+            tenant_field: See the class docstring.
         """
         self._mapper = mapper
+        self._assert_tenant_filter = assert_tenant_filter
+        self._tenant_field = tenant_field
+        # Only resolved when the guard is actually on — computing this
+        # unconditionally broke every existing test constructing a
+        # repository over a MagicMock mapper (no real Meta to read), and
+        # the byte-identical-when-off guarantee means the flag-off path
+        # must not even import varco_core.meta.
+        self._tenant_scope: TenantScope | None = None
+        if assert_tenant_filter:
+            from varco_core.meta import MetaReader  # noqa: PLC0415
+
+            self._tenant_scope = MetaReader.read(mapper._domain_cls).tenant_scope  # noqa: SLF001
+
+    def _guard_tenant_filter(self, params: QueryParams) -> None:
+        """
+        Beanie mirror of ``AsyncSQLAlchemyRepository._guard_tenant_filter``
+        — see that docstring for the full contract (Plan 037 / S15).
+        """
+        if not self._assert_tenant_filter:
+            return
+
+        from varco_core.tenancy.settings import TenantScope  # noqa: PLC0415
+
+        if self._tenant_scope is not TenantScope.TENANT:
+            return
+
+        from varco_core.query.applicator.tenant_guard import (  # noqa: PLC0415
+            assert_tenant_predicate,
+        )
+
+        assert_tenant_predicate(
+            params.node,
+            tenant_field=self._tenant_field,
+            entity=self._mapper._domain_cls.__name__,  # noqa: SLF001
+        )
 
     # ── CRUD ───────────────────────────────────────────────────────────────────
 
@@ -174,6 +229,8 @@ class AsyncBeanieRepository(AsyncRepository[D, PK], Generic[D, PK]):
             - ``params.sort`` empty   → default MongoDB insertion order.
             - Dotted field paths in AST are supported (MongoDB dot-notation).
         """
+        self._guard_tenant_filter(params)
+
         # Build the MongoDB filter dict from the AST (or empty dict = no filter)
         mongo_filter: dict[str, Any] = {}
         if params.node is not None:
@@ -209,6 +266,8 @@ class AsyncBeanieRepository(AsyncRepository[D, PK], Generic[D, PK]):
         Returns:
             Integer count.  ``0`` when no documents match.
         """
+        self._guard_tenant_filter(params if params is not None else QueryParams(node=None))
+
         mongo_filter: dict[str, Any] = {}
         if params is not None and params.node is not None:
             mongo_filter = BeanieQueryCompiler().visit(params.node)
@@ -382,6 +441,8 @@ class AsyncBeanieRepository(AsyncRepository[D, PK], Generic[D, PK]):
                 "Provide at least one field name → value pair."
             )
 
+        self._guard_tenant_filter(params)
+
         # Translate the AST filter to a MongoDB filter dict
         mongo_filter: dict[str, Any] = {}
         if params.node is not None:
@@ -419,6 +480,8 @@ class AsyncBeanieRepository(AsyncRepository[D, PK], Generic[D, PK]):
               collected by the driver.
             - ``params.limit`` still caps the total number of yielded documents.
         """
+        self._guard_tenant_filter(params)
+
         # Build the same FindMany query as find_by_query — reuses all filter,
         # sort, and pagination logic, but yields instead of calling to_list()
         mongo_filter: dict[str, Any] = {}

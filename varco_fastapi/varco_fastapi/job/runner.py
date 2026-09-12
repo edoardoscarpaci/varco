@@ -521,7 +521,29 @@ class JobRunner(AbstractJobRunner):
         """
         # Find all PENDING jobs that have a task_payload
         pending_jobs = await self._store.list_by_status(JobStatus.PENDING)
-        recoverable = [j for j in pending_jobs if j.task_payload is not None]
+        # DESIGN (Plan 039 / Phase 1, §D-S20-driver "(3)"): Job.run_at is documented
+        # as "earliest time this job is eligible to be claimed" (job/base.py:252-255)
+        # and the ABC's own claim_next() default enforces exactly this predicate
+        # (job/base.py:872-874: "if candidate.run_at is not None and candidate.run_at
+        # > current: continue"). recover() previously used try_claim() unconditionally
+        # and skipped this check entirely — a job scheduled for next week would fire
+        # immediately on process restart. This is a belt-and-braces fix at the runner
+        # layer: InMemoryJobStore.try_claim() (varco_fastapi/job/store.py:246-276)
+        # already enforces "run_at IS NULL OR run_at <= now" internally, so this gap
+        # was not observable through the in-memory store used by every unit test —
+        # but the ABC contract makes no such guarantee for an arbitrary
+        # AbstractJobStore implementation whose try_claim() does not itself filter,
+        # so the filter belongs here too, not only in one backend.
+        # ✅ Byte-identical for run_at=None (today's most common case, pinned by
+        #    test_run_at_none_is_claimed_today_behaviour_pinned).
+        # ❌ An app relying on recover() firing future-dated jobs at startup changes
+        #    behaviour — accepted: that reliance contradicts run_at's own docstring.
+        now = datetime.now(UTC)
+        recoverable = [
+            j
+            for j in pending_jobs
+            if j.task_payload is not None and (j.run_at is None or j.run_at <= now)
+        ]
 
         if not recoverable:
             logger.info("JobRunner.recover(): no recoverable PENDING jobs found")

@@ -78,10 +78,13 @@ from varco_core.authority.exceptions import (
     AuthorityError,
     IssuerNotFoundError,
     KeyLoadError,
+    RevocationStoreUnavailableError,
+    TokenRevokedError,
     UnknownKidError,
 )
 from varco_core.authority.jwt_authority import JwtAuthority
 from varco_core.authority.multi_key_authority import MultiKeyAuthority
+from varco_core.authority.posture import JwksPostureReport, inspect_jwks_posture
 from varco_core.authority.registry import TrustedIssuerEntry, TrustedIssuerRegistry
 from varco_core.authority.sources.authority import AuthoritySource
 
@@ -92,6 +95,9 @@ __all__ = [
     # ── Registry ────────────────────────────────────────────────────────────
     "TrustedIssuerRegistry",
     "TrustedIssuerEntry",
+    # ── Posture (Plan 041 / S22) ────────────────────────────────────────────
+    "JwksPostureReport",
+    "inspect_jwks_posture",
     # ── Sources ─────────────────────────────────────────────────────────────
     "AuthoritySource",
     # ── Configuration ────────────────────────────────────────────────────────
@@ -102,4 +108,6 @@ __all__ = [
     "UnknownKidError",
     "IssuerNotFoundError",
     "KeyLoadError",
+    "TokenRevokedError",
+    "RevocationStoreUnavailableError",
 ]

@@ -229,6 +229,8 @@ class SyncOp:
 #: container's bootstrap role — see ``rls_app_engine``.
 RLS_APP_ROLE = "varco_rls_app"
 RLS_APP_PASSWORD = "varco_rls_pw"
+RLS_READER_ROLE = "varco_rls_reader"
+RLS_READER_PASSWORD = "varco_rls_reader_pw"
 
 
 async def provision_rls_app_url(container: Any) -> str:
@@ -286,6 +288,65 @@ async def provision_rls_app_url(container: Any) -> str:
     return (
         make_url(admin_url)
         .set(username=RLS_APP_ROLE, password=RLS_APP_PASSWORD)
+        .render_as_string(hide_password=False)
+    )
+
+
+async def provision_rls_reader_url(container: Any) -> str:
+    """
+    Create a second non-superuser login role that **owns nothing**, and return its DSN.
+
+    DESIGN: a non-owning observer is the only role that can witness the
+    §D-S12-order ordering guarantee (Plan 037 / Step 6)
+        Postgres exempts a table's **owner** from its RLS policies until
+        ``FORCE ROW LEVEL SECURITY`` is applied. ``provision_rls_app_url``'s
+        role owns every table it creates, so between ``ENABLE`` (statement 2)
+        and ``FORCE`` (statement 3) it sees every row regardless of whether a
+        policy exists — which makes it blind to exactly the failure the
+        statement reorder exists to prevent.
+        ✅ This role owns nothing, so RLS applies to it the moment
+           ``ENABLE ROW LEVEL SECURITY`` runs. Under the OLD order
+           (ENABLE before CREATE POLICY) it would observe the default-deny
+           window as **zero rows**; under the new order it observes correct
+           per-tenant scoping. That difference is the regression.
+        ❌ Needs an explicit ``GRANT SELECT`` per table under test — it has no
+           ownership privileges to fall back on.
+
+    Args:
+        container: A started ``PostgresContainer``.
+
+    Returns:
+        An asyncpg DSN authenticating as the non-owning, non-superuser role.
+
+    Edge cases:
+        Idempotent — an already-existing role is left as-is. The role is
+        granted ``USAGE`` on ``public`` but deliberately **not** ``CREATE``,
+        so it cannot become an owner by accident.
+    """
+    import sqlalchemy as sa
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    admin_url = asyncpg_url(container)
+    admin_engine = create_async_engine(admin_url, echo=False)
+    try:
+        async with admin_engine.begin() as conn:
+            exists = await conn.scalar(
+                sa.text("SELECT 1 FROM pg_roles WHERE rolname = :r"),
+                {"r": RLS_READER_ROLE},
+            )
+            if not exists:
+                await conn.execute(
+                    sa.text(f"CREATE ROLE {RLS_READER_ROLE} LOGIN PASSWORD '{RLS_READER_PASSWORD}'")
+                )
+            # USAGE only — never CREATE, so this role can never own a table.
+            await conn.execute(sa.text(f"GRANT USAGE ON SCHEMA public TO {RLS_READER_ROLE}"))
+    finally:
+        await admin_engine.dispose()
+
+    return (
+        make_url(admin_url)
+        .set(username=RLS_READER_ROLE, password=RLS_READER_PASSWORD)
         .render_as_string(hide_password=False)
     )
 

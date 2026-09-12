@@ -43,6 +43,7 @@ from varco_conformance.cache import CacheBackendConformance
 from varco_conformance.dlq import DeadLetterQueueConformance
 from varco_conformance.event_bus import EventBusConformance
 from varco_conformance.job_store import JobStoreConformance
+from varco_conformance.token_revocation import TokenRevocationStoreConformance
 from varco_core.cache.invalidation import TTLStrategy
 from varco_core.cache.memory import InMemoryCache, NoOpCache
 from varco_core.event.dlq import InMemoryDeadLetterQueue
@@ -156,3 +157,14 @@ class TestInMemoryDeadLetterQueueConformance(DeadLetterQueueConformance):
     @pytest.fixture
     async def dlq(self) -> InMemoryDeadLetterQueue:
         return InMemoryDeadLetterQueue()
+
+
+# ── Token revocation store ───────────────────────────────────────────────────
+
+
+class TestInMemoryTokenRevocationStoreConformance(TokenRevocationStoreConformance):
+    @pytest.fixture
+    async def store(self):
+        from varco_core.revocation.memory import InMemoryTokenRevocationStore
+
+        return InMemoryTokenRevocationStore()

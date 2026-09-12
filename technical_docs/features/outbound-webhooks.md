@@ -1,5 +1,8 @@
 # Outbound webhooks
 
+See also: [inbound-webhooks.md](inbound-webhooks.md) (the receiving half — signature
+verification of webhooks sent *to* a varco app).
+
 Plan 031 (D4) — a subscription registry, signing, SSRF-hardened delivery, retry into the
 existing DLQ, and an admin surface for replay/rotation/disablement. Assembled entirely from
 parts varco already ships (`RetryPolicy`, `AbstractDeadLetterQueue`, `DlqRedriver`,

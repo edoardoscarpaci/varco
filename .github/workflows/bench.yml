@@ -26,11 +26,18 @@
 
 name: Benchmarks
 
+# ⛔ DISABLED — manual-dispatch only, deliberately.
+# The `push`/`pull_request` triggers are commented out (not deleted) because
+# this repo has no CodSpeed account yet, so every automatic run would upload
+# nothing and add noise to every PR. Re-enable by uncommenting the two blocks
+# below once `CODSPEED_TOKEN` exists (design/varco-1-0-release/release-runbook.md
+# §3b). Nothing about the never-a-gate contract changes either way.
 on:
-  push:
-    branches: ["main"]
-  pull_request:
-    branches: ["main"]
+  workflow_dispatch:
+  # push:
+  #   branches: ["main"]
+  # pull_request:
+  #   branches: ["main"]
 
 # Group by event_name as well as ref — the lesson Plan 024 recorded for
 # integration.yml (design/research/001-github-actions-concurrency-semantics.md

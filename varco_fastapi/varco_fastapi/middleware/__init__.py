@@ -3,40 +3,47 @@ varco_fastapi.middleware
 ========================
 ASGI middleware stack for varco_fastapi applications.
 
-Recommended middleware order (outermost to innermost)::
+**This module is the single normative home for the verified middleware
+order** (Plan 035 / §D-order, Phase 2). ``varco_fastapi/app.py``'s module
+docstring and its ``create_varco_app`` inline comments point back here
+instead of restating it — a prior copy in each of those three places had
+drifted out of sync with what ``create_varco_app`` actually builds (see
+§D-order-bugs; two of the three questions raised there are filed as
+BACKLOG rows, not fixed here — this plan does not reorder the stack).
 
-    app = FastAPI(lifespan=lifespan)
+Verified execution order (outermost → innermost) as built by
+``create_varco_app`` with every optional middleware enabled — **new
+entries from Plan 035 in bold**::
 
-    # 1. CORS — must be outermost so preflight OPTIONS requests are handled
-    install_cors(app, CORSConfig.from_env())
+    CORSMiddleware
+    **SecurityHeadersMiddleware**       (opt-out: security_headers=False)
+    extra_middleware=[...]              (caller-supplied, OUTSIDE ErrorMiddleware —
+                                          see §D-order-bugs: a ServiceException
+                                          raised here is NOT rendered by the
+                                          error envelope)
+    ErrorMiddleware
+    **BodyLimitMiddleware**             (opt-out: body_limit=False)
+    RequestLoggingMiddleware
+    TracingMiddleware
+    MetricsMiddleware                   (INSIDE Tracing — Plan 041 / §D-S17-decision:
+                                          exemplars need a current span)
+    **RateLimitMiddleware(stage=PRE_AUTH)**   (opt-in: rate_limit=RateLimitBundle(...);
+                                                only IP/GLOBAL-scoped rules legal here)
+    RequestContextMiddleware            (populates AuthContext / current_tenant())
+    **RateLimitMiddleware(stage=POST_AUTH)**  (opt-in, same bundle; SUBJECT/TENANT rules)
+    LocalizationMiddleware
+    IdempotencyMiddleware               (opt-in, unchanged — Plan 029)
+    ProfilingMiddleware
+    route handler
 
-    # 2. Error handling — catches errors from ALL middleware below
-    app.add_middleware(ErrorMiddleware)
+Why each new entry sits where it does (full DESIGN blocks + rejected
+alternatives): ``technical_docs/features/http-edge-hardening.md``'s
+ordering-contract section, and Plan 035's §D-order /
+§D-order (one-RateLimitMiddleware-two-positions design).
 
-    # 3. Tracing — wraps requests in OTel spans (optional)
-    app.add_middleware(TracingMiddleware)
-
-    # 4. Metrics — records OTel HTTP instruments (optional, enable_metrics=True)
-    #    Sits inside Tracing so OTel context is active; outside RequestContext
-    #    so auth ContextVars are not required.
-    app.add_middleware(MetricsMiddleware)
-
-    # 5. Logging — logs after tracing sets up correlation ID
-    app.add_middleware(RequestLoggingMiddleware, skip_paths={"/health"})
-
-    # 6. Request context — sets auth + tenant ContextVars
-    app.add_middleware(RequestContextMiddleware, server_auth=my_auth)
-
-    # 6.5. Idempotency-Key — opt-in (Plan 029 / D1). MUST sit inside
-    #      ErrorMiddleware (so its 409/422/400 render through the normal
-    #      error path) and inside RequestContextMiddleware (so
-    #      current_tenant()/the auth subject are populated before its
-    #      §D-D1-scope key-scoping logic reads them). Not part of the
-    #      default stack — register it explicitly.
-    app.add_middleware(IdempotencyMiddleware, store=my_store)
-
-    # 7. Session — DI container per request (optional, advanced)
-    app.add_middleware(SessionMiddleware, container=my_container)
+``create_varco_app`` never moves an existing ``add_middleware`` call to make
+room for these three — each is inserted at its own, separately-tested
+position (``varco_fastapi/tests/test_middleware_order.py``).
 
 The low-level ``app.add_middleware`` API is a **stack** — each call inserts
 the middleware at the front, so the last ``add_middleware`` call ends up
@@ -56,13 +63,28 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from varco_fastapi.middleware.body_limit import BodyLimitMiddleware, BodyLimitSettings
 from varco_fastapi.middleware.cors import CORSConfig, install_cors
 from varco_fastapi.middleware.error import ErrorMiddleware
 from varco_fastapi.middleware.idempotency import IdempotencyMiddleware
+from varco_fastapi.middleware.introspect import HttpEdgeFinding, HttpEdgePosture, inspect_http_edge
 from varco_fastapi.middleware.logging import RequestLoggingMiddleware
 from varco_fastapi.middleware.metrics import MetricsMiddleware
 from varco_fastapi.middleware.profiling import ProfilingMiddleware, ProfilingSettings
+from varco_fastapi.middleware.rate_limit import (
+    RateLimitBundle,
+    RateLimitMiddleware,
+    RateLimitRule,
+    RateLimitScope,
+    RateLimitSettings,
+    RateLimitStage,
+)
 from varco_fastapi.middleware.request_context import RequestContextMiddleware
+from varco_fastapi.middleware.security_headers import (
+    SecurityHeadersMiddleware,
+    SecurityHeadersPreset,
+    SecurityHeadersSettings,
+)
 from varco_fastapi.middleware.session import (
     SessionMiddleware,
     get_container,
@@ -180,4 +202,22 @@ __all__ = [
     "get_session_dependency",
     "install_middleware_stack",
     "MiddlewareEntry",
+    # Plan 035 / S7 — security headers
+    "SecurityHeadersMiddleware",
+    "SecurityHeadersPreset",
+    "SecurityHeadersSettings",
+    # Plan 035 / S8 — request body limits
+    "BodyLimitMiddleware",
+    "BodyLimitSettings",
+    # Plan 035 / S10 — HTTP rate limiting
+    "RateLimitBundle",
+    "RateLimitMiddleware",
+    "RateLimitRule",
+    "RateLimitScope",
+    "RateLimitSettings",
+    "RateLimitStage",
+    # Plan 035 / §D-seam — the Plan 036 introspection seam
+    "HttpEdgeFinding",
+    "HttpEdgePosture",
+    "inspect_http_edge",
 ]

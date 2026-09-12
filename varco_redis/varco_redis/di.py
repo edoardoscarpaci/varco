@@ -66,6 +66,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from varco_core.revocation.base import AbstractTokenRevocationStore
+
 # ── bootstrap ─────────────────────────────────────────────────────────────────
 
 
@@ -240,9 +242,57 @@ async def async_bootstrap(
     return container
 
 
+# ── Token revocation (Plan 034 / S13b, Step 34) ──────────────────────────────
+
+
+def enable_redis_token_revocation(container: Any, **redis_kwargs: Any) -> Any:
+    """
+    Opt in to ``RedisTokenRevocationStore`` as the application's
+    ``AbstractTokenRevocationStore``, shadowing the always-off Null default
+    (``varco_redis.revocation.RedisScanNullTokenRevocationStoreDefault``,
+    a local subclass of ``varco_core.revocation.null.NullTokenRevocationStore`` —
+    see that class's docstring for why it lives here rather than being
+    picked up cross-package).
+
+    Mirrors ``varco_core.revocation.di.enable_token_revocation``'s shape —
+    same ``enable_*`` verb, same "binding a store here does not by itself
+    wire ``TrustedIssuerRegistry``" caveat (§D-S13-di's two-step).
+
+    Args:
+        container:     The ``DIContainer`` already scanned via
+                       ``container.scan("varco_redis", recursive=True)``.
+        **redis_kwargs: Forwarded to ``RedisTokenRevocationStore()`` —
+                       ``url``, ``namespace``, or any ``redis.asyncio.from_url()``
+                       keyword.
+
+    Returns:
+        The same container, for chaining.
+
+    Example::
+
+        container = DIContainer()
+        container.scan("varco_redis", recursive=True)
+        enable_redis_token_revocation(container, url="redis://localhost:6379/0")
+
+        store = await container.aget(AbstractTokenRevocationStore)
+        registry = TrustedIssuerRegistry(revocation_store=store)  # the second step
+    """
+    from providify import Provider  # noqa: PLC0415
+
+    from varco_redis.revocation import RedisTokenRevocationStore  # noqa: PLC0415
+
+    @Provider(singleton=True)
+    def _provide_redis_revocation_store() -> AbstractTokenRevocationStore:
+        return RedisTokenRevocationStore(**redis_kwargs)
+
+    container.provide(_provide_redis_revocation_store)
+    return container
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 __all__ = [
     "bootstrap",
     "async_bootstrap",
+    "enable_redis_token_revocation",
 ]

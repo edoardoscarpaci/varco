@@ -52,6 +52,12 @@ class CanonicalClaim(StrEnum):
         TENANT_ID:  → ``AuthContext.metadata["tenant_id"]``.
         ACTOR:      → ``AuthContext.metadata["actor"]`` (RFC 8693 ``act``).
         TOKEN_TYPE: → ``JsonWebToken.token_type``.
+        TENANTS:    → ``AuthContext.metadata["tenants"]``, a **list** — the
+                    tenant↔subject membership claim consumed by
+                    ``varco_core.tenancy.membership.ClaimTenantMembership``
+                    (Plan 033 / S5, §D-S5-claim). Deliberately NOT added to
+                    ``_SCALAR_TARGETS`` below — it is a list target, same
+                    shape family as ROLES/SCOPES.
     """
 
     USER_ID = "user_id"
@@ -61,6 +67,7 @@ class CanonicalClaim(StrEnum):
     TENANT_ID = "tenant_id"
     ACTOR = "actor"
     TOKEN_TYPE = "token_type"
+    TENANTS = "tenants"
 
 
 # Canonical targets whose AUTO default should resolve to a bare scalar (not

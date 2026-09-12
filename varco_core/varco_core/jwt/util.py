@@ -53,7 +53,7 @@ class JwtUtil:
 
     Example::
 
-        util = JwtUtil(JwtParser.parse(raw_token, secret))
+        util = JwtUtil(JwtParser.parse(raw_token, secret, algorithms=["HS256"]))
 
         if util.is_system():
             ...  # trust elevated system privileges

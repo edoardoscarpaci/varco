@@ -14,7 +14,7 @@ Async safety:   ✅ All methods are ``async def``.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from sqlalchemy import asc, desc, func, select
 from sqlalchemy import delete as sa_delete
@@ -27,6 +27,9 @@ from varco_core.query.type import SortOrder
 from varco_core.repository import AsyncRepository
 
 from varco_sa.query.compiler import SQLAlchemyQueryCompiler
+
+if TYPE_CHECKING:
+    from varco_core.tenancy.settings import TenantScope
 
 D = TypeVar("D", bound=DomainModel)
 PK = TypeVar("PK")
@@ -62,18 +65,83 @@ class AsyncSQLAlchemyRepository(AsyncRepository[D, PK], Generic[D, PK]):
     Args:
         session: The async SQLAlchemy session for this unit-of-work.
         mapper:  Auto-generated mapper produced by ``SAModelFactory``.
+        assert_tenant_filter: Opt-in, dev-time-only AST tenant-filter guard
+                 (Plan 037 / S15, §D-S15-hook). Default ``False`` —
+                 byte-identical to pre-3.2 behaviour. See
+                 ``varco_core.query.applicator.tenant_guard`` for what this
+                 does and does not catch — **it is not a security control**.
+        tenant_field: Field name the guard looks for. Default
+                 ``"tenant_id"`` — override to match a custom
+                 ``TenantAwareService._tenant_field``.
     """
 
-    def __init__(self, session: AsyncSession, mapper: AbstractMapper[D, Any]) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        mapper: AbstractMapper[D, Any],
+        *,
+        assert_tenant_filter: bool = False,
+        tenant_field: str = "tenant_id",
+    ) -> None:
         """
         Initialise the repository.
 
         Args:
             session: Active ``AsyncSession`` managed by ``SQLAlchemyUnitOfWork``.
             mapper:  Bidirectional domain ↔ ORM mapper.
+            assert_tenant_filter: See the class docstring — opt-in,
+                     dev-time-only, off by default.
+            tenant_field: See the class docstring.
         """
         self._session = session
         self._mapper = mapper
+        self._assert_tenant_filter = assert_tenant_filter
+        self._tenant_field = tenant_field
+        # Only resolved when the guard is actually on — computing this
+        # unconditionally would break any repository constructed over a
+        # mocked/incomplete mapper (no real Meta to read) even when the
+        # flag is off, and the byte-identical-when-off guarantee means the
+        # flag-off path must not even import varco_core.meta.
+        self._tenant_scope: TenantScope | None = None
+        if assert_tenant_filter:
+            from varco_core.meta import MetaReader  # noqa: PLC0415
+
+            self._tenant_scope = MetaReader.read(mapper._domain_cls).tenant_scope  # noqa: SLF001
+
+    def _guard_tenant_filter(self, params: QueryParams) -> None:
+        """
+        Call ``assert_tenant_predicate()`` when ``assert_tenant_filter=True``
+        and this entity is ``TenantScope.TENANT`` (Plan 037 / S15).
+
+        A no-op (checked first, cheapest branch) when the flag is off — the
+        byte-identical-by-default guarantee this feature depends on.
+        ``TenantScope.GLOBAL`` entities are never asserted (a shared
+        reference table legitimately carries no tenant filter).
+
+        Args:
+            params: The ``QueryParams`` about to be applied to a query.
+
+        Raises:
+            TenantFilterError: See
+                ``varco_core.query.applicator.tenant_guard.assert_tenant_predicate``.
+        """
+        if not self._assert_tenant_filter:
+            return
+
+        from varco_core.tenancy.settings import TenantScope  # noqa: PLC0415
+
+        if self._tenant_scope is not TenantScope.TENANT:
+            return
+
+        from varco_core.query.applicator.tenant_guard import (  # noqa: PLC0415
+            assert_tenant_predicate,
+        )
+
+        assert_tenant_predicate(
+            params.node,
+            tenant_field=self._tenant_field,
+            entity=self._mapper._domain_cls.__name__,  # noqa: SLF001
+        )
 
     # ── CRUD ───────────────────────────────────────────────────────────────────
 
@@ -182,6 +250,8 @@ class AsyncSQLAlchemyRepository(AsyncRepository[D, PK], Generic[D, PK]):
             varco_core.exception.repository.FieldNotFound:
                 AST or sort references a field that doesn't exist on the model.
         """
+        self._guard_tenant_filter(params)
+
         stmt = select(self._mapper._orm_cls)
 
         # Apply WHERE clause when a filter node is present
@@ -217,6 +287,8 @@ class AsyncSQLAlchemyRepository(AsyncRepository[D, PK], Generic[D, PK]):
         Returns:
             Integer count of matching rows.  ``0`` when no rows match.
         """
+        self._guard_tenant_filter(params if params is not None else QueryParams(node=None))
+
         # DESIGN: func.count() on the ORM class generates SELECT COUNT(*)
         # FROM <table> — no columns fetched, no ORM hydration.
         stmt = select(func.count()).select_from(self._mapper._orm_cls)
@@ -294,6 +366,8 @@ class AsyncSQLAlchemyRepository(AsyncRepository[D, PK], Generic[D, PK]):
               to release the underlying DB cursor.
             - ``params.limit`` caps total yielded items, same as ``find_by_query``.
         """
+        self._guard_tenant_filter(params)
+
         # Build the same statement as find_by_query — filter, sort, paginate
         stmt = select(self._mapper._orm_cls)
 
@@ -480,6 +554,8 @@ class AsyncSQLAlchemyRepository(AsyncRepository[D, PK], Generic[D, PK]):
                 "update_many_by_query: 'update' dict must not be empty. "
                 "Provide at least one field name → value pair."
             )
+
+        self._guard_tenant_filter(params)
 
         # Build the core UPDATE statement with VALUES
         stmt = sa_update(self._mapper._orm_cls).values(**update)
