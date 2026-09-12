@@ -1,6 +1,6 @@
 [project]
 name          = "varco-casbin"
-version       = "3.1.0"
+version       = "3.2.0"
 description   = "Casbin policy-engine authorization backend for varco — ACL/RBAC/ABAC with dynamic persisted policies and a REST management router"
 authors       = [{ name = "edoardo.scarpaci", email = "edoardo.scarpaci@gmail.com" }]
 readme        = "README.md"

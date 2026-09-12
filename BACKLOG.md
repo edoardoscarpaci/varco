@@ -18,7 +18,7 @@ across all cycles at the bottom of this file.
 
 Produced by `/discover` with a focus on tenant-identity trust. **This cycle is a dedicated
 security release** — its rows are not competing with feature work, and none of them were cut for
-size. **3.2.0 shipped on <RELEASE_DATE>** (tag `v3.2.0`); the cycle is closed. Open rows in the
+size. **3.2.0 shipped on 2026-09-12** (tag `v3.2.0`); the cycle is closed. Open rows in the
 Live table below roll forward into the next cycle.
 
 **Extended 2026-09-07 by a second `/discover` pass** (scout inventory + research brief

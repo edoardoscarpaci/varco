@@ -42,7 +42,7 @@ live in each feature's own page under [technical_docs/features/](technical_docs/
 All ten packages are released **in lockstep** — they always share one version number, and a
 breaking change in any one bumps all ten. Install the exact version you need with any package
 manager's usual pin; siblings resolve automatically via a compatible-release pin
-(`varco-core~=3.0`), so `varco-kafka==3.1.0` works with `varco-core` anywhere in the `3.x` line.
+(`varco-core~=3.0`), so `varco-kafka==3.2.0` works with `varco-core` anywhere in the `3.x` line.
 See `CONTRIBUTING.md`'s versioning and deprecation policy for the full contract.
 
 ---

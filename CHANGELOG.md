@@ -9,24 +9,34 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Security
+## [3.2.0] — 2026-09-12
 
-- **`error_params()` is now redacted and shape-guarded by default (Plan 040, S21).**
-  `error_message_for()` routes `error_params()`'s return value through the new
-  `varco_core.redaction.redact_mapping()`/`json_safe()` before emitting it on the error envelope
-  (`ErrorEnvelopeSettings.redact_params`, default `True`) — a secret-named key (matching one of
-  `DEFAULT_REDACT_PATTERNS`) is replaced with `"[REDACTED]"`, and a non-JSON value (e.g. a live
-  object from a `vars(exc)` dump) is replaced with `"<TypeName>"`. Byte-identical for every
-  in-tree `ServiceException`. **Not** closed: a secret *value* under a key that does not match a
-  pattern — redaction is key-name-based only, never value scanning. Revert with
-  `VARCO_ERROR_REDACT_PARAMS=false`.
-- **Closed the unmapped-exception information leak (Plan 035 / S3).** Two fallback sites —
-  `ErrorMiddleware._service_error_response`'s `except` branch and `add_exception_handlers`'s
-  `_make_error_response`'s `except` branch (reached when `error_message_for()` itself raises, e.g.
-  a `ServiceException.error_params()` raises) — used to echo `str(exc)` directly into the response
-  body. Both now return an opaque `"An internal error occurred."` message plus `correlation_id`,
-  and log the exception type server-side at ERROR with `exc_info=True`. Unconditional — there is
-  no toggle for this fix; correlate via the `correlation_id` in the log.
+### BREAKING — required `algorithms=`, `?api_key=`/`?token=` off by default (Plan 034, S1/S2)
+
+- **`JwtParser.parse()` now requires `algorithms=`** as a keyword-only argument — the previous
+  silent `["HS256"]` default is gone, and there is no environment-variable escape hatch (never
+  will be). Omitting it raises `TypeError` at the call site, caught by mypy `strict = true` before
+  a test runs. **Measured blast radius: zero varco production call sites and zero examples** —
+  `JwtBearerAuth` (via `TrustedIssuerRegistry.verify()`, which derives algorithms from the
+  resolved key) and `PassthroughAuth` (via `parse_unverified()`, which has no `algorithms`
+  parameter) are structurally unaffected. **The fix**: `JwtParser.parse(raw, secret,
+  algorithms=["HS256"])` — one line, at every direct call site.
+- **`ApiKeyAuth`'s `?api_key=` query-parameter fallback is now off by default** — `param` defaults
+  to `None` instead of `"api_key"`. **Measured blast radius: zero in-repo consumers.** **The
+  fix**: `ApiKeyAuth(..., param="api_key")` to opt back in; prefer moving clients to the
+  `X-API-Key` header — the query param is otherwise in every access log, proxy log, and `Referer`
+  header.
+- **`WebSocketAuth`'s `?token=` query-parameter fallback is now off by default** — same treatment,
+  `token_query_param` defaults to `None`. **The fix**: `WebSocketAuth(inner, token_query_param="token")`
+  to opt back in; prefer the existing `Sec-WebSocket-Protocol: bearer.<token>` sub-protocol path
+  for browser clients that cannot set headers.
+
+⚠️ **`scripts/api_surface.py --check` does not catch either flip** — it records `inspect.signature()`
+only for top-level `function`-kind exports; `JwtParser.parse` is a `classmethod` and
+`ApiKeyAuth.__init__` is a class constructor, both outside its documented scope. Out-of-tree
+callers must read this entry; the guard against regression is a dedicated `inspect.signature()`
+test in each owning package's own suite (`varco_core/tests/test_jwt.py`,
+`varco_fastapi/tests/milestone_a/test_server_auth.py`), not the snapshot gate.
 
 ### BEHAVIOUR CHANGE — cross-tenant write guard on the admin surfaces (Plan 036, S4)
 
@@ -59,6 +69,39 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ⚠️ **Upgrade note**: verify a retention/redrive sweep that relied on the old unscoped default
   still does what you intend before granting the role — see the plan's migration table for the
   full list of affected call shapes.
+
+### Security
+
+- **`error_params()` is now redacted and shape-guarded by default (Plan 040, S21).**
+  `error_message_for()` routes `error_params()`'s return value through the new
+  `varco_core.redaction.redact_mapping()`/`json_safe()` before emitting it on the error envelope
+  (`ErrorEnvelopeSettings.redact_params`, default `True`) — a secret-named key (matching one of
+  `DEFAULT_REDACT_PATTERNS`) is replaced with `"[REDACTED]"`, and a non-JSON value (e.g. a live
+  object from a `vars(exc)` dump) is replaced with `"<TypeName>"`. Byte-identical for every
+  in-tree `ServiceException`. **Not** closed: a secret *value* under a key that does not match a
+  pattern — redaction is key-name-based only, never value scanning. Revert with
+  `VARCO_ERROR_REDACT_PARAMS=false`.
+- **Closed the unmapped-exception information leak (Plan 035 / S3).** Two fallback sites —
+  `ErrorMiddleware._service_error_response`'s `except` branch and `add_exception_handlers`'s
+  `_make_error_response`'s `except` branch (reached when `error_message_for()` itself raises, e.g.
+  a `ServiceException.error_params()` raises) — used to echo `str(exc)` directly into the response
+  body. Both now return an opaque `"An internal error occurred."` message plus `correlation_id`,
+  and log the exception type server-side at ERROR with `exc_info=True`. Unconditional — there is
+  no toggle for this fix; correlate via the `correlation_id` in the log.
+
+### Security — the two-tenant-setter finding (Plan 033 / S6, Correction 1)
+
+- **Finding, not fixed by default in 3.2**: `RequestContextMiddleware` (on by default,
+  `enable_tenant_context=True`) has always entered `tenant_context()` from a JWT's `tenant_id`
+  claim with **no catalog-status check and no `pool.ensure()`** — the exact check
+  `TenantResolutionMiddleware` performs. A token issued for a suspended or deleted tenant
+  therefore still activates that tenant's context on any app using `create_varco_app` with a
+  container. This is not new in 3.2 and the default is not changed by 3.2 (flipping it would be a
+  silent fleet-wide 403 on upgrade, forbidden by the locked blast-radius rule). Fix: adopt a
+  `varco_core.tenancy.source.TenantSourceChain` — `TenantResolutionMiddleware` becomes the single
+  tenant decision point and `RequestContextMiddleware` defers to it (see Added, below). The
+  unchained path is removed in 4.0 (see Deprecated). Full detail:
+  `technical_docs/features/tenant-provenance.md`.
 
 ### Added
 
@@ -212,94 +255,6 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   gain a Docker-free regression test for the KI-2/KI-7 `delete_where()` no-predicate path. No
   production code changed.
 
-### Fixed
-
-- **`AuditLogMixin`'s docstring named a `_get_audit_diff_create()` redaction hook that never
-  existed (Plan 040, S21).** The docstring at `service/audit.py` has promised, since Plan 009,
-  that a caller could "redact sensitive fields by overriding `_get_audit_diff_create()` if
-  needed" — that method existed nowhere in the repo. Corrected to name the real hook,
-  `_audit_diff()` (plus the `_audit_redactor` class attribute), which is now real and callable.
-- **`JobRunner.recover()` now honours `Job.run_at` (Plan 039, Phase 1).** `Job.run_at` is
-  documented as *"earliest time this job is eligible to be claimed"* and the ABC's own
-  `claim_next()` default enforces exactly this predicate — `recover()` used `try_claim()`
-  unconditionally and skipped the check, so a job scheduled for the future would fire immediately
-  on process restart. ⚠️ **Behaviour change, narrow in practice**: `InMemoryJobStore.try_claim()`
-  already enforced `run_at IS NULL OR run_at <= now` internally, so this was not observable
-  through the in-memory store every unit test in this repo uses — the fix is a defence-in-depth
-  filter at the runner layer, closing the gap for any `AbstractJobStore` whose own `try_claim()`
-  does not filter. An app relying on `recover()` firing future-dated jobs at startup (against
-  `run_at`'s own documented contract) will see a behaviour change; `run_at=None` (the common case)
-  is unaffected.
-
-### Changed
-
-- **`MetricsMiddleware` now records INSIDE `TracingMiddleware` (Plan 041, S17,
-  §D-S17-decision).** `http.server.request.duration` no longer includes `TracingMiddleware`'s
-  own overhead; expect a small, one-time **downward** step in every latency series at upgrade.
-  Attribute sets are unchanged — `http.request.method`, `http.route`,
-  `http.response.status_code` — so this is **not** a cardinality or schema change, and no
-  dashboard query needs rewriting. HTTP metrics now carry OTel exemplars when a sampled span
-  exists, which is new capability, not a regression. See
-  `technical_docs/features/http-edge-hardening.md`'s "Metrics inside tracing" section.
-- **`StandardWebhooksSigner.sign()`/`verify()` accept `bytes` (Plan 038, S19, §D-S19-gap).**
-  `payload` is now `str | bytes` on both methods — additive, byte-identical for an existing `str`
-  caller. A `bytes` payload lets a raw inbound body that is not valid UTF-8 be verified directly,
-  without a lossy decode.
-- **`render_rls_ddl()`'s returned statement order (Plan 037 / §D-S12-order).** Now
-  `CREATE POLICY`, `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY` — previously
-  `ENABLE`, `FORCE`, `CREATE POLICY`. Same three statements, same text, only the index changes;
-  every in-repo caller executes the whole list in order and is unaffected. Fixes a default-deny
-  window (Postgres denies all rows the instant RLS is enabled with no policy yet present) for any
-  standalone caller of `render_rls_ddl()` that does not run all three statements in one
-  transaction. ⚠️ A caller that indexes the returned list positionally (e.g.
-  `render_rls_ddl(t)[0]`) now gets a different statement — no such caller exists in this repo.
-- **`varco_sa.rls_framework.FRAMEWORK_RLS_TABLES` is now derived, and wider (Plan 037 / S12a).**
-  Previously a hand-listed two-table constant (`varco_audit_log`, `varco_dead_letters`); now
-  computed by `framework_rls_tables()` walking `framework_metadata()` for every table carrying a
-  tenant column — five-plus tables, including `varco_schedules`,
-  `varco_webhook_subscriptions`, and the encryption-key-store table (`varco_tenants` remains
-  hard-excluded — its `tenant_id` is a primary key, not a filterable column). The old constant
-  name still resolves, computed from the new function, so no import breaks.
-
-- The unmapped-exception fallback body no longer contains `str(exc)` (see Security, above) — no
-  revert; this is the security fix.
-- Four security headers are now sent by default on every response
-  (`VARCO_SECURITY_HEADERS_ENABLED=false` reverts).
-- A 10 MiB request-body ceiling is now enforced by default
-  (`VARCO_BODY_LIMIT_ENABLED=false`, or `VARCO_BODY_LIMIT_MAX_BYTES=<bytes>`, reverts).
-- `correlation_id` is now present on **every** error response body — `ErrorMiddleware` and
-  `add_exception_handlers` generate a fresh id when no ambient one is set, rather than omitting the
-  key entirely. This widens the S3 fix beyond the two fallback sites to every error path, including
-  `_internal_error_response()`'s already-sanitized 500 body. No toggle; not called out in Plan 035
-  as an explicit change — see the sync report's Drift section.
-
-### BREAKING — required `algorithms=`, `?api_key=`/`?token=` off by default (Plan 034, S1/S2)
-
-- **`JwtParser.parse()` now requires `algorithms=`** as a keyword-only argument — the previous
-  silent `["HS256"]` default is gone, and there is no environment-variable escape hatch (never
-  will be). Omitting it raises `TypeError` at the call site, caught by mypy `strict = true` before
-  a test runs. **Measured blast radius: zero varco production call sites and zero examples** —
-  `JwtBearerAuth` (via `TrustedIssuerRegistry.verify()`, which derives algorithms from the
-  resolved key) and `PassthroughAuth` (via `parse_unverified()`, which has no `algorithms`
-  parameter) are structurally unaffected. **The fix**: `JwtParser.parse(raw, secret,
-  algorithms=["HS256"])` — one line, at every direct call site.
-- **`ApiKeyAuth`'s `?api_key=` query-parameter fallback is now off by default** — `param` defaults
-  to `None` instead of `"api_key"`. **Measured blast radius: zero in-repo consumers.** **The
-  fix**: `ApiKeyAuth(..., param="api_key")` to opt back in; prefer moving clients to the
-  `X-API-Key` header — the query param is otherwise in every access log, proxy log, and `Referer`
-  header.
-- **`WebSocketAuth`'s `?token=` query-parameter fallback is now off by default** — same treatment,
-  `token_query_param` defaults to `None`. **The fix**: `WebSocketAuth(inner, token_query_param="token")`
-  to opt back in; prefer the existing `Sec-WebSocket-Protocol: bearer.<token>` sub-protocol path
-  for browser clients that cannot set headers.
-
-⚠️ **`scripts/api_surface.py --check` does not catch either flip** — it records `inspect.signature()`
-only for top-level `function`-kind exports; `JwtParser.parse` is a `classmethod` and
-`ApiKeyAuth.__init__` is a class constructor, both outside its documented scope. Out-of-tree
-callers must read this entry; the guard against regression is a dedicated `inspect.signature()`
-test in each owning package's own suite (`varco_core/tests/test_jwt.py`,
-`varco_fastapi/tests/milestone_a/test_server_auth.py`), not the snapshot gate.
-
 ### Added — token revocation, hashed API keys (Plan 034, S13/S14)
 
 - **`varco_core.revocation`** — `AbstractTokenRevocationStore` (`TOKEN`/`SUBJECT`/`TENANT`/
@@ -322,20 +277,6 @@ test in each owning package's own suite (`varco_core/tests/test_jwt.py`,
   `varco_core.revocation.posture`) reporting facts about an auth tree's and a registry's
   revocation wiring. Definitions only — Plan 036 owns the judgement and any startup wiring built
   on top of them.
-
-### Security — the two-tenant-setter finding (Plan 033 / S6, Correction 1)
-
-- **Finding, not fixed by default in 3.2**: `RequestContextMiddleware` (on by default,
-  `enable_tenant_context=True`) has always entered `tenant_context()` from a JWT's `tenant_id`
-  claim with **no catalog-status check and no `pool.ensure()`** — the exact check
-  `TenantResolutionMiddleware` performs. A token issued for a suspended or deleted tenant
-  therefore still activates that tenant's context on any app using `create_varco_app` with a
-  container. This is not new in 3.2 and the default is not changed by 3.2 (flipping it would be a
-  silent fleet-wide 403 on upgrade, forbidden by the locked blast-radius rule). Fix: adopt a
-  `varco_core.tenancy.source.TenantSourceChain` — `TenantResolutionMiddleware` becomes the single
-  tenant decision point and `RequestContextMiddleware` defers to it (see Added, below). The
-  unchained path is removed in 4.0 (see Deprecated). Full detail:
-  `technical_docs/features/tenant-provenance.md`.
 
 ### Added — tenant identity provenance, membership binding, act-as (Plan 033, S6/S5/S16)
 
@@ -382,6 +323,67 @@ test in each owning package's own suite (`varco_core/tests/test_jwt.py`,
   source explicitly — `TenantSourceChain(sources=(LegacyTenantSource(),))` — which warns not at
   all, or migrate onto a signed-claim source per `technical_docs/features/tenant-provenance.md`'s
   upgrade note.
+
+### Changed
+
+- **`MetricsMiddleware` now records INSIDE `TracingMiddleware` (Plan 041, S17,
+  §D-S17-decision).** `http.server.request.duration` no longer includes `TracingMiddleware`'s
+  own overhead; expect a small, one-time **downward** step in every latency series at upgrade.
+  Attribute sets are unchanged — `http.request.method`, `http.route`,
+  `http.response.status_code` — so this is **not** a cardinality or schema change, and no
+  dashboard query needs rewriting. HTTP metrics now carry OTel exemplars when a sampled span
+  exists, which is new capability, not a regression. See
+  `technical_docs/features/http-edge-hardening.md`'s "Metrics inside tracing" section.
+- **`StandardWebhooksSigner.sign()`/`verify()` accept `bytes` (Plan 038, S19, §D-S19-gap).**
+  `payload` is now `str | bytes` on both methods — additive, byte-identical for an existing `str`
+  caller. A `bytes` payload lets a raw inbound body that is not valid UTF-8 be verified directly,
+  without a lossy decode.
+- **`render_rls_ddl()`'s returned statement order (Plan 037 / §D-S12-order).** Now
+  `CREATE POLICY`, `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY` — previously
+  `ENABLE`, `FORCE`, `CREATE POLICY`. Same three statements, same text, only the index changes;
+  every in-repo caller executes the whole list in order and is unaffected. Fixes a default-deny
+  window (Postgres denies all rows the instant RLS is enabled with no policy yet present) for any
+  standalone caller of `render_rls_ddl()` that does not run all three statements in one
+  transaction. ⚠️ A caller that indexes the returned list positionally (e.g.
+  `render_rls_ddl(t)[0]`) now gets a different statement — no such caller exists in this repo.
+- **`varco_sa.rls_framework.FRAMEWORK_RLS_TABLES` is now derived, and wider (Plan 037 / S12a).**
+  Previously a hand-listed two-table constant (`varco_audit_log`, `varco_dead_letters`); now
+  computed by `framework_rls_tables()` walking `framework_metadata()` for every table carrying a
+  tenant column — five-plus tables, including `varco_schedules`,
+  `varco_webhook_subscriptions`, and the encryption-key-store table (`varco_tenants` remains
+  hard-excluded — its `tenant_id` is a primary key, not a filterable column). The old constant
+  name still resolves, computed from the new function, so no import breaks.
+
+- The unmapped-exception fallback body no longer contains `str(exc)` (see Security, above) — no
+  revert; this is the security fix.
+- Four security headers are now sent by default on every response
+  (`VARCO_SECURITY_HEADERS_ENABLED=false` reverts).
+- A 10 MiB request-body ceiling is now enforced by default
+  (`VARCO_BODY_LIMIT_ENABLED=false`, or `VARCO_BODY_LIMIT_MAX_BYTES=<bytes>`, reverts).
+- `correlation_id` is now present on **every** error response body — `ErrorMiddleware` and
+  `add_exception_handlers` generate a fresh id when no ambient one is set, rather than omitting the
+  key entirely. This widens the S3 fix beyond the two fallback sites to every error path, including
+  `_internal_error_response()`'s already-sanitized 500 body. No toggle; not called out in Plan 035
+  as an explicit change — see the sync report's Drift section.
+
+### Fixed
+
+- **`AuditLogMixin`'s docstring named a `_get_audit_diff_create()` redaction hook that never
+  existed (Plan 040, S21).** The docstring at `service/audit.py` has promised, since Plan 009,
+  that a caller could "redact sensitive fields by overriding `_get_audit_diff_create()` if
+  needed" — that method existed nowhere in the repo. Corrected to name the real hook,
+  `_audit_diff()` (plus the `_audit_redactor` class attribute), which is now real and callable.
+- **`JobRunner.recover()` now honours `Job.run_at` (Plan 039, Phase 1).** `Job.run_at` is
+  documented as *"earliest time this job is eligible to be claimed"* and the ABC's own
+  `claim_next()` default enforces exactly this predicate — `recover()` used `try_claim()`
+  unconditionally and skipped the check, so a job scheduled for the future would fire immediately
+  on process restart. ⚠️ **Behaviour change, narrow in practice**: `InMemoryJobStore.try_claim()`
+  already enforced `run_at IS NULL OR run_at <= now` internally, so this was not observable
+  through the in-memory store every unit test in this repo uses — the fix is a defence-in-depth
+  filter at the runner layer, closing the gap for any `AbstractJobStore` whose own `try_claim()`
+  does not filter. An app relying on `recover()` firing future-dated jobs at startup (against
+  `run_at`'s own documented contract) will see a behaviour change; `run_at=None` (the common case)
+  is unaffected.
 
 ## [3.1.0] — 2026-09-05
 
@@ -2432,7 +2434,8 @@ breaking changes between alpha versions while the API stabilises.
 ---
 
 <!-- Links -->
-[Unreleased]: https://github.com/edoardoscarpaci/varco/compare/v3.1.0...HEAD
+[Unreleased]: https://github.com/edoardoscarpaci/varco/compare/v3.2.0...HEAD
+[3.2.0]: https://github.com/edoardoscarpaci/varco/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/edoardoscarpaci/varco/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/edoardoscarpaci/varco/compare/v0.1.0...v3.0.0
 [0.1.0]: https://github.com/edoardoscarpaci/varco/releases/tag/v0.1.0
