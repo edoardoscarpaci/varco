@@ -202,6 +202,15 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pipeline). Opt in via `TenancySettings.assert_tenant_filter`
   (`VARCO_TENANCY_ASSERT_TENANT_FILTER`) plus `assert_tenant_filter=True` on
   `AsyncSQLAlchemyRepository`/`AsyncBeanieRepository`.
+- **Conformance findings register restored (Plan 042, S23).**
+  `testkit/varco_conformance/COVERAGE.md` gains a `## Conformance findings register` — the durable
+  index of every conformance finding (KI-2/3/5/6/7, all FIXED or WORKED AROUND, each with its
+  `file:line` fix and its guard test) plus a "How to file a new finding" decision table (backend
+  ABC violation → `strict=True` xfail whose `reason=` names a `KI-N` row; suite gap → fix in
+  `testkit/`; capability divergence → override one test). CLAUDE.md's Test Conventions now points
+  at this register instead of the trimmed-by-design `BACKLOG.md`, and `KafkaDLQ`/`NatsDLQ` each
+  gain a Docker-free regression test for the KI-2/KI-7 `delete_where()` no-predicate path. No
+  production code changed.
 
 ### Fixed
 
