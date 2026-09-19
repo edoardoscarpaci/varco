@@ -104,7 +104,7 @@ dev = [
     # uvicorn for integration test server
     "uvicorn>=0.30",
     # starlette test client
-    "anyio>=4.0",
+    "anyio>=4.14.2",
     # cryptography for JWT auth tests
     "cryptography>=50.0.0",
     # tests/test_app_migrations_integration.py exercises MigrationLifecycle against a
