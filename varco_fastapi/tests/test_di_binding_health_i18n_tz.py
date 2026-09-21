@@ -15,15 +15,16 @@ from varco_core.context.defaults import TenantDefaultsProvider
 from varco_core.i18n.catalog import MessageCatalog
 from varco_core.i18n.settings import I18nSettings
 from varco_core.tz.settings import TimezoneSettings
-from varco_fastapi.di import VarcoFastAPIModule, setup_varco_defaults
 
 
 def _build_container() -> DIContainer:
+    # Plan 045: setup_varco_defaults() is gone and container.scan("varco_fastapi",
+    # recursive=True) already auto-installs VarcoFastAPIModule (its
+    # @Configuration providers, including TaskSerializer, are all @Fallback
+    # and self-registering) — the redundant explicit install() is dropped.
     container = DIContainer()
     container.scan("varco_core", recursive=True)
     container.scan("varco_fastapi", recursive=True)
-    container.install(VarcoFastAPIModule)
-    setup_varco_defaults(container)
     return container
 
 

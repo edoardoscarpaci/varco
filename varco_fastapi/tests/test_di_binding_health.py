@@ -51,7 +51,7 @@ from providify import DIContainer, Provider
 # from those globals and ``container.provide()`` fails at registration time.
 from varco_core.observability.config import OtelConfig
 from varco_core.observability.di import OtelConfiguration
-from varco_fastapi.di import VarcoFastAPIModule, setup_varco_defaults
+from varco_fastapi.di import VarcoFastAPIModule
 
 VARCO_PACKAGES = (
     "varco_core",
@@ -164,14 +164,15 @@ class TestContainerLocalnsHealth:
     """
 
     def test_localns_build_never_raises_for_a_full_varco_container(self) -> None:
+        # Plan 045: setup_varco_defaults() is gone; scanning "varco_fastapi"
+        # (in VARCO_PACKAGES) already auto-installs VarcoFastAPIModule, so
+        # the redundant explicit install() below is dropped too.
         container = DIContainer()
         for pkg in VARCO_PACKAGES:
             try:
                 container.scan(pkg, recursive=True)
             except ImportError:  # pragma: no cover - optional backend absent
                 continue
-        container.install(VarcoFastAPIModule)
-        setup_varco_defaults(container)
         container.install(OtelConfiguration)
 
         container._build_localns()  # must not raise

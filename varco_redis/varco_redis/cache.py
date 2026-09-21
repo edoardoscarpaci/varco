@@ -41,17 +41,17 @@ Async safety:   ✅  All public methods are ``async def``.
 from __future__ import annotations
 
 import logging
-import sys
 from typing import Any
 
 import redis.asyncio as aioredis
-from providify import Configuration, Disposes, Inject, PreDestroy, Provider
+from providify import Configuration, Disposes, Fallback, Inject, PreDestroy, Provider
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 from varco_core.cache.base import CacheBackend, InvalidationStrategy
 from varco_core.cache.config import CacheSettings
 from varco_core.cache.layered import LayeredCache
 from varco_core.cache.memory import InMemoryCache
+from varco_core.di import BACKEND_PRIORITY
 from varco_core.serialization import JsonSerializer, Serializer
 
 _logger = logging.getLogger(__name__)
@@ -553,7 +553,7 @@ class RedisCacheConfiguration:
 
         # @Provider-decorated module-level function — provide() rejects bare
         # lambdas and takes no second "interface" argument.  Register it
-        # BEFORE ainstall(): equal-priority bindings resolve first-registered.
+        # Registered in any order — the default is @Fallback (Plan 045).
         @Provider(singleton=True)
         def redis_cache_settings() -> RedisCacheSettings:
             return RedisCacheSettings(
@@ -564,7 +564,8 @@ class RedisCacheConfiguration:
         await container.ainstall(RedisCacheConfiguration)
     """
 
-    @Provider(singleton=True, priority=-sys.maxsize - 1)
+    @Fallback
+    @Provider(singleton=True)
     def redis_cache_settings(self) -> RedisCacheSettings:
         """
         Default ``RedisCacheSettings`` pointing at ``redis://localhost:6379/0``.
@@ -575,7 +576,8 @@ class RedisCacheConfiguration:
         # Reads from VARCO_REDIS_CACHE_* env vars if set.
         return RedisCacheSettings.from_env()
 
-    @Provider(singleton=True)
+    @Fallback
+    @Provider(singleton=True, priority=BACKEND_PRIORITY)
     async def redis_cache(
         self,
         settings: Inject[RedisCacheSettings],
@@ -770,7 +772,7 @@ class RedisLayeredCacheConfiguration:
 
         # @Provider-decorated module-level function — provide() rejects bare
         # lambdas and takes no second "interface" argument.  Register it
-        # BEFORE ainstall(): equal-priority bindings resolve first-registered.
+        # Registered in any order — the default is @Fallback (Plan 045).
         @Provider(singleton=True)
         def layered_cache_settings() -> LayeredCacheSettings:
             return LayeredCacheSettings(
@@ -784,7 +786,8 @@ class RedisLayeredCacheConfiguration:
         await container.ainstall(RedisLayeredCacheConfiguration)
     """
 
-    @Provider(singleton=True, priority=-sys.maxsize - 1)
+    @Fallback
+    @Provider(singleton=True)
     def layered_cache_settings(self) -> LayeredCacheSettings:
         """
         Default ``LayeredCacheSettings`` with localhost Redis and unbounded L1.
@@ -795,7 +798,8 @@ class RedisLayeredCacheConfiguration:
         # Reads from VARCO_LAYERED_CACHE_* env vars if set.
         return LayeredCacheSettings.from_env()
 
-    @Provider(singleton=True)
+    @Fallback
+    @Provider(singleton=True, priority=BACKEND_PRIORITY)
     async def layered_cache(
         self,
         settings: Inject[LayeredCacheSettings],

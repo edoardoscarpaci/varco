@@ -11,7 +11,7 @@ Eventarc/EventBridge consumer, or a Knative sink cannot parse them."
 ## The seam: a second `Serializer[Event]`, nothing else
 
 `varco_core/event/serializer.py` already documents its own extension point — `JsonEventSerializer`
-is registered at `@Singleton(priority=-sys.maxsize - 1)` and loses to any app-supplied
+is registered `@Fallback @Singleton` (Plan 045) and loses to any app-supplied
 `Serializer[Event]` at any registration order. CloudEvents ships as a *second implementation* of
 that Protocol and changes nothing else:
 

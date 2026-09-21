@@ -20,9 +20,9 @@ dropping DI for the parameter; under >= 1.1.0 it aborts container validation.
 
 The alias is gone. Bus constructors now annotate the **interface**
 ``Serializer[Event]`` directly, and ``JsonEventSerializer`` explicitly
-subclasses it and carries ``@Singleton(priority=-sys.maxsize - 1)`` so it is
-the lowest-priority default binding — present out of the box, beaten by any
-application-supplied serializer.
+subclasses it and carries ``@Fallback`` (Plan 045) so it is the in-process
+default binding — present out of the box, and any application-supplied
+serializer wins regardless of registration order.
 
 These tests pin that contract end-to-end: the interface resolves, the default
 is ``JsonEventSerializer``, and an app override wins.
@@ -30,7 +30,6 @@ is ``JsonEventSerializer``, and an app override wins.
 
 from __future__ import annotations
 
-import sys
 from typing import Annotated, Any, get_type_hints
 
 from providify import DIContainer, Provider
@@ -114,21 +113,23 @@ class TestJsonEventSerializerIsTheDefaultBinding:
         """
         assert issubclass(JsonEventSerializer, Serializer)
 
-    def test_registered_at_minimum_priority(self) -> None:
+    def test_registered_as_a_fallback_at_priority_zero(self) -> None:
         """
-        Lowest possible priority is the whole point: the default must lose to
-        any application-supplied binding, which uses the default priority.
+        `@Fallback` is the whole point: the default must lose to any
+        application-supplied binding, regardless of registration order or
+        priority — it carries no explicit priority (providify's default, 0).
         """
         container = DIContainer()
         container.scan("varco_core", recursive=True)
 
-        priorities = {
-            getattr(b, "priority", None)
+        matching = [
+            b
             for b in container._bindings
             if getattr(b, "implementation", None) is JsonEventSerializer
-        }
+        ]
 
-        assert priorities == {-sys.maxsize - 1}
+        assert {b.priority for b in matching} == {0}
+        assert all(b.fallback is True for b in matching)
 
     def test_interface_resolves_to_the_default(self) -> None:
         container = DIContainer()

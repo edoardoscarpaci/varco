@@ -30,12 +30,12 @@ without per-model branching in ``enforce``.
 from __future__ import annotations
 
 import asyncio
-import sys
 from typing import TYPE_CHECKING, Any
 
 import casbin
-from providify import Inject, PostConstruct, PreDestroy, Singleton
+from providify import Fallback, Inject, PostConstruct, PreDestroy, Singleton
 from varco_core.auth.policy import EnforcementRequest, PolicyEngine, PolicyManagement
+from varco_core.di import BACKEND_PRIORITY
 
 from varco_casbin.adapter import build_adapter
 from varco_casbin.config import CasbinSettings
@@ -105,7 +105,8 @@ class _AttrStr(str):
         return (self.__class__, (str(self), self._attrs))
 
 
-@Singleton(priority=-sys.maxsize, qualifier="casbin")
+@Fallback
+@Singleton(priority=BACKEND_PRIORITY, qualifier="casbin")
 class CasbinPolicyEngine(PolicyEngine, PolicyManagement):
     """
     Casbin-backed ``PolicyEngine`` + ``PolicyManagement``.

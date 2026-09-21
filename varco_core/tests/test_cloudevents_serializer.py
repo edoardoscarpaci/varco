@@ -286,15 +286,24 @@ class TestCloudEventsSettings:
 
 class TestOptInByDefault:
     async def test_serializer_is_not_registered_at_minimum_priority(self) -> None:
-        # JsonEventSerializer wins by default (priority=-sys.maxsize-1); the
-        # CloudEvents serializer sits at DEFAULT priority so it is never
-        # auto-active, only opt-in via an explicit binding.
-        import sys  # noqa: PLC0415
+        # JsonEventSerializer is @Fallback (Plan 045) — a candidate only when
+        # no non-fallback Serializer[Event] binding exists. The CloudEvents
+        # provider registered by bind_cloudevents_serializer() is a plain,
+        # non-fallback binding, so it shadows JsonEventSerializer once bound —
+        # it is never auto-active on its own (opt-in only, §D-CE1).
+        from providify import DIContainer  # noqa: PLC0415
+        from varco_core.event.cloudevents import (  # noqa: PLC0415
+            CloudEventsSettings,
+            bind_cloudevents_serializer,
+        )
+        from varco_core.serialization import Serializer  # noqa: PLC0415
 
-        from varco_core.event.cloudevents import CloudEventsJsonSerializer  # noqa: PLC0415
+        container = DIContainer()
+        container.scan("varco_core", recursive=True)
+        bind_cloudevents_serializer(container, CloudEventsSettings(source="/svc/test"))
 
-        priority = getattr(CloudEventsJsonSerializer, "__di_priority__", None)
-        assert priority != -sys.maxsize - 1
+        binding = container.get_binding(Serializer[Event])
+        assert binding.fallback is False
 
 
 # ── Open question 1 — the DLQ round-trip decision (plan §Open questions) ───────

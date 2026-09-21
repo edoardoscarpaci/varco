@@ -71,13 +71,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 from uuid import UUID
 
-from providify import Inject, Singleton
+from providify import Fallback, Inject, Singleton
 from varco_core.event.base import AbstractEventBus, Event, Subscription
 
 _logger = logging.getLogger(__name__)
@@ -171,7 +170,8 @@ class SSEConnection:
 # ── SSEEventBus ───────────────────────────────────────────────────────────────
 
 
-@Singleton(priority=-sys.maxsize)
+@Fallback
+@Singleton
 class SSEEventBus:
     """
     Push adapter that delivers varco events to SSE subscribers.

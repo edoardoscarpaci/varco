@@ -33,7 +33,7 @@ Sync-only (settings discovery, no connection)::
     # Cache is NOT started — call async_bootstrap() or
     # ``await container.ainstall(MemcachedCacheConfiguration)`` separately.
 
-Overriding settings before bootstrap::
+Overriding settings (any order — the default is @Fallback)::
 
     from providify import DIContainer
     from varco_memcached.cache import MemcachedCacheSettings
@@ -47,7 +47,7 @@ Overriding settings before bootstrap::
         return MemcachedCacheSettings(host="memcached.internal", port=11211)
 
     container = DIContainer()
-    container.provide(memcached_settings)   # before bootstrap — order matters
+    container.provide(memcached_settings)   # any order — the default is @Fallback
     await async_bootstrap(container)
 
 📚 Docs

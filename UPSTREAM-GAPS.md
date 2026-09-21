@@ -56,7 +56,7 @@ Full workflow, including when *not* to file: CLAUDE.md's
 
 | ID | Library | Gap | Report | Guard |
 |---|---|---|---|---|
-| **P24-DISPOSES-FIRSTMATCH** | `providify` 2.0.1 | `DIContainer.install()`'s `@Disposes` wiring loop (`providify/container.py:6201-6214`) attaches a disposer to the **first** matching `ProviderBinding` across the **whole container**, not the installing module's own binding — when two `@Configuration`s both bind the same interface via `@Provider`, each with its own `@Disposes`, the second `install()` overwrites the first binding's disposer and leaves the second binding's own instance with no teardown path at all | [providify-disposes-first-match.md](design/upstream-gaps/providify-disposes-first-match.md) | `varco_redis/tests/test_redis_cache_disposes.py::test_both_cache_configurations_installed_together_both_get_stopped` (strict xfail, no Docker, every `make test`) |
+| **P28-FALLBACK-SHADOWED-SCANNED-CLASS** | `providify` 2.1.0 (`3cb207f`) | `FALLBACK_SHADOWED` is computed per-binding for its own "natural request" `(b.interface, b.qualifier, None)`; a scanned `@Singleton` class registers with `interface = cls` itself (`container.py:1248`), never the ABC it implements, so the INFO never fires for a scanned-class default shadowed at its ABC — even though `get(ABC)` correctly returns the override. Affects 22 of varco's own default sites; gates Plan 052's `varco diagnose` | [providify-fallback-shadowed-scanned-class.md](design/upstream-gaps/providify-fallback-shadowed-scanned-class.md) | `varco_core/tests/test_fallback_defaults.py` (strict xfail, `raises=AssertionError`, no Docker, every `make test`) |
 
 ## Recently closed
 
@@ -70,10 +70,28 @@ file and in the CHANGELOG, not here.)*
   own supported teardown mechanism — at all nine affected sites. See
   [providify-provider-predestroy.md](design/upstream-gaps/providify-provider-predestroy.md)
   §8 for the full resolution.
+- **P24-DISPOSES-FIRSTMATCH** — resolved 2026-09-14 (providify 2.1.0, Plan 045
+  / DI-15 close-out). Disposer wiring is now scoped to the bindings the same
+  `install()`/`ainstall()` call registered; converted guard:
+  `varco_redis/tests/test_redis_cache_disposes.py::test_both_cache_configurations_installed_together_both_get_stopped`.
+  See [providify-disposes-first-match.md](design/upstream-gaps/providify-disposes-first-match.md) §7.
+- **P25-CONDITIONAL-REGISTRATION** — resolved 2026-09-14 (providify 2.1.0,
+  Plan 045 / DI-15 close-out). `@Requires(condition=..., env=..., value=...)`
+  shipped as the third activation conjunct; converted guard:
+  `varco_core/tests/test_providify_contracts.py::TestP25ConditionalRegistration::test_requires_decorator_is_exported`.
+  See [providify-conditional-registration.md](design/upstream-gaps/providify-conditional-registration.md) §9.
+- **P26-OPEN-GENERIC-BINDING** — resolved 2026-09-14 (providify 2.1.0, Plan
+  045 / DI-15 close-out). `returns=Repo[T]` now registers an open binding
+  served by any closed request; converted guard:
+  `varco_core/tests/test_providify_contracts.py::TestP26OpenGenericBinding::test_open_alias_registration_resolves_closed_request`.
+  See [providify-open-generic-binding.md](design/upstream-gaps/providify-open-generic-binding.md) §8.
+- **P27-FALLBACK-BINDING** — resolved 2026-09-14 (providify 2.1.0, Plan 045 /
+  DI-15 close-out). `@Fallback`/`FallbackMarker`/`IssueKind.FALLBACK_SHADOWED`
+  shipped exactly under the recommended name and semantics; converted guards:
+  `varco_core/tests/test_providify_contracts.py::TestP27FallbackBinding::test_fallback_decorator_is_exported`
+  + `::test_validate_reports_shadowed_fallback`.
+  See [providify-fallback-binding.md](design/upstream-gaps/providify-fallback-binding.md) §9.
 
 ---
 
-**Last updated:** 2026-09-02 · Recreated after the `cae7f33` deletion, as a thin
-index over `design/upstream-gaps/` rather than the inline-body document it used
-to be (Plan 022 closeout). P22-PROVIDER-PREDESTROY closed by Plan 024; opened
-with **P24-DISPOSES-FIRSTMATCH**.
+**Last updated:** 2026-09-14 · Plan 045 closed P24, P25, P26, P27 (providify 2.1.0).

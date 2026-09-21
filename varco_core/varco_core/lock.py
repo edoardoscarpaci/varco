@@ -88,12 +88,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from abc import ABC, abstractmethod
 from typing import Any
 from uuid import UUID, uuid4
 
-from providify import Singleton
+from providify import Fallback, Singleton
 
 _logger = logging.getLogger(__name__)
 
@@ -370,7 +369,8 @@ class AbstractDistributedLock(ABC):
 # ── InMemoryLock ──────────────────────────────────────────────────────────────
 
 
-@Singleton(priority=-sys.maxsize - 1, qualifier="in_memory")
+@Fallback
+@Singleton(qualifier="in_memory")
 class InMemoryLock(AbstractDistributedLock):
     """
     In-process distributed lock backed by a dict of ``asyncio.Lock`` per key.

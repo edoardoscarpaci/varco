@@ -27,16 +27,16 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from providify import Singleton
+from providify import Fallback, Singleton
 from varco_core.job.base import AbstractJobStore, Job, JobStatus, StaleLeaseError
 
 
-@Singleton(priority=-sys.maxsize - 1)  # MIN_INT as priority
+@Fallback
+@Singleton
 class InMemoryJobStore(AbstractJobStore):
     """
     Dict-backed in-memory job store.

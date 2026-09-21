@@ -50,7 +50,7 @@ Overriding the default settings::
         )
 
     container = DIContainer()
-    container.provide(kafka_settings)          # before scan() — order matters
+    container.provide(kafka_settings)          # any order — the default is @Fallback
     container.scan("varco_kafka", recursive=True)
 """
 
@@ -89,8 +89,7 @@ def bootstrap(
         from varco_kafka.config import KafkaEventBusSettings
         from providify import DIContainer
 
-        # Registered before bootstrap() so it wins over the package default;
-        # add priority=... instead if you must register afterwards.
+        # Registered in any order — the package default is @Fallback.
         @Provider(singleton=True)
         def kafka_settings() -> KafkaEventBusSettings:
             return KafkaEventBusSettings(

@@ -56,7 +56,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Sequence
@@ -66,7 +65,7 @@ from enum import StrEnum
 from typing import ClassVar, Final
 from uuid import UUID, uuid4
 
-from providify import Singleton
+from providify import Fallback, Singleton
 
 from varco_core.event.base import Event
 
@@ -521,7 +520,8 @@ class AbstractDeadLetterQueue(ABC):
 # ── InMemoryDeadLetterQueue ───────────────────────────────────────────────────
 
 
-@Singleton(priority=-sys.maxsize - 1, qualifier="in_memory")
+@Fallback
+@Singleton(qualifier="in_memory")
 class InMemoryDeadLetterQueue(AbstractDeadLetterQueue):
     """
     In-memory ``AbstractDeadLetterQueue`` implementation for tests.

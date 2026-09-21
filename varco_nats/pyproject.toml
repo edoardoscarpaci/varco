@@ -29,7 +29,7 @@ dependencies = [
     # and for @Configuration / @Provider in varco_nats.dlq (NatsDLQConfiguration).
     # It is already a transitive dep via varco-core but listed here to make the
     # direct usage explicit and to protect against future varco-core decoupling.
-    "providify>=2.0.1",
+    "providify>=2.1.0",
     # pydantic-settings is used directly in varco_nats.config for SettingsConfigDict.
     # It is also a transitive dep via varco-core, but listed explicitly here.
     "pydantic-settings>=2.14.2",

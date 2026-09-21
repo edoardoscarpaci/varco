@@ -35,7 +35,6 @@ Async safety:   ✅ check() is async def; all I/O uses await.
 from __future__ import annotations
 
 import asyncio
-import sys
 import time
 
 from providify import Inject, Singleton
@@ -46,7 +45,9 @@ from varco_beanie.config import BeanieSettings
 # ── BeanieHealthCheck ─────────────────────────────────────────────────────────
 
 
-@Singleton(priority=-sys.maxsize, qualifier="beanie")
+# collection contribution — never @Fallback (it would vanish from
+# get_all(HealthCheck) once an app adds its own check)
+@Singleton(qualifier="beanie")
 class BeanieHealthCheck(HealthCheck):
     """
     Liveness probe for a MongoDB server.

@@ -2,19 +2,21 @@
 Plan 024 / Phase 1, Steps 13 + 16 — `@Disposes` teardown for the two Redis
 cache configurations (`RedisCacheConfiguration`, `RedisLayeredCacheConfiguration`).
 
-RED MODE: neither configuration has a `@Disposes(CacheBackend)` method yet.
-`RedisCache.stop()`/`LayeredCache.stop()` are only reachable via `@PreDestroy`,
-which providify never calls on a `@Provider`-produced instance
-(`providify/README.md:945-949`). Every test below is expected to FAIL today:
+Plan 045 / Step 6: the P24-DISPOSES-FIRSTMATCH guard is CLOSED —
+providify 2.1.0 scopes `@Disposes` wiring to the bindings the same
+`install()`/`ainstall()` registered (`providify/CHANGELOG.md:14-24`), so
+installing both configurations no longer overwrites the first module's
+disposer. This module now asserts three passing contracts: both
+provider-produced `CacheBackend` instances are stopped on `ashutdown()`;
+`validate()` reports zero `UNMATCHED_DISPOSER`/`DISPOSER_OVERWRITTEN`
+issues; and `DIContainer.provide()` returns the `ProviderBinding` it
+registered (`providify/CHANGELOG.md:27-29`).
 
-- The `validate()` assertions fail with `AttributeError` because the
-  installed providify does not yet have `IssueKind.UNREACHABLE_PRE_DESTROY`
-  (pin bump is Step 12, not yet applied) — once pinned to >=2.0.1 the same
-  assertion would fail because the disposer that resolves the warning does
-  not exist yet.
-- The round-trip assertions fail because `ashutdown()` never calls
-  `RedisCache.stop()` for a provider-produced instance — the monkeypatched
-  `_record` sentinel is never invoked.
+RED MODE (before the pin bump, still resolving providify 2.0.1): the
+`validate()` assertions fail with `AttributeError` because
+`IssueKind.UNMATCHED_DISPOSER`/`DISPOSER_OVERWRITTEN` do not exist yet;
+`test_provide_returns_the_provider_binding` fails because `provide()`
+still returns `None`.
 
 No Docker required — Redis I/O is monkeypatched to no-ops.
 """
@@ -88,19 +90,6 @@ async def test_redis_cache_stop_runs_on_ashutdown(monkeypatch: pytest.MonkeyPatc
     assert calls == ["stopped"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: providify's @Disposes wiring loop (container.py:6201-6214) "
-        "attaches a disposer to the first matching CacheBackend binding "
-        "across the WHOLE container, not the installing module's own — "
-        "installing RedisLayeredCacheConfiguration after RedisCacheConfiguration "
-        "overwrites the first binding's disposer and leaves the second "
-        "binding's own instance (LayeredCache) with no teardown path at all. "
-        "See design/upstream-gaps/providify-disposes-first-match.md "
-        "(P24-DISPOSES-FIRSTMATCH)."
-    ),
-)
 async def test_both_cache_configurations_installed_together_both_get_stopped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -138,9 +127,39 @@ async def test_both_cache_configurations_installed_together_both_get_stopped(
     # Force both CacheBackend bindings to actually be instantiated —
     # aget() alone would only construct the highest-priority one.
     await container.aget_all(CacheBackend)
+
+    report = container.validate(raise_on_error=False)
+    bad_kinds = {IssueKind.UNMATCHED_DISPOSER, IssueKind.DISPOSER_OVERWRITTEN}
+    bad_issues = [i for i in report.issues if i.kind in bad_kinds]
+    assert bad_issues == []
+
     await container.ashutdown()
 
     # Both provider-produced CacheBackend instances must have been stopped —
     # not just the one whose binding happened to receive the disposer.
     assert "redis" in stopped
     assert "layered" in stopped
+
+
+def test_provide_returns_the_provider_binding() -> None:
+    # providify 2.1.0: DIContainer.provide() now returns the ProviderBinding
+    # it registered (was None) — providify/CHANGELOG.md:27-29. NOTE:
+    # `ProviderBinding` is not re-exported from the `providify` top-level
+    # package (`providify/__init__.py` __all__ has no such name) — the
+    # installed 2.1.0 shape requires importing it from `providify.binding`
+    # directly. Corrected here from the test-writer's `from providify import
+    # ProviderBinding`, which does not match the shipped contract.
+    from providify.binding import ProviderBinding
+
+    def factory() -> CacheBackend:
+        return RedisCache.__new__(RedisCache)  # never started; binding shape only
+
+    container = DIContainer()
+    # `provide()` requires either an `@Provider`-decorated factory or an
+    # explicit `returns=` override (`ProviderBindingNotDecoratedError`
+    # otherwise, per `providify/binding.py`'s undecorated-factory guard) —
+    # `returns=` is the documented spelling for registering a plain,
+    # undecorated factory someone else wrote.
+    binding = container.provide(factory, returns=CacheBackend)
+
+    assert isinstance(binding, ProviderBinding)

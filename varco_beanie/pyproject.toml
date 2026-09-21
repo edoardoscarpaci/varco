@@ -31,7 +31,7 @@ dependencies = [
     # Explicit direct dependency for varco_beanie.di — providify is already
     # a transitive dep via varco-core but listing it here makes the di module's
     # imports explicit and protects against future varco-core decoupling.
-    "providify>=2.0.1",
+    "providify>=2.1.0",
 ]
 
 [project.urls]

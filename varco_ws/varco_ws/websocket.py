@@ -77,13 +77,12 @@ import asyncio
 import enum
 import json
 import logging
-import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 from uuid import UUID
 
-from providify import Inject, Singleton
+from providify import Fallback, Inject, Singleton
 from varco_core.event.base import AbstractEventBus, Event, Subscription
 
 _logger = logging.getLogger(__name__)
@@ -349,7 +348,8 @@ def _suppress_task_exception(task: asyncio.Task[Any]) -> None:
 # ── WebSocketEventBus ─────────────────────────────────────────────────────────
 
 
-@Singleton(priority=-sys.maxsize)
+@Fallback
+@Singleton
 class WebSocketEventBus:
     """
     Push adapter that broadcasts varco events to connected WebSocket clients.

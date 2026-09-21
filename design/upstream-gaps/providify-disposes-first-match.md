@@ -4,10 +4,13 @@
 **Raised by**: varco, Plan 024 Phase 1 (C2 — `@Disposes` adoption), Step 16
 **Date**: 2026-09-02
 **providify version**: 2.0.1 (as resolved in `uv.lock`)
-**Status**: ⛔ Open — filed, not worked around
+**Status**: ✅ Resolved (2026-09-14, Plan 045 / DI-15 close-out) — see §7
 **Priority**: 🟡 should. Not a crash; a silent resource leak when two
 `@Configuration`s in the same container both bind the same interface via
 `@Provider`, each with its own `@Disposes` for that interface.
+**Re-verified**: 2026-09-12 against providify 2.0.1 @ `1402f0a` (Plan 043 / DI-15) — loop
+unchanged.
+**Gates**: BACKLOG `DI-9`.
 
 ---
 
@@ -36,6 +39,20 @@ For every `@Disposes(X)` method found on the module being installed, this walks
 **all** `self._bindings` (every binding in the *entire container*, not just the
 ones this `install()` call is registering) and attaches the disposer to the
 **first** `ProviderBinding` whose interface matches `X`, then `break`s.
+
+The loop lives inside `_register_module_providers(module_cls, instance)`
+(`providify/container.py:6160`), the shared tail both the sync and async install paths funnel
+through. Every caller, found by
+`rg -n '_register_module_providers' /home/edoardo/projects/providify/providify/container.py`:
+
+- `providify/container.py:6135` — `_install_one()`, the sync path (`DIContainer.install()`'s
+  per-class loop tail).
+- `providify/container.py:6157` — `_ainstall_one()`, the async path (`DIContainer.ainstall()`'s
+  per-class loop tail).
+
+Both callers register providers and wire `@Disposes` through the identical
+`_register_module_providers` body — the defect below applies to `install()` and `ainstall()`
+equally, not only the async path this report originally cited.
 
 ## 2. Why this is a gap
 
@@ -89,15 +106,28 @@ redundant-but-harmless double-stop.
 
 ## 4. The ask
 
-- ✅ **Preferred**: scope the "first matching binding" search
-  (`providify/container.py:6207`) to bindings registered **by this
-  `install()` call** (i.e., only bindings whose owning module is
-  `module_cls`), not every binding in the container. This is a minimal,
-  surgical change — the loop already has `self` and `module_cls` in scope.
-- ✅ **Alternative**: raise (or add a new `IssueKind`, `AMBIGUOUS_DISPOSER`) when
-  a `@Disposes(X)` disposer-wiring pass would overwrite an *already-set*
-  `disposer` on a binding that belongs to a **different** module — surfacing
-  the collision instead of silently mis-wiring it.
+`_register_module_providers` already has the information it needs to scope the search correctly,
+because `self.provide()` is called for each of *this module's own* providers
+(`providify/container.py:6196`, `:6199`) inside the **same function**, appending to
+`self._bindings` — the provider-registration loop starts at `providify/container.py:6176`.
+
+- ✅ **Preferred, minimal**: record `start = len(self._bindings)` before the provider-registration
+  loop (`providify/container.py:6176`), and scope the disposer search
+  (`providify/container.py:6209`, `for binding in self._bindings:`) to
+  `self._bindings[start:]` instead of the whole list. No signature change, no new state, ~3
+  lines. This is possible only because `provide()` currently returns `None`
+  (`providify/container.py:1048`) — nothing else identifies which bindings this call produced,
+  so the slice is the cheapest correct fix available today.
+- ✅ **Alternative, larger**: change `provide()` to return the `ProviderBinding` it created
+  (`providify/container.py:1048` currently `-> None`). This also serves `DI-13`'s "every
+  `@Disposes` reachable" test directly — the disposer-wiring loop could then match against the
+  small set of bindings `_register_module_providers` itself just created, holding direct
+  references rather than re-deriving a slice.
+- ✅ **Detect, not just fix**: add an `IssueKind.DISPOSER_OVERWRITTEN` warning, sibling of the
+  shipped `IssueKind.UNREACHABLE_PRE_DESTROY` (`providify/container.py:5327`), raised when a
+  disposer-wiring pass would replace a non-`None` `disposer` on a binding **not** registered by
+  this `install()`/`ainstall()` call — this is precisely the class of finding `DI-7`'s wiring
+  report should surface, independent of whether the "Preferred" fix above also lands.
 - ❌ **Not requested**: any change to `@PreDestroy`/producer-method semantics —
   that gap (P22-PROVIDER-PREDESTROY) is settled as intentional and closed
   separately; this is a distinct wiring-loop defect in `@Disposes` itself.
@@ -123,3 +153,36 @@ fixed upstream.
 first matching binding across the whole container, not the installing
 module's own — see design/upstream-gaps/providify-disposes-first-match.md")`.
 No Docker required (monkeypatched I/O), runs in every `make test`.
+
+## 7. Resolution (2026-09-14)
+
+providify 2.1.0's `CHANGELOG.md:14-31` ships the "Alternative, larger" fix from §4 above:
+`_register_module_providers`'s disposer-wiring loop is now scoped to the bindings *this*
+`install()`/`ainstall()` call itself registered (the `own` list, `providify/container.py:7321`,
+consulted by the scoped loop at `:7359-7360`) rather than every binding in the container — the
+exact "Preferred, minimal" shape asked for, generalized. Two new `IssueKind`s ship alongside it:
+`UNMATCHED_DISPOSER` and `DISPOSER_OVERWRITTEN` (`providify/validation.py:102-109`, both
+`Severity.WARNING`) — the "Detect, not just fix" ask. `DIContainer.provide()` also now returns the
+`ProviderBinding` it created (`providify/container.py:1250`, was `None`) — the "Alternative,
+larger" fix's own prerequisite, adopted independently of this report (Plan 045 §Context row
+"`provide()` returns the binding").
+
+**Behaviour change, audited**: `CHANGELOG.md:22-24` notes a `@Disposes(X)` on a module with no `X`
+provider of its own no longer attaches to any binding elsewhere in the container (it used to
+silently attach to the first matching binding anywhere — the very defect this report is about).
+`rg -n '@Disposes' varco_*/varco_*` (site list above, §"Why this is a gap" audit) shows every
+`@Disposes(X)` in varco is declared on the *same* `@Configuration` class that also provides an `X`
+binding of its own — `RedisCacheConfiguration`/`RedisLayeredCacheConfiguration` (`CacheBackend`),
+the four DLQ configurations (`AbstractDeadLetterQueue`), `RedisEventBusSelectorConfiguration`
+(`AbstractEventBus`), `RedisBulkheadConfiguration` (`RedisBulkhead`),
+`MemcachedCacheConfiguration` (`CacheBackend`) — so no varco site loses its disposer under the new
+scoped-search behaviour; nothing changed in application code.
+
+**varco adopted**: nothing to change in `RedisCacheConfiguration`/`RedisLayeredCacheConfiguration`
+— both configurations' own `@Disposes(CacheBackend)` methods were already correct in isolation; the
+bug was entirely in providify's cross-container search. The guard is converted in Plan 045 Step 6
+(`varco_redis/tests/test_redis_cache_disposes.py`): the `xfail` marker is removed, the test now
+asserts both `"redis"` and `"layered"` appear in the stop-order list, plus a new
+`test_provide_returns_the_provider_binding` pinning the `provide()` return-value change, and a
+`validate()` assertion that zero `UNMATCHED_DISPOSER`/`DISPOSER_OVERWRITTEN` issues are reported for
+this configuration pair.

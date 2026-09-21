@@ -50,13 +50,12 @@ Async safety:   ✅  All methods are ``async def``.
 
 from __future__ import annotations
 
-import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from providify import Singleton
+from providify import Fallback, Singleton
 
 # ── ConversationTurn ──────────────────────────────────────────────────────────
 
@@ -171,7 +170,8 @@ class AbstractConversationStore(ABC):
 # ── InMemoryConversationStore ─────────────────────────────────────────────────
 
 
-@Singleton(priority=-sys.maxsize, qualifier="in_memory")
+@Fallback
+@Singleton(qualifier="in_memory")
 class InMemoryConversationStore(AbstractConversationStore):
     """
     In-process conversation store backed by a plain ``dict[str, list]``.

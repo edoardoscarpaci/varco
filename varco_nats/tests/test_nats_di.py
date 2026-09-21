@@ -156,7 +156,7 @@ class RequiredFieldSettingsForTest(EventBusSettings):
     required_value: str
 
 
-@Singleton(priority=-sys.maxsize)
+@Singleton
 class SingletonRequiredFieldSettingsForTest(RequiredFieldSettingsForTest):
     pass
 

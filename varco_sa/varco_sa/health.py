@@ -63,7 +63,6 @@ Async safety:   ✅ check() is async def; all I/O uses await; pool snapshot is
 from __future__ import annotations
 
 import asyncio
-import sys
 import time
 from typing import Annotated
 
@@ -78,7 +77,9 @@ from varco_sa.pool_metrics import pool_metrics
 # ── SAHealthCheck ─────────────────────────────────────────────────────────────
 
 
-@Singleton(priority=-sys.maxsize, qualifier="sa")
+# collection contribution — never @Fallback (it would vanish from
+# get_all(HealthCheck) once an app adds its own check)
+@Singleton(qualifier="sa")
 class SAHealthCheck(HealthCheck):
     """
     Liveness probe for a SQLAlchemy-backed database.
@@ -201,7 +202,9 @@ class SAHealthCheck(HealthCheck):
 # ── SAPoolSaturationCheck ─────────────────────────────────────────────────────
 
 
-@Singleton(priority=-sys.maxsize, qualifier="sa-pool")
+# collection contribution — never @Fallback (it would vanish from
+# get_all(HealthCheck) once an app adds its own check)
+@Singleton(qualifier="sa-pool")
 class SAPoolSaturationCheck(HealthCheck):
     """
     Pool-saturation readiness probe for a SQLAlchemy async backend.

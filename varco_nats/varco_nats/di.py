@@ -54,7 +54,7 @@ Overriding the default settings::
         )
 
     container = DIContainer()
-    container.provide(nats_settings)           # before scan() — order matters
+    container.provide(nats_settings)           # any order — the default is @Fallback
     container.scan("varco_nats", recursive=True)
 """
 
@@ -92,8 +92,7 @@ def bootstrap(container: Any = None) -> Any:
         from varco_nats.config import NatsEventBusSettings
         from providify import DIContainer
 
-        # Registered before bootstrap() so it wins over the package default;
-        # add priority=... instead if you must register afterwards.
+        # Registered in any order — the package default is @Fallback.
         @Provider(singleton=True)
         def nats_settings() -> NatsEventBusSettings:
             return NatsEventBusSettings(

@@ -51,10 +51,10 @@ Async safety:   ✅ Synchronous — pipeline is a plain Python list.
 
 from __future__ import annotations
 
-import sys
 from typing import Any
 
-from providify import Singleton
+from providify import Fallback, Singleton
+from varco_core.di import BACKEND_PRIORITY
 from varco_core.query.applicator.applicator import QueryApplicator
 from varco_core.query.type import SortField, SortOrder, TransformerNode
 
@@ -68,7 +68,8 @@ _DESC = -1
 Pipeline = list[dict[str, Any]]
 
 
-@Singleton(priority=-sys.maxsize, qualifier="beanie_aggregation")
+@Fallback
+@Singleton(priority=BACKEND_PRIORITY, qualifier="beanie_aggregation")
 class BeanieAggregationApplicator(QueryApplicator):
     """
     ``QueryApplicator`` that builds a MongoDB aggregation pipeline from a

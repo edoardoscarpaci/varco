@@ -26,11 +26,10 @@ Async safety:   ✅  All public methods are ``async def``.
 from __future__ import annotations
 
 import logging
-import sys
 import time
 from typing import TYPE_CHECKING, Annotated, Any
 
-from providify import InjectMeta, Singleton
+from providify import Fallback, InjectMeta, Singleton
 
 from varco_core.cache.base import CacheBackend, InvalidationStrategy
 from varco_core.cache.config import CacheSettings
@@ -142,7 +141,8 @@ class NoOpCache(CacheBackend):
 # ── InMemoryCache ─────────────────────────────────────────────────────────────
 
 
-@Singleton(priority=-sys.maxsize - 1, qualifier="in_memory")
+@Fallback
+@Singleton(qualifier="in_memory")
 class InMemoryCache(CacheBackend):
     """
     In-process dict-backed cache with optional TTL and invalidation strategies.

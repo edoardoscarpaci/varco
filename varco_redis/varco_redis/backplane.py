@@ -74,13 +74,12 @@ import asyncio
 import hashlib
 import json
 import logging
-import sys
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 import redis.asyncio as aioredis
-from providify import Provider, Singleton
+from providify import Fallback, Provider, Singleton
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from varco_core.cache.backplane import (
@@ -131,7 +130,8 @@ class RedisBackplaneSettings(BaseSettings):
 # constructor pitfall (CLAUDE.md). Register via a module-level @Provider,
 # same as every other varco_redis settings class that isn't shaped like
 # RedisEventBusSettings's own custom __init__.
-@Provider(singleton=True, priority=-sys.maxsize - 1)
+@Fallback
+@Provider(singleton=True)
 def _redis_backplane_settings() -> RedisBackplaneSettings:
     """Default ``RedisBackplaneSettings``, reading ``VARCO_REDIS_CACHE_BACKPLANE_*`` env vars."""
     return RedisBackplaneSettings()

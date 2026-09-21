@@ -53,7 +53,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import TYPE_CHECKING, Annotated, Any
 
@@ -64,6 +63,7 @@ import redis.asyncio as aioredis
 from providify import (
     Configuration,
     Disposes,
+    Fallback,
     Inject,
     InjectMeta,
     Instance,
@@ -72,6 +72,7 @@ from providify import (
     Provider,
     Singleton,
 )
+from varco_core.di import BACKEND_PRIORITY
 from varco_core.event.base import (
     CHANNEL_ALL,
     CHANNEL_DEFAULT,
@@ -99,7 +100,8 @@ _logger = logging.getLogger(__name__)
 _POLL_INTERVAL: float = 0.01  # 10 ms
 
 
-@Singleton(priority=-sys.maxsize, qualifier="redis")
+@Fallback
+@Singleton(qualifier="redis")
 class RedisEventBus(AbstractEventBus):
     """
     ``AbstractEventBus`` backed by Redis Pub/Sub via ``redis.asyncio``.
@@ -529,7 +531,8 @@ class RedisEventBusSelectorConfiguration:
     Async safety:   ✅ No I/O at construction time — I/O happens in ``start()``.
     """
 
-    @Provider(singleton=True)
+    @Fallback
+    @Provider(singleton=True, priority=BACKEND_PRIORITY)
     def bus(
         self,
         settings: Inject[RedisEventBusSettings],

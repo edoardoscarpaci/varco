@@ -30,9 +30,9 @@ Async safety:   ✅  All public methods are ``async def``.
 from __future__ import annotations
 
 import logging
-import sys
 
-from providify import Inject, PostConstruct, PreDestroy, Singleton
+from providify import Fallback, Inject, PostConstruct, PreDestroy, Singleton
+from varco_core.di import BACKEND_PRIORITY
 from varco_core.event.base import ChannelConfig
 from varco_core.event.channel import ChannelManager
 
@@ -58,7 +58,8 @@ RedisChannelManagerSettings = RedisEventBusSettings
 # ── RedisChannelManager ───────────────────────────────────────────────────────
 
 
-@Singleton(priority=-sys.maxsize, qualifier="redis")
+@Fallback
+@Singleton(priority=BACKEND_PRIORITY, qualifier="redis")
 class RedisChannelManager(ChannelManager):
     """
     Redis Pub/Sub channel management via a local registry.

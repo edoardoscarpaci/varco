@@ -219,8 +219,8 @@ DeadLetterEntry (Plan 005 Phase 3) — event: DomainEvent | None, source: DeadLe
   (CONSUMER default / OUTBOX_RELAY / JOB), source_ref, payload — one shape for all three
 
 Serializer[Event] (Protocol, varco_core.serialization)
-  ├── JsonEventSerializer          (varco_core.event.serializer) — DEFAULT, @Singleton at
-  │                                  priority=-sys.maxsize-1, so it loses to any app-supplied one
+  ├── JsonEventSerializer          (varco_core.event.serializer) — DEFAULT, @Fallback @Singleton,
+  │                                  so it loses to any app-supplied one regardless of order
   └── CloudEventsJsonSerializer    (varco_core.event.cloudevents, Plan 030 / N2) — CloudEvents
                                      v1.0.2 STRUCTURED mode; OPT-IN only, no DI decorator at all
                                      (a module-level @Singleton/@Provider would be auto-registered
@@ -609,7 +609,7 @@ functions Plan 036 aggregates — no warning/raise/lifespan hook lives in either
 
 ```
 AbstractAuthorizer (ABC)                         — service-layer gate; authorize(ctx, action, resource)
-  ├── BaseAuthorizer            (permissive fallback, priority -(2**31))
+  ├── BaseAuthorizer            (permissive fallback, @Fallback @Singleton — no priority)
   ├── GrantBasedAuthorizer / RoleBasedAuthorizer / OwnershipAuthorizer  (static, token-derived)
   └── PolicyEngineAuthorizer    (dynamic — bridges to a PolicyEngine; opt-in)
 
@@ -819,10 +819,11 @@ SAXactAdvisoryLock (varco_sa) — PostgreSQL pg_try_advisory_xact_lock(int8) (Pl
   │       transaction's own commit/rollback is what bounds the lock.
   └── Recommended default whenever the deployment might sit behind a pooler.
 
-varco_sa.di.SAModule — AbstractDistributedLock → SAAdvisoryLock (default, upgrade-safe binding);
-  SAXactAdvisoryLock also registered as a directly-injectable singleton
-  (Inject[SAXactAdvisoryLock]); override recipe: provide() before install()/scan(),
-  or @Provider(priority=100) — see varco_sa/varco_sa/di.py
+varco_sa.di.SAModule — AbstractDistributedLock → SAAdvisoryLock (default, upgrade-safe binding,
+  @Fallback @Provider at BACKEND_PRIORITY); SAXactAdvisoryLock also registered as a
+  directly-injectable singleton (Inject[SAXactAdvisoryLock], also @Fallback so it never
+  accidentally wins the AbstractDistributedLock slot — see its own docstring); override recipe:
+  provide() your own AbstractDistributedLock binding in any order — see varco_sa/varco_sa/di.py
 
 LockNotAcquiredError(Exception)
   └── Raised by acquire() when timeout expires before the lock is free
@@ -1306,7 +1307,7 @@ FlagEvaluationContext (frozen dataclass) — varco_core.flags.base
 FlagResolution[T] (frozen dataclass, Generic) — value + optional `reason` string
 
 Implementations:
-  ├── NullFeatureFlags (varco_core) — scanned @Singleton, priority=-sys.maxsize-1, the DI default;
+  ├── NullFeatureFlags (varco_core) — scanned @Fallback @Singleton, the DI default;
   │                                    every resolver returns the caller's default, reason="NULL"
   └── InMemoryFeatureFlags (varco_core) — dict-backed, optional per-tenant overrides;
                                            tenant override → global value → caller's default

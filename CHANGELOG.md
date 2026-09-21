@@ -9,6 +9,118 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### BREAKING — `@Fallback` framework defaults, providify >= 2.1.0 (Plan 045, DI-15 close-out / DI-3)
+
+`providify>=2.1.0` is now required (all ten packages). Every varco-owned binding of a varco seam
+is now declared `@Fallback` (providify 2.1.0's resolve-time default-binding marker) instead of a
+priority-floor heuristic — `priority=-sys.maxsize - 1`, `-sys.maxsize`, and
+`varco_core.auth.authorizer._FALLBACK_PRIORITY` (`-(2**31)`, removed) are gone from every varco
+binding. `setup_varco_defaults()` and `bootstrap(setup_defaults=)` (`varco_fastapi.di`) are
+**removed entirely** — `VarcoFastAPIModule` now declares its `TaskSerializer` default itself.
+
+Consequences for application code:
+- If you registered your own binding at a **negative priority** to sit between varco's tiers, or
+  copied a varco decorator line **including its priority**: drop the priority. Any binding without
+  `@Fallback` wins over every varco default regardless of order or priority.
+- If you copied a varco line **including `@Fallback`**: your binding is now a fallback too and
+  ties with varco's by priority, then registration order — `validate()` reports
+  `AMBIGUOUS_BINDING`. Remove `@Fallback` from your own bindings.
+- If you relied on `container.get_all(T)` / `InjectInstances[T]` **including** the varco default
+  beside your own: a shadowed fallback is now excluded. Resolve the default explicitly with
+  `get(T, qualifier="in_memory")` (or the relevant backend qualifier) if you need it.
+- If you relied on "provide your override **before** `install()`/`scan()`": still works; order no
+  longer matters.
+- If you read `container.validate()` reports: there is a new `Severity.INFO` tier
+  (`FALLBACK_SHADOWED`, `CONDITION_INACTIVE`); `report.errors`/`.warnings` are unchanged, and
+  `report.ok` still means "no errors". Code that treated every `report.issues` entry as a problem
+  must filter by `severity`.
+- Backend bindings (`KafkaEventBus`, `RedisEventBusSelectorConfiguration.bus`, the DLQ and cache
+  providers, `SQLAlchemyRepositoryProvider`, `CasbinPolicyEngine`, …) are `@Fallback` at
+  `varco_core.di.BACKEND_PRIORITY` (100): a scanned backend beats the in-process default, and your
+  binding beats both. Two backends scanned for one seam still tie (unchanged; Plan 047).
+- `varco_redis.revocation.RedisScanNullTokenRevocationStoreDefault` is removed;
+  `varco_redis.di.bootstrap()` registers `varco_core`'s `NullTokenRevocationStore` instead. An app
+  that scanned `varco_redis` **without** calling `bootstrap()` must now also scan
+  `varco_core.revocation` (or call `bootstrap()`).
+- `/health` lists varco's own probes in registration order instead of first (they are no longer at
+  a priority floor). Membership is unchanged.
+- `KafkaDLQConfiguration` / `RedisDLQConfiguration` / `RedisStreamDLQConfiguration` /
+  `NatsDLQConfiguration` no longer register a second `*EventBusSettings` provider; they inject the
+  package's settings binding when present and fall back to `from_env()` otherwise. Standalone
+  `ainstall(<DLQ>)` on a bare container works as before.
+- `varco_fastapi.di.VarcoFastAPIModule.request_context`/`jwt_context` — dead-code duplicates of
+  `varco_fastapi.context.get_request_context`/`get_jwt_context` (invisible under the pre-045
+  priority-floor model, since the latter always won by priority) — are removed; the `context.py`
+  originals were, and remain, the live bindings.
+
+Full model, override recipes, and a Pitfalls table: `technical_docs/features/dependency-injection.md`.
+
+### Fixed / Tests (Plan 045, DI-15 close-out)
+
+- **Closed `P24-DISPOSES-FIRSTMATCH`** — providify 2.1.0 scopes `@Disposes` wiring to the bindings
+  the same `install()`/`ainstall()` call registered (`CHANGELOG.md:14-24` in the providify source
+  tree); varco adopted nothing (the fix was entirely upstream). Guard converted to a passing test:
+  `varco_redis/tests/test_redis_cache_disposes.py::test_both_cache_configurations_installed_together_both_get_stopped`.
+  See `design/upstream-gaps/providify-disposes-first-match.md` §7.
+- **Closed `P25-CONDITIONAL-REGISTRATION`** — providify 2.1.0 ships
+  `@Requires(condition=..., env=..., value=...)`; varco verifies the shipped contract here and
+  adopts it at real call sites in Plan 047. Guard converted:
+  `varco_core/tests/test_providify_contracts.py::TestP25ConditionalRegistration::test_requires_decorator_is_exported`.
+  See `design/upstream-gaps/providify-conditional-registration.md` §9.
+- **Closed `P26-OPEN-GENERIC-BINDING`** — providify 2.1.0 ships open-generic provider bindings
+  (`returns=Repo[T]` now resolves any closed request); varco verifies the shipped contract here
+  and adopts it in Plans 046/051. Guard converted:
+  `varco_core/tests/test_providify_contracts.py::TestP26OpenGenericBinding::test_open_alias_registration_resolves_closed_request`.
+  See `design/upstream-gaps/providify-open-generic-binding.md` §8.
+- **Closed `P27-FALLBACK-BINDING`** — providify 2.1.0 ships `@Fallback`/`FallbackMarker`/
+  `IssueKind.FALLBACK_SHADOWED` exactly under the recommended name and semantics; adopted at ~60
+  sites across all ten packages (this plan). Guards converted:
+  `varco_core/tests/test_providify_contracts.py::TestP27FallbackBinding::test_fallback_decorator_is_exported`
+  + `::test_validate_reports_shadowed_fallback`. See `design/upstream-gaps/providify-fallback-binding.md` §9.
+- **Filed `P28-FALLBACK-SHADOWED-SCANNED-CLASS`** — `FALLBACK_SHADOWED` is never emitted for a
+  scanned-class default shadowed at its ABC (a scanned `@Singleton`'s own interface is the concrete
+  class, never the ABC). Affects 22 of varco's own default sites; gates Plan 052's
+  `varco diagnose`. Guarded by a `strict=True` xfail:
+  `varco_core/tests/test_fallback_defaults.py::test_fallback_shadowed_scanned_class_blind_spot`.
+  See `design/upstream-gaps/providify-fallback-shadowed-scanned-class.md`.
+
+### Documentation / Tests (Plan 043, DI-15)
+
+- **Filed `P25-CONDITIONAL-REGISTRATION`** — providify 2.0.1's only activation inputs are
+  `@Profile`/`@Alternative`; there is no predicate-over-configuration primitive (`@Requires` does
+  not exist under any name, confirmed against providify source at `1402f0a`). See
+  `design/upstream-gaps/providify-conditional-registration.md`, guarded by
+  `varco_core/tests/test_providify_upstream_gaps.py::TestP25ConditionalRegistration` (strict
+  xfail, `raises=ImportError`).
+- **Filed `P26-OPEN-GENERIC-BINDING`** — providify's generic-alias matching treats a binding-side
+  `TypeVar` as a literal, not a wildcard (`providify/utils.py:174-180`), so a single open
+  `returns=Repository[T]` registration cannot serve `Repository[User]`/`Repository[Order]`/…,
+  forcing the per-type registration loops in `varco_sa`/`varco_beanie`/`varco_fastapi`. See
+  `design/upstream-gaps/providify-open-generic-binding.md`, guarded by
+  `varco_core/tests/test_providify_upstream_gaps.py::TestP26OpenGenericBinding` (strict xfail,
+  `raises=LookupError`).
+- **Re-verified and sharpened `P24-DISPOSES-FIRSTMATCH`** against providify 2.0.1 @ `1402f0a` —
+  the loop is unchanged; the report now names the enclosing function
+  (`_register_module_providers`) and both its sync and async callers, and proposes a concrete
+  `start = len(self._bindings)` slice-based fix. See
+  `design/upstream-gaps/providify-disposes-first-match.md`, guarded by
+  `varco_redis/tests/test_redis_cache_disposes.py` (unchanged, still `xfailed`).
+
+No runtime behaviour changes; no public API changes.
+
+### Documentation / Tests (Plan 044, DI-15 third ask)
+
+- **Filed `P27-FALLBACK-BINDING`** — providify 2.0.1 has no `@DefaultBean`-style fallback
+  binding; framework defaults are a `priority=-sys.maxsize-1` heuristic that loses an
+  equal-priority collision by registration order (`providify/container.py:2382`) and is never
+  excluded from `get_all()`. The ask: a `@Fallback` marker evaluated lazily in `_filter()`
+  (request-relative, active-candidates-only shadowing) plus `IssueKind.FALLBACK_SHADOWED`. See
+  `design/upstream-gaps/providify-fallback-binding.md`, guarded by
+  `varco_core/tests/test_providify_upstream_gaps.py::TestP27FallbackBinding` (two strict
+  xfails, `raises=ImportError` / `raises=AttributeError`).
+
+No runtime behaviour changes; no public API changes.
+
 ## [3.2.0] — 2026-09-12
 
 ### BREAKING — required `algorithms=`, `?api_key=`/`?token=` off by default (Plan 034, S1/S2)

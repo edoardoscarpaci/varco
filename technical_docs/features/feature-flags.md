@@ -65,7 +65,7 @@ of truth, and `RequestContext` never holds it.
 
 ## Why `NullFeatureFlags` is a scanned `@Singleton`, not a module-level default
 
-`NullFeatureFlags` is registered at `priority=-sys.maxsize - 1` via `@Singleton` so
+`NullFeatureFlags` is registered `@Fallback @Singleton` (Plan 045) so
 `container.scan("varco_core.flags", recursive=True)` binds it automatically — mirroring
 CLAUDE.md's "DI defaults" rule (default ABC implementations register through DI, never as a
 hardcoded module-level singleton). `enable_feature_flags(container)` then registers

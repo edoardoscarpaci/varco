@@ -93,7 +93,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import Annotated, Any
 
@@ -103,7 +102,8 @@ from typing import Annotated, Any
 from nats import connect
 from nats.js.api import ConsumerConfig
 from nats.js.errors import NotFoundError
-from providify import Inject, InjectMeta, Instance, PostConstruct, PreDestroy, Singleton
+from providify import Fallback, Inject, InjectMeta, Instance, PostConstruct, PreDestroy, Singleton
+from varco_core.di import BACKEND_PRIORITY
 from varco_core.event.base import (
     CHANNEL_ALL,
     CHANNEL_DEFAULT,
@@ -126,7 +126,8 @@ _logger = logging.getLogger(__name__)
 _MSG_ID_HEADER = "Nats-Msg-Id"
 
 
-@Singleton(priority=-sys.maxsize, qualifier="nats")
+@Fallback
+@Singleton(priority=BACKEND_PRIORITY, qualifier="nats")
 class NatsEventBus(AbstractEventBus):
     """
     ``AbstractEventBus`` backed by NATS JetStream via ``nats-py``.

@@ -11,7 +11,7 @@ All singletons (``RedisEventBus``, ``RedisStreamEventBus`` via selector,
 ``RedisEventBusSettings`` is the exception: pydantic ``BaseSettings``
 declares ``__init__(self, **values)``, which is not a shape ``@Singleton``
 should be applied to (see CLAUDE.md's pitfall table). It is registered
-instead by a lowest-priority ``@Provider`` factory
+instead by a ``@Fallback @Provider`` factory
 (``redis_event_bus_settings`` in ``varco_redis.config``), same as
 ``RedisBackplaneSettings`` in ``varco_redis.backplane`` — both are
 discovered by the same ``scan()``.
@@ -58,7 +58,7 @@ Overriding the default settings::
         return RedisEventBusSettings(url=os.environ["REDIS_URL"])
 
     container = DIContainer()
-    container.provide(redis_settings)          # before scan() — order matters
+    container.provide(redis_settings)          # any order — the default is @Fallback
     container.scan("varco_redis", recursive=True)
 """
 
@@ -111,7 +111,7 @@ def bootstrap(
             return RedisEventBusSettings(url=os.environ["REDIS_URL"])
 
         container = DIContainer()
-        container.provide(redis_settings)      # before bootstrap() — order matters
+        container.provide(redis_settings)      # any order — the default is @Fallback
         bootstrap(container)
 
     Args:
@@ -155,6 +155,16 @@ def bootstrap(
 
     if container is None:
         container = DIContainer.current()
+
+    # Plan 045 / E2: scan varco_core.revocation FIRST so
+    # NullTokenRevocationStore (the real @Fallback @Singleton, defined in
+    # varco_core.revocation.null) is registered as the AbstractTokenRevocationStore
+    # default — replaces the deleted varco_redis-local
+    # RedisScanNullTokenRevocationStoreDefault subclass, which existed only
+    # because providify's scanner skips re-exported symbols (only a class's
+    # OWN defining module registers it). An app that scans varco_redis
+    # WITHOUT calling bootstrap() must scan varco_core.revocation itself.
+    container.scan("varco_core.revocation", recursive=True)
 
     # Discover all @Singleton/@Component classes and module-level @Provider
     # functions in varco_redis recursively.  This includes:
@@ -248,11 +258,12 @@ async def async_bootstrap(
 def enable_redis_token_revocation(container: Any, **redis_kwargs: Any) -> Any:
     """
     Opt in to ``RedisTokenRevocationStore`` as the application's
-    ``AbstractTokenRevocationStore``, shadowing the always-off Null default
-    (``varco_redis.revocation.RedisScanNullTokenRevocationStoreDefault``,
-    a local subclass of ``varco_core.revocation.null.NullTokenRevocationStore`` —
-    see that class's docstring for why it lives here rather than being
-    picked up cross-package).
+    ``AbstractTokenRevocationStore``, shadowing the always-off
+    ``varco_core.revocation.null.NullTokenRevocationStore`` default (a
+    ``@Fallback`` binding — this registers a plain, non-fallback provider,
+    which wins regardless of registration order). ``bootstrap()`` scans
+    ``varco_core.revocation`` itself so this default is present even when
+    an app only scans ``varco_redis`` (Plan 045 / E2).
 
     Mirrors ``varco_core.revocation.di.enable_token_revocation``'s shape —
     same ``enable_*`` verb, same "binding a store here does not by itself

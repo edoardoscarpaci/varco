@@ -76,9 +76,9 @@ DESIGN: no module-level ``@Singleton`` / ``@Provider`` decorator
        ``@Provider`` function (providify ``scanner.py:_scan_module``).  A decorator
        here would silently change the wire bytes of every app that scans
        ``varco_core`` — the exact opposite of §D-CE1's "opt-in, never auto-active".
-    ✅ ``bind_cloudevents_serializer()`` registers at providify's **default**
-       priority, which therefore beats ``JsonEventSerializer``'s
-       ``priority=-sys.maxsize - 1`` in any registration order.
+    ✅ ``bind_cloudevents_serializer()`` registers a non-fallback binding,
+       which therefore beats ``JsonEventSerializer``'s ``@Fallback`` default
+       in any registration order.
     ❌ One more wiring call for the adopter.  Accepted: an explicit call is the
        only honest way to say "change my wire format".
 
@@ -511,9 +511,8 @@ def bind_cloudevents_serializer(
     cannot inject pydantic's ``**values`` constructor).
 
     After this call every bus that *resolves* ``Serializer[Event]`` gets the
-    CloudEvents envelope, because the binding lands at providify's **default**
-    priority and ``JsonEventSerializer`` is registered at
-    ``priority=-sys.maxsize - 1``.
+    CloudEvents envelope, because this binding is a non-fallback and
+    ``JsonEventSerializer`` is declared ``@Fallback``.
 
     Every bus resolves it: ``KafkaEventBus`` and ``NatsEventBus`` inject it as
     scanned singletons, and ``RedisEventBus``/``RedisStreamEventBus`` receive it

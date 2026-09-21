@@ -2,15 +2,16 @@
 Unit tests for varco_core.base_authorizer
 =============================================
 Covers:
-  - _FALLBACK_PRIORITY constant value and type
+  - `@Fallback` marker on `BaseAuthorizer` (Plan 045 — replaces the removed
+    `_FALLBACK_PRIORITY` constant)
   - BaseAuthorizer.authorize() — permissive for every combination of
     ctx / action / resource (anonymous, authenticated, any action, collection
     and instance-level resources)
   - BaseAuthorizer is a proper AbstractAuthorizer subclass
   - DI injection via providify — BaseAuthorizer is resolved as AbstractAuthorizer
     when no other binding is registered
-  - DI shadowing — a custom authorizer at default priority (0) is returned
-    instead of BaseAuthorizer
+  - DI shadowing — an application authorizer, registered AFTER the scan,
+    always wins regardless of priority or registration order (`@Fallback`)
   - Singleton scope — same instance is returned across multiple container.get() calls
 
 DESIGN: why a fresh DIContainer per test
@@ -26,6 +27,7 @@ from typing import Annotated
 
 import pytest
 from providify import DIContainer, Singleton
+from providify.metadata import _is_fallback
 from varco_core.auth import (
     AbstractAuthorizer,
     Action,
@@ -33,7 +35,7 @@ from varco_core.auth import (
     Resource,
     ResourceGrant,
 )
-from varco_core.auth.authorizer import _FALLBACK_PRIORITY, BaseAuthorizer
+from varco_core.auth.authorizer import BaseAuthorizer
 from varco_core.meta import PKStrategy, PrimaryKey, pk_field
 from varco_core.model import DomainModel
 
@@ -71,8 +73,8 @@ def fresh_container() -> DIContainer:
     Returns:
         Empty ``DIContainer`` pre-scanned for ``base_authorizer`` module.
     """
-    # Scan the module so the @Singleton(priority=_FALLBACK_PRIORITY) metadata
-    # is registered — this is the path we actually want to test.
+    # Scan the module so the @Fallback @Singleton metadata is registered —
+    # this is the path we actually want to test.
     container = DIContainer()
     container.scan("varco_core.auth.authorizer")
     return container
@@ -105,37 +107,15 @@ def instance_resource() -> Resource:
     return Resource(entity_type=Post, entity=Post(pk="post-1", title="hello"))
 
 
-# ── _FALLBACK_PRIORITY constant ───────────────────────────────────────────────
+# ── @Fallback marker ────────────────────────────────────────────────────────
 
 
-class TestFallbackPriority:
-    """_FALLBACK_PRIORITY is the public contract for the absolute minimum priority."""
+class TestFallbackMarker:
+    """`BaseAuthorizer` carries the `@Fallback` marker (Plan 045 — replaces
+    the removed `_FALLBACK_PRIORITY` priority-floor constant)."""
 
-    def test_value_is_negative_2_to_the_31(self):
-        # The constant must equal -(2**31) — documented as INT_MIN equivalent.
-        # Any change to this value is a breaking change for downstream code
-        # that registers intermediate-priority authorizers.
-        assert _FALLBACK_PRIORITY == -(2**31)
-
-    def test_value_is_int(self):
-        # Must be a plain int — providify expects int for priority, not float.
-        assert isinstance(_FALLBACK_PRIORITY, int)
-
-    def test_lower_than_default_priority(self):
-        # Default providify priority is 0.  _FALLBACK_PRIORITY must be strictly
-        # lower so any default-priority binding shadows it.
-        assert _FALLBACK_PRIORITY < 0
-
-    def test_lower_than_minus_one(self):
-        # Leaves the range -1 … -2_147_483_647 free for intermediate fallbacks
-        # without any re-prioritization of existing bindings.
-        assert _FALLBACK_PRIORITY < -1
-
-    def test_representable_as_32_bit_signed_int(self):
-        # -(2**31) is the minimum value of a 32-bit signed integer.
-        # Values below this would be outside the conventional INT_MIN range.
-        int32_min = -(2**31)
-        assert _FALLBACK_PRIORITY >= int32_min
+    def test_base_authorizer_is_marked_fallback(self):
+        assert _is_fallback(BaseAuthorizer) is True
 
 
 # ── BaseAuthorizer class-level properties ─────────────────────────────────────
@@ -242,8 +222,8 @@ class TestBaseAuthorizerDI:
     def test_resolves_as_abstract_authorizer(self, fresh_container: DIContainer):
         # The container must resolve AbstractAuthorizer to a BaseAuthorizer
         # instance when no other binding is registered.
-        # This validates that @Singleton(priority=_FALLBACK_PRIORITY) set up
-        # the binding correctly and the class is reachable via its interface.
+        # This validates that @Fallback @Singleton set up the binding
+        # correctly and the class is reachable via its interface.
         authorizer = fresh_container.get(AbstractAuthorizer)
         assert isinstance(authorizer, BaseAuthorizer)
 
@@ -255,12 +235,15 @@ class TestBaseAuthorizerDI:
         second = fresh_container.get(AbstractAuthorizer)
         assert first is second
 
-    def test_shadowed_by_higher_priority_authorizer(self):
-        # This is the core promise of the framework: registering a custom
-        # authorizer at the default priority (0) must shadow BaseAuthorizer.
+    def test_shadowed_by_application_authorizer_registered_after_scan(self):
+        # This is the core promise of the framework: any application
+        # AbstractAuthorizer binding wins over BaseAuthorizer, regardless of
+        # registration order or priority — because BaseAuthorizer is
+        # @Fallback (a candidate only when no non-fallback binding exists).
         #
         # DESIGN: We define the replacement inside the test to avoid polluting
-        # the module namespace, then scan/register it into a fresh container.
+        # the module namespace, then scan/register it into a fresh container
+        # AFTER the scan — proving order does not matter under @Fallback.
 
         @Singleton
         class AppAuthorizer(AbstractAuthorizer):
@@ -271,15 +254,16 @@ class TestBaseAuthorizerDI:
                 pass
 
         container = DIContainer()
-        # Scan base authorizer (priority = -(2**31)) — always registered first.
+        # Scan base authorizer (@Fallback) — registered FIRST.
         container.scan("varco_core.auth.authorizer")
-        # Manually register the higher-priority custom authorizer.
-        # Default @Singleton priority is 0, which beats -(2**31).
+        # Register the application authorizer AFTER the scan — it still wins,
+        # because @Fallback yields to any non-fallback binding regardless of
+        # order.
         container.bind(AbstractAuthorizer, AppAuthorizer)
 
         resolved = container.get(AbstractAuthorizer)
 
-        # The container must return the higher-priority AppAuthorizer,
+        # The container must return the application's AppAuthorizer,
         # NOT the fallback BaseAuthorizer.
         assert isinstance(resolved, AppAuthorizer)
         assert not isinstance(resolved, BaseAuthorizer)

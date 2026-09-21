@@ -31,7 +31,7 @@ Usage (most common — OTLP export to a collector)::
         )
 
     container = DIContainer()
-    container.provide(otel_config)      # ⚠️ BEFORE install() — see below
+    container.provide(otel_config)      # any order — the default is @Fallback
     container.install(OtelConfiguration)
 
     tracer_provider = container.get(TracerProvider)
@@ -61,13 +61,10 @@ Overriding the default config::
     # OtelConfiguration reads OtelConfig from the container — the explicit
     # provide() call above takes precedence over the module's own default.
 
-⚠️ Registration order matters.  Bindings of equal priority resolve to the
-   **first** one registered, so ``provide()`` must run *before*
-   ``install(OtelConfiguration)``.  If you must register afterwards, raise the
-   priority explicitly::
-
-       @Provider(singleton=True, priority=100)
-       def otel_config() -> OtelConfig: ...
+``otel_config``'s default is declared ``@Fallback`` — register yours in any
+order, before or after ``install(OtelConfiguration)``; a non-fallback
+``OtelConfig`` binding always wins
+(`technical_docs/features/dependency-injection.md`).
 
 ⚠️ ``DIContainer.install()`` takes the module class only — there is no
    ``install(OtelConfiguration, config=...)`` keyword.  Configuration is
@@ -121,7 +118,7 @@ from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from providify import Configuration, Inject, Provider
+from providify import Configuration, Fallback, Inject, Provider
 
 from varco_core.observability.attributes import (
     GlobalAttributes,
@@ -177,18 +174,19 @@ class OtelConfiguration:
             )
 
         container = DIContainer()
-        container.provide(otel_config)       # before install() — order matters
+        container.provide(otel_config)       # any order — @Fallback
         container.install(OtelConfiguration)
         tracer_provider = container.get(TracerProvider)
     """
 
+    @Fallback
     @Provider(singleton=True)
     def otel_config(self) -> OtelConfig:
         """
         Default ``OtelConfig`` with no OTLP export and service name ``"varco"``.
 
-        Override before installing this configuration to supply a real
-        service name, version, and collector endpoint::
+        ``@Fallback`` — register yours in any order; it wins regardless of
+        registration order (`technical_docs/features/dependency-injection.md`)::
 
             @Provider(singleton=True)
             def otel_config() -> OtelConfig:
@@ -203,16 +201,14 @@ class OtelConfiguration:
 
         The override must be a ``@Provider``-decorated module-level function
         (``provide()`` rejects undecorated callables, and a lazy PEP-563 return
-        annotation only resolves against the function's own ``__globals__``),
-        and it must be registered *before* ``install()`` unless it declares a
-        higher ``priority``.
+        annotation only resolves against the function's own ``__globals__``).
 
         Returns:
             A minimal ``OtelConfig`` suitable for local development — records
             spans and metrics in memory but does not export them.
         """
         # Sensible local-dev default: records spans but never exports them.
-        # Callers override this by providing their own OtelConfig before install.
+        # Callers override this by providing their own OtelConfig binding, in any order.
         return OtelConfig(service_name="varco")
 
     @Provider(singleton=True)

@@ -59,11 +59,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any
 
-from providify import Instance, Singleton
+from providify import Fallback, Instance, Singleton
 
 from varco_core.event.base import (
     CHANNEL_ALL,
@@ -84,7 +83,8 @@ _logger = logging.getLogger(__name__)
 # ── InMemoryEventBus ──────────────────────────────────────────────────────────
 
 
-@Singleton(priority=-sys.maxsize - 1, qualifier="in_memory")
+@Fallback
+@Singleton(qualifier="in_memory")
 class InMemoryEventBus(AbstractEventBus):
     """
     Synchronous or background in-process event bus.

@@ -46,14 +46,13 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from providify import Singleton
+from providify import Fallback, Singleton
 
 from varco_core.exception import ServiceException
 
@@ -234,7 +233,8 @@ class AbstractTenantMembership(ABC):
         raise NotImplementedError
 
 
-@Singleton(priority=-sys.maxsize - 1)
+@Fallback
+@Singleton
 class NullTenantMembership(AbstractTenantMembership):
     """
     The scanned DI default — always allows.

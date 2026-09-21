@@ -173,30 +173,23 @@ class TestDocumentedBootstrapApi:
 
         assert container.get(OtelConfig).service_name == "orders-svc"
 
-    def test_provide_after_install_needs_an_explicit_priority(self) -> None:
+    def test_provide_after_install_wins_in_any_order(self) -> None:
         """
-        Equal-priority bindings resolve to the first registered one, so a
-        ``provide()`` call made *after* ``install()`` loses unless it raises
-        its priority.  Documented so nobody rediscovers it in production.
+        Plan 045: ``OtelConfiguration.otel_config`` is declared ``@Fallback``
+        — a plain, non-fallback ``OtelConfig`` provider registered AFTER
+        ``install()`` still wins unconditionally, with no need to raise its
+        priority. This replaces the pre-045 "equal-priority ties resolve to
+        the first registered" behaviour this test used to document.
         """
 
         @Provider(singleton=True)
         def late_default() -> OtelConfig:
             return OtelConfig(service_name="late")
 
-        @Provider(singleton=True, priority=100)
-        def late_priority() -> OtelConfig:
-            return OtelConfig(service_name="late-priority")
-
         container = DIContainer()
         container.install(OtelConfiguration)
         container.provide(late_default)
-        assert container.get(OtelConfig).service_name == "varco"
-
-        container = DIContainer()
-        container.install(OtelConfiguration)
-        container.provide(late_priority)
-        assert container.get(OtelConfig).service_name == "late-priority"
+        assert container.get(OtelConfig).service_name == "late"
 
     def test_install_does_not_take_a_config_keyword(self) -> None:
         """

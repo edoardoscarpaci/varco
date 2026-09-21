@@ -365,6 +365,11 @@ container.install(SAModule)
 bind_repositories(container, User, Post)
 ```
 
+**Rule**: every varco-registered binding of a varco seam is `@Fallback` (in-process defaults
+bare, backends at `varco_core.di.BACKEND_PRIORITY`); a user binding always wins regardless of
+order; never mark a collection contribution (`HealthCheck`) `@Fallback`. Full model + pitfalls:
+`technical_docs/features/dependency-injection.md`.
+
 ### DI wiring verb taxonomy
 
 The DI wiring verbs above (`bootstrap`, `bind_*`, `enable_*`, `mount_*`, `install_*`, plus

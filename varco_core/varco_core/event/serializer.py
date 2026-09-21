@@ -11,8 +11,9 @@ with that interface, so any implementation can be plugged in via DI.
 ``JsonEventSerializer`` is the default implementation.  It subclasses
 ``Serializer[Event]`` explicitly (rather than relying on structural Protocol
 satisfaction) so providify registers it under the interface, and carries
-``@Singleton(priority=-sys.maxsize - 1)`` — the lowest possible priority, so it
-is available out of the box but loses to any application-supplied serializer::
+``@Fallback`` — the in-process default, so it is available out of the box but
+any application binding of ``Serializer[Event]`` wins regardless of
+registration order (`technical_docs/features/dependency-injection.md`)::
 
     @Provider(singleton=True)
     def my_serializer() -> Serializer[Event]:
@@ -83,10 +84,9 @@ Async safety:   ✅ No I/O — pure CPU-bound serialization.
 from __future__ import annotations
 
 import json
-import sys
 from typing import Any
 
-from providify.decorator import Singleton
+from providify import Fallback, Singleton
 
 # DESIGN: ``Event`` is imported at RUNTIME, not under ``TYPE_CHECKING``.
 #
@@ -113,7 +113,8 @@ from varco_core.serialization import Serializer
 #   ✅ Fully overridable — `container.provide(my_serializer)` wins, in any order.
 #   ❌ Registers a binding even in apps that never use the event system (cheap:
 #      the instance is only constructed on first resolution).
-@Singleton(priority=-sys.maxsize - 1)
+@Fallback
+@Singleton
 class JsonEventSerializer(Serializer[Event]):
     """
     Serialize and deserialize ``Event`` objects to/from UTF-8 JSON bytes.

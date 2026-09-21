@@ -6,25 +6,25 @@ varco_core.flags.null
 so an application that never opts into feature flags sees zero behaviour
 change: every resolution simply returns the caller's own default.
 
-Registered at the lowest possible priority (mirrors the "low-priority
-default; override with container.bind()" pattern documented in providify's
-own reference) so ``enable_feature_flags()`` unconditionally wins once
-called.
+``@Fallback`` — the in-process default; any application binding of
+``AbstractFeatureFlags`` (including ``enable_feature_flags()``'s
+``InMemoryFeatureFlags``) wins regardless of registration order
+(`technical_docs/features/dependency-injection.md`).
 """
 
 from __future__ import annotations
 
-import sys
 from typing import Any
 
-from providify import Singleton
+from providify import Fallback, Singleton
 
 from varco_core.flags.base import AbstractFeatureFlags, FlagEvaluationContext, FlagResolution
 
 __all__ = ["NullFeatureFlags"]
 
 
-@Singleton(priority=-sys.maxsize - 1)
+@Fallback
+@Singleton
 class NullFeatureFlags(AbstractFeatureFlags):
     """
     No-op feature flags — always returns the caller's default, unchanged.

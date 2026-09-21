@@ -47,16 +47,16 @@ from __future__ import annotations
 
 import inspect
 import logging
-import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Annotated, Any, ClassVar
 from uuid import UUID, uuid4
 
 from beanie import Document
-from providify import InjectMeta, Singleton
+from providify import Fallback, InjectMeta, Singleton
 from pydantic import Field
 from pymongo.errors import DuplicateKeyError
+from varco_core.di import BACKEND_PRIORITY
 from varco_core.event.base import Event
 from varco_core.event.dlq import (
     AbstractDeadLetterQueue,
@@ -119,7 +119,8 @@ def _ttl_index_entry(seconds: int) -> Any:
 # ── BeanieDeadLetterQueue ─────────────────────────────────────────────────────
 
 
-@Singleton(priority=-sys.maxsize, qualifier="beanie")
+@Fallback
+@Singleton(priority=BACKEND_PRIORITY, qualifier="beanie")
 class BeanieDeadLetterQueue(AbstractDeadLetterQueue):
     """
     Beanie-backed ``AbstractDeadLetterQueue`` — mirrors ``SADeadLetterQueue``.

@@ -7,19 +7,18 @@ default (Plan 034 / S13a, Step 18, §D-S13-di). Bound automatically by
 ``container.scan("varco_core.revocation", recursive=True)`` so an
 application that never opts into revocation sees zero behaviour change.
 
-Registered at the lowest possible priority — the exact
-``varco_core.flags.NullFeatureFlags`` precedent
-(``varco_core/varco_core/flags/null.py``) — so
-``enable_token_revocation()`` unconditionally wins once called.
+``@Fallback`` — the in-process default; any application binding of
+``AbstractTokenRevocationStore`` (including ``enable_token_revocation()``'s
+``InMemoryTokenRevocationStore``) wins regardless of registration order
+(`technical_docs/features/dependency-injection.md`).
 """
 
 from __future__ import annotations
 
-import sys
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from providify import Singleton
+from providify import Fallback, Singleton
 
 from varco_core.revocation.base import AbstractTokenRevocationStore
 from varco_core.revocation.model import RevocationScope, RevocationVerdict
@@ -32,7 +31,8 @@ if TYPE_CHECKING:
 __all__ = ["NullTokenRevocationStore"]
 
 
-@Singleton(priority=-sys.maxsize - 1)
+@Fallback
+@Singleton
 class NullTokenRevocationStore(AbstractTokenRevocationStore):
     """
     No-op revocation store — never revokes anything, performs no I/O.

@@ -763,8 +763,8 @@ def _collect_local(
                         severity=PostureSeverity.WARN,
                         detail="AbstractAuthorizer resolves to BaseAuthorizer — every "
                         "operation is allowed unconditionally.",
-                        remediation="Register a real AbstractAuthorizer @Singleton at "
-                        "priority higher than -(2**31).",
+                        remediation="Register any AbstractAuthorizer binding — "
+                        "varco's BaseAuthorizer is @Fallback and yields to it.",
                     )
                 )
 

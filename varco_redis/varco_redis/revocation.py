@@ -39,15 +39,12 @@ Async safety:   ✅ All methods are ``async def``. The underlying
 from __future__ import annotations
 
 import json
-import sys
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import redis.asyncio as aioredis
-from providify import Singleton
 from varco_core.revocation.base import AbstractTokenRevocationStore
 from varco_core.revocation.model import RevocationEntry, RevocationScope, RevocationVerdict
-from varco_core.revocation.null import NullTokenRevocationStore
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -251,34 +248,3 @@ class RedisTokenRevocationStore(AbstractTokenRevocationStore):
                     deleted: int = await self._client.delete(redis_key)
                     removed += deleted
         return removed
-
-
-@Singleton(priority=-sys.maxsize - 1)
-class RedisScanNullTokenRevocationStoreDefault(NullTokenRevocationStore):
-    """
-    A trivial ``NullTokenRevocationStore`` subclass, defined **in this
-    module** so ``container.scan("varco_redis", recursive=True)`` alone
-    (with no scan of ``varco_core`` at all) still finds a default binding
-    for ``AbstractTokenRevocationStore``.
-
-    DESIGN: a local subclass over relying on a cross-package scan
-        Providify's scanner explicitly skips re-exported symbols — "only
-        objects whose defining module matches the scanned module are
-        registered" (``providify/scanner.py``'s own docstring). The real
-        ``NullTokenRevocationStore`` is defined in ``varco_core.revocation.null``,
-        so scanning ``varco_redis`` alone would never discover it, and an
-        app that scans only ``varco_redis`` (a legitimate, standalone usage
-        pattern — see this package's other ``@Singleton`` defaults) would
-        see ``AbstractTokenRevocationStore`` unbound rather than defaulting
-        to the always-off Null Object every other entry point gets.
-        ✅ Zero behavioural difference from the real ``NullTokenRevocationStore``
-           — every method is inherited unchanged.
-        ✅ ``isinstance(x, NullTokenRevocationStore)`` still holds for this
-           subclass, so callers checking "is revocation off" by type need
-           no special case.
-        ❌ Two classes exist for one concept. Accepted — the alternative
-           (duplicating scan("varco_core.revocation") inside
-           ``enable_redis_token_revocation``) would silently start
-           registering unrelated ``varco_core.revocation`` bindings for an
-           app that only asked for ``varco_redis``.
-    """

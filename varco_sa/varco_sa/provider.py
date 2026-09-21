@@ -6,11 +6,11 @@ Concrete ``RepositoryProvider`` for SQLAlchemy async.
 
 from __future__ import annotations
 
-import sys
 from typing import Annotated, Any, TypeVar
 
-from providify import InjectMeta, Singleton
+from providify import Fallback, InjectMeta, Singleton
 from sqlalchemy.ext.asyncio import async_sessionmaker
+from varco_core.di import BACKEND_PRIORITY
 from varco_core.model import DomainModel
 from varco_core.providers import RepositoryProvider
 from varco_core.repository import AsyncRepository
@@ -21,7 +21,8 @@ from varco_sa.factory import SAModelFactory
 D = TypeVar("D", bound=DomainModel)
 
 
-@Singleton(priority=-sys.maxsize, qualifier="sa")
+@Fallback
+@Singleton(priority=BACKEND_PRIORITY, qualifier="sa")
 class SQLAlchemyRepositoryProvider(RepositoryProvider):
     """
     ``RepositoryProvider`` backed by SQLAlchemy async.

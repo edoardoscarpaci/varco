@@ -48,7 +48,8 @@ needs. **No interface change required.**
 
 ```python
 # varco_opa/engine.py (sketch — NOT implemented)
-@Singleton(priority=-sys.maxsize, qualifier="opa")
+@Fallback
+@Singleton(priority=BACKEND_PRIORITY, qualifier="opa")
 class OpaPolicyEngine(PolicyEngine):
     def __init__(self, settings: Inject[OpaSettings], client: httpx.AsyncClient): ...
 

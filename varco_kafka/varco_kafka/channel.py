@@ -52,15 +52,15 @@ Async safety:   ✅  All public methods are ``async def``.
 from __future__ import annotations
 
 import logging
-import sys
 from typing import Any
 
 from aiokafka.admin import AIOKafkaAdminClient, NewTopic
 from aiokafka.errors import TopicAlreadyExistsError
-from providify import Inject, PostConstruct, PreDestroy, Provider, Singleton
+from providify import Fallback, Inject, PostConstruct, PreDestroy, Provider, Singleton
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 from varco_core.config import VarcoSettings
+from varco_core.di import BACKEND_PRIORITY
 from varco_core.event.base import ChannelConfig
 from varco_core.event.channel import ChannelManager
 
@@ -126,7 +126,8 @@ class KafkaChannelManagerSettings(VarcoSettings):
         return f"{self.topic_prefix}{channel}"
 
 
-@Provider(singleton=True, priority=-sys.maxsize)
+@Fallback
+@Provider(singleton=True)
 def kafka_channel_manager_settings() -> KafkaChannelManagerSettings:
     """
     Default ``KafkaChannelManagerSettings`` binding, discovered by
@@ -144,8 +145,8 @@ def kafka_channel_manager_settings() -> KafkaChannelManagerSettings:
         ❌ Settings are no longer discoverable by class decoration alone — this
            module must stay importable by the scanner (it always is).
 
-    ``priority=-sys.maxsize`` keeps this the lowest-priority binding, so any
-    application-supplied provider wins without needing an explicit priority.
+    ``@Fallback`` — the in-process default; any application-supplied
+    provider wins regardless of registration order.
 
     Returns:
         ``KafkaChannelManagerSettings`` populated from ``VARCO_KAFKA_ADMIN_*``
@@ -157,7 +158,8 @@ def kafka_channel_manager_settings() -> KafkaChannelManagerSettings:
 # ── KafkaChannelManager ───────────────────────────────────────────────────────
 
 
-@Singleton(priority=-sys.maxsize, qualifier="kafka")
+@Fallback
+@Singleton(priority=BACKEND_PRIORITY, qualifier="kafka")
 class KafkaChannelManager(ChannelManager):
     """
     Kafka topic management via ``AIOKafkaAdminClient``.

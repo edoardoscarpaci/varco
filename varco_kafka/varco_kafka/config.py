@@ -52,10 +52,9 @@ Async safety:   ✅ No mutable state.
 from __future__ import annotations
 
 import enum
-import sys
 from typing import Any
 
-from providify import Provider
+from providify import Fallback, Provider
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 from varco_core.event.config import EventBusSettings
@@ -225,7 +224,8 @@ class KafkaEventBusSettings(EventBusSettings):
         return f"{self.channel_prefix}{channel}"
 
 
-@Provider(singleton=True, priority=-sys.maxsize)
+@Fallback
+@Provider(singleton=True)
 def kafka_event_bus_settings() -> KafkaEventBusSettings:
     """
     Default ``KafkaEventBusSettings`` binding, discovered by
@@ -250,8 +250,8 @@ def kafka_event_bus_settings() -> KafkaEventBusSettings:
         ❌ Settings are no longer discoverable by class decoration alone — this
            module must stay importable by the scanner (it always is).
 
-    ``priority=-sys.maxsize`` keeps this the lowest-priority binding, so any
-    application-supplied provider wins without needing an explicit priority.
+    ``@Fallback`` — the in-process default; any application-supplied
+    provider wins regardless of registration order.
 
     Returns:
         ``KafkaEventBusSettings`` populated from ``VARCO_KAFKA_*`` environment

@@ -59,11 +59,10 @@ Async safety:   ✅ Both ``produce`` and ``produce_many`` are ``async def``.
 
 from __future__ import annotations
 
-import sys
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from providify import Inject, Singleton
+from providify import Fallback, Inject, Singleton
 
 from varco_core.event.base import CHANNEL_DEFAULT, AbstractEventBus, Event
 
@@ -143,7 +142,8 @@ class AbstractEventProducer(ABC):
 # ── BusEventProducer ──────────────────────────────────────────────────────────
 
 
-@Singleton(priority=-sys.maxsize - 1)
+@Fallback
+@Singleton
 class BusEventProducer(AbstractEventProducer):
     """
     Standard ``AbstractEventProducer`` that delegates to an ``AbstractEventBus``.

@@ -735,6 +735,26 @@ container.register(PostAssembler)
 container.register(PostService)
 ```
 
+Overriding a framework default — registered *after* `container.scan(...)`, and still wins,
+because every varco default is declared `@Fallback` (see
+[technical_docs/features/dependency-injection.md](technical_docs/features/dependency-injection.md)):
+
+```python
+from providify import Singleton, DIContainer
+from varco_core.auth import AbstractAuthorizer
+
+
+@Singleton
+class MyAuthorizer(AbstractAuthorizer):
+    async def authorize(self, ctx, action, resource) -> None:
+        ...  # your real authorization logic
+
+
+container = DIContainer()
+container.scan("varco_core", recursive=True)  # registers BaseAuthorizer, a @Fallback default
+container.bind(AbstractAuthorizer, MyAuthorizer)  # wins — registered AFTER, order doesn't matter
+```
+
 ---
 
 ## Authorization
@@ -876,7 +896,7 @@ class AppAuthorizer(RoleBasedAuthorizer):
 
 ### BaseAuthorizer
 
-Permissive fallback — allows every operation. Registered at the lowest priority so any application authorizer automatically takes precedence:
+Permissive fallback — allows every operation. Declared `@Fallback`, so any application `AbstractAuthorizer` binding automatically takes precedence, regardless of registration order:
 
 ```python
 from varco_core.base_authorizer import BaseAuthorizer
@@ -3731,8 +3751,8 @@ def otel_config() -> OtelConfig:
 
 
 container = DIContainer()
-container.provide(otel_config)  # ⚠️ before install() — equal-priority
-container.install(OtelConfiguration)  #    bindings resolve first-registered
+container.provide(otel_config)  # any order — the default is @Fallback
+container.install(OtelConfiguration)
 
 tracer_provider = container.get(TracerProvider)
 ```
@@ -4454,7 +4474,7 @@ resolution.value    # True inside tenant "acme"'s ambient context, False elsewhe
 resolution.reason   # "TENANT_OVERRIDE" / "STATIC" / "DEFAULT"
 ```
 
-`NullFeatureFlags` (a scanned `@Singleton`, lowest priority) is the DI default — importing or
+`NullFeatureFlags` (a scanned `@Singleton`, declared `@Fallback`) is the DI default — importing or
 scanning `varco_core.flags` never changes behaviour for an app that has not opted in. Opt in
 explicitly:
 

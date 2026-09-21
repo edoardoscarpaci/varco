@@ -91,7 +91,8 @@ from nats import connect
 from nats.errors import TimeoutError as NatsTimeoutError
 from nats.js.api import RetentionPolicy
 from nats.js.errors import NotFoundError
-from providify import Configuration, Disposes, Inject, InjectMeta, Provider
+from providify import Configuration, Disposes, Fallback, InjectMeta, Provider
+from varco_core.di import BACKEND_PRIORITY
 from varco_core.event.base import Event
 from varco_core.event.dlq import (
     AbstractDeadLetterQueue,
@@ -758,30 +759,25 @@ class NatsDLQConfiguration:
         dlq = await container.aget(AbstractDeadLetterQueue)
     """
 
-    @Provider(singleton=True)
-    def nats_dlq_settings(self) -> NatsEventBusSettings:
-        """
-        Default ``NatsEventBusSettings`` for the DLQ.
-
-        If the bus configuration was scanned first, the container resolves the
-        already-registered ``NatsEventBusSettings`` singleton instead.
-
-        Returns:
-            ``NatsEventBusSettings`` populated from ``VARCO_NATS_*`` env vars.
-        """
-        return NatsEventBusSettings.from_env()
-
-    @Provider(singleton=True)
+    @Fallback
+    @Provider(singleton=True, priority=BACKEND_PRIORITY)
     async def nats_dlq(
         self,
-        settings: Inject[NatsEventBusSettings],
+        settings: Annotated[NatsEventBusSettings | None, InjectMeta(optional=True)] = None,
         serializer: Annotated[Serializer[Event] | None, InjectMeta(optional=True)] = None,
     ) -> AbstractDeadLetterQueue:
         """
         Create and start the ``NatsDLQ`` singleton.
 
         Args:
-            settings: ``NatsEventBusSettings`` — injected from the container.
+            settings: Optionally-injected ``NatsEventBusSettings`` — reuses
+                        the bus's own settings binding when a bus was already
+                        registered via ``scan()``/``bootstrap()``; ``None``
+                        when nothing is bound, in which case this falls back
+                        to ``NatsEventBusSettings.from_env()`` (Plan 045 —
+                        replaces a second, now-deleted ``@Provider`` of this
+                        settings type that used to tie with the bus's own
+                        under ``@Fallback``).
             serializer: Optionally-injected ``Serializer[Event]``.  Forwarded so the
                         DLQ stores dead letters in the same wire format the bus
                         publishes; ``None`` when nothing is bound, in which case
@@ -793,6 +789,7 @@ class NatsDLQConfiguration:
         Raises:
             NoServersError: (nats-py) If the configured servers are unreachable.
         """
+        settings = settings or NatsEventBusSettings.from_env()
         _logger.info(
             "NatsDLQConfiguration: starting NatsDLQ (servers=%s)",
             settings.servers,

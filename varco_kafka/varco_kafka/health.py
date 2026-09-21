@@ -33,7 +33,6 @@ Async safety:   ✅ check() is async def; all I/O uses await.
 from __future__ import annotations
 
 import asyncio
-import sys
 import time
 
 from providify import Inject, Singleton
@@ -44,7 +43,9 @@ from varco_kafka.config import KafkaEventBusSettings
 # ── KafkaHealthCheck ──────────────────────────────────────────────────────────
 
 
-@Singleton(priority=-sys.maxsize, qualifier="kafka")
+# collection contribution — never @Fallback (it would vanish from
+# get_all(HealthCheck) once an app adds its own check)
+@Singleton(qualifier="kafka")
 class KafkaHealthCheck(HealthCheck):
     """
     Liveness probe for a Kafka cluster.

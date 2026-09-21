@@ -99,24 +99,18 @@ async with session_factory() as session:
 so upgrading to a Plan-005-Phase-5 release does not silently change any
 app's runtime behaviour. `SAXactAdvisoryLock` is always separately
 injectable via `Inject[SAXactAdvisoryLock]`. To make `SAXactAdvisoryLock`
-win the `AbstractDistributedLock` binding instead (per `CLAUDE.md`'s DI
-override recipe — equal-priority bindings resolve to the first registered):
+win the `AbstractDistributedLock` binding instead: `sa_advisory_lock` is
+declared `@Fallback` (Plan 045), so any non-fallback binding you register —
+in any order, before or after `scan()`/`install()` — wins outright:
 
 ```python
-# Option A — provide() your own binding before install()/scan()
 @Provider(singleton=True)
 def my_lock(config: Inject[SAConfig]) -> AbstractDistributedLock:
     return SAXactAdvisoryLock(config.engine)
 
 
-container.provide(my_lock)  # registered FIRST — wins
+container.provide(my_lock)          # any order — wins over the default
 container.scan("varco_sa", recursive=True)
-
-
-# Option B — explicit higher priority, order-independent
-@Provider(singleton=True, priority=100)
-def my_lock(config: Inject[SAConfig]) -> AbstractDistributedLock:
-    return SAXactAdvisoryLock(config.engine)
 ```
 
 ## Why `RedisLock` is not the answer here

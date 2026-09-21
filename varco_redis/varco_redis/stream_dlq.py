@@ -123,11 +123,12 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 import redis.asyncio as aioredis
-from providify import Configuration, Disposes, Inject, Provider
+from providify import Configuration, Disposes, Fallback, InjectMeta, Provider
+from varco_core.di import BACKEND_PRIORITY
 from varco_core.event.dlq import AbstractDeadLetterQueue, DeadLetterEntry
 from varco_core.event.serializer import JsonEventSerializer
 
@@ -750,31 +751,23 @@ class RedisStreamDLQConfiguration:
         entries = await dlq.pop_batch(limit=10)
     """
 
-    @Provider(singleton=True)
-    def redis_stream_dlq_settings(self) -> RedisEventBusSettings:
-        """
-        Default ``RedisEventBusSettings`` for the Stream DLQ.
-
-        If the bus was registered via ``scan()`` / ``bootstrap()`` first, the
-        container resolves the already-registered ``RedisEventBusSettings``
-        singleton instead of this provider.
-
-        Returns:
-            ``RedisEventBusSettings`` with development-friendly defaults.
-        """
-        # Reads from VARCO_REDIS_* env vars if set.
-        return RedisEventBusSettings.from_env()
-
-    @Provider(singleton=True)
+    @Fallback
+    @Provider(singleton=True, priority=BACKEND_PRIORITY)
     async def redis_stream_dlq(
         self,
-        settings: Inject[RedisEventBusSettings],
+        settings: Annotated[RedisEventBusSettings | None, InjectMeta(optional=True)] = None,
     ) -> AbstractDeadLetterQueue:
         """
         Create, connect, and return the ``RedisStreamDLQ`` singleton.
 
         Args:
-            settings: ``RedisEventBusSettings`` — injected from the container.
+            settings: Optionally-injected ``RedisEventBusSettings`` — reuses
+                        the bus's own settings binding when a bus was already
+                        registered via ``scan()``/``bootstrap()``; ``None``
+                        when nothing is bound, in which case this falls back
+                        to ``RedisEventBusSettings.from_env()`` (Plan 045 —
+                        replaces a second, now-deleted ``@Provider`` of this
+                        settings type).
 
         Returns:
             A connected ``RedisStreamDLQ`` bound to ``AbstractDeadLetterQueue``.
@@ -782,6 +775,7 @@ class RedisStreamDLQConfiguration:
         Raises:
             ConnectionError: (redis.asyncio) If Redis is unreachable at startup.
         """
+        settings = settings or RedisEventBusSettings.from_env()
         _logger.info(
             "RedisStreamDLQConfiguration: connecting RedisStreamDLQ (url=%s).",
             settings.url,

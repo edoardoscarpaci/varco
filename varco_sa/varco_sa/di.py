@@ -54,10 +54,10 @@ Async safety:   ✅ All providers are synchronous — SQLAlchemy has no async
 
 from __future__ import annotations
 
-import sys
 from typing import TYPE_CHECKING, Any
 
-from providify import Configuration, Inject, PostConstruct, Provider
+from providify import Configuration, Fallback, Inject, PostConstruct, Provider
+from varco_core.di import BACKEND_PRIORITY
 from varco_core.lock import AbstractDistributedLock
 from varco_core.model import DomainModel
 from varco_core.providers import RepositoryProvider
@@ -173,7 +173,8 @@ class SAModule:
 
         install_rls_tenant_hook(AsyncSession, require_tenant=settings.rls_require_tenant)
 
-    @Provider(singleton=True, priority=-sys.maxsize - 1)
+    @Fallback
+    @Provider(singleton=True, priority=BACKEND_PRIORITY)
     def uow_provider(
         self,
         repo_provider: Inject[RepositoryProvider],
@@ -207,7 +208,8 @@ class SAModule:
         # IUoWProvider without wrapping.
         return repo_provider  # type: ignore[return-value]
 
-    @Provider(singleton=True)
+    @Fallback
+    @Provider(singleton=True, priority=BACKEND_PRIORITY)
     def sa_advisory_lock(self, config: Inject[SAConfig]) -> AbstractDistributedLock:
         """
         Bind ``AbstractDistributedLock`` → ``SAAdvisoryLock`` (session-level,
@@ -222,22 +224,17 @@ class SAModule:
         transaction-mode connection pooler (PgBouncer ``pool_mode=transaction``
         and equivalents) — that topology is NOT supported by this default.
 
-        **Override recipe** (per ``CLAUDE.md`` DI pitfalls table — equal-priority
-        bindings resolve to the first registered):
+        **Override recipe**: this binding is ``@Fallback`` — register your own
+        ``AbstractDistributedLock`` binding in any order, before or after
+        ``scan("varco_sa", recursive=True)``, and it wins unconditionally:
 
         ```python
-        # Option A — provide() your own binding before install()/scan()
         @Provider(singleton=True)
         def my_lock(config: Inject[SAConfig]) -> AbstractDistributedLock:
             return SAXactAdvisoryLock(config.engine)
 
-        container.provide(my_lock)          # registered FIRST — wins
+        container.provide(my_lock)          # any order — wins over the default
         container.scan("varco_sa", recursive=True)
-
-        # Option B — same priority tie-break, explicit @Provider(priority=100)
-        @Provider(singleton=True, priority=100)
-        def my_lock(config: Inject[SAConfig]) -> AbstractDistributedLock:
-            return SAXactAdvisoryLock(config.engine)
         ```
 
         ``SAXactAdvisoryLock`` itself is always resolvable directly via
@@ -256,6 +253,7 @@ class SAModule:
         """
         return SAAdvisoryLock(config.engine)
 
+    @Fallback
     @Provider(singleton=True)
     def sa_xact_advisory_lock(self, config: Inject[SAConfig]) -> SAXactAdvisoryLock:
         """
@@ -271,6 +269,22 @@ class SAModule:
         every caller having to construct it manually, and so the override
         recipe documented on ``sa_advisory_lock`` has a ready-made instance
         to delegate to.
+
+        ``@Fallback`` (Plan 045): because ``SAXactAdvisoryLock`` is a
+        concrete subclass of ``AbstractDistributedLock``, providify's
+        ``issubclass``-based interface matching (``_binding_serves``) makes
+        this binding an ACCIDENTAL candidate for a bare, unqualified
+        ``Inject[AbstractDistributedLock]`` request too — not just for its
+        own concrete type. Without ``@Fallback`` here, this binding (a plain
+        non-fallback at priority 0) would win that request over
+        ``sa_advisory_lock`` above (a ``@Fallback`` at ``BACKEND_PRIORITY``)
+        the moment ``sa_advisory_lock`` became a fallback, silently reversing
+        the "kept as ``SAAdvisoryLock`` so upgrading does not change
+        behaviour" guarantee. Both are fallbacks now, so ``sa_advisory_lock``
+        still wins the unqualified `AbstractDistributedLock` request by
+        priority (``BACKEND_PRIORITY`` beats the bare default); an
+        `Inject[SAXactAdvisoryLock]` request is unaffected — this binding is
+        its only candidate either way.
 
         Args:
             config: ``SAConfig`` singleton — supplies the ``AsyncEngine`` used

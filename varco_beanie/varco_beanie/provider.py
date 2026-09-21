@@ -6,10 +6,10 @@ Concrete ``RepositoryProvider`` for Beanie (Motor / MongoDB).
 
 from __future__ import annotations
 
-import sys
 from typing import Any, TypeVar
 
-from providify import Inject, PostConstruct, Singleton
+from providify import Fallback, Inject, PostConstruct, Singleton
+from varco_core.di import BACKEND_PRIORITY
 from varco_core.model import DomainModel
 from varco_core.providers import RepositoryProvider
 from varco_core.repository import AsyncRepository
@@ -20,7 +20,8 @@ from varco_beanie.factory import BeanieDocRegistry, BeanieModelFactory
 D = TypeVar("D", bound=DomainModel)
 
 
-@Singleton(priority=-sys.maxsize, qualifier="beanie")
+@Fallback
+@Singleton(priority=BACKEND_PRIORITY, qualifier="beanie")
 class BeanieRepositoryProvider(RepositoryProvider):
     """
     ``RepositoryProvider`` backed by Beanie (Motor / MongoDB).

@@ -167,10 +167,26 @@ class TestPopBatchAndAck:
 
 
 class TestNatsDLQConfiguration:
-    def test_settings_provider_returns_settings(self) -> None:
-        # The sync provider is testable without a container.
-        settings = NatsDLQConfiguration().nats_dlq_settings()
-        assert isinstance(settings, NatsEventBusSettings)
+    async def test_provides_abstract_dead_letter_queue_with_no_settings_bound(
+        self, fake_nc: FakeNatsClient
+    ) -> None:
+        # Plan 045 / E1: the standalone-install path (no bus settings bound)
+        # falls back to NatsEventBusSettings.from_env() inside nats_dlq()
+        # itself — the deleted `nats_dlq_settings` duplicate provider is no
+        # longer needed to make `ainstall(NatsDLQConfiguration)` on a bare
+        # container work.
+        from providify import DIContainer
+        from varco_core.event.dlq import AbstractDeadLetterQueue
+
+        with patch("varco_nats.dlq.connect", return_value=fake_nc):
+            container = DIContainer()
+            await container.ainstall(NatsDLQConfiguration)
+            dlq = await container.aget(AbstractDeadLetterQueue)
+
+            assert isinstance(dlq, NatsDLQ)
+            assert isinstance(dlq._settings, NatsEventBusSettings)
+
+            await container.ashutdown()
 
 
 # ── repr ──────────────────────────────────────────────────────────────────────

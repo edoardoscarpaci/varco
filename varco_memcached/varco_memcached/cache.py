@@ -54,14 +54,14 @@ from __future__ import annotations
 
 import logging
 import math
-import sys
 from typing import Any
 
 import aiomcache
-from providify import Configuration, Disposes, Inject, PreDestroy, Provider
+from providify import Configuration, Disposes, Fallback, Inject, PreDestroy, Provider
 from pydantic_settings import SettingsConfigDict
 from varco_core.cache.base import CacheBackend, InvalidationStrategy
 from varco_core.cache.config import CacheSettings
+from varco_core.di import BACKEND_PRIORITY
 from varco_core.serialization import JsonSerializer, Serializer
 
 _logger = logging.getLogger(__name__)
@@ -620,8 +620,8 @@ class MemcachedCacheConfiguration:
     Overriding settings::
 
         # @Provider-decorated module-level function — provide() rejects bare
-        # lambdas and takes no second "interface" argument.  Register it
-        # BEFORE ainstall(): equal-priority bindings resolve first-registered.
+        # lambdas and takes no second "interface" argument. Registered in
+        # any order — the default is @Fallback (Plan 045).
         @Provider(singleton=True)
         def memcached_cache_settings() -> MemcachedCacheSettings:
             return MemcachedCacheSettings(
@@ -633,7 +633,8 @@ class MemcachedCacheConfiguration:
         await container.ainstall(MemcachedCacheConfiguration)
     """
 
-    @Provider(singleton=True, priority=-sys.maxsize - 1)
+    @Fallback
+    @Provider(singleton=True)
     def memcached_cache_settings(self) -> MemcachedCacheSettings:
         """
         Default ``MemcachedCacheSettings`` pointing at ``localhost:11211``.
@@ -644,7 +645,8 @@ class MemcachedCacheConfiguration:
         # Reads from VARCO_MEMCACHED_CACHE_* env vars if set.
         return MemcachedCacheSettings.from_env()
 
-    @Provider(singleton=True, priority=-sys.maxsize - 1)
+    @Fallback
+    @Provider(singleton=True, priority=BACKEND_PRIORITY)
     async def memcached_cache(
         self,
         settings: Inject[MemcachedCacheSettings],

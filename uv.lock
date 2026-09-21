@@ -2051,11 +2051,11 @@ wheels = [
 
 [[package]]
 name = "providify"
-version = "2.0.1"
+version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e5/16/e0e6e98838e07ee1ca6dc40de0bc4a448530e92bf39350e21e0620918b20/providify-2.0.1.tar.gz", hash = "sha256:552f3166b227d6c6655d389441e225a014bd3d67734ede469c43cc230e425dc4", size = 703460, upload-time = "2026-09-01T21:51:27.873Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/12/8e/87bff520dc11a69408cca60bee913609e2a03e1d46933c97019626a07070/providify-2.1.0.tar.gz", hash = "sha256:46077545e9aa29460249e5470b0b0f702d560410824bb94c86e888b6fb393a8e", size = 849259, upload-time = "2026-09-13T17:30:42.735Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b0/5d/7907977f54f4a3eff81fae5fe071b72740167b0ae1d43b2889cd522a6345/providify-2.0.1-py3-none-any.whl", hash = "sha256:aa9aeff7481956c052fb0be4385d44c764ce716b43f4af038f0081fded3c6a99", size = 242830, upload-time = "2026-09-01T21:51:26.356Z" },
+    { url = "https://files.pythonhosted.org/packages/de/56/3668e8120a1b07d6b44a351f6b9788bf652bbd39f8119417e79f3e464c76/providify-2.1.0-py3-none-any.whl", hash = "sha256:4d386f1d9e29823cdc79dc475c9e27b4e17b910a4365b284a4e6788124b7787c", size = 285563, upload-time = "2026-09-13T17:30:41.221Z" },
 ]
 
 [[package]]
@@ -2839,7 +2839,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "beanie", specifier = ">=2.0" },
-    { name = "providify", specifier = ">=2.0.1" },
+    { name = "providify", specifier = ">=2.1.0" },
     { name = "pymongo", specifier = ">=4.11" },
     { name = "varco-core", editable = "varco_core" },
 ]
@@ -2894,7 +2894,7 @@ requires-dist = [
     { name = "casbin", specifier = ">=1.36" },
     { name = "casbin-async-sqlalchemy-adapter", marker = "extra == 'sqlalchemy'", specifier = ">=1.4" },
     { name = "motor", marker = "extra == 'beanie'", specifier = ">=3.0" },
-    { name = "providify", specifier = ">=2.0.1" },
+    { name = "providify", specifier = ">=2.1.0" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'sqlalchemy'", specifier = ">=2.0" },
     { name = "varco-core", editable = "varco_core" },
@@ -2954,7 +2954,7 @@ requires-dist = [
     { name = "opentelemetry-api", specifier = ">=1.20" },
     { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.20" },
     { name = "opentelemetry-sdk", specifier = ">=1.20" },
-    { name = "providify", specifier = ">=2.0.1" },
+    { name = "providify", specifier = ">=2.1.0" },
     { name = "psutil", specifier = ">=5.9" },
     { name = "pydantic", specifier = ">=2.12.5,<3.0.0" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
@@ -3054,7 +3054,7 @@ requires-dist = [
     { name = "opentelemetry-exporter-prometheus", marker = "extra == 'prometheus'", specifier = ">=0.43b0" },
     { name = "opentelemetry-instrumentation-fastapi", marker = "extra == 'otel'", specifier = ">=0.42b0" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.20" },
-    { name = "providify", specifier = ">=2.0.1" },
+    { name = "providify", specifier = ">=2.1.0" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "python-multipart", specifier = ">=0.0.31" },
     { name = "pyyaml", marker = "extra == 'openapi'", specifier = ">=6.0" },
@@ -3099,7 +3099,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiokafka", specifier = ">=0.11" },
-    { name = "providify", specifier = ">=2.0.1" },
+    { name = "providify", specifier = ">=2.1.0" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "varco-core", editable = "varco_core" },
 ]
@@ -3132,7 +3132,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiomcache", specifier = ">=0.8" },
-    { name = "providify", specifier = ">=2.0.1" },
+    { name = "providify", specifier = ">=2.1.0" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "varco-core", editable = "varco_core" },
 ]
@@ -3165,7 +3165,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "nats-py", specifier = ">=2.7" },
-    { name = "providify", specifier = ">=2.0.1" },
+    { name = "providify", specifier = ">=2.1.0" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "varco-core", editable = "varco_core" },
 ]
@@ -3197,7 +3197,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "providify", specifier = ">=2.0.1" },
+    { name = "providify", specifier = ">=2.1.0" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "redis", specifier = ">=5.0" },
     { name = "varco-core", editable = "varco_core" },
@@ -3243,7 +3243,7 @@ dev = [
 requires-dist = [
     { name = "alembic", marker = "extra == 'migrations'", specifier = ">=1.13" },
     { name = "asyncpg", marker = "extra == 'postgresql'", specifier = ">=0.29" },
-    { name = "providify", specifier = ">=2.0.1" },
+    { name = "providify", specifier = ">=2.1.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "varco-core", editable = "varco_core" },
 ]
@@ -3282,7 +3282,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "providify", specifier = ">=2.0.1" },
+    { name = "providify", specifier = ">=2.1.0" },
     { name = "varco-core", editable = "varco_core" },
 ]
 

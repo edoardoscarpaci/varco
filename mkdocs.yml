@@ -135,6 +135,7 @@ nav:
       - i18n & Localization: features/i18n-and-localization.md
       - Timezone Handling: features/timezone-handling.md
       - Feature Flags: features/feature-flags.md
+      - Dependency Injection: features/dependency-injection.md
   - Guides:
       - "Calling another service — client_for": guides/client.md
       - "Typed client code generation": guides/client-code-generation.md

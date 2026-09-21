@@ -64,7 +64,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import Annotated, Any
 
@@ -73,7 +72,8 @@ from typing import Annotated, Any
 # to reach into the aiokafka namespace directly.
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
 from aiokafka.structs import OffsetAndMetadata
-from providify import Inject, InjectMeta, Instance, PostConstruct, PreDestroy, Singleton
+from providify import Fallback, Inject, InjectMeta, Instance, PostConstruct, PreDestroy, Singleton
+from varco_core.di import BACKEND_PRIORITY
 from varco_core.event.base import (
     CHANNEL_ALL,
     CHANNEL_DEFAULT,
@@ -92,7 +92,8 @@ from varco_kafka.config import KafkaDeliverySemantics, KafkaEventBusSettings
 _logger = logging.getLogger(__name__)
 
 
-@Singleton(priority=-sys.maxsize, qualifier="kafka")
+@Fallback
+@Singleton(priority=BACKEND_PRIORITY, qualifier="kafka")
 class KafkaEventBus(AbstractEventBus):
     """
     ``AbstractEventBus`` backed by Apache Kafka via ``aiokafka``.

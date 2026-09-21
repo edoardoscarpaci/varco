@@ -63,15 +63,15 @@ Async safety:   ✅  All public methods are ``async def``.
 from __future__ import annotations
 
 import logging
-import sys
 from typing import Any
 
 from nats import connect
 from nats.js.errors import NotFoundError
-from providify import Inject, PostConstruct, PreDestroy, Provider, Singleton
+from providify import Fallback, Inject, PostConstruct, PreDestroy, Provider, Singleton
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 from varco_core.config import VarcoSettings
+from varco_core.di import BACKEND_PRIORITY
 from varco_core.event.base import ChannelConfig
 from varco_core.event.channel import ChannelManager
 
@@ -164,7 +164,8 @@ class NatsChannelManagerSettings(VarcoSettings):
         return subject.removeprefix(f"{self.subject_prefix}.").removeprefix(self.channel_prefix)
 
 
-@Provider(singleton=True, priority=-sys.maxsize)
+@Fallback
+@Provider(singleton=True)
 def nats_channel_manager_settings() -> NatsChannelManagerSettings:
     """
     Default ``NatsChannelManagerSettings`` binding, discovered by
@@ -182,8 +183,8 @@ def nats_channel_manager_settings() -> NatsChannelManagerSettings:
         ❌ Settings are no longer discoverable by class decoration alone — this
            module must stay importable by the scanner (it always is).
 
-    ``priority=-sys.maxsize`` keeps this the lowest-priority binding, so any
-    application-supplied provider wins without needing an explicit priority.
+    ``@Fallback`` — the in-process default; any application-supplied
+    provider wins regardless of registration order.
 
     Returns:
         ``NatsChannelManagerSettings`` populated from ``VARCO_NATS_ADMIN_*``
@@ -195,7 +196,8 @@ def nats_channel_manager_settings() -> NatsChannelManagerSettings:
 # ── NatsStreamManager ─────────────────────────────────────────────────────────
 
 
-@Singleton(priority=-sys.maxsize, qualifier="nats")
+@Fallback
+@Singleton(priority=BACKEND_PRIORITY, qualifier="nats")
 class NatsStreamManager(ChannelManager):
     """
     JetStream stream administration via the nats-py JetStream management API.

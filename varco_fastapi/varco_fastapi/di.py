@@ -13,7 +13,9 @@ modules (SA, Redis, etc.) at application bootstrap::
     container.install(VarcoFastAPIModule)
     bind_clients(container, OrderClient, UserClient)  # ⚠️ currently broken — see bind_clients() docstring
 
-Registered defaults (all overrideable via ``container.bind()``):
+Registered defaults (all ``@Fallback`` — any application binding of the same
+interface wins regardless of registration order,
+`technical_docs/features/dependency-injection.md`):
 
     AbstractJobStore   → InMemoryJobStore
     AbstractJobRunner  → JobRunner(store)
@@ -22,19 +24,17 @@ Registered defaults (all overrideable via ``container.bind()``):
     CORSConfig         → CORSConfig.from_env()
     ClientProfile      → ClientProfile.from_env()
     TaskRegistry       → TaskRegistry() (singleton)
+    TaskSerializer     → DefaultTaskSerializer (singleton)
 
-``setup_varco_defaults(container)`` — call once after ``container.install(VarcoFastAPIModule)``
-to register singleton default implementations for framework ABCs::
+``setup_varco_defaults()`` / ``bootstrap(setup_defaults=)`` were removed in
+Plan 045 — ``TaskSerializer`` is now registered directly by
+``VarcoFastAPIModule.task_serializer`` (a ``@Fallback @Provider``, the same
+shape as every other default above), scanned automatically by
+``container.scan("varco_fastapi", recursive=True)`` / ``bootstrap()``.
 
-    container.install(VarcoFastAPIModule)
-    setup_varco_defaults(container)   # binds TaskSerializer → DefaultTaskSerializer
+Override in any order::
 
-Defaults registered by ``setup_varco_defaults``:
-    TaskSerializer → DefaultTaskSerializer (@Singleton, priority=-sys.maxsize-1)
-
-Override before or after calling ``setup_varco_defaults``::
-
-    container.bind(TaskSerializer, MySerializer)  # overrides default
+    container.bind(TaskSerializer, MySerializer)  # overrides the default
 
 ``bind_clients()`` mirrors ``bind_repositories()`` from ``varco_sa.di`` — both go
 through ``container.provide(Provider(...)(factory), returns=...)``, whose
@@ -54,10 +54,9 @@ Async safety:   ✅ No I/O during registration; providers are called lazily.
 
 from __future__ import annotations
 
-import sys
 from typing import Any
 
-from providify import Configuration, Provider, Singleton
+from providify import Configuration, Fallback, Provider
 
 # ── Plan 011 — i18n / timezone default bindings ─────────────────────────
 from varco_core.context.defaults import NullTenantDefaults, TenantDefaultsProvider
@@ -86,23 +85,8 @@ from varco_core.tz.settings import TimezoneSettings
 # type hint".
 from varco_fastapi.auth.trust_store import TrustStore
 from varco_fastapi.client.base import ClientProfile
-from varco_fastapi.context import (
-    JwtContext,
-    RequestContext,
-    get_jwt_context,
-    get_request_context,
-)
 from varco_fastapi.middleware.cors import CORSConfig
 from varco_fastapi.middleware.profiling import ProfilingSettings
-
-# ── Singleton stamps for varco_core classes (no providify dep there) ──────────
-# varco_core must stay providify-free — apply scope decorators here, once, at
-# module import time.  Idempotent: stamping an already-decorated class is harmless.
-#
-# priority = -sys.maxsize - 1  →  lowest possible, so any user-supplied binding
-# for these types wins automatically (user priority > default).
-Singleton(priority=-sys.maxsize - 1)(DefaultTaskSerializer)
-Singleton(priority=-sys.maxsize - 1)(TaskRegistry)
 
 
 def bind_clients(container: Any, *client_classes: type) -> None:
@@ -270,14 +254,18 @@ class VarcoFastAPIModule:
         - ``JwtTransformSettings``     — from ``VARCO_JWT_TRANSFORM_*`` env vars
         - ``ClaimTransformerRegistry`` — from ``JwtTransformConfig.from_env()``
         - ``TaskRegistry``             — shared singleton across all routers
-        - ``RequestContext``           — per-request ContextVar (non-singleton)
-        - ``JwtContext``               — per-request JWT ContextVar (non-singleton)
+
+    ``RequestContext``/``JwtContext`` are registered by
+    ``varco_fastapi.context``'s own module-level ``@Provider`` functions
+    (``get_request_context``/``get_jwt_context``), not by this class — see
+    that module for the per-request ContextVar bindings.
 
     Thread safety:  ✅ Module instance is created once at install() time.
     Async safety:   ✅ All providers are synchronous.
     """
 
-    @Provider(singleton=True, priority=-sys.maxsize - 1)
+    @Fallback
+    @Provider(singleton=True)
     def trust_store(self) -> TrustStore:
         """
         TLS trust store loaded from env vars (``VARCO_TRUST_STORE_DIR``, etc.).
@@ -287,7 +275,8 @@ class VarcoFastAPIModule:
         """
         return TrustStore.from_env()
 
-    @Provider(singleton=True, priority=-sys.maxsize - 1)
+    @Fallback
+    @Provider(singleton=True)
     def cors_config(self) -> CORSConfig:
         """
         CORS configuration from ``VARCO_CORS_ORIGINS`` env var. An unset
@@ -298,7 +287,8 @@ class VarcoFastAPIModule:
         """
         return CORSConfig.from_env()
 
-    @Provider(singleton=True, priority=-sys.maxsize - 1)
+    @Fallback
+    @Provider(singleton=True)
     def client_profile(self) -> ClientProfile:
         """
         Default HTTP client profile from ``VARCO_CLIENT_TIMEOUT`` env vars.
@@ -308,7 +298,8 @@ class VarcoFastAPIModule:
         """
         return ClientProfile.from_env()
 
-    @Provider(singleton=True, priority=-sys.maxsize - 1)
+    @Fallback
+    @Provider(singleton=True)
     def profiling_settings(self) -> ProfilingSettings:
         """
         Diagnostic profiler settings loaded from ``VARCO_PROFILER_*`` env vars.
@@ -331,7 +322,8 @@ class VarcoFastAPIModule:
         """
         return ProfilingSettings()
 
-    @Provider(singleton=True, priority=-sys.maxsize - 1)
+    @Fallback
+    @Provider(singleton=True)
     def jwt_transform_settings(self) -> JwtTransformSettings:
         """
         Flat ``VARCO_JWT_TRANSFORM_*`` claim-transform settings, loaded from
@@ -347,7 +339,8 @@ class VarcoFastAPIModule:
         """
         return JwtTransformSettings.from_env()
 
-    @Provider(singleton=True, priority=-sys.maxsize - 1)
+    @Fallback
+    @Provider(singleton=True)
     def claim_transformer_registry(self) -> ClaimTransformerRegistry:
         """
         The fully parsed claim-transformer registry (global mapping + every
@@ -368,7 +361,8 @@ class VarcoFastAPIModule:
         """
         return JwtTransformConfig.from_env().to_registry()
 
-    @Provider(singleton=True, priority=-sys.maxsize - 1)
+    @Fallback
+    @Provider(singleton=True)
     def task_registry(self) -> TaskRegistry:
         """
         Shared ``TaskRegistry`` singleton used by all ``VarcoCRUDRouter`` instances.
@@ -381,7 +375,8 @@ class VarcoFastAPIModule:
         """
         return TaskRegistry()
 
-    @Provider(singleton=True, priority=-sys.maxsize - 1)
+    @Fallback
+    @Provider(singleton=True)
     def i18n_settings(self) -> I18nSettings:
         """
         ``I18nSettings`` from ``VARCO_I18N_*`` env vars — off by default
@@ -392,12 +387,14 @@ class VarcoFastAPIModule:
         """
         return I18nSettings()
 
-    @Provider(singleton=True, priority=-sys.maxsize - 1)
+    @Fallback
+    @Provider(singleton=True)
     def timezone_settings(self) -> TimezoneSettings:
         """``TimezoneSettings`` from ``VARCO_TZ_*`` env vars — off by default."""
         return TimezoneSettings()
 
-    @Provider(singleton=True, priority=-sys.maxsize - 1)
+    @Fallback
+    @Provider(singleton=True)
     def message_catalog(self) -> MessageCatalog:
         """
         Framework-default ``MessageCatalog`` binding — ``NullMessageCatalog``
@@ -407,7 +404,8 @@ class VarcoFastAPIModule:
         """
         return NullMessageCatalog()
 
-    @Provider(singleton=True, priority=-sys.maxsize - 1)
+    @Fallback
+    @Provider(singleton=True)
     def tenant_defaults_provider(self) -> TenantDefaultsProvider:
         """
         Framework-default ``TenantDefaultsProvider`` binding —
@@ -415,31 +413,36 @@ class VarcoFastAPIModule:
         """
         return NullTenantDefaults()
 
-    @Provider(priority=-sys.maxsize - 1)
-    def request_context(self) -> RequestContext:
-        """
-        Current request context — auth, request ID, raw token.
+    # Plan 045 / §D-validate: `request_context`/`jwt_context` @Provider
+    # methods that used to live here are REMOVED — they were byte-identical
+    # duplicates of `varco_fastapi.context.get_request_context`/
+    # `get_jwt_context` (both `@Provider`-decorated module-level functions,
+    # discovered by the same `container.scan("varco_fastapi", recursive=True)`
+    # call). Under the pre-045 floor-priority model this duplication was
+    # invisible: this class's copies were registered at the old negative-
+    # ceiling priority floor and always lost silently to the bare
+    # (priority 0) `context.py` originals. Marking both `@Fallback` made the
+    # duplication visible for the first time, as a genuine
+    # `FALLBACK_SHADOWED` INFO — one varco default shadowing another varco
+    # default at equal (fallback) tier, the exact defect §D-validate's
+    # `report.infos == ()` assertion exists to catch. Deleting the dead
+    # copies here (rather than allowlisting the INFO) is the correct fix:
+    # `context.py`'s originals already fully cover both bindings.
 
-        Non-singleton: ``RequestContext`` is per-request state stored in a
-        ``ContextVar``.  The container wraps it in ``Live[RequestContext]`` so
-        singletons always receive the current request's values.
+    @Fallback
+    @Provider(singleton=True)
+    def task_serializer(self) -> TaskSerializer:
+        """
+        Framework-default ``TaskSerializer`` — ``DefaultTaskSerializer``
+        (Plan 045: replaces the removed ``setup_varco_defaults()`` helper,
+        which used to bind this via an imperative ``container.bind()`` call
+        the caller had to remember to make). ``@Fallback`` — any application
+        binding of ``TaskSerializer`` wins regardless of registration order.
 
         Returns:
-            The ``RequestContext`` for the current asyncio task.
+            A ``DefaultTaskSerializer`` instance.
         """
-        return get_request_context()
-
-    @Provider(priority=-sys.maxsize - 1)
-    def jwt_context(self) -> JwtContext:
-        """
-        Parsed JWT payload for the current request.
-
-        Non-singleton for the same reason as ``request_context`` above.
-
-        Returns:
-            The ``JwtContext`` for the current asyncio task.
-        """
-        return get_jwt_context()
+        return DefaultTaskSerializer()
 
 
 def create_varco_container(*packages: str) -> Any:
@@ -506,45 +509,6 @@ def create_varco_container(*packages: str) -> Any:
     return container
 
 
-def setup_varco_defaults(container: Any) -> None:
-    """
-    Bind framework ABC defaults into the DI container.
-
-    Call once after ``container.install(VarcoFastAPIModule)`` to register
-    default implementations for framework ABCs that use ``@Singleton`` /
-    ``@Component`` scope on the class rather than a ``@Provider`` factory.
-
-    Registered bindings:
-        ``TaskSerializer`` → ``DefaultTaskSerializer`` (@Singleton, lowest priority)
-
-    Override before or after calling this function::
-
-        setup_varco_defaults(container)
-        container.bind(TaskSerializer, MyCustomSerializer)  # wins — higher priority
-
-    Args:
-        container: The ``DIContainer`` to register defaults into.
-                   Must have ``VarcoFastAPIModule`` already installed.
-
-    Edge cases:
-        - Calling twice is safe — ``ClassBinding`` for the same interface is
-          appended, and the container picks the highest-priority match.
-        - If ``VarcoFastAPIModule`` was not installed (providify absent), this
-          function is a no-op — the absence of a binding is handled gracefully
-          by ``VarcoCRUDRouter._task_serializer.is_resolvable()`` falling back
-          to ``DEFAULT_SERIALIZER``.
-
-    Thread safety:  ✅ Registration is expected at bootstrap (single-threaded).
-    Async safety:   ✅ No I/O during registration.
-    """
-    # DefaultTaskSerializer is @Singleton (stamped at module level above).
-    # TaskSerializer and DefaultTaskSerializer are imported at module level, but
-    # we re-use the module-level names here — no local import needed.
-    # container.bind() respects class-level scope metadata — no singleton=True
-    # needed on the @Provider side because scope lives on the class itself.
-    container.bind(TaskSerializer, DefaultTaskSerializer)
-
-
 def setup_event_producer(container: Any) -> None:
     """
     Bind ``BusEventProducer`` as the default ``AbstractEventProducer`` implementation.
@@ -574,7 +538,6 @@ def setup_event_producer(container: Any) -> None:
            (``BusEventProducer`` holds a reference to ``AbstractEventBus``).
            A helper called explicitly after bus install enforces this order.
         ✅ Apps that do not use events skip this call entirely — zero overhead.
-        ✅ Mirrors the ``setup_varco_defaults`` pattern — consistent API.
         ❌ One extra bootstrap call — small ergonomic cost, large safety gain.
 
     Args:
@@ -606,13 +569,8 @@ def setup_event_producer(container: Any) -> None:
     # AbstractEventProducer, BusEventProducer, AbstractEventBus, Provider, Singleton
     # are all imported at module level — no local imports needed here.
 
-    # Apply @Singleton to BusEventProducer so DI creates a single shared
-    # producer for all services.  BusEventProducer is stateless once
-    # constructed (it just delegates to the bus) — safe to share.
-    #
-    # priority = -sys.maxsize - 1 → lowest possible, so any user-supplied
-    # AbstractEventProducer binding wins automatically.
-    Singleton(priority=-sys.maxsize - 1)(BusEventProducer)
+    # BusEventProducer is already declared `@Fallback @Singleton` at its own
+    # definition (varco_core.event.producer) — no re-stamp needed here.
 
     # Register a @Provider that injects AbstractEventBus into BusEventProducer.
     # Named function (not lambda) for clean describe() output in the container.
@@ -629,7 +587,6 @@ __all__ = [
     "bind_clients",
     "bootstrap",
     "create_varco_container",
-    "setup_varco_defaults",
     "setup_event_producer",
     # MCP / Skill adapter DI helpers — re-exported from their modules for
     # one-stop import: from varco_fastapi.di import bind_mcp_adapter
@@ -644,7 +601,6 @@ __all__ = [
 def bootstrap(
     container: Any = None,
     *packages: str,
-    setup_defaults: bool = True,
     setup_producer: bool = False,
 ) -> Any:
     """
@@ -653,7 +609,11 @@ def bootstrap(
     Installs :data:`VarcoFastAPIModule`, calls
     ``container.scan("varco_fastapi", recursive=True)`` plus any
     additional ``packages``, and optionally runs
-    :func:`setup_varco_defaults` and :func:`setup_event_producer`.
+    :func:`setup_event_producer`. Every framework default — including
+    ``TaskSerializer → DefaultTaskSerializer`` — is registered by the scan
+    itself (each is a ``@Fallback``-marked binding on ``VarcoFastAPIModule``
+    or a scanned ``@Singleton`` class); there is no longer a separate
+    "setup defaults" step to opt into or skip.
 
     This is a convenience wrapper around :func:`create_varco_container`
     that also installs the FastAPI module — the minimum required setup
@@ -680,9 +640,6 @@ def bootstrap(
         *packages:       Additional package names to scan after
                          ``"varco_fastapi"`` — typically your application
                          package (e.g. ``"myapp"``).
-        setup_defaults:  When ``True`` (default), calls
-                         :func:`setup_varco_defaults` to bind
-                         ``TaskSerializer → DefaultTaskSerializer``.
         setup_producer:  When ``True``, calls :func:`setup_event_producer`
                          to bind ``AbstractEventProducer → BusEventProducer``.
                          Only meaningful after a bus module is installed.
@@ -719,9 +676,6 @@ def bootstrap(
     all_packages = ("varco_fastapi", *packages)
     for pkg in all_packages:
         container.scan(pkg, recursive=True)
-
-    if setup_defaults:
-        setup_varco_defaults(container)
 
     if setup_producer:
         setup_event_producer(container)
