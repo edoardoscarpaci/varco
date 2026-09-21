@@ -33,8 +33,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from providify import Provider
-
+from varco_core.di import bind_instance
 from varco_core.retention.policy import RetentionRegistry
 
 if TYPE_CHECKING:
@@ -42,24 +41,8 @@ if TYPE_CHECKING:
 
 __all__ = ["bind_retention_registry"]
 
-# providify's `container.provide()` APPENDS a binding rather than replacing
-# one for the same interface (verified against `container.py:1091`,
-# `_get_best_candidate`'s `max(candidates, key=priority)` at
-# `container.py:2354-2382` — ties resolve to the FIRST-registered binding,
-# not the last). `DIContainer.override()` only replaces `ClassBinding`
-# entries, not `ProviderBinding` (`container.py:6438-6465`), so it cannot
-# express "replace an already-constructed-object binding". A strictly
-# increasing `priority=` on each call is the documented mechanism
-# `_get_best_candidate` actually honours, and is the only way
-# "calling bind_retention_registry twice replaces the binding"
-# (test_retention_di.py) can hold without reaching into
-# `container._bindings` — see `bind_trust_store`'s identical
-# already-constructed-object model, which does not need this because it is
-# never called twice for one container in practice.
-_bind_call_count = 0
 
-
-def bind_retention_registry(container: DIContainer, registry: RetentionRegistry) -> None:
+def bind_retention_registry(container: DIContainer, registry: RetentionRegistry) -> DIContainer:
     """
     Register an already-constructed ``RetentionRegistry`` as a DI singleton.
 
@@ -71,14 +54,17 @@ def bind_retention_registry(container: DIContainer, registry: RetentionRegistry)
             ``varco_fastapi.retention.RetentionLifecycle``).
 
     Returns:
-        ``None`` — the binding is registered as a side effect on
-        ``container``.
+        The same ``container`` passed in (Plan 046 §D-bind — this is now a
+        one-liner over ``varco_core.di.bind_instance()``; the previous
+        ``_bind_call_count`` priority-escalation hack is gone).
+
+    Raises:
+        AlreadyBoundError: A non-fallback ``RetentionRegistry`` binding
+            already exists — use providify's ``di_overrides``/
+            ``ContainerOverrides`` in a test to replace it.
 
     Edge cases:
-        - Calling this twice on the same container replaces the binding
-          (the second ``registry`` wins) — ``providify``'s own
-          ``Provider(singleton=True)`` semantics, not special-cased here.
-        - Never touches ``DIContainer.current()`` — this binds into the
+        - Never reaches for the process-global container — this binds into the
           ``container`` argument only.
 
     Example::
@@ -89,14 +75,5 @@ def bind_retention_registry(container: DIContainer, registry: RetentionRegistry)
         # elsewhere, DI-resolved:
         resolved = container.get(RetentionRegistry)
     """
-
-    global _bind_call_count
-    _bind_call_count += 1
-    priority = _bind_call_count
-
-    def _registry_factory() -> RetentionRegistry:
-        return registry
-
-    container.provide(
-        Provider(singleton=True, priority=priority)(_registry_factory), returns=RetentionRegistry
-    )
+    bind_instance(container, RetentionRegistry, registry)
+    return container

@@ -26,12 +26,15 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 from providify import Provider
 
 from varco_core.flags.base import AbstractFeatureFlags
 from varco_core.flags.memory import InMemoryFeatureFlags
+
+if TYPE_CHECKING:
+    from providify import DIContainer
 
 __all__ = ["enable_feature_flags"]
 
@@ -55,7 +58,7 @@ def _provide_in_memory_feature_flags() -> AbstractFeatureFlags:
     return InMemoryFeatureFlags()
 
 
-def enable_feature_flags(container: Any) -> Any:
+def enable_feature_flags(container: DIContainer) -> DIContainer:
     """
     Opt in to ``InMemoryFeatureFlags`` as the application's
     ``AbstractFeatureFlags``, shadowing the always-off ``NullFeatureFlags``
@@ -68,6 +71,11 @@ def enable_feature_flags(container: Any) -> Any:
     Returns:
         The same container, for chaining.
 
+    Raises:
+        AlreadyBoundError: A non-fallback ``AbstractFeatureFlags`` binding
+            already exists — either the application's own, or a previous
+            call to this function (§D-enable).
+
     Edge cases:
         - Calling before scanning is safe — ``container.provide`` does not
           require the scan to have happened first, but ``NullFeatureFlags``
@@ -79,5 +87,13 @@ def enable_feature_flags(container: Any) -> Any:
         container.scan("varco_core.flags", recursive=True)
         enable_feature_flags(container)
     """
+    from varco_core.di import AlreadyBoundError, is_user_bound  # noqa: PLC0415
+
+    if is_user_bound(container, AbstractFeatureFlags):
+        raise AlreadyBoundError(
+            "A non-fallback AbstractFeatureFlags binding already exists — "
+            "enable_feature_flags() shadows the @Fallback NullFeatureFlags default "
+            "and cannot register a second competing binding."
+        )
     container.provide(_provide_in_memory_feature_flags)
     return container

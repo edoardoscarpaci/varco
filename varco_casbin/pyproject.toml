@@ -67,6 +67,7 @@ packages = ["varco_casbin"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths    = ["tests"]
+pythonpath   = ["../testkit"]
 markers      = [
     "integration: real database required (disabled by default — use -m integration)",
 ]

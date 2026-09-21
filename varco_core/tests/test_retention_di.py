@@ -45,18 +45,29 @@ class TestBindRetentionRegistry:
         tasks_after = {t for t in asyncio.all_tasks() if not t.done()}
         assert tasks_after == tasks_before
 
-    def test_calling_twice_replaces_the_binding(self) -> None:
+    def test_calling_twice_raises(self) -> None:
+        # Plan 046 §D-bind — the old "priority escalation replaces the
+        # binding" hack is gone; a second call now raises AlreadyBoundError.
+        # Use providify's di_overrides/ContainerOverrides in a test instead.
+        import pytest
+        from varco_core.di import AlreadyBoundError  # noqa: PLC0415
         from varco_core.retention.di import bind_retention_registry  # noqa: PLC0415
-        from varco_core.retention.policy import RetentionRegistry  # noqa: PLC0415
 
         container = DIContainer()
         first = _registry()
         second = _registry()
         bind_retention_registry(container, first)
-        bind_retention_registry(container, second)
 
-        resolved = container.get(RetentionRegistry)
-        assert resolved is second
+        with pytest.raises(AlreadyBoundError):
+            bind_retention_registry(container, second)
+
+    def test_bind_retention_registry_returns_the_container(self) -> None:
+        from varco_core.retention.di import bind_retention_registry  # noqa: PLC0415
+
+        container = DIContainer()
+        result = bind_retention_registry(container, _registry())
+
+        assert result is container
 
     def test_never_touches_di_container_current(self) -> None:
         from varco_core.retention.di import bind_retention_registry  # noqa: PLC0415

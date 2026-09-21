@@ -76,6 +76,8 @@ the installed copy.
 > `(interface, qualifier)` and carries `owner` as display text (⚠️ Step 1 measures what 046/051
 > actually stamped).
 
+> **Handoff from Plan 046 (landed):** the P29 report (`design/upstream-gaps/providify-descriptor-fallback-field.md`) and its `fallback_bindings()` shim in `testkit/varco_conformance/di_wiring.py` are available; `varco_core.di.is_user_bound()` is the "is a user override live for this seam" primitive `varco diagnose` can call directly.
+
 ## Goal
 
 After this plan: `varco_core.di.build_wiring_report(container, …) -> WiringReport` is one frozen,

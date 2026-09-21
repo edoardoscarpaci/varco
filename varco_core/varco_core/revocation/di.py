@@ -17,8 +17,8 @@ turn revocation checking on for any app that merely imports
 ⚠️ **Binding a store here does not by itself enable checking.** A store is
 only consulted when it is *also* passed to
 ``TrustedIssuerRegistry(revocation_store=...)`` — §D-S13-hook forbids
-``varco_core`` reaching for ``DIContainer.current()`` internally, so that
-wiring is always the application's own explicit step. This two-step is the
+``varco_core`` from ever reaching for the process-global container internally,
+so that wiring is always the application's own explicit step. This two-step is the
 single most likely way to think revocation is on when it is not; it is a
 Pitfalls-table row and an ``inspect_revocation_posture()`` field
 (``store_bound_but_registry_unwired`` — see ``varco_core.revocation.posture``).
@@ -41,12 +41,15 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 from providify import Provider
 
 from varco_core.revocation.base import AbstractTokenRevocationStore
 from varco_core.revocation.memory import InMemoryTokenRevocationStore
+
+if TYPE_CHECKING:
+    from providify import DIContainer
 
 __all__ = ["enable_token_revocation"]
 
@@ -67,7 +70,7 @@ def _provide_in_memory_revocation_store() -> AbstractTokenRevocationStore:
     return InMemoryTokenRevocationStore()
 
 
-def enable_token_revocation(container: Any) -> Any:
+def enable_token_revocation(container: DIContainer) -> DIContainer:
     """
     Opt in to ``InMemoryTokenRevocationStore`` as the application's
     ``AbstractTokenRevocationStore``, shadowing the always-off
@@ -79,6 +82,13 @@ def enable_token_revocation(container: Any) -> Any:
 
     Returns:
         The same container, for chaining.
+
+    Raises:
+        AlreadyBoundError: A non-fallback ``AbstractTokenRevocationStore``
+            binding already exists — either the application's own, or a
+            previous call to this or
+            ``varco_redis.di.enable_redis_token_revocation`` (both flip the
+            same seam, §D-enable).
 
     Edge cases:
         - Calling before scanning is safe — ``container.provide`` does not
@@ -93,5 +103,13 @@ def enable_token_revocation(container: Any) -> Any:
         container.scan("varco_core.revocation", recursive=True)
         enable_token_revocation(container)
     """
+    from varco_core.di import AlreadyBoundError, is_user_bound  # noqa: PLC0415
+
+    if is_user_bound(container, AbstractTokenRevocationStore):
+        raise AlreadyBoundError(
+            "A non-fallback AbstractTokenRevocationStore binding already exists — "
+            "enable_token_revocation()/enable_redis_token_revocation() flip the same "
+            "seam and only one may win."
+        )
     container.provide(_provide_in_memory_revocation_store)
     return container

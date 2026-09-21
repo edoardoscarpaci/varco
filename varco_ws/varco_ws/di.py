@@ -73,14 +73,17 @@ Async safety:   ✅ No I/O at scan time; I/O happens in start().
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from providify import DIContainer
+
+if TYPE_CHECKING:
+    pass
 
 # ── bootstrap ─────────────────────────────────────────────────────────────────
 
 
-def bootstrap(
-    container: Any = None,
-) -> Any:
+def bootstrap(container: DIContainer) -> DIContainer:
     """
     Bootstrap ``varco_ws`` into a ``DIContainer``.
 
@@ -90,11 +93,13 @@ def bootstrap(
     An ``AbstractEventBus`` implementation **must** already be registered in
     the container before calling this function — both adapters inject it::
 
+        from providify import DIContainer
         from varco_redis.di import bootstrap as redis_bootstrap
         from varco_ws.di import bootstrap as ws_bootstrap
 
-        redis_bootstrap()   # scan varco_redis → registers AbstractEventBus
-        ws_bootstrap()      # scan varco_ws → registers WebSocketEventBus + SSEEventBus
+        container = DIContainer()
+        redis_bootstrap(container)   # scan varco_redis → registers AbstractEventBus
+        ws_bootstrap(container)      # scan varco_ws → registers WebSocketEventBus + SSEEventBus
 
         ws_bus  = container.get(WebSocketEventBus)
         sse_bus = container.get(SSEEventBus)
@@ -109,12 +114,12 @@ def bootstrap(
             await sse_bus.stop()
 
     Args:
-        container: An existing ``DIContainer`` to scan into.
-                   When ``None``, ``DIContainer.current()`` is used —
-                   the process-level singleton.
+        container: The ``DIContainer`` to scan into. Required — this
+            function never creates one and never reads
+            the process-global container (Plan 046 §D-locator).
 
     Returns:
-        The ``DIContainer`` after scanning.
+        The same ``container`` passed in, after scanning.
 
     Edge cases:
         - Calling twice is safe — scanning is idempotent.
@@ -126,16 +131,6 @@ def bootstrap(
     Thread safety:  ✅ Bootstrap is intended for single-threaded startup only.
     Async safety:   ✅ Scanning is synchronous.  I/O happens in ``start()``.
     """
-    try:
-        from providify import DIContainer  # noqa: PLC0415
-    except ImportError:
-        return None
-
-    if container is None:
-        # Use the process-level singleton so callers don't need to pass it
-        # around — consistent with every other bootstrap() in varco packages.
-        container = DIContainer.current()
-
     # Scan discovers WebSocketEventBus and SSEEventBus via their @Singleton
     # decorators.  Both inject Inject[AbstractEventBus] from the container.
     container.scan("varco_ws", recursive=True)
@@ -147,13 +142,14 @@ def bootstrap(
 
 
 def bind_websocket_adapter(
-    container: Any,
+    container: DIContainer,
     *,
+    qualifier: str | None = None,
     event_type: Any = None,
     channel: str = "*",
     max_queue_size: int = 100,
     backpressure_policy: Any = None,
-) -> None:
+) -> DIContainer:
     """
     Register a per-channel ``WebSocketEventBus`` singleton in a providify
     ``DIContainer``.
@@ -186,6 +182,10 @@ def bind_websocket_adapter(
 
     Args:
         container:           A providify ``DIContainer`` instance.
+        qualifier:           Optional qualifier so multiple per-channel
+                             adapters can coexist (§D-bind) — e.g.
+                             ``qualifier="orders"``. ``None`` registers the
+                             unqualified default.
         event_type:          Event class to subscribe to.  ``None`` defaults to
                              ``Event`` (all events).
         channel:             Bus channel to subscribe to.  ``"*"`` means all channels.
@@ -195,13 +195,14 @@ def bind_websocket_adapter(
                              defaults to ``BackpressurePolicy.DROP_OLDEST``.
 
     Returns:
-        None
+        The same ``container`` passed in.
+
+    Raises:
+        AlreadyBoundError: A non-fallback ``WebSocketEventBus`` binding of
+            the same ``qualifier`` already exists — qualify differently to
+            register a second per-channel adapter.
 
     Edge cases:
-        - Never raises — if providify is not installed the function logs a
-          warning and returns without registering anything.
-        - Calling twice with the same ``event_type``/``channel`` replaces the
-          previous binding — providify last-registration wins.
         - The adapter is **not** started automatically; call ``start()`` in the
           FastAPI lifespan handler.
         - ``AbstractEventBus`` must already be registered before the factory is
@@ -210,32 +211,23 @@ def bind_websocket_adapter(
     Thread safety:  ✅ Registration is intended at bootstrap (single-threaded).
     Async safety:   ✅ No I/O during registration.
     """
-    try:
-        # Presence probe — providify is an optional dependency.  This
-        # `import providify` is deliberate: it is what
-        # `varco_ws/tests/test_di.py::test_bind_websocket_adapter_importerror_guard`
-        # blocks by purging `sys.modules`, so the guard must trigger on
-        # providify's own absence.
-        import providify  # noqa: F401
-    except ImportError:
-        import logging  # noqa: PLC0415
-
-        logging.getLogger(__name__).warning(
-            "bind_websocket_adapter: providify not installed — "
-            "WebSocketEventBus not registered in DI."
-        )
-        return
-
-    # Resolve defaults that live in the varco_ws module — imported here to
-    # keep the module-level import list minimal and match the lazy-import
-    # pattern used throughout the package.
     from providify import Provider  # noqa: PLC0415
+    from varco_core.di import is_user_bound  # noqa: PLC0415
     from varco_core.event.base import AbstractEventBus, Event  # noqa: PLC0415
 
     from varco_ws.websocket import (  # noqa: PLC0415
         BackpressurePolicy,
         WebSocketEventBus,
     )
+
+    if is_user_bound(container, WebSocketEventBus, qualifier=qualifier):
+        from varco_core.di import AlreadyBoundError  # noqa: PLC0415
+
+        raise AlreadyBoundError(
+            f"A non-fallback WebSocketEventBus binding qualifier={qualifier!r} already "
+            "exists — pass a different qualifier= to register another per-channel "
+            "adapter, or use providify's di_overrides/ContainerOverrides in a test."
+        )
 
     # Capture every arg into a local binding-time variable so that the closure
     # does NOT close over the parameter names (which would alias the last call's
@@ -261,7 +253,7 @@ def bind_websocket_adapter(
         the decoration-time ``returns=`` override on ``@Provider`` means the
         placeholder return annotation on this closure never needs patching.
         """
-        bus = container.get(AbstractEventBus)
+        bus: AbstractEventBus = container.get(AbstractEventBus)
         return WebSocketEventBus(
             bus,
             event_type=_event_type,
@@ -270,19 +262,23 @@ def bind_websocket_adapter(
             backpressure_policy=_backpressure_policy,
         )
 
-    container.provide(Provider(singleton=True)(_ws_factory), returns=WebSocketEventBus)
+    container.provide(
+        Provider(singleton=True, qualifier=qualifier)(_ws_factory), returns=WebSocketEventBus
+    )
+    return container
 
 
 # ── bind_sse_adapter ──────────────────────────────────────────────────────────
 
 
 def bind_sse_adapter(
-    container: Any,
+    container: DIContainer,
     *,
+    qualifier: str | None = None,
     event_type: Any = None,
     channel: str = "*",
     max_queue_size: int = 100,
-) -> None:
+) -> DIContainer:
     """
     Register a per-channel ``SSEEventBus`` singleton in a providify
     ``DIContainer``.
@@ -315,6 +311,9 @@ def bind_sse_adapter(
 
     Args:
         container:      A providify ``DIContainer`` instance.
+        qualifier:      Optional qualifier so multiple per-channel adapters
+                        can coexist (§D-bind). ``None`` registers the
+                        unqualified default.
         event_type:     Event class to subscribe to.  ``None`` defaults to
                         ``Event`` (all events).
         channel:        Bus channel to subscribe to.  ``"*"`` means all channels.
@@ -322,13 +321,13 @@ def bind_sse_adapter(
                         Default matches ``SSEEventBus`` default (100).
 
     Returns:
-        None
+        The same ``container`` passed in.
+
+    Raises:
+        AlreadyBoundError: A non-fallback ``SSEEventBus`` binding of the
+            same ``qualifier`` already exists.
 
     Edge cases:
-        - Never raises — if providify is not installed the function logs a
-          warning and returns without registering anything.
-        - Calling twice with the same ``event_type``/``channel`` replaces the
-          previous binding — providify last-registration wins.
         - The adapter is **not** started automatically; call ``start()`` in the
           FastAPI lifespan handler.
         - ``AbstractEventBus`` must already be registered before the factory is
@@ -337,25 +336,20 @@ def bind_sse_adapter(
     Thread safety:  ✅ Registration is intended at bootstrap (single-threaded).
     Async safety:   ✅ No I/O during registration.
     """
-    try:
-        # Presence probe — see bind_websocket_adapter's comment for why this
-        # is `import providify`: it is what
-        # `varco_ws/tests/test_di.py::test_bind_sse_adapter_importerror_guard`
-        # blocks by purging `sys.modules`.
-        import providify  # noqa: F401
-    except ImportError:
-        import logging  # noqa: PLC0415
-
-        logging.getLogger(__name__).warning(
-            "bind_sse_adapter: providify not installed — SSEEventBus not registered in DI."
-        )
-        return
-
-    # Resolve defaults imported lazily to keep module-level import list minimal.
     from providify import Provider  # noqa: PLC0415
+    from varco_core.di import is_user_bound  # noqa: PLC0415
     from varco_core.event.base import AbstractEventBus, Event  # noqa: PLC0415
 
     from varco_ws.sse import SSEEventBus  # noqa: PLC0415
+
+    if is_user_bound(container, SSEEventBus, qualifier=qualifier):
+        from varco_core.di import AlreadyBoundError  # noqa: PLC0415
+
+        raise AlreadyBoundError(
+            f"A non-fallback SSEEventBus binding qualifier={qualifier!r} already exists — "
+            "pass a different qualifier= to register another per-channel adapter, or use "
+            "providify's di_overrides/ContainerOverrides in a test."
+        )
 
     # Capture every arg at binding time — same closure-capture pattern as
     # bind_websocket_adapter and bind_mcp_adapter in varco_fastapi.
@@ -375,7 +369,7 @@ def bind_sse_adapter(
         — the decoration-time ``returns=`` override means this closure's
         placeholder return annotation never needs patching.
         """
-        bus = container.get(AbstractEventBus)
+        bus: AbstractEventBus = container.get(AbstractEventBus)
         return SSEEventBus(
             bus,
             event_type=_event_type,
@@ -383,7 +377,10 @@ def bind_sse_adapter(
             max_queue_size=_max_queue_size,
         )
 
-    container.provide(Provider(singleton=True)(_sse_factory), returns=SSEEventBus)
+    container.provide(
+        Provider(singleton=True, qualifier=qualifier)(_sse_factory), returns=SSEEventBus
+    )
+    return container
 
 
 # ── Public API ────────────────────────────────────────────────────────────────

@@ -37,6 +37,15 @@ container = DIContainer()
 bind_cloudevents_serializer(container, CloudEventsSettings(source="/svc/orders"))
 ```
 
+`bind_cloudevents_serializer(container, settings)` requires an explicit `container` and returns
+it (Plan 046 §D-bind — both the `CloudEventsSettings` and `Serializer[Event]` registrations go
+through `varco_core.di.bind_instance()`). Call it **once**: a second call raises
+`varco_core.di.AlreadyBoundError` instead of silently changing the wire format again — previously
+a repeat call appended a second competing binding and the *first*-registered one silently kept
+winning (providify's `provide()` appends; ties resolve first-registered, never "last one wins").
+Use providify's `di_overrides`/`ContainerOverrides` in a test to swap the serializer instead of
+calling this twice.
+
 or, without DI:
 
 ```python

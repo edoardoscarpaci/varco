@@ -34,10 +34,13 @@ def test_backend_priority_value_is_100() -> None:
     assert BACKEND_PRIORITY == 100
 
 
-def test_di_module_exports_only_backend_priority() -> None:
+def test_di_module_exports_backend_priority() -> None:
+    # Plan 046 adds AlreadyBoundError/bind_instance/bootstrap/is_user_bound
+    # to this module (test_di_wiring_primitives.py covers those) — this
+    # test only pins that BACKEND_PRIORITY is still exported.
     import varco_core.di as di_module
 
-    assert di_module.__all__ == ["BACKEND_PRIORITY"]
+    assert "BACKEND_PRIORITY" in di_module.__all__
 
 
 def test_importing_di_module_does_not_import_providify() -> None:

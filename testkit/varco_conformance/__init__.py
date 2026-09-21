@@ -2,10 +2,12 @@
 varco_conformance
 ==================
 
-Shared, test-only conformance suites for ``varco_core`` ABCs
+Shared, test-only conformance suites — eight for ``varco_core`` ABCs
 (``AbstractEventBus``, ``CacheBackend``, ``AbstractJobStore``,
 ``AbstractDeadLetterQueue``, ``ChannelManager``, ``AbstractIdempotencyStore``,
-``WebhookSubscriptionRepository``, ``AbstractTokenRevocationStore``).
+``WebhookSubscriptionRepository``, ``AbstractTokenRevocationStore``), plus a
+ninth (``di_wiring``, Plan 046 / DI-13) for every package's
+``bootstrap(container) -> DIContainer`` contract.
 
 This package lives at the repo root under ``testkit/`` — it is **never**
 packaged or published, and is reached only via each participating package's

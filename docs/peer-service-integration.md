@@ -119,7 +119,11 @@ bind_peers(container, {"orders": OrderRouter, "billing": BillingRouter})
 `bind_peers` builds (or accepts) a `PeerRegistry`, resolves each named
 mapping's client, and registers it via `bind_clients()` — the registry
 itself should be constructed once and shared; `bind_peers` does this for you
-when you don't pass `registry=` explicitly.
+when you don't pass `registry=` explicitly. It requires an explicit `container`
+argument, returns that same container (Plan 046 §D-bind — it delegates to
+`bind_clients`), and raises `varco_core.di.AlreadyBoundError` if a peer's client
+class is already bound — call it once per process, or use providify's
+`di_overrides`/`ContainerOverrides` in a test to replace a binding.
 
 ## Pitfalls
 

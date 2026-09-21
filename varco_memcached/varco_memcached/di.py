@@ -18,18 +18,22 @@ Usage
 -----
 Typical app startup::
 
+    from providify import DIContainer
     from varco_memcached.di import async_bootstrap
     from varco_core.cache import CacheBackend
 
-    container = await async_bootstrap()
+    container = DIContainer()
+    await async_bootstrap(container)
     cache = await container.aget(CacheBackend)
     await container.ashutdown()
 
 Sync-only (settings discovery, no connection)::
 
+    from providify import DIContainer
     from varco_memcached.di import bootstrap
 
-    container = bootstrap()
+    container = DIContainer()
+    bootstrap(container)
     # Cache is NOT started — call async_bootstrap() or
     # ``await container.ainstall(MemcachedCacheConfiguration)`` separately.
 
@@ -56,16 +60,12 @@ Overriding settings (any order — the default is @Fallback)::
 
 from __future__ import annotations
 
-import logging
-from typing import Any
-
-_logger = logging.getLogger(__name__)
-
+from providify import DIContainer
 
 # ── bootstrap ─────────────────────────────────────────────────────────────────
 
 
-def bootstrap(container: Any = None) -> Any:
+def bootstrap(container: DIContainer) -> DIContainer:
     """
     Bootstrap ``varco_memcached`` into a ``DIContainer`` (sync scan only).
 
@@ -78,25 +78,23 @@ def bootstrap(container: Any = None) -> Any:
     Call this at application startup if you need the sync scan step
     separate from the async activation::
 
+        from providify import DIContainer
         from varco_memcached.di import bootstrap, async_bootstrap
 
-        container = bootstrap()
+        container = DIContainer()
+        bootstrap(container)
         # ... other sync wiring ...
         await async_bootstrap(container)
 
     Args:
-        container: An existing ``DIContainer`` to scan into.
-                   When ``None``, ``DIContainer.current()`` is used —
-                   the process-level singleton.
+        container: The ``DIContainer`` to scan into. Required — this
+            function never creates one and never reads
+            the process-global container (Plan 046 §D-locator).
 
     Returns:
-        The ``DIContainer`` after scanning, or ``None`` if ``providify``
-        is not installed.
+        The same ``container`` passed in, after scanning.
 
     Edge cases:
-        - Returns ``None`` (not a container) when ``providify`` is absent so
-          callers can safely ignore the return value in environments where
-          the DI framework is optional.
         - Calling twice is safe — scanning is idempotent.
         - The cache is NOT started after this call; use
           :func:`async_bootstrap` or call
@@ -106,24 +104,6 @@ def bootstrap(container: Any = None) -> Any:
     Thread safety:  ✅ Bootstrap is intended for single-threaded startup only.
     Async safety:   ✅ Scanning is synchronous.
     """
-    try:
-        # Guard: providify is an optional dependency — importing it here
-        # (rather than at module level) means this module loads cleanly
-        # even when providify is absent (e.g. in test environments that
-        # only use InMemoryCache without the DI container).
-        from providify import DIContainer  # noqa: PLC0415
-    except ImportError:
-        # Providify not installed — return None so callers that check
-        # the return value can branch accordingly, and callers that
-        # ignore the return value continue without error.
-        _logger.debug("providify not installed; varco_memcached DI helpers are no-ops")
-        return None
-
-    if container is None:
-        # Fall back to the process-level singleton so the most common usage
-        # (a single-container app) requires no explicit container argument.
-        container = DIContainer.current()
-
     # Discover all @Singleton/@Component classes and module-level @Provider
     # functions in varco_memcached recursively.  Currently the package
     # exposes MemcachedCacheSettings (@Singleton) and MemcachedHealthCheck
@@ -137,7 +117,7 @@ def bootstrap(container: Any = None) -> Any:
 # ── async_bootstrap ───────────────────────────────────────────────────────────
 
 
-async def async_bootstrap(container: Any = None, *, setup_cache: bool = True) -> Any:
+async def async_bootstrap(container: DIContainer) -> DIContainer:
     """
     Bootstrap ``varco_memcached`` and activate the Memcached cache (async).
 
@@ -152,83 +132,45 @@ async def async_bootstrap(container: Any = None, *, setup_cache: bool = True) ->
             #   await container.ainstall(MemcachedCacheConfiguration)
 
     After this call ``CacheBackend`` is resolvable from the container and
-    the connection pool to Memcached has been opened.
+    the connection pool to Memcached has been opened. Plan 046 §D-contract
+    removes the ``setup_cache=`` kwarg — call plain :func:`bootstrap` for a
+    scan-only container.
 
     Args:
-        container: An existing ``DIContainer`` to scan into.
-                   When ``None``, ``DIContainer.current()`` is used.
-        setup_cache: When ``True`` (default — unchanged from before this
-                   parameter existed), installs ``MemcachedCacheConfiguration``
-                   after scanning, which constructs and starts
-                   ``MemcachedCache``. The cache is bound as ``CacheBackend``
-                   in the container. When ``False``, this call is exactly
-                   :func:`bootstrap` — no connection pool is opened. Mirrors
-                   ``varco_redis.di.async_bootstrap(..., setup_cache=...)``
-                   in *shape* — see the cross-reference paragraph below for
-                   why the *defaults* still differ.
+        container: The ``DIContainer`` to scan into. Required — see
+            :func:`bootstrap`.
 
     Returns:
-        The ``DIContainer`` after scanning and (when ``setup_cache=True``)
-        cache installation, or ``None`` if ``providify`` is not installed
-        (same as :func:`bootstrap`).
+        The same ``container`` passed in, after scanning and cache
+        installation.
 
     Raises:
-        ConnectionRefusedError: If ``setup_cache=True`` and the Memcached
-                                server is unreachable when
-                                ``MemcachedCacheConfiguration.setup()`` runs.
+        ConnectionRefusedError: If the Memcached server is unreachable
+            when ``MemcachedCacheConfiguration.setup()`` runs.
 
     Edge cases:
         - Connection settings are read from ``VARCO_MEMCACHED_HOST``,
           ``VARCO_MEMCACHED_PORT``, and related env vars via
           ``MemcachedCacheSettings``.  Override by providing a custom
           ``MemcachedCacheSettings`` binding before calling this function.
-        - ``setup_cache=False`` is equivalent to :func:`bootstrap` — no
-          connection pool is opened, and ``CacheBackend`` is not resolvable
-          from the container until a later ``async_bootstrap(setup_cache=True)``
-          or manual ``await container.ainstall(MemcachedCacheConfiguration)``.
-        - ``setup_cache=False`` with providify absent still returns ``None``
-          — the ``container is None`` guard runs *before* the
-          ``setup_cache`` branch, so no ``AttributeError`` is possible
-          either way.
         - ``await container.ashutdown()`` must be called at process exit to
           close the aiomcache connection pool via
           ``MemcachedCacheConfiguration``'s ``@Disposes(CacheBackend)``
-          method (only relevant when ``setup_cache=True`` was used at some
-          point). Not ``@PreDestroy`` — providify never invokes
+          method. Not ``@PreDestroy`` — providify never invokes
           ``@PreDestroy`` on a ``@Provider``-produced instance; ``@Disposes``
           is the supported teardown path for provider output (Plan 024 / C2).
-
-    Cross-reference — why the *defaults* differ from ``varco_redis``:
-        ``varco_redis.di.async_bootstrap()`` defaults ``setup_cache=False``
-        because it also serves a streams/event-bus bootstrap path where no
-        cache is wanted at all — defaulting to install one there would
-        silently open a Redis connection pool for callers who only use
-        Redis as an event bus. ``varco_memcached`` has no such second use
-        case: a Memcached connection is its *only* reason to exist, so
-        ``setup_cache=True`` here reproduces this function's
-        pre-existing, unconditional-install behaviour exactly — no
-        existing ``await async_bootstrap(container)`` call site changes
-        behaviour.
 
     Thread safety:  ✅ Intended for single-threaded startup only.
     Async safety:   ✅ ``async def`` — safe to ``await``.
     """
-    container = bootstrap(container)
-    if container is None:
-        # providify is absent — bootstrap() returned None; nothing to install
-        _logger.debug("providify not installed; varco_memcached DI helpers are no-ops")
-        return None
+    bootstrap(container)
 
-    if setup_cache:
-        # ainstall runs MemcachedCacheConfiguration.setup(), which constructs
-        # MemcachedCache, calls cache.start() to open the aiomcache pool, and
-        # binds the instance as CacheBackend in the container.
-        # This is intentionally separate from bootstrap() — the async step cannot
-        # run in a sync context, and some apps need the sync scan before the event
-        # loop is started (e.g. framework introspection at import time).
-        from varco_memcached.cache import MemcachedCacheConfiguration  # noqa: PLC0415
+    # ainstall runs MemcachedCacheConfiguration.setup(), which constructs
+    # MemcachedCache, calls cache.start() to open the aiomcache pool, and
+    # binds the instance as CacheBackend in the container.
+    from varco_memcached.cache import MemcachedCacheConfiguration  # noqa: PLC0415
 
-        await container.ainstall(MemcachedCacheConfiguration)
+    await container.ainstall(MemcachedCacheConfiguration)
 
     return container
 

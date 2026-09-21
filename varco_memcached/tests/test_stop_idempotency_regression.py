@@ -9,8 +9,9 @@ hook, a component reachable by both ``_stop_all()`` and ``container.ashutdown()`
 has ``stop()`` called twice.
 
 ``MemcachedCache`` is table row #9 and the worst-affected orphan alongside
-``RedisCache``: ``varco_memcached.di.async_bootstrap()`` defaults
-``setup_cache=True``, so the *default* path leaves an eagerly-started client
+``RedisCache``: ``varco_memcached.di.async_bootstrap()`` always installs the
+cache configuration (Plan 046 removed the ``setup_cache=`` kwarg — it is
+unconditional now), so the default path leaves an eagerly-started client
 that nothing tears down today.  No server is needed here — ``aiomcache``
 connects lazily, so start→stop→stop completes offline.
 

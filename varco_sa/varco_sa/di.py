@@ -306,7 +306,7 @@ class SAModule:
 def bind_repositories(
     container: DIContainer,
     *entity_classes: type[DomainModel],
-) -> None:
+) -> DIContainer:
     """
     Register an ``AsyncRepository[D]`` binding for each domain model class.
 
@@ -335,12 +335,17 @@ def bind_repositories(
         container:       The ``DIContainer`` to register bindings into.
         *entity_classes: One or more ``DomainModel`` subclasses.
 
+    Returns:
+        The same ``container`` passed in.
+
     Raises:
         ValueError: Called with no ``entity_classes``.
+        AlreadyBoundError: A non-fallback ``AsyncRepository[entity_cls]``
+            binding already exists for one of the given classes (§D-bind) —
+            qualify differently is not applicable here; use providify's
+            ``di_overrides``/``ContainerOverrides`` in a test to replace it.
 
     Edge cases:
-        - Calling twice with the same entity class adds a second binding.
-          The container will pick the higher-priority one; avoid duplicates.
         - Empty ``entity_classes`` raises immediately — likely a programming error.
 
     Example::
@@ -362,6 +367,8 @@ def bind_repositories(
     for entity_cls in entity_classes:
         _bind_repo_provider(container, entity_cls)
 
+    return container
+
 
 def _bind_repo_provider(container: DIContainer, entity_cls: type[DomainModel]) -> None:
     """
@@ -382,10 +389,23 @@ def _bind_repo_provider(container: DIContainer, entity_cls: type[DomainModel]) -
     Returns:
         None — the provider is registered as a side effect on *container*.
 
+    Raises:
+        AlreadyBoundError: A non-fallback ``AsyncRepository[entity_cls]``
+            binding already exists (§D-bind).
+
     Thread safety:  ✅ Pure function — creates a new closure each call.
     Async safety:   ✅ The registered factory is synchronous — repository
                        construction itself is synchronous; I/O is lazy.
     """
+    from varco_core.di import AlreadyBoundError, is_user_bound  # noqa: PLC0415
+
+    interface = AsyncRepository[entity_cls]  # type: ignore[valid-type, type-arg]
+    if is_user_bound(container, interface):
+        raise AlreadyBoundError(
+            f"A non-fallback AsyncRepository[{entity_cls.__name__}] binding already "
+            "exists — use providify's di_overrides/ContainerOverrides in a test to "
+            "replace it."
+        )
 
     def _repo_factory(provider: RepositoryProvider) -> AsyncRepository[Any, Any]:
         # provider is injected by the container (resolved as RepositoryProvider
@@ -409,17 +429,17 @@ def _bind_repo_provider(container: DIContainer, entity_cls: type[DomainModel]) -
 # ── bootstrap ─────────────────────────────────────────────────────────────────
 
 
-def bootstrap(
-    container: Any = None,
-    *entity_classes: type[DomainModel],
-) -> Any:
+def bootstrap(container: DIContainer) -> DIContainer:
     """
     Bootstrap ``varco_sa`` into a ``DIContainer``.
 
     Installs :class:`SAModule` and calls
     ``container.scan("varco_sa", recursive=True)`` to discover
-    ``SQLAlchemyRepositoryProvider`` and ``SAHealthCheck``.  Optionally
-    binds per-entity ``AsyncRepository[D]`` providers in the same call.
+    ``SQLAlchemyRepositoryProvider`` and ``SAHealthCheck``. Call
+    :func:`bind_repositories` separately for per-entity ``AsyncRepository[D]``
+    bindings (Plan 046 §D-contract removes the ``*entity_classes`` convenience
+    — a re-run ``bootstrap()`` must be idempotent, and ``bind_repositories()``'s
+    own rule is "raise on repeat", which is the wrong behaviour for that).
 
     ``SAConfig`` **must** be registered in the container before calling
     this function — it is injected into both ``SQLAlchemyRepositoryProvider``
@@ -429,7 +449,7 @@ def bootstrap(
         from sqlalchemy.orm import DeclarativeBase
         from providify import DIContainer, Provider
         from varco_sa.bootstrap import SAConfig
-        from varco_sa.di import bootstrap
+        from varco_sa.di import bind_repositories, bootstrap
         from myapp.models import User, Post
 
         class Base(DeclarativeBase): pass
@@ -445,55 +465,32 @@ def bootstrap(
             )
 
         container.provide(sa_config)
-        bootstrap(container, User, Post)   # install + scan + bind repos in one call
+        bootstrap(container)
+        bind_repositories(container, User, Post)
 
     Args:
-        container:       An existing ``DIContainer`` to install into.
-                         When ``None``, ``DIContainer.current()`` is used —
-                         the process-level singleton.
-        *entity_classes: Optional ``DomainModel`` subclasses to pass to
-                         :func:`bind_repositories`.  When provided,
-                         ``AsyncRepository[D]`` bindings are registered for
-                         each class in the same bootstrap call.
+        container: The ``DIContainer`` to install into. Required — this
+            function never creates one and never reads
+            the process-global container (Plan 046 §D-locator).
 
     Returns:
-        The ``DIContainer`` after installation, scanning, and optional
-        repository binding.
+        The same ``container`` passed in, after installation and scanning.
 
     Raises:
         LookupError: Raised lazily at resolution time if ``SAConfig`` is not
                      registered before this call.
 
     Edge cases:
-        - Calling twice is safe — scanning and ``install`` are idempotent;
-          repository bindings for the same class are appended (container
-          picks the higher-priority one).
-        - No ``entity_classes`` means no ``AsyncRepository[D]`` bindings are
-          registered; call :func:`bind_repositories` separately later.
+        - Calling twice is safe — scanning and ``install`` are idempotent.
 
     Thread safety:  ✅ Bootstrap is intended for single-threaded startup only.
     Async safety:   ✅ All operations are synchronous — SQLAlchemy has no
                        async init step at construction time.
     """
-    try:
-        from providify import DIContainer  # noqa: PLC0415
-    except ImportError:
-        return None
-
-    if container is None:
-        # Use the process-level singleton container so callers don't need
-        # to pass it around — consistent with create_varco_container().
-        container = DIContainer.current()
-
     # SAModule is an empty backward-compat @Configuration — install() is a no-op.
     # _sa_uow_provider is a module-level @Provider discovered by scan automatically,
     # so no explicit install() is needed.
     container.scan("varco_sa", recursive=True)
-
-    if entity_classes:
-        # Convenience: bind per-entity AsyncRepository[D] in the same call
-        # so callers don't need a separate bind_repositories() call.
-        bind_repositories(container, *entity_classes)
 
     return container
 
@@ -501,7 +498,7 @@ def bootstrap(
 # ── create_tables helper ──────────────────────────────────────────────────────
 
 
-async def create_tables(container: Any = None) -> None:
+async def create_tables(container: DIContainer) -> None:
     """
     Create all SQLAlchemy-mapped tables in the connected database.
 
@@ -525,9 +522,10 @@ async def create_tables(container: Any = None) -> None:
             await create_tables(container)   # one line instead of 15
 
     Args:
-        container: ``DIContainer`` to resolve ``SAConfig`` and
-                   ``SQLAlchemyRepositoryProvider`` from.  When ``None``,
-                   ``DIContainer.current()`` is used (the process singleton).
+        container: The ``DIContainer`` to resolve ``SAConfig`` and
+                   ``SQLAlchemyRepositoryProvider`` from. Required — this
+                   function never reads the process-global container (Plan 046
+                   §D-locator).
 
     Raises:
         LookupError: ``SAConfig`` is not registered in the container.
@@ -542,14 +540,6 @@ async def create_tables(container: Any = None) -> None:
     Thread safety:  ✅ Intended for single-threaded startup only.
     Async safety:   ✅ ``async def`` — safe to ``await`` from any async context.
     """
-    try:
-        from providify import DIContainer  # noqa: PLC0415
-    except ImportError:
-        return
-
-    if container is None:
-        container = DIContainer.current()
-
     from varco_core.providers import (
         RepositoryProvider as _RepoProvider,
     )  # noqa: PLC0415

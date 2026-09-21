@@ -68,6 +68,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from providify import DIContainer
 from sqlalchemy.orm import DeclarativeBase
+from varco_core.di import bootstrap as core_bootstrap
 from varco_core.event import AbstractEventBus
 from varco_core.job.base import AbstractJobRunner
 from varco_fastapi.di import bootstrap as fastapi_bootstrap
@@ -123,7 +124,7 @@ def create_app() -> FastAPI:
     4.  Build ``VarcoLifespan`` with a ``_bootstrap`` async setup hook.
     5.  Create ``FastAPI`` app with lifespan + middleware stack (sync).
     6.  At startup (inside ``_bootstrap``):
-        a.  ``await redis_async_bootstrap(container, setup_cache=True)`` — cache start.
+        a.  ``await redis_async_bootstrap(container)`` — cache start (always installs now).
         b.  ``await registry.load_all()`` — populate public keyset.
         c.  Resolve bus, consumer, job_runner and register with lifespan.
         d.  Resolve ``PostService`` and include routers on the app.
@@ -203,12 +204,22 @@ def create_app() -> FastAPI:
     # and module-level @Provider functions in that package.  No install() calls
     # are needed — all @Configuration classes are either empty or replaced by
     # module-level @Provider functions that scan finds automatically.
+    from varco_core.di import bind_instance
+    from varco_redis.config import RedisEventBusSettings
+
+    # §D-streams (Plan 046) — bootstrap(streams=True) is gone; register an
+    # explicit non-fallback settings instance before bootstrap() instead.
+    bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))
+
     sa_bootstrap(container)  # SA repo provider + UoW
-    redis_bootstrap(container, streams=True)  # Redis event bus (streams)
+    redis_bootstrap(container)  # Redis event bus (streams, per the settings above)
     ws_bootstrap(container)  # WebSocket + SSE adapters
-    # setup_producer=True binds AbstractEventProducer → BusEventProducer so
-    # PostService._produce() publishes events to the Redis bus instead of no-op.
-    fastapi_bootstrap(container, setup_producer=True)  # FastAPI defaults + event producer
+    # varco_core.di.bootstrap() binds AbstractEventProducer → BusEventProducer
+    # (a varco_core Class-A @Fallback default) so PostService._produce()
+    # publishes events to the Redis bus instead of no-op — setup_event_producer()
+    # is gone (Plan 046 §D-removals).
+    core_bootstrap(container)
+    fastapi_bootstrap(container)  # FastAPI defaults
 
     # ── 5. Domain module ──────────────────────────────────────────────────────
     # container.scan() discovers @Singleton-decorated classes in the example
@@ -290,7 +301,7 @@ def create_app() -> FastAPI:
 
         Steps:
         1. ``await create_tables(container)`` — populate ORM metadata + DDL.
-        2. ``await redis_async_bootstrap(container, setup_cache=True)`` — cache start.
+        2. ``await redis_async_bootstrap(container)`` — cache start (always installs now).
         3. ``await registry.load_all()`` — populate issuer public keyset.
         4. Resolve and register lifecycle singletons (bus, consumer, ws_bus, sse_bus,
            job_runner) — startup order matters.
@@ -311,14 +322,11 @@ def create_app() -> FastAPI:
         await create_tables(container)
 
         # Install the Redis cache backend (async init — cache.start() must be awaited).
-        # redis_async_bootstrap wraps the sync scan + optional ainstall in one call so
-        # the _bootstrap closure doesn't need to import RedisCacheConfiguration directly.
-        # DESIGN: redis_async_bootstrap over ainstall(RedisCacheConfiguration) here
-        #   ✅ Hides the RedisCacheConfiguration import and the two-step pattern.
-        #   ✅ setup_cache=True is self-documenting — intent is clear at a glance.
-        #   ✅ redis_async_bootstrap(setup_cache=False) is a no-op scan — safe to call twice.
-        #   ❌ Slightly less explicit — developer must know setup_cache starts the cache.
-        await redis_async_bootstrap(container, setup_cache=True)
+        # redis_async_bootstrap wraps the sync scan + ainstall in one call so the
+        # _bootstrap closure doesn't need to import RedisCacheConfiguration directly.
+        # Plan 046 removed setup_cache= — async_bootstrap() always installs the
+        # cache now; call plain bootstrap() for a scan-only container.
+        await redis_async_bootstrap(container)
 
         # Populate the issuer public keyset.  Must happen before any request
         # arrives — JwtBearerAuth.verify() will fail on an empty keyset.

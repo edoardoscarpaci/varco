@@ -169,7 +169,10 @@ registry.register(
     )
 )
 
-bind_retention_registry(container, registry)
+bind_retention_registry(container, registry)  # -> DIContainer (Plan 046 §D-bind); raises
+                                               # AlreadyBoundError on a second call — use
+                                               # providify's di_overrides/ContainerOverrides
+                                               # in a test to replace the registry instead
 
 app = create_varco_app(
     container,

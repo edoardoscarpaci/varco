@@ -142,13 +142,7 @@ def make_sa_provider(
         container.provide(make_sa_provider(Base, Post, User))
         sa_bootstrap(container)   # scan + bind repos
     """
-    try:
-        from providify import Provider  # noqa: PLC0415
-    except ImportError:
-        raise ImportError(
-            "make_sa_provider requires providify. Install it with: pip install providify"
-        ) from None
-
+    from providify import Provider  # noqa: PLC0415
     from sqlalchemy.ext.asyncio import create_async_engine  # noqa: PLC0415
 
     # Capture all args in the closure — the factory is called lazily later.

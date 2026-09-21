@@ -3501,20 +3501,24 @@ await runner.recover()
 One-liner setup for each backend (also registered by `container.install(VarcoFastAPIModule)`):
 
 ```python
-from varco_fastapi.app import (
-    sa_bootstrap,  # SQLAlchemy repo provider + UoW
-    redis_bootstrap,  # Redis event bus
-    ws_bootstrap,  # WebSocket + SSE adapters
-    fastapi_bootstrap,  # FastAPI defaults (auth, CORS, job runner, producer)
-    redis_async_bootstrap,  # Redis cache (async — call inside lifespan)
-)
+from varco_sa.di import bootstrap as sa_bootstrap
+from varco_redis.di import bootstrap as redis_bootstrap
+from varco_ws.di import bootstrap as ws_bootstrap
+from varco_fastapi.di import bootstrap as fastapi_bootstrap
 from varco_fastapi.lifespan import VarcoLifespan
 
+from varco_core.di import bind_instance, bootstrap as core_bootstrap
+from varco_redis.config import RedisEventBusSettings
+
 container = DIContainer()
+# Redis Streams (at-least-once) — an explicit non-fallback settings instance
+# replaces the removed bootstrap(streams=True) (Plan 046 §D-streams).
+bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))
 sa_bootstrap(container)
-redis_bootstrap(container, streams=True)  # use Redis Streams (at-least-once)
+redis_bootstrap(container)
 ws_bootstrap(container)
-fastapi_bootstrap(container, setup_producer=True)
+core_bootstrap(container)      # AbstractEventProducer → BusEventProducer, etc.
+fastapi_bootstrap(container)
 
 app = FastAPI(lifespan=VarcoLifespan(container))
 ```

@@ -116,7 +116,8 @@ class PostService(
         # Optional — defaults to NoopEventProducer when no bus is wired.
         # Must be declared here (not only on AsyncService.__init__) so that
         # providify sees the parameter and injects AbstractEventProducer when
-        # setup_producer=True wires BusEventProducer into the container.
+        # varco_core.di.bootstrap() wires BusEventProducer into the container
+        # (a varco_core Class-A @Fallback default).
         # Without this declaration, providify resolves PostService.__init__
         # only and passes producer=None → AsyncService uses NoopEventProducer.
         producer: Annotated[AbstractEventProducer, InjectMeta(optional=True)] = None,
@@ -129,17 +130,17 @@ class PostService(
                           authorizer is registered.
             assembler:    Injected ``PostAssembler`` — handles DTO ↔ Post mapping.
             producer:     Optional ``AbstractEventProducer``.  Injected by the DI
-                          container when ``setup_producer=True`` (wires
-                          ``BusEventProducer`` → ``AbstractEventBus``).  When
-                          absent (unit tests, no bus wired), ``AsyncService``
+                          container once ``varco_core.di.bootstrap()`` has run
+                          (wires ``BusEventProducer`` → ``AbstractEventBus``).
+                          When absent (unit tests, no bus wired), ``AsyncService``
                           falls back to ``NoopEventProducer``.
 
         Edge cases:
             - ``_cache`` is injected via ClassVar from ``CacheServiceMixin`` —
               no parameter needed here; providify sets it at the class level.
-            - If ``setup_producer=False`` (default), the container has no binding
-              for ``AbstractEventProducer``; ``InjectMeta(optional=True)`` makes
-              the parameter resolve to ``None`` safely.
+            - If ``varco_core.di.bootstrap()`` was never called, the container has
+              no binding for ``AbstractEventProducer``; ``InjectMeta(optional=True)``
+              makes the parameter resolve to ``None`` safely.
         """
         # Forward producer so AsyncService.__init__ uses the injected instance
         # instead of defaulting to NoopEventProducer.

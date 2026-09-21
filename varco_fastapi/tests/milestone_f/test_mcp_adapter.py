@@ -436,25 +436,6 @@ def test_repr_includes_router_name():
     assert "4" in repr(adapter)  # 4 tools
 
 
-# ── bind_mcp_adapter without providify ───────────────────────────────────────
-
-
-def test_bind_mcp_adapter_noop_without_providify():
-    """``bind_mcp_adapter`` returns silently (does not raise) when providify is absent."""
-    import sys  # noqa: PLC0415
-
-    mock_container = MagicMock()
-    orig = sys.modules.pop("providify", None)
-    try:
-        # Should not raise — bind_mcp_adapter is a no-op without providify
-        from varco_fastapi.router.mcp import bind_mcp_adapter as _bind  # noqa: PLC0415
-
-        _bind(mock_container, OrderRouter)  # must not raise
-    finally:
-        if orig is not None:
-            sys.modules["providify"] = orig
-
-
 # ── bind_mcp_adapter against a real container (Plan 014 / Step 12) ────────────
 
 

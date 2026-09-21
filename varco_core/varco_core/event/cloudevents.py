@@ -501,7 +501,7 @@ def _to_rfc3339(value: datetime) -> str:
 def bind_cloudevents_serializer(
     container: DIContainer,
     settings: CloudEventsSettings,
-) -> None:
+) -> DIContainer:
     """
     Bind the CloudEvents serializer (and its settings) into *container*.
 
@@ -526,12 +526,16 @@ def bind_cloudevents_serializer(
                    ``source`` fails at wiring time, not at first publish.
 
     Returns:
-        ``None`` — the container is mutated in place (``bind_*`` verb, see
-        CLAUDE.md's DI wiring verb taxonomy).
+        The same ``container`` passed in (Plan 046 §D-bind — both
+        registrations now go through ``varco_core.di.bind_instance()``).
+
+    Raises:
+        AlreadyBoundError: A non-fallback ``CloudEventsSettings`` or
+            ``Serializer[Event]`` binding already exists — a second call
+            used to silently change the wire format again; it now fails
+            loudly instead. Call it once, at bootstrap.
 
     Edge cases:
-        - Calling this twice registers two bindings; the last one wins at the
-          same priority.  Call it once, at bootstrap.
         - It changes the **wire format** of every event the app publishes on a
           bus that resolves ``Serializer[Event]``.  Roll it out with the
           three-phase dual-emit plan in
@@ -553,12 +557,13 @@ def bind_cloudevents_serializer(
             container, CloudEventsSettings(source="/svc/orders")
         )
     """
+    from varco_core.di import bind_instance  # noqa: PLC0415
+
     serializer = CloudEventsJsonSerializer(settings)
 
-    # `returns=` is providify's native interface override (>= 2.0.0) — required
-    # because a lambda/closure has no useful return annotation to read.
-    container.provide(lambda: settings, returns=CloudEventsSettings)
-    container.provide(lambda: serializer, returns=Serializer[Event])
+    bind_instance(container, CloudEventsSettings, settings)
+    bind_instance(container, Serializer[Event], serializer)
+    return container
 
 
 __all__ = [

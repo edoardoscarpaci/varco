@@ -68,10 +68,12 @@ def enable_authorization_audit(
         The same container, for chaining.
 
     Raises:
-        RuntimeError: The currently-bound `AbstractAuthorizer` is already
-            an `AuditingAuthorizer` — calling this twice would double
-            wrap (and double record) every decision. A no-op would hide
-            the mistake; this fails loudly instead (Edge cases table).
+        AlreadyBoundError: The currently-bound `AbstractAuthorizer` is
+            already an `AuditingAuthorizer` — calling this twice would
+            double wrap (and double record) every decision. A no-op would
+            hide the mistake; this fails loudly instead (Edge cases table).
+            `AlreadyBoundError` is a `RuntimeError` subclass (Plan 046
+            §D-enable), so an existing `except RuntimeError` keeps working.
 
     Example::
 
@@ -79,9 +81,11 @@ def enable_authorization_audit(
         container.scan("myapp", recursive=True)   # binds the real authorizer
         enable_authorization_audit(container)      # call LAST
     """
+    from varco_core.di import AlreadyBoundError  # noqa: PLC0415
+
     delegate: AbstractAuthorizer = container.get(AbstractAuthorizer)
     if isinstance(delegate, AuditingAuthorizer):
-        raise RuntimeError(
+        raise AlreadyBoundError(
             "enable_authorization_audit() was already applied to this container's "
             "AbstractAuthorizer binding — calling it a second time would wrap the "
             "wrapper and double-record every decision."

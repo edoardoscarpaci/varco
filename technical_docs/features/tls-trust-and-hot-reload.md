@@ -192,8 +192,12 @@ store raises `ResourceNotLoadedError` on `.context` access rather than silently 
 
 `varco_core.tls.bind_trust_store(container, store)` is the only DI-wiring surface this package
 exposes — it registers an **already-constructed** `ReloadingTrustStore` (and its `TrustStore`
-spec) as DI singletons. It has **no lifecycle side effect** — the caller still owns
-`start()`/`stop()`:
+spec) as DI singletons and returns the same `container` (Plan 046 §D-bind — both bindings are
+now one-liners over `varco_core.di.bind_instance()`). It has **no lifecycle side effect** — the
+caller still owns `start()`/`stop()`. `bind_trust_store` requires an explicit `container`
+argument (never a process-global default) and raises `varco_core.di.AlreadyBoundError` if a
+non-fallback `ReloadingTrustStore`/`TrustStore` binding already exists — call it once, or use
+providify's `di_overrides`/`ContainerOverrides` in a test to replace it:
 
 ```python
 from varco_core.tls import TrustStore, ReloadingTrustStore, bind_trust_store

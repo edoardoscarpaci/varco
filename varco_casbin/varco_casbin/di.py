@@ -35,15 +35,14 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Any
-
-from providify import Inject, Provider
+from providify import DIContainer, Inject, Provider
 from varco_core.auth import (
     AbstractAuthorizer,
     PolicyEngine,
     PolicyEngineAuthorizer,
     RequestMapper,
 )
+from varco_core.di import AlreadyBoundError, is_user_bound
 
 from varco_casbin.config import CasbinSettings
 
@@ -86,7 +85,7 @@ def _provide_policy_authorizer(
     return PolicyEngineAuthorizer(engine, RequestMapper())
 
 
-def bootstrap(container: Any = None) -> Any:
+def bootstrap(container: DIContainer) -> DIContainer:
     """
     Bootstrap ``varco_casbin`` into a ``DIContainer``.
 
@@ -96,42 +95,41 @@ def bootstrap(container: Any = None) -> Any:
     call ``enable_policy_authorizer`` for that.
 
     Args:
-        container: An existing ``DIContainer`` to scan into.  When ``None``,
-                   ``DIContainer.current()`` is used.
+        container: The ``DIContainer`` to scan into. Required — this
+            function never creates one and never reads
+            the process-global container (Plan 046 §D-locator).
 
     Returns:
-        The ``DIContainer`` after scanning, or ``None`` if providify is not
-        installed (mirrors the other backends' graceful-degradation pattern).
+        The same ``container`` passed in, after scanning.
 
     Edge cases:
-        - Calling twice is safe — scanning is idempotent and re-registering the
-          settings provider resolves to the same value.
+        - Calling twice is safe: scanning is idempotent, and the
+          ``CasbinSettings`` provider is guarded by ``is_user_bound()`` so a
+          second ``bootstrap()`` call registers no second provider (Plan 048
+          replaces this hand guard with ``bind_settings()``'s own).
         - ``container.ashutdown()`` must be awaited at process exit so the
           engine's ``@PreDestroy`` runs.
     """
-    try:
-        from providify import DIContainer
-    except ImportError:  # pragma: no cover - providify is a hard dep in practice
-        return None
-
-    if container is None:
-        container = DIContainer.current()
-
     container.scan("varco_casbin", recursive=True)
     # pydantic BaseSettings cannot be a @Singleton under providify — register a
-    # clean provider (scan does not auto-register module-level @Provider funcs).
-    container.provide(_provide_casbin_settings)
+    # clean provider (scan does not auto-register module-level @Provider
+    # funcs). Guarded: container.provide() always appends, so an unguarded
+    # second bootstrap() call would register a second, ambiguous provider —
+    # 048 replaces this hand guard with bind_settings()'s own idempotency.
+    if not is_user_bound(container, CasbinSettings):
+        container.provide(_provide_casbin_settings)
     return container
 
 
-def enable_policy_authorizer(container: Any) -> Any:
+def enable_policy_authorizer(container: DIContainer) -> DIContainer:
     """
     Opt in to Casbin-driven service-layer authorization.
 
-    Registers ``PolicyEngineAuthorizer`` as the application ``AbstractAuthorizer``
-    at the default priority (``0``), shadowing the permissive ``BaseAuthorizer``
-    fallback.  Every existing ``AsyncService`` then enforces Casbin policy with
-    no service-code changes.
+    Registers ``PolicyEngineAuthorizer`` as the application ``AbstractAuthorizer``,
+    shadowing the permissive ``BaseAuthorizer`` fallback (a ``@Fallback``
+    binding — this registers a plain, non-fallback provider, which wins
+    regardless of registration order).  Every existing ``AsyncService`` then
+    enforces Casbin policy with no service-code changes.
 
     DESIGN: an explicit function rather than a scanned @Configuration
         ✅ Truly opt-in — ``scan`` auto-activates ``@Configuration`` objects, so
@@ -146,16 +144,25 @@ def enable_policy_authorizer(container: Any) -> Any:
     Returns:
         The same container, for chaining.
 
-    Edge cases:
-        - If the application already binds an ``AbstractAuthorizer`` at priority
-          ``0``, this introduces an ambiguous same-priority binding — bind your
-          own authorizer at a higher priority, or do not call this.
+    Raises:
+        AlreadyBoundError: A non-fallback ``AbstractAuthorizer`` binding
+            already exists — either the application's own, or a previous
+            call to this function (§D-enable). Bind your own authorizer
+            through the application's normal DI wiring, or do not call this
+            twice.
 
     Example::
 
-        container = bootstrap(DIContainer())
+        container = DIContainer()
+        bootstrap(container)
         enable_policy_authorizer(container)
     """
+    if is_user_bound(container, AbstractAuthorizer):
+        raise AlreadyBoundError(
+            "A non-fallback AbstractAuthorizer binding already exists — "
+            "enable_policy_authorizer() shadows the @Fallback BaseAuthorizer default "
+            "and cannot register a second competing binding."
+        )
     container.provide(_provide_policy_authorizer)
     return container
 

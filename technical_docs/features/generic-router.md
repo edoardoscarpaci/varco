@@ -227,6 +227,13 @@ CORSMiddleware (outermost)
 is not added to responses — but `ErrorMiddleware`, `TracingMiddleware`, and
 `RequestLoggingMiddleware` all still run.
 
+`DISessionMiddleware`'s `container` argument is required and keyword-only
+(`DISessionMiddleware(app, *, container: DIContainer)`, Plan 046 §D-locator) — it never falls
+back to a process-global container. Installed via `install_middleware_stack(app,
+[(DISessionMiddleware, {"container": container}), …])` or
+`app.add_middleware(DISessionMiddleware, container=container)` — constructing it without
+`container=` raises `TypeError`.
+
 ---
 
 ## Auth wiring for service-free routers

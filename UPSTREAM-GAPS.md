@@ -57,6 +57,7 @@ Full workflow, including when *not* to file: CLAUDE.md's
 | ID | Library | Gap | Report | Guard |
 |---|---|---|---|---|
 | **P28-FALLBACK-SHADOWED-SCANNED-CLASS** | `providify` 2.1.0 (`3cb207f`) | `FALLBACK_SHADOWED` is computed per-binding for its own "natural request" `(b.interface, b.qualifier, None)`; a scanned `@Singleton` class registers with `interface = cls` itself (`container.py:1248`), never the ABC it implements, so the INFO never fires for a scanned-class default shadowed at its ABC — even though `get(ABC)` correctly returns the override. Affects 22 of varco's own default sites; gates Plan 052's `varco diagnose` | [providify-fallback-shadowed-scanned-class.md](design/upstream-gaps/providify-fallback-shadowed-scanned-class.md) | `varco_core/tests/test_fallback_defaults.py` (strict xfail, `raises=AssertionError`, no Docker, every `make test`) |
+| **P29-DESCRIPTOR-FALLBACK** | `providify` 2.1.0 | `BindingDescriptor` carries no `fallback` field (`descriptor.py:49-54`); `describe()` drops it and every other public read filters shadowed fallbacks, so enumerating a container's fallback bindings needs a private `container._bindings` read. Blocks Plan 046's `di_wiring` conformance suite's completeness check | [providify-descriptor-fallback-field.md](design/upstream-gaps/providify-descriptor-fallback-field.md) | `varco_core/tests/test_providify_contracts.py::TestP29DescriptorFallbackField::test_binding_descriptor_carries_fallback` (strict xfail) |
 
 ## Recently closed
 

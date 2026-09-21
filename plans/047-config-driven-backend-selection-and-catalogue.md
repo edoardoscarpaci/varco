@@ -79,6 +79,11 @@ the installed copy.
 > `max(priority)` (`container.py:2853`) only ranks the survivors. **045's `BACKEND_PRIORITY =
 > 100` does not break the precedence rule and is not amended** (§D-precedence).
 
+> **Handoff from Plan 046 (landed):** `bootstrap()` is the registration point for 047's `@Requires`-gated providers; each package's `expected_defaults`
+> (`testkit/varco_conformance/di_wiring.py` subclasses) is the seed of the catalogue and should be *generated* from it once the catalogue exists (then
+> `test_declared_defaults_are_complete` reads the catalogue, and the P29 shim's only remaining consumer is the completeness cross-check); `enable_*` now
+> raises `AlreadyBoundError` on a second non-fallback — 047's precedence decision must not reintroduce a silent no-op.
+
 ## Goal
 
 After this plan: each of the six seams — `CacheBackend`, `AbstractDeadLetterQueue`,

@@ -735,10 +735,14 @@ class RedisStreamDLQConfiguration:
 
     Example (Streams bus + Streams DLQ)::
 
+        from varco_core.di import bind_instance
         from varco_redis.di import bootstrap
         from varco_redis.stream_dlq import RedisStreamDLQConfiguration
 
-        container = bootstrap(streams=True)
+        container = DIContainer()
+        # replaces the removed bootstrap(streams=True) (Plan 046 §D-streams)
+        bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))
+        bootstrap(container)
         await container.ainstall(RedisStreamDLQConfiguration)
 
         dlq = await container.aget(AbstractDeadLetterQueue)

@@ -14,7 +14,6 @@ All tests use InMemoryEventBus — no real broker required.
 
 from __future__ import annotations
 
-import pytest
 from providify import Provider
 from varco_core.event.base import AbstractEventBus, Event
 from varco_core.event.memory import InMemoryEventBus
@@ -30,10 +29,7 @@ def _make_container_with_bus() -> tuple[object, InMemoryEventBus]:
     Build a minimal providify DIContainer with an InMemoryEventBus registered
     as AbstractEventBus.  Returns (container, bus).
     """
-    try:
-        from providify import DIContainer
-    except ImportError:
-        pytest.skip("providify not installed — skipping DI tests")
+    from providify import DIContainer
 
     container = DIContainer()
     bus = InMemoryEventBus()
@@ -343,40 +339,6 @@ def test_bind_websocket_adapter_closure_capture() -> None:
     assert ws_b._event_type is ShipmentEvent
 
 
-def test_bind_websocket_adapter_importerror_guard(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """
-    When providify is not installed (ImportError on import), ``bind_websocket_adapter``
-    must return without raising so callers in environments without providify are
-    unaffected.
-    """
-    import builtins  # noqa: PLC0415
-    import sys  # noqa: PLC0415
-    from unittest.mock import MagicMock  # noqa: PLC0415
-
-    original_import = builtins.__import__
-
-    def _block_providify(name: str, *args: object, **kwargs: object) -> object:
-        if name == "providify":
-            raise ImportError("providify not installed")
-        return original_import(name, *args, **kwargs)  # type: ignore[arg-type]
-
-    # Remove any cached providify module so our hook fires.
-    providify_cached = {k: v for k, v in sys.modules.items() if "providify" in k}
-    for k in providify_cached:
-        monkeypatch.delitem(sys.modules, k, raising=False)
-
-    monkeypatch.setattr(builtins, "__import__", _block_providify)
-
-    mock_container = MagicMock()
-    # Must not raise even though providify is unavailable.
-    bind_websocket_adapter(mock_container, channel="orders")
-
-    # No provide() call should have been made.
-    mock_container.provide.assert_not_called()
-
-
 # ── bind_sse_adapter tests ────────────────────────────────────────────────────
 
 
@@ -449,31 +411,3 @@ def test_bind_sse_adapter_closure_capture() -> None:
     assert sse_a._event_type is AlertEvent
     assert sse_b._channel == "metrics"
     assert sse_b._event_type is MetricEvent
-
-
-def test_bind_sse_adapter_importerror_guard(monkeypatch: pytest.MonkeyPatch) -> None:
-    """
-    When providify is not installed, ``bind_sse_adapter`` must return without
-    raising.
-    """
-    import builtins  # noqa: PLC0415
-    import sys  # noqa: PLC0415
-    from unittest.mock import MagicMock  # noqa: PLC0415
-
-    original_import = builtins.__import__
-
-    def _block_providify(name: str, *args: object, **kwargs: object) -> object:
-        if name == "providify":
-            raise ImportError("providify not installed")
-        return original_import(name, *args, **kwargs)  # type: ignore[arg-type]
-
-    providify_cached = {k: v for k, v in sys.modules.items() if "providify" in k}
-    for k in providify_cached:
-        monkeypatch.delitem(sys.modules, k, raising=False)
-
-    monkeypatch.setattr(builtins, "__import__", _block_providify)
-
-    mock_container = MagicMock()
-    bind_sse_adapter(mock_container, channel="status")
-
-    mock_container.provide.assert_not_called()

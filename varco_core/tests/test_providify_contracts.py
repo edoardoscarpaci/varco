@@ -455,3 +455,41 @@ class TestP27FallbackBinding:
 
         results: list[Base] = container.get_all(Base)
         assert A not in [type(x) for x in results]
+
+
+class TestP29DescriptorFallbackField:
+    """P29-DESCRIPTOR-FALLBACK (Plan 046 / \u00a7D-suite) \u2014 `BindingDescriptor`
+    carries no `fallback` field (`providify/descriptor.py:49-54`), so a
+    public `describe()` read cannot answer "is this binding a fallback"
+    without the private `container._bindings` shim
+    (`testkit/varco_conformance/di_wiring.py::fallback_bindings`).
+
+    Guard for `design/upstream-gaps/providify-descriptor-fallback-field.md`.
+    """
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason=(
+            "GAP: P29-DESCRIPTOR-FALLBACK -- BindingDescriptor carries no "
+            "`fallback` field (providify/descriptor.py:49-54) -- see "
+            "design/upstream-gaps/providify-descriptor-fallback-field.md"
+        ),
+    )
+    def test_binding_descriptor_carries_fallback(self) -> None:
+        from providify import Fallback
+
+        class Base:
+            pass
+
+        @Fallback
+        @Singleton
+        class F(Base):
+            pass
+
+        container = DIContainer()
+        container.bind(Base, F)
+
+        descriptor = container.describe().bindings[0]
+
+        assert getattr(descriptor, "fallback", None) is True

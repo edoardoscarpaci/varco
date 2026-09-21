@@ -76,7 +76,7 @@ varco_kafka/             — Kafka event bus backend (aiokafka)
   ├── channel.py         — KafkaChannel (topic routing)
   ├── dlq.py             — KafkaDLQ (dead letter queue)
   ├── config.py          — KafkaConfig (frozen dataclass)
-  └── di.py              — bootstrap() scan helper
+  └── di.py              — bootstrap(container) scan helper
 
 varco_nats/              — NATS JetStream event bus backend (nats-py)
   ├── bus.py             — NatsEventBus(AbstractEventBus) — JetStream, durable consumers
@@ -85,7 +85,7 @@ varco_nats/              — NATS JetStream event bus backend (nats-py)
   ├── dlq.py             — NatsDLQ (dead letter queue, WorkQueue-retention stream)
   ├── health.py          — NatsHealthCheck — connect + account_info() probe
   ├── config.py          — NatsEventBusSettings, NatsDeliverySemantics
-  └── di.py              — bootstrap() scan helper
+  └── di.py              — bootstrap(container) scan helper
 
 varco_redis/             — Redis Pub/Sub event bus + cache backend (redis.asyncio)
   ├── bus.py             — RedisEventBus(AbstractEventBus)
@@ -97,7 +97,7 @@ varco_redis/             — Redis Pub/Sub event bus + cache backend (redis.asyn
   ├── dlq.py             — RedisDLQ (dead letter queue)
   ├── idempotency.py     — RedisIdempotencyStore(AbstractIdempotencyStore) — SET NX PX (Plan 029 / D1b)
   ├── config.py          — RedisConfig, CacheConfig (frozen dataclasses)
-  └── di.py              — bootstrap() scan helper; RedisCacheConfiguration (opt-in cache)
+  └── di.py              — bootstrap(container) scan helper; RedisCacheConfiguration (opt-in cache)
 
 varco_sa/                — SQLAlchemy async ORM backend
   ├── __init__.py        — SAConfig, SAModelFactory, bind_repositories()
@@ -162,7 +162,7 @@ varco_casbin/            — Casbin policy-engine authorization backend (ACL/RBA
   ├── adapter.py         — build_adapter() factory (memory | file | sqlalchemy async)
   ├── router.py          — build_policy_router() — FastAPI APIRouter REST admin ([fastapi] extra)
   ├── models/*.conf      — bundled Casbin models: acl, rbac, rbac_domains, abac
-  └── di.py              — bootstrap() scan helper; enable_policy_authorizer() (opt-in authorizer)
+  └── di.py              — bootstrap(container) scan helper; enable_policy_authorizer(container) (opt-in authorizer)
 ```
 
 > Authorization seam lives in **varco_core.auth.policy** (PolicyEngine, PolicyManagement,
@@ -1467,7 +1467,7 @@ DESIGN:
   ✅ SSE stop: _STOP_SENTINEL in queue — stream() generator terminates without polling
   ❌ WebSocket: no per-client queue — slow send_text blocks the broadcast coroutine
   ❌ SSE: memory grows with (clients × queue depth) — cap with max_queue_size
-  ✅ varco_ws ships a DI module — ``bootstrap()`` scans the package; ``bind_websocket_adapter()`` / ``bind_sse_adapter()`` register per-channel singletons
+  ✅ varco_ws ships a DI module — ``bootstrap(container)`` scans the package and returns it; ``bind_websocket_adapter(container, qualifier=...)`` / ``bind_sse_adapter(container, qualifier=...)`` register per-channel singletons and return the container
 ```
 
 ---
@@ -1847,7 +1847,7 @@ filtered_query = transformer.transform(base_query, params, User)
 
 - **WebSocket adapter**: `WebSocketEventBus` wraps any `AbstractEventBus`; calls `websocket.send_text(str)` — compatible with FastAPI, Starlette, aiohttp
 - **SSE adapter**: `SSEEventBus` delivers events as `data: {...}\n\n` strings; integrate with `StreamingResponse` in any ASGI framework
-- **DI module** (`varco_ws.di`): `bootstrap()` scans the package, discovering both adapters as `@Singleton`s; `bind_websocket_adapter()` / `bind_sse_adapter()` register per-channel singletons
+- **DI module** (`varco_ws.di`): `bootstrap(container)` scans the package (returns the container), discovering both adapters as `@Singleton`s; `bind_websocket_adapter(container, qualifier=...)` / `bind_sse_adapter(container, qualifier=...)` register per-channel singletons (also returning the container; a repeat call with the same `qualifier` raises `AlreadyBoundError`)
 - **No broker dependency**: both adapters subscribe to an existing bus instance; the push layer is fully decoupled from transport
 
   ```python

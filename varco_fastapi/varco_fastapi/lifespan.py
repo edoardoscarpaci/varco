@@ -155,7 +155,7 @@ class VarcoLifespan:
         #   ✅ Testable with a bare coroutine factory — no providify needed.
         #   ❌ A second optional kwarg on a class that already had one.  Accepted:
         #      the symmetry with setup= is precisely the point.
-        #   Rejected: DIContainer.current() lookup inside _stop_all() — implicit
+        #   Rejected: a process-global-container lookup inside _stop_all() — implicit
         #      global state, untestable, and silently wrong in multi-container tests.
         self._shutdown: Callable[[], Awaitable[None]] | None = shutdown
 

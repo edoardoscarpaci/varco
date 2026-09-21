@@ -32,7 +32,8 @@ Pub/Sub (default)::
     from providify import DIContainer
     from varco_redis.di import bootstrap
 
-    container = bootstrap()
+    container = DIContainer()
+    bootstrap(container)
     bus = await container.aget(AbstractEventBus)
     await container.ashutdown()
 
@@ -42,11 +43,21 @@ Or manually::
     container.scan("varco_redis", recursive=True)
     bus = await container.aget(AbstractEventBus)
 
-Redis Streams (at-least-once)::
+Redis Streams (at-least-once) — either set the env var, or register an
+explicit non-fallback settings instance before ``bootstrap()`` (Plan 046
+§D-streams; ``bootstrap(streams=True)`` is removed — it used to mutate
+``os.environ`` for the whole process, which is gone)::
 
     # Set in environment before starting the process:
     # VARCO_REDIS_USE_STREAMS=true
     container.scan("varco_redis", recursive=True)
+
+    # Or, code-side:
+    from varco_core.di import bind_instance
+    from varco_redis.config import RedisEventBusSettings
+
+    bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))
+    bootstrap(container)
 
 Overriding the default settings::
 
@@ -66,16 +77,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from providify import DIContainer
 from varco_core.revocation.base import AbstractTokenRevocationStore
 
 # ── bootstrap ─────────────────────────────────────────────────────────────────
 
 
-def bootstrap(
-    container: Any = None,
-    *,
-    streams: bool = False,
-) -> Any:
+def bootstrap(container: DIContainer) -> DIContainer:
     """
     Bootstrap ``varco_redis`` into a ``DIContainer``.
 
@@ -90,16 +98,24 @@ def bootstrap(
 
     Call this **once** at application startup::
 
+        from providify import DIContainer
         from varco_redis.di import bootstrap
 
-        container = bootstrap()
+        container = DIContainer()
+        bootstrap(container)
         bus = await container.aget(AbstractEventBus)
         await container.ashutdown()
 
-    To use Redis Streams, either pass ``streams=True`` or set the env var::
+    To use Redis Streams, either set ``VARCO_REDIS_USE_STREAMS=true`` in the
+    environment, or register an explicit settings instance before calling
+    this function (Plan 046 §D-streams — ``bootstrap(streams=True)`` is
+    removed; it used to mutate ``os.environ`` for the whole process)::
 
-        container = bootstrap(streams=True)
-        # Equivalent to: VARCO_REDIS_USE_STREAMS=true  (env var)
+        from varco_core.di import bind_instance
+        from varco_redis.config import RedisEventBusSettings
+
+        bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))
+        bootstrap(container)
 
     Override settings before calling bootstrap::
 
@@ -115,16 +131,12 @@ def bootstrap(
         bootstrap(container)
 
     Args:
-        container: An existing ``DIContainer`` to scan into.
-                   When ``None``, ``DIContainer.current()`` is used —
-                   the process-level singleton.
-        streams:   When ``True``, sets ``VARCO_REDIS_USE_STREAMS=true`` in
-                   the process environment before scanning so the
-                   ``_redis_active_bus`` selector returns ``RedisStreamEventBus``.
-                   Prefer setting the env var directly in production.
+        container: The ``DIContainer`` to scan into. Required — this
+            function never creates one and never reads
+            the process-global container (Plan 046 §D-locator).
 
     Returns:
-        The ``DIContainer`` after scanning.
+        The same ``container`` passed in, after scanning.
 
     Edge cases:
         - Calling twice is safe — scanning is idempotent.
@@ -133,29 +145,10 @@ def bootstrap(
           ``@Disposes(AbstractEventBus)`` method — not ``@PreDestroy``, which
           providify never invokes on a ``@Provider``-produced instance
           (Plan 024 / C2).
-        - ``streams=True`` mutates ``os.environ["VARCO_REDIS_USE_STREAMS"]``.
-          This affects all subsequent ``RedisEventBusSettings()`` constructions
-          in the same process.
 
     Thread safety:  ✅ Bootstrap is intended for single-threaded startup only.
     Async safety:   ✅ Scanning is synchronous.
     """
-    import os  # noqa: PLC0415
-
-    try:
-        from providify import DIContainer  # noqa: PLC0415
-    except ImportError:
-        return None
-
-    if streams:
-        # Set env var before scan so RedisEventBusSettings() picks it up.
-        # The @Singleton is constructed once during warm-up; changing the env
-        # var afterwards has no effect.
-        os.environ.setdefault("VARCO_REDIS_USE_STREAMS", "true")
-
-    if container is None:
-        container = DIContainer.current()
-
     # Plan 045 / E2: scan varco_core.revocation FIRST so
     # NullTokenRevocationStore (the real @Fallback @Singleton, defined in
     # varco_core.revocation.null) is registered as the AbstractTokenRevocationStore
@@ -180,74 +173,47 @@ def bootstrap(
 # ── async_bootstrap ───────────────────────────────────────────────────────────
 
 
-async def async_bootstrap(
-    container: Any = None,
-    *,
-    streams: bool = False,
-    setup_cache: bool = False,
-) -> Any:
+async def async_bootstrap(container: DIContainer) -> DIContainer:
     """
-    Async version of :func:`bootstrap` that optionally starts the Redis cache.
+    Async version of :func:`bootstrap` that also starts the Redis cache.
 
-    Combines the synchronous scan step with an optional async cache installation
-    so the app's ``_bootstrap`` function doesn't need a separate
+    Combines the synchronous scan step with an async cache installation so
+    the app's own bootstrap function doesn't need a separate
     ``await container.ainstall(RedisCacheConfiguration)`` call::
 
         async def _bootstrap() -> None:
-            await redis_async_bootstrap(container, streams=True, setup_cache=True)
+            await async_bootstrap(container)
             # ↑ one call instead of two
 
         # Equivalent to:
         async def _bootstrap() -> None:
-            redis_bootstrap(container, streams=True)
+            bootstrap(container)
             await container.ainstall(RedisCacheConfiguration)
 
+    Plan 046 §D-contract removes the ``setup_cache=`` kwarg — the two
+    packages' differing defaults (``varco_redis`` was ``False``,
+    ``varco_memcached`` was ``True``) were exactly the inconsistency DI-2
+    names. Call plain :func:`bootstrap` for a scan-only container.
+
     Args:
-        container:   An existing ``DIContainer`` to scan into.
-                     When ``None``, ``DIContainer.current()`` is used.
-        streams:     When ``True``, activates ``RedisStreamEventBus`` — same
-                     as passing ``streams=True`` to :func:`bootstrap`.
-        setup_cache: When ``True``, installs ``RedisCacheConfiguration`` after
-                     scanning, which constructs and starts ``RedisCache``.
-                     The cache is bound as ``CacheBackend`` in the container.
-                     When ``False`` (default), no cache is installed.
+        container: The ``DIContainer`` to scan into. Required — see
+            :func:`bootstrap`.
 
     Returns:
-        The ``DIContainer`` after scanning and optional cache installation, or
-        ``None`` when providify is not installed — mirroring
-        :func:`bootstrap`'s own contract. Prior to 3.0.0 this path raised
-        ``AttributeError`` instead (Plan 022 / RIDER-1).
+        The same ``container`` passed in, after scanning and cache
+        installation.
 
     Raises:
-        ConnectionError: If ``setup_cache=True`` and Redis is unreachable.
-
-    Edge cases:
-        - ``setup_cache=False`` is the same as calling :func:`bootstrap` — no
-          async work is done.
-        - When providify is absent, ``None`` is returned and no cache is
-          installed, regardless of ``setup_cache``.
-        - The cache URL is read from ``VARCO_REDIS_CACHE_URL`` (via
-          ``RedisCacheSettings.from_env()``), not from ``VARCO_REDIS_URL``.
-          Both can point at the same Redis instance.
+        ConnectionError: If Redis is unreachable.
 
     Thread safety:  ✅ Intended for single-threaded startup only.
     Async safety:   ✅ ``async def`` — safe to ``await``.
     """
-    container = bootstrap(container, streams=streams)
+    bootstrap(container)
 
-    # RIDER-1 (Plan 022 / Phase 3). ``bootstrap()`` returns ``None`` when
-    # providify is absent (its own ``except ImportError: return None`` path),
-    # so without this guard the next line raised
-    # ``AttributeError: 'NoneType' object has no attribute 'ainstall'`` —
-    # a crash on exactly the path documented as a graceful no-op. Returning
-    # ``None`` here makes this function's contract match ``bootstrap()``'s.
-    if container is None:
-        return None
+    from varco_redis.cache import RedisCacheConfiguration  # noqa: PLC0415
 
-    if setup_cache:
-        from varco_redis.cache import RedisCacheConfiguration  # noqa: PLC0415
-
-        await container.ainstall(RedisCacheConfiguration)
+    await container.ainstall(RedisCacheConfiguration)
 
     return container
 
@@ -255,7 +221,7 @@ async def async_bootstrap(
 # ── Token revocation (Plan 034 / S13b, Step 34) ──────────────────────────────
 
 
-def enable_redis_token_revocation(container: Any, **redis_kwargs: Any) -> Any:
+def enable_redis_token_revocation(container: DIContainer, **redis_kwargs: Any) -> DIContainer:
     """
     Opt in to ``RedisTokenRevocationStore`` as the application's
     ``AbstractTokenRevocationStore``, shadowing the always-off
@@ -279,6 +245,12 @@ def enable_redis_token_revocation(container: Any, **redis_kwargs: Any) -> Any:
     Returns:
         The same container, for chaining.
 
+    Raises:
+        AlreadyBoundError: A non-fallback ``AbstractTokenRevocationStore``
+            binding already exists (yours, or a previous call to this or
+            ``varco_core.revocation.di.enable_token_revocation`` — both flip
+            the same seam, §D-enable).
+
     Example::
 
         container = DIContainer()
@@ -289,8 +261,16 @@ def enable_redis_token_revocation(container: Any, **redis_kwargs: Any) -> Any:
         registry = TrustedIssuerRegistry(revocation_store=store)  # the second step
     """
     from providify import Provider  # noqa: PLC0415
+    from varco_core.di import AlreadyBoundError, is_user_bound  # noqa: PLC0415
 
     from varco_redis.revocation import RedisTokenRevocationStore  # noqa: PLC0415
+
+    if is_user_bound(container, AbstractTokenRevocationStore):
+        raise AlreadyBoundError(
+            "A non-fallback AbstractTokenRevocationStore binding already exists — "
+            "enable_redis_token_revocation()/enable_token_revocation() flip the same "
+            "seam and only one may win."
+        )
 
     @Provider(singleton=True)
     def _provide_redis_revocation_store() -> AbstractTokenRevocationStore:

@@ -211,7 +211,7 @@ class TrustedIssuerRegistry:
                 ``enable_redis_token_revocation``) does NOT by itself wire
                 it here — that binding must be passed to this constructor
                 explicitly (§D-S13-di's two-step; ``varco_core`` never
-                reaches for ``DIContainer.current()``).
+                reaches for the process-global container).
         """
         # label → TrustedIssuerEntry
         self._entries: dict[str, TrustedIssuerEntry] = {}

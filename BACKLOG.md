@@ -70,7 +70,7 @@ Every row of the 4.0 Live table is planned, one line per plan file. Build order,
 the whole-set done criteria: [`plans/000-index-4-0-di-standardization.md`](plans/000-index-4-0-di-standardization.md).
 A row moves to `## ✅ Shipped` only when its plan is built and merged.
 
-- `DI-2`, `DI-8`, `DI-13` — plans/046-wiring-verb-collapse-and-explicit-container.md
+- `DI-2`, `DI-8`, `DI-13` — plans/046-wiring-verb-collapse-and-explicit-container.md — `done (Plan 046)`
 - `DI-12`, `DI-4`, `DI-17` — plans/047-config-driven-backend-selection-and-catalogue.md
 - `DI-6`, `DI-16` — plans/048-settings-standardization.md
 - `DI-1`, `FLIP-1` — plans/049-varco-module-and-composable-app.md

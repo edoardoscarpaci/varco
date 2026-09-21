@@ -56,14 +56,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from providify import Configuration, Fallback, Provider
+from providify import Configuration, DIContainer, Fallback, Provider
 
 # ── Plan 011 — i18n / timezone default bindings ─────────────────────────
 from varco_core.context.defaults import NullTenantDefaults, TenantDefaultsProvider
-
-# Event producer types — also needed by setup_event_producer() for the same reason.
-from varco_core.event.base import AbstractEventBus
-from varco_core.event.producer import AbstractEventProducer, BusEventProducer
 from varco_core.i18n.catalog import MessageCatalog, NullMessageCatalog
 from varco_core.i18n.settings import I18nSettings
 from varco_core.job.serializer import DefaultTaskSerializer, TaskSerializer
@@ -89,7 +85,7 @@ from varco_fastapi.middleware.cors import CORSConfig
 from varco_fastapi.middleware.profiling import ProfilingSettings
 
 
-def bind_clients(container: Any, *client_classes: type) -> None:
+def bind_clients(container: DIContainer, *client_classes: type) -> DIContainer:
     """
     Register ``AsyncVarcoClient`` subclasses in the DI container.
 
@@ -121,19 +117,22 @@ def bind_clients(container: Any, *client_classes: type) -> None:
             def __init__(self, orders: Inject[VarcoClient[OrderRouter]]) -> None:
                 self._orders = orders
 
+    Returns:
+        The same ``container`` passed in.
+
+    Raises:
+        TypeError: A client has no ``_router_class``.
+        AlreadyBoundError: A non-fallback ``VarcoClient[RouterType]`` binding
+            already exists for one of the given clients (§D-bind).
+
     Edge cases:
-        - Client without ``_router_class`` → ``TypeError`` with helpful message.
-        - Same client registered twice → the **first** registration wins, not
-          the second. `DIContainer.get()` picks the highest-*priority* binding
-          for an interface and both registrations share the same (default)
-          priority, so ties resolve to the earliest-registered candidate — the
-          binding is appended, never replaced (same first-registered-wins rule
-          as ``container.provide()`` / ``container.install()``).
         - No configurator → client will need an explicit ``base_url`` at construction.
 
     Thread safety:  ✅ Registration happens at bootstrap; no concurrent access.
     Async safety:   ✅ No I/O during registration.
     """
+    from varco_core.di import AlreadyBoundError, is_user_bound
+
     from varco_fastapi.client.base import AsyncVarcoClient
 
     for client_cls in client_classes:
@@ -148,6 +147,13 @@ def bind_clients(container: Any, *client_classes: type) -> None:
         # Create a typed alias for the registration key (VarcoClient[RouterType])
         # This is the same trick bind_repositories() uses in varco_sa.di
         client_alias = AsyncVarcoClient[router_cls]  # type: ignore[valid-type]
+
+        if is_user_bound(container, client_alias):
+            raise AlreadyBoundError(
+                f"A non-fallback VarcoClient[{router_cls.__name__}] binding already "
+                "exists — use providify's di_overrides/ContainerOverrides in a test "
+                "to replace it."
+            )
 
         # Capture client_cls in closure to avoid late-binding
         _cls = client_cls
@@ -179,8 +185,10 @@ def bind_clients(container: Any, *client_classes: type) -> None:
         #      fails later, further from the cause).
         container.provide(Provider(singleton=True)(_factory), returns=client_alias)
 
+    return container
 
-def bind_clients_from(container: Any, *router_classes: type) -> None:
+
+def bind_clients_from(container: DIContainer, *router_classes: type) -> DIContainer:
     """
     ``client_class_for()`` each router, then ``bind_clients()`` the results
     (Plan 009, Phase 3 / C1).
@@ -197,6 +205,9 @@ def bind_clients_from(container: Any, *router_classes: type) -> None:
 
         bind_clients_from(container, OrderRouter, UserRouter)
         orders_client = await container.aget(VarcoClient[OrderRouter])
+
+    Returns:
+        The same ``container`` passed in (delegates to :func:`bind_clients`).
     """
     from varco_fastapi.client.configurator import ClientConfigurator
     from varco_fastapi.client.front_door import client_class_for
@@ -233,7 +244,7 @@ def bind_clients_from(container: Any, *router_classes: type) -> None:
         )
         for base in (client_class_for(r) for r in router_classes)
     )
-    bind_clients(container, *client_classes)
+    return bind_clients(container, *client_classes)
 
 
 # ── VarcoFastAPIModule ────────────────────────────────────────────────────────
@@ -445,275 +456,73 @@ class VarcoFastAPIModule:
         return DefaultTaskSerializer()
 
 
-def create_varco_container(*packages: str) -> Any:
-    """
-    Create (or return) the global ``DIContainer`` and scan varco packages.
-
-    Uses ``DIContainer.current()`` to access the process-level singleton
-    container — all calls within the same process share the same instance.
-    The container is scanned for ``@Singleton`` / ``@Component`` classes
-    in every package passed.  Pass your application's top-level package
-    last to ensure backend classes are registered before app-level overrides.
-
-    DESIGN: DIContainer.current() over explicit passing
-        ✅ Application code never needs to pass the container around —
-           it is retrieved from the global context whenever needed.
-        ✅ Consistent with how FastAPI route factories call
-           ``DIContainer.current().get(...)`` to resolve dependencies.
-        ❌ Harder to use in tests that need an isolated container — for tests,
-           create a fresh ``DIContainer()`` directly and scope it to the test.
-
-    Args:
-        *packages: Package names to scan (e.g. ``"varco_core"``,
-                   ``"varco_redis"``, ``"myapp"``).  The container scans
-                   each package recursively to discover all scope-annotated
-                   classes (``@Singleton``, ``@Component``, etc.).
-
-    Returns:
-        The global ``DIContainer`` instance after scanning.
-
-    Example::
-
-        # Application bootstrap
-        container = create_varco_container(
-            "varco_core",   # InMemoryEventBus, InMemoryLock, etc.
-            "varco_redis",  # RedisEventBus, RedisHealthCheck, etc.
-            "varco_sa",     # SQLAlchemyRepositoryProvider, SAHealthCheck, etc.
-            "myapp",        # application-level @Singleton services
-        )
-        container.install(VarcoFastAPIModule)
-        bind_repositories(container, User, Post)
-        await container.awarm_up()  # triggers all @PostConstruct methods
-
-    Edge cases:
-        - If ``packages`` is empty, no scanning occurs — the container is
-          returned as-is with only manually registered bindings.
-        - Calling twice with the same package is safe — scanning is idempotent;
-          already-registered classes are not re-registered.
-        - Returns ``None`` if providify is not installed.
-
-    Thread safety:  ✅ Intended for single-threaded bootstrap only.
-    Async safety:   ✅ No async operations — scanning is synchronous.
-    """
-    try:
-        from providify import DIContainer
-    except ImportError:
-        return None
-
-    container = DIContainer.current()
-    for package in packages:
-        # Recursive scan — discovers all @Singleton / @Component classes
-        # in every submodule of the given package.
-        container.scan(package, recursive=True)
-
-    return container
-
-
-def setup_event_producer(container: Any) -> None:
-    """
-    Bind ``BusEventProducer`` as the default ``AbstractEventProducer`` implementation.
-
-    Call once after an event bus has been registered (e.g. via
-    ``container.scan("varco_redis")`` / ``bootstrap()``) to wire the producer
-    abstraction that ``AsyncService`` and ``CacheServiceMixin`` depend on::
-
-        container = DIContainer()
-        container.scan("varco_redis", recursive=True)  # binds AbstractEventBus
-        container.install(SAModule)
-        container.install(VarcoFastAPIModule)
-        setup_event_producer(container)  # binds AbstractEventProducer → BusEventProducer
-
-    After this call, all ``AsyncService`` subclasses with an optional
-    ``AbstractEventProducer`` injection will receive a live ``BusEventProducer``
-    instead of the fallback ``NoopEventProducer``.  ``CacheServiceMixin``
-    will also emit ``CacheInvalidated`` events cross-process.
-
-    Override before or after this call to supply a custom producer::
-
-        setup_event_producer(container)
-        container.bind(AbstractEventProducer, MyCustomProducer)  # wins
-
-    DESIGN: separate helper over auto-wiring inside VarcoFastAPIModule
-        ✅ The event bus module must be installed BEFORE the producer is created
-           (``BusEventProducer`` holds a reference to ``AbstractEventBus``).
-           A helper called explicitly after bus install enforces this order.
-        ✅ Apps that do not use events skip this call entirely — zero overhead.
-        ❌ One extra bootstrap call — small ergonomic cost, large safety gain.
-
-    Args:
-        container: The ``DIContainer`` to register the binding into.
-                   Must have an ``AbstractEventBus`` binding already registered
-                   (from a scanned bus package like ``varco_redis``).
-
-    Raises:
-        LookupError: Raised lazily at resolution time if ``AbstractEventBus``
-                     is not registered when ``AbstractEventProducer`` is first
-                     resolved.  Install the bus module before this call to
-                     surface the error at startup.
-
-    Edge cases:
-        - Calling twice adds a second binding; the container uses the
-          higher-priority one.  Safe but unnecessary — call once.
-        - If no bus module is installed, ``BusEventProducer`` construction
-          will raise ``LookupError`` at first resolution.  Always install a
-          bus module first.
-        - ``NoopEventProducer`` is still used in service subclasses that are
-          constructed before this binding is resolved — the Null Object
-          pattern in ``AsyncService.__init__`` applies only as a constructor
-          fallback.  With a proper DI container, resolution happens lazily
-          so the binding will always be found before any service is used.
-
-    Thread safety:  ✅ Registration is expected at bootstrap (single-threaded).
-    Async safety:   ✅ No I/O during registration.
-    """
-    # AbstractEventProducer, BusEventProducer, AbstractEventBus, Provider, Singleton
-    # are all imported at module level — no local imports needed here.
-
-    # BusEventProducer is already declared `@Fallback @Singleton` at its own
-    # definition (varco_core.event.producer) — no re-stamp needed here.
-
-    # Register a @Provider that injects AbstractEventBus into BusEventProducer.
-    # Named function (not lambda) for clean describe() output in the container.
-    @Provider(singleton=True)
-    def _bus_event_producer(bus: AbstractEventBus) -> AbstractEventProducer:
-        """Default BusEventProducer — wraps the registered AbstractEventBus."""
-        return BusEventProducer(bus=bus)
-
-    container.provide(_bus_event_producer)
-
-
 __all__ = [
     "VarcoFastAPIModule",
     "bind_clients",
+    "bind_clients_from",
     "bootstrap",
-    "create_varco_container",
-    "setup_event_producer",
-    # MCP / Skill adapter DI helpers — re-exported from their modules for
+    # MCP / Skill adapter DI helpers — true re-exports from their modules for
     # one-stop import: from varco_fastapi.di import bind_mcp_adapter
     "bind_mcp_adapter",
     "bind_skill_adapter",
 ]
 
+# ── Re-export adapter DI helpers for one-stop import convenience ──────────────
+# True re-exports (not wrapping *args/**kwargs functions, Plan 046 §D-removals)
+# so `inspect.signature(varco_fastapi.di.bind_mcp_adapter)` shows the real
+# `qualifier=` parameter instead of an opaque `(*args, **kwargs)`.
+from varco_fastapi.router.mcp import bind_mcp_adapter  # noqa: E402
+from varco_fastapi.router.skill import bind_skill_adapter  # noqa: E402
 
 # ── bootstrap ─────────────────────────────────────────────────────────────────
 
 
-def bootstrap(
-    container: Any = None,
-    *packages: str,
-    setup_producer: bool = False,
-) -> Any:
+def bootstrap(container: DIContainer) -> DIContainer:
     """
     Bootstrap ``varco_fastapi`` into a ``DIContainer``.
 
-    Installs :data:`VarcoFastAPIModule`, calls
-    ``container.scan("varco_fastapi", recursive=True)`` plus any
-    additional ``packages``, and optionally runs
-    :func:`setup_event_producer`. Every framework default — including
-    ``TaskSerializer → DefaultTaskSerializer`` — is registered by the scan
-    itself (each is a ``@Fallback``-marked binding on ``VarcoFastAPIModule``
-    or a scanned ``@Singleton`` class); there is no longer a separate
-    "setup defaults" step to opt into or skip.
+    Installs :data:`VarcoFastAPIModule` and calls
+    ``container.scan("varco_fastapi", recursive=True)``. Every framework
+    default — including ``TaskSerializer → DefaultTaskSerializer`` — is
+    registered by the scan itself (each is a ``@Fallback``-marked binding on
+    ``VarcoFastAPIModule`` or a scanned ``@Singleton`` class); there is no
+    separate "setup defaults" step to opt into or skip.
 
-    This is a convenience wrapper around :func:`create_varco_container`
-    that also installs the FastAPI module — the minimum required setup
-    for a ``varco_fastapi``-based application::
+    Plan 046 §D-removals deletes ``*packages``/``setup_producer=`` and the
+    ``create_varco_container``/``setup_event_producer`` helpers they used to
+    delegate to — scan your own application package separately, and call
+    ``varco_core.di.bootstrap(container)`` for ``AbstractEventProducer →
+    BusEventProducer`` (it is a ``varco_core`` Class-A ``@Fallback`` default,
+    045's A10)::
 
-        from varco_fastapi.di import bootstrap
-
-        container = bootstrap("myapp")   # scans varco_fastapi + myapp
-        # All VarcoFastAPIModule providers are available immediately
-
-    Full application bootstrap with a Redis event bus::
-
+        from providify import DIContainer
+        from varco_core.di import bootstrap as core_bootstrap
         from varco_redis.di import bootstrap as redis_bootstrap
         from varco_fastapi.di import bootstrap as fastapi_bootstrap
 
-        container = await redis_bootstrap()
-        fastapi_bootstrap(container, "myapp", setup_producer=True)
-        # AbstractEventProducer → BusEventProducer is now bound
+        container = DIContainer()
+        core_bootstrap(container)      # AbstractEventProducer → BusEventProducer, etc.
+        redis_bootstrap(container)     # AbstractEventBus → RedisEventBus
+        fastapi_bootstrap(container)   # VarcoFastAPIModule defaults
+        container.scan("myapp", recursive=True)
 
     Args:
-        container:       An existing ``DIContainer`` to install into.
-                         When ``None``, ``DIContainer.current()`` is used —
-                         the process-level singleton.
-        *packages:       Additional package names to scan after
-                         ``"varco_fastapi"`` — typically your application
-                         package (e.g. ``"myapp"``).
-        setup_producer:  When ``True``, calls :func:`setup_event_producer`
-                         to bind ``AbstractEventProducer → BusEventProducer``.
-                         Only meaningful after a bus module is installed.
+        container: The ``DIContainer`` to install into. Required — this
+            function never creates one and never reads
+            the process-global container (Plan 046 §D-locator).
 
     Returns:
-        The ``DIContainer`` after installation, scanning, and optional
-        default bindings.
+        The same ``container`` passed in, after installation and scanning.
 
     Edge cases:
-        - ``setup_producer=True`` without a bus module installed causes a
-          ``LookupError`` at first ``AbstractEventProducer`` resolution.
-          Always install a bus module before passing ``setup_producer=True``.
-        - ``VarcoFastAPIModule`` is ``None`` when providify is not installed —
-          ``bootstrap()`` returns ``None`` in that case.
+        - Calling twice is safe — scanning is idempotent.
 
     Thread safety:  ✅ Bootstrap is intended for single-threaded startup only.
     Async safety:   ✅ No I/O during installation; providers are called lazily.
     """
-    try:
-        from providify import DIContainer
-    except ImportError:
-        return None
-
-    if container is None:
-        # Use the process-level singleton container — consistent with
-        # create_varco_container().
-        container = DIContainer.current()
-
-    # Scan varco_fastapi itself, then any caller-supplied packages.
     # The scanner discovers VarcoFastAPIModule (@Configuration) and calls
     # container.install(VarcoFastAPIModule) automatically — no explicit
-    # install() call needed.  varco_fastapi is scanned first so its
-    # @Singleton classes are registered before application-level overrides.
-    all_packages = ("varco_fastapi", *packages)
-    for pkg in all_packages:
-        container.scan(pkg, recursive=True)
-
-    if setup_producer:
-        setup_event_producer(container)
+    # install() call needed.
+    container.scan("varco_fastapi", recursive=True)
 
     return container
-
-
-# ── Re-export adapter DI helpers for one-stop import convenience ──────────────
-
-
-def bind_mcp_adapter(*args: Any, **kwargs: Any) -> None:
-    """
-    Re-export of ``varco_fastapi.router.mcp.bind_mcp_adapter``.
-
-    Convenience alias so DI wiring code can import everything from one place::
-
-        from varco_fastapi.di import (
-            VarcoFastAPIModule,
-            bind_clients,
-            bind_mcp_adapter,
-            bind_skill_adapter,
-        )
-
-    See ``varco_fastapi.router.mcp.bind_mcp_adapter`` for full documentation.
-    """
-    from varco_fastapi.router.mcp import bind_mcp_adapter as _impl
-
-    return _impl(*args, **kwargs)
-
-
-def bind_skill_adapter(*args: Any, **kwargs: Any) -> None:
-    """
-    Re-export of ``varco_fastapi.router.skill.bind_skill_adapter``.
-
-    Convenience alias so DI wiring code can import everything from one place.
-
-    See ``varco_fastapi.router.skill.bind_skill_adapter`` for full documentation.
-    """
-    from varco_fastapi.router.skill import bind_skill_adapter as _impl
-
-    return _impl(*args, **kwargs)

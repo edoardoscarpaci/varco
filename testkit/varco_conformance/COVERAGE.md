@@ -1,10 +1,12 @@
 # Conformance suite coverage — audit outcome
 
-**Never packaged** — lives alongside the eight conformance base classes it documents (five from
-Plan 012/019, plus `idempotency_store`/`webhook_subscription`/`token_revocation` added by Plans
-029/031/034), reached only via `pythonpath = ["../testkit"]` (CLAUDE.md's Test Conventions). This
-file is the durable, audited record answering: *for every implementation of one of the eight
-shared ABCs, does it subclass the matching conformance suite, and if not, why not?*
+**Never packaged** — lives alongside the nine conformance base classes it documents (five from
+Plan 012/019, `idempotency_store`/`webhook_subscription`/`token_revocation` added by Plans
+029/031/034, and `di_wiring` added by Plan 046 / DI-13), reached only via
+`pythonpath = ["../testkit"]` (CLAUDE.md's Test Conventions). This file is the durable, audited
+record answering: *for every implementation of one of the eight ABCs (or every package's
+`bootstrap()`, for `di_wiring`), does it subclass the matching conformance suite, and if not, why
+not?*
 
 Produced by Plan 024 (§D-C7, C7), for the original five-suite matrix. See BACKLOG.md's "C7's audit
 outcome" open question, answered: **two** real gaps out of a five-suite × ~24-implementation
@@ -12,9 +14,9 @@ matrix — the great majority of the apparent gaps scout tooling flagged were le
 not real holes. The three later ABCs (below) were designed with a shared suite from day one and
 audited at the same rigor as they landed.
 
-**Rule (CLAUDE.md's Test Conventions)**: a new implementation of one of the eight ABCs either
-subclasses its suite or gets a row in this file explaining why not — a future absence must be
-argued against a written record, not rediscovered from scratch.
+**Rule (CLAUDE.md's Test Conventions)**: a new implementation of one of the eight ABCs, or a new
+package's `bootstrap()`, either subclasses its suite or gets a row in this file explaining why
+not — a future absence must be argued against a written record, not rediscovered from scratch.
 
 ---
 
@@ -27,6 +29,7 @@ argued against a written record, not rediscovered from scratch.
 | `job_store` | `InMemoryJobStore`, `SAJobStore`, `RedisJobStore`, `BeanieJobStore` | `varco_core/tests/test_conformance_inmemory.py:130` (cross-package import of `varco_fastapi/varco_fastapi/job/store.py:40`, documented); `varco_sa/tests/test_sa_conformance.py:26`; `varco_redis/tests/test_redis_conformance.py:56`; `varco_beanie/tests/test_beanie_conformance.py:34` | none |
 | `event_bus` | `InMemoryEventBus`, `NoopEventBus`, `RedisEventBus`, `RedisStreamEventBus`, `KafkaEventBus`, `NatsEventBus` | all but `NoopEventBus` | **`NoopEventBus`** — resolved as a stated reason, not a subclass (see below) |
 | `dlq` | `InMemoryDLQ`, `RedisDLQ`, `RedisStreamDLQ`, `KafkaDLQ`, `NatsDLQ`, `SADeadLetterQueue`, `BeanieDeadLetterQueue` | all — `RedisStreamDLQ` filled by Plan 024 Step 32 (`varco_redis/tests/test_redis_conformance.py::TestRedisStreamDLQConformance`) | **none remaining** — was `RedisStreamDLQ`, now closed |
+| `di_wiring` | all ten packages' `bootstrap()` | `varco_core/tests/test_di_wiring_conformance.py`, `varco_kafka/tests/test_kafka_di_wiring.py`, `varco_nats/tests/test_nats_di_wiring.py`, `varco_redis/tests/test_redis_di_wiring.py`, `varco_memcached/tests/test_memcached_di_wiring.py`, `varco_ws/tests/test_ws_di_wiring.py`, `varco_casbin/tests/test_casbin_di_wiring.py`, `varco_sa/tests/test_sa_di_wiring.py`, `varco_beanie/tests/test_beanie_di_wiring.py`, `varco_fastapi/tests/test_fastapi_di_wiring.py` | none — all ten subclass, Docker-free |
 
 ## Stated absences
 
@@ -49,10 +52,11 @@ These are legitimate, permanent absences — not TODOs, not backlog rows.
   behaviour that actually matters (WS/SSE framing, connection lifecycle).
 - **`varco_memcached`** — implements only `CacheBackend`. No event bus, DLQ, job store, or channel
   manager exists in this package, so it legitimately subscribes to only the `cache` suite.
-- **`varco_casbin`** — implements **none** of the five ABCs (it is a policy engine, not a
-  broker/cache/job-store backend), and therefore does not need `pythonpath = ["../testkit"]` at
-  all — the only package of the ten deliberately without one. Confirmed present in all nine
-  others.
+- **`varco_casbin`** — implements **none** of the eight backend ABCs (it is a policy engine, not
+  a broker/cache/job-store backend); it therefore subscribes to none of those eight suites. It
+  gained `pythonpath = ["../testkit"]` in Plan 046 / DI-13 specifically for `di_wiring` — it now
+  subclasses `DIWiringConformance` (`varco_casbin/tests/test_casbin_di_wiring.py`), so it is no
+  longer the one package without the testkit path.
 - **`TenantSource`** (`varco_core.tenancy.source`, Plan 033 / S6) — no conformance suite, and
   none is planned (§D-S6-conformance). `testkit/varco_conformance` is **never packaged**, so the
   only audience a suite would serve — an out-of-tree implementer of a new source (mTLS, path-

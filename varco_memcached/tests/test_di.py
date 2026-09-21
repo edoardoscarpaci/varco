@@ -9,14 +9,13 @@ any network connections.
 
 Sections
 --------
-- ``bootstrap``       — returns container, creates container when None, ImportError guard
+- ``bootstrap``       — returns container, requires an explicit container (Plan 046)
 - ``async_bootstrap`` — delegates to bootstrap, calls ainstall
 - ``__init__`` re-export — bootstrap and async_bootstrap importable from package root
 """
 
 from __future__ import annotations
 
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from varco_memcached.di import async_bootstrap, bootstrap
@@ -68,83 +67,17 @@ class TestBootstrap:
         bootstrap(container)
         container.scan.assert_called_once_with("varco_memcached", recursive=True)
 
-    def test_uses_di_container_current_when_none(self) -> None:
+    def test_bootstrap_requires_a_container(self) -> None:
         """
-        When container=None, bootstrap() must fall back to DIContainer.current().
-
-        This mirrors every other varco bootstrap() — it makes the single-container
-        app case work with no explicit container argument.
+        Plan 046 §D-contract — ``bootstrap()`` no longer defaults ``container``
+        to ``None``/``DIContainer.current()``; calling it with no argument is
+        a ``TypeError`` (missing positional argument), the intended loud
+        failure.
         """
-        mock_container = _make_mock_container()
+        import pytest  # noqa: PLC0415
 
-        # Patch sys.modules["providify"] so the local import inside bootstrap()
-        # resolves our mock DIContainer instead of the real one.
-        # This is the only reliable approach because bootstrap() does
-        # ``from providify import DIContainer`` inside the function body —
-        # patching the di module's namespace directly would not intercept
-        # that local import statement.
-        mock_di_container_cls = MagicMock()
-        mock_di_container_cls.current.return_value = mock_container
-
-        fake_providify = MagicMock()
-        fake_providify.DIContainer = mock_di_container_cls
-
-        original = sys.modules.get("providify")
-        sys.modules["providify"] = fake_providify  # type: ignore[assignment]
-        try:
-            result = bootstrap(None)
-        finally:
-            # Restore original so other tests using real providify are unaffected
-            if original is None:
-                sys.modules.pop("providify", None)
-            else:
-                sys.modules["providify"] = original
-
-        mock_di_container_cls.current.assert_called_once()
-        assert result is mock_container
-
-    def test_importerror_guard_returns_none(self) -> None:
-        """
-        bootstrap() must return None when providify is not installed.
-
-        This ensures the package loads cleanly in environments where
-        providify is absent (e.g. libraries used without a DI container).
-        """
-        # Temporarily hide providify from sys.modules to simulate absence
-        original = sys.modules.get("providify")
-        # Inject a sentinel that raises ImportError when imported
-        sys.modules["providify"] = None  # type: ignore[assignment]
-        try:
-            result = bootstrap(_make_mock_container())
-        finally:
-            if original is None:
-                sys.modules.pop("providify", None)
-            else:
-                sys.modules["providify"] = original
-
-        assert result is None, (
-            "bootstrap() must return None when providify is absent so callers "
-            "don't crash when the DI framework is optional."
-        )
-
-    def test_importerror_guard_no_container(self) -> None:
-        """
-        bootstrap(None) must return None (not raise) when providify is absent.
-
-        The None path runs DIContainer.current() which would raise
-        AttributeError — the ImportError guard must short-circuit before that.
-        """
-        original = sys.modules.get("providify")
-        sys.modules["providify"] = None  # type: ignore[assignment]
-        try:
-            result = bootstrap(None)  # no container — would blow up without guard
-        finally:
-            if original is None:
-                sys.modules.pop("providify", None)
-            else:
-                sys.modules["providify"] = original
-
-        assert result is None
+        with pytest.raises(TypeError):
+            bootstrap()  # type: ignore[call-arg]
 
 
 # ── async_bootstrap ───────────────────────────────────────────────────────────
@@ -213,15 +146,10 @@ class TestAsyncBootstrap:
 
     async def test_no_kwargs_call_awaits_ainstall_exactly_once(self) -> None:
         """
-        Plan 014 / audit F7 — characterization of TODAY'S unconditional
-        install: ``await async_bootstrap(container)`` with **no kwargs**
-        must await ``container.ainstall(MemcachedCacheConfiguration)``
-        exactly once.
-
-        This is the behaviour Plan 014 step 18's new ``setup_cache: bool =
-        True`` parameter must preserve byte-for-byte as its default — this
-        test is written before that parameter exists, precisely so it pins
-        the pre-change contract (see the plan's Risks section).
+        ``await async_bootstrap(container)`` with **no kwargs** (Plan 046
+        removed ``setup_cache=`` entirely) must await
+        ``container.ainstall(MemcachedCacheConfiguration)`` exactly once —
+        it is unconditional now.
         """
         from varco_memcached.cache import MemcachedCacheConfiguration  # noqa: PLC0415
 
@@ -232,96 +160,12 @@ class TestAsyncBootstrap:
 
         container.ainstall.assert_awaited_once_with(MemcachedCacheConfiguration)
 
-    async def test_passes_none_container_to_bootstrap(self) -> None:
-        """
-        async_bootstrap(None) must pass None through to bootstrap() so
-        bootstrap()'s DIContainer.current() fallback logic kicks in.
-        """
-        mock_container = _make_mock_container()
+    async def test_async_bootstrap_requires_a_container(self) -> None:
+        """Plan 046 §D-contract — same required-container contract as ``bootstrap()``."""
+        import pytest  # noqa: PLC0415
 
-        with (
-            patch("varco_memcached.di.bootstrap", return_value=mock_container) as mock_bs,
-            patch("varco_memcached.cache.MemcachedCacheConfiguration"),
-        ):
-            await async_bootstrap(None)
-
-        # None must be forwarded — not resolved here — so bootstrap() can apply
-        # its own DIContainer.current() fallback consistently.
-        mock_bs.assert_called_once_with(None)
-
-    async def test_setup_cache_false_does_not_await_ainstall(self) -> None:
-        """
-        Plan 014 / audit F7, step 19 — ``setup_cache=False`` must not await
-        ``container.ainstall(...)`` and must still return the container.
-        """
-        container = _make_mock_container()
-
-        with patch("varco_memcached.di.bootstrap", return_value=container):
-            result = await async_bootstrap(container, setup_cache=False)
-
-        container.ainstall.assert_not_awaited()
-        assert result is container
-
-    async def test_setup_cache_false_with_providify_absent_returns_none(self) -> None:
-        """
-        Plan 014 / audit F7, step 19 — ``setup_cache=False`` with providify
-        absent still returns ``None`` (the ``container is None`` guard runs
-        before the ``setup_cache`` branch either way).
-        """
-        original = sys.modules.get("providify")
-        sys.modules["providify"] = None  # type: ignore[assignment]
-        try:
-            result = await async_bootstrap(_make_mock_container(), setup_cache=False)
-        finally:
-            if original is None:
-                sys.modules.pop("providify", None)
-            else:
-                sys.modules["providify"] = original
-
-        assert result is None
-
-    async def test_setup_cache_default_true_awaits_ainstall(self) -> None:
-        """
-        Plan 014 / audit F7, step 19 — the default (``setup_cache=True``)
-        path is unchanged: ``ainstall`` is still awaited exactly once.
-        """
-        from varco_memcached.cache import MemcachedCacheConfiguration  # noqa: PLC0415
-
-        container = _make_mock_container()
-
-        with patch("varco_memcached.di.bootstrap", return_value=container):
-            result = await async_bootstrap(container)
-
-        container.ainstall.assert_awaited_once_with(MemcachedCacheConfiguration)
-        assert result is container
-
-    async def test_importerror_guard_returns_none(self) -> None:
-        """
-        async_bootstrap() must return None (not raise AttributeError) when
-        providify is not installed.
-
-        Before the fix, ``container = bootstrap(container)`` would return
-        ``None`` and the subsequent ``await container.ainstall(...)`` would
-        crash with ``AttributeError: 'NoneType' object has no attribute
-        'ainstall'``.  The guard must short-circuit before that point.
-        """
-        # Temporarily hide providify from sys.modules to simulate absence.
-        # bootstrap() — called inside async_bootstrap() — checks for providify
-        # and returns None when it is absent.
-        original = sys.modules.get("providify")
-        sys.modules["providify"] = None  # type: ignore[assignment]
-        try:
-            result = await async_bootstrap(_make_mock_container())
-        finally:
-            if original is None:
-                sys.modules.pop("providify", None)
-            else:
-                sys.modules["providify"] = original
-
-        assert result is None, (
-            "async_bootstrap() must return None when providify is absent — "
-            "not raise AttributeError from trying to call .ainstall() on None."
-        )
+        with pytest.raises(TypeError):
+            await async_bootstrap()  # type: ignore[call-arg]
 
 
 # ── package-level re-export ───────────────────────────────────────────────────

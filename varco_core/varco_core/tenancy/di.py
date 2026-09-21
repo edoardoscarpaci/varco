@@ -41,7 +41,7 @@ default) read them via ``TenantMembershipSettings.from_env()``::
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from providify import Provider
 
@@ -50,6 +50,9 @@ from varco_core.tenancy.membership import (
     ClaimTenantMembership,
     TenantMembershipSettings,
 )
+
+if TYPE_CHECKING:
+    from providify import DIContainer
 
 __all__ = ["enable_tenant_membership"]
 
@@ -75,9 +78,9 @@ def _build_claim_membership_provider(settings: TenantMembershipSettings) -> Any:
 
 
 def enable_tenant_membership(
-    container: Any,
+    container: DIContainer,
     settings: TenantMembershipSettings | None = None,
-) -> Any:
+) -> DIContainer:
     """
     Opt in to ``ClaimTenantMembership`` as the application's
     ``AbstractTenantMembership``, shadowing the always-allow
@@ -94,12 +97,25 @@ def enable_tenant_membership(
     Returns:
         The same container, for chaining.
 
+    Raises:
+        AlreadyBoundError: A non-fallback ``AbstractTenantMembership``
+            binding already exists — either the application's own, or a
+            previous call to this function (§D-enable).
+
     Example::
 
         container = DIContainer()
         container.scan("varco_core", recursive=True)
         enable_tenant_membership(container)
     """
+    from varco_core.di import AlreadyBoundError, is_user_bound  # noqa: PLC0415
+
+    if is_user_bound(container, AbstractTenantMembership):
+        raise AlreadyBoundError(
+            "A non-fallback AbstractTenantMembership binding already exists — "
+            "enable_tenant_membership() shadows the @Fallback NullTenantMembership "
+            "default and cannot register a second competing binding."
+        )
     resolved = settings if settings is not None else TenantMembershipSettings.from_env()
     container.provide(_build_claim_membership_provider(resolved))
     return container

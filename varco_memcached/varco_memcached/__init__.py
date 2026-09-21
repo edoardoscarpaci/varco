@@ -17,10 +17,12 @@ Usage::
 
 DI wiring (recommended — one call)::
 
+    from providify import DIContainer
     from varco_memcached.di import async_bootstrap
     from varco_core.cache import CacheBackend
 
-    container = await async_bootstrap()
+    container = DIContainer()
+    await async_bootstrap(container)
     cache = await container.aget(CacheBackend)
 
 DI wiring (manual)::

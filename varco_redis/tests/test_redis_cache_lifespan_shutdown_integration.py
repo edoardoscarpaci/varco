@@ -84,7 +84,7 @@ async def test_container_shutdown_closes_orphaned_redis_cache_pool(
     monkeypatch.setenv("VARCO_REDIS_CACHE_KEY_PREFIX", f"test:{run_id}:")
 
     container = providify.DIContainer()
-    await async_bootstrap(container, setup_cache=True)
+    await async_bootstrap(container)
 
     cache: Any = await container.aget(CacheBackend)
     # Force a real round-trip so the pool holds a genuinely connected socket.

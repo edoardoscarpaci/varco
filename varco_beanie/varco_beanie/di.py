@@ -103,7 +103,7 @@ class BeanieModule:
 def bind_repositories(
     container: DIContainer,
     *entity_classes: type[DomainModel],
-) -> None:
+) -> DIContainer:
     """
     Register an ``AsyncRepository[D]`` binding for each domain model class.
 
@@ -131,12 +131,15 @@ def bind_repositories(
         container:       The ``DIContainer`` to register bindings into.
         *entity_classes: One or more ``DomainModel`` subclasses.
 
+    Returns:
+        The same ``container`` passed in.
+
     Raises:
         ValueError: Called with no ``entity_classes``.
+        AlreadyBoundError: A non-fallback ``AsyncRepository[entity_cls]``
+            binding already exists for one of the given classes (§D-bind).
 
     Edge cases:
-        - Calling twice with the same entity class adds a second binding.
-          The container will pick the higher-priority one; avoid duplicates.
         - Empty ``entity_classes`` raises immediately — likely a programming error.
 
     Example::
@@ -147,6 +150,8 @@ def bind_repositories(
     Thread safety:  ✅ Called once at startup before concurrent access.
     Async safety:   ✅ The generated providers are async coroutine functions.
     """
+    from varco_core.di import AlreadyBoundError, is_user_bound  # noqa: PLC0415
+
     if not entity_classes:
         raise ValueError(
             "bind_repositories() requires at least one entity class. "
@@ -154,7 +159,16 @@ def bind_repositories(
         )
 
     for entity_cls in entity_classes:
+        interface = AsyncRepository[entity_cls]  # type: ignore[valid-type, type-arg]
+        if is_user_bound(container, interface):
+            raise AlreadyBoundError(
+                f"A non-fallback AsyncRepository[{entity_cls.__name__}] binding already "
+                "exists — use providify's di_overrides/ContainerOverrides in a test to "
+                "replace it."
+            )
         container.provide(_make_repo_provider(entity_cls))
+
+    return container
 
 
 def _make_repo_provider(entity_cls: type[DomainModel]) -> Any:
@@ -204,18 +218,18 @@ def _make_repo_provider(entity_cls: type[DomainModel]) -> Any:
 # ── bootstrap ─────────────────────────────────────────────────────────────────
 
 
-def bootstrap(
-    container: Any = None,
-    *entity_classes: type[DomainModel],
-) -> Any:
+def bootstrap(container: DIContainer) -> DIContainer:
     """
     Bootstrap ``varco_beanie`` into a ``DIContainer``.
 
     Installs :class:`BeanieModule` and calls
     ``container.scan("varco_beanie", recursive=True)`` to discover
     ``BeanieRepositoryProvider``, ``BeanieQueryCompiler``, and
-    ``BeanieHealthCheck``.  Optionally binds per-entity
-    ``AsyncRepository[D]`` providers in the same call.
+    ``BeanieHealthCheck``. Call :func:`bind_repositories` separately for
+    per-entity ``AsyncRepository[D]`` bindings (Plan 046 §D-contract removes
+    the ``*entity_classes`` convenience — a re-run ``bootstrap()`` must be
+    idempotent, and ``bind_repositories()``'s own rule is "raise on repeat",
+    which is the wrong behaviour for that).
 
     ``BeanieSettings`` **must** be registered in the container before calling
     this function — it is injected into both ``BeanieRepositoryProvider``
@@ -223,7 +237,7 @@ def bootstrap(
 
         from pymongo import AsyncMongoClient
         from providify import DIContainer, Provider
-        from varco_beanie.di import bootstrap, BeanieSettings
+        from varco_beanie.di import bind_repositories, bootstrap, BeanieSettings
         from myapp.models import User, Post
 
         container = DIContainer()
@@ -237,23 +251,19 @@ def bootstrap(
             )
 
         container.provide(beanie_settings)
-        bootstrap(container, User, Post)   # install + scan + bind repos in one call
+        bootstrap(container)
+        bind_repositories(container, User, Post)
 
         # BeanieRepositoryProvider.init() is async — warm up the container
         await container.awarm_up()
 
     Args:
-        container:       An existing ``DIContainer`` to install into.
-                         When ``None``, ``DIContainer.current()`` is used —
-                         the process-level singleton.
-        *entity_classes: Optional ``DomainModel`` subclasses to pass to
-                         :func:`bind_repositories`.  When provided,
-                         ``AsyncRepository[D]`` bindings are registered for
-                         each class in the same bootstrap call.
+        container: The ``DIContainer`` to install into. Required — this
+            function never creates one and never reads
+            the process-global container (Plan 046 §D-locator).
 
     Returns:
-        The ``DIContainer`` after installation, scanning, and optional
-        repository binding.
+        The same ``container`` passed in, after installation and scanning.
 
     Raises:
         LookupError: Raised lazily at resolution time if ``BeanieSettings`` is
@@ -264,8 +274,6 @@ def bootstrap(
           ``await container.awarm_up()`` after ``bootstrap()`` to trigger
           its ``@PostConstruct`` and run ``init_beanie()`` before serving requests.
         - Calling twice is safe — scanning and ``install`` are idempotent.
-        - No ``entity_classes`` means no ``AsyncRepository[D]`` bindings are
-          registered; call :func:`bind_repositories` separately later.
 
     Thread safety:  ✅ Bootstrap is intended for single-threaded startup only.
     Async safety:   ⚠️ This function is synchronous, but
@@ -273,24 +281,9 @@ def bootstrap(
                        via ``@PostConstruct``.  Always call
                        ``await container.awarm_up()`` afterwards.
     """
-    try:
-        from providify import DIContainer  # noqa: PLC0415
-    except ImportError:
-        return None
-
-    if container is None:
-        # Use the process-level singleton container so callers don't need
-        # to pass it around — consistent with create_varco_container().
-        container = DIContainer.current()
-
     # BeanieModule is an empty backward-compat @Configuration — install() is a no-op.
     # All @Singleton classes in varco_beanie are discovered by scan automatically.
     container.scan("varco_beanie", recursive=True)
-
-    if entity_classes:
-        # Convenience: bind per-entity AsyncRepository[D] in the same call
-        # so callers don't need a separate bind_repositories() call.
-        bind_repositories(container, *entity_classes)
 
     return container
 

@@ -9,6 +9,70 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### BREAKING — one wiring contract: explicit container, no service locator, `AlreadyBoundError` (Plan 046, DI-2 / DI-8 / DI-13)
+
+Every `bootstrap()` requires a container and returns it. All ten (`varco_core.di` is new,
+`varco_kafka`, `varco_nats`, `varco_redis`, `varco_memcached`, `varco_ws`, `varco_casbin`,
+`varco_sa`, `varco_beanie`, `varco_fastapi`) are `bootstrap(container: DIContainer) ->
+DIContainer`. None consults the process-global container; none returns `None`.
+
+| Old | New |
+|---|---|
+| `container = varco_x.di.bootstrap()` | `container = DIContainer(); varco_x.di.bootstrap(container)` |
+| `container.scan("varco_core", recursive=True)` (by hand) | `varco_core.di.bootstrap(container)` (identical effect; the documented entry point) |
+| `varco_fastapi.di.bootstrap(container, "myapp")` / `bootstrap("myapp")` | `varco_fastapi.di.bootstrap(container); container.scan("myapp", recursive=True)` |
+| `varco_fastapi.di.bootstrap(container, setup_producer=True)` / `setup_event_producer(container)` | `varco_core.di.bootstrap(container)` — `BusEventProducer` is the `@Fallback` `AbstractEventProducer` (045 A10) |
+| `create_varco_container("varco_core", "varco_redis", "myapp")` | `c = DIContainer(); varco_core.di.bootstrap(c); varco_redis.di.bootstrap(c); c.scan("myapp", recursive=True)` |
+| `varco_sa.di.bootstrap(container, User, Post)` / `varco_beanie.di.bootstrap(container, User, Post)` | `bootstrap(container); bind_repositories(container, User, Post)` |
+| `varco_sa.di.create_tables()` | `create_tables(container)` |
+| `varco_redis.di.bootstrap(container, streams=True)` | `from varco_core.di import bind_instance; bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True)); bootstrap(container)` — or `VARCO_REDIS_USE_STREAMS=true` in the environment (unchanged) |
+| `await varco_redis.di.async_bootstrap(container, setup_cache=True)` / `(…, streams=True)` | `await async_bootstrap(container)` — always installs `RedisCacheConfiguration`; use `bootstrap()` for scan-only; streams as above |
+| `await varco_memcached.di.async_bootstrap(container, setup_cache=False)` | `bootstrap(container)` |
+| `await varco_memcached.di.async_bootstrap()` | `await async_bootstrap(container)` |
+| `DISessionMiddleware(app)` / `app.add_middleware(DISessionMiddleware)` | `app.add_middleware(DISessionMiddleware, container=container)` or `install_middleware_stack(app, [(DISessionMiddleware, {"container": container}), …])` |
+| `varco_fastapi.middleware.session.get_container()` | removed — pass the container you built |
+| `from varco_fastapi.di import bind_mcp_adapter, bind_skill_adapter` | still works — now true re-exports with their real signatures |
+
+`bind_trust_store`, `bind_retention_registry`, `bind_cloudevents_serializer`,
+`bind_websocket_adapter`, `bind_sse_adapter`, `bind_mcp_adapter`, `bind_skill_adapter`,
+`bind_repositories` (both), `bind_clients`, `bind_clients_from`, `bind_peers` now return
+`DIContainer` (was `None`). A second registration of the same `(interface, qualifier)` raises
+`varco_core.di.AlreadyBoundError` (previously: appended, first-registered silently won).
+`bind_websocket_adapter`/`bind_sse_adapter`/`bind_mcp_adapter`/`bind_skill_adapter` gain
+`qualifier=` for multiple adapters. `enable_token_revocation`, `enable_redis_token_revocation`,
+`enable_feature_flags`, `enable_tenant_membership`, `enable_policy_authorizer` are typed `->
+DIContainer` and raise `AlreadyBoundError` when a non-fallback binding of their seam already
+exists (yours, or a previous call); `enable_authorization_audit`'s double-wrap `RuntimeError` is
+now `AlreadyBoundError` (a `RuntimeError` subclass). In tests, replace a binding with providify's
+`di_overrides`/`ContainerOverrides`, not a second call.
+
+**New** — `varco_core.di.bind_instance(container, Interface, obj, *, qualifier=None)` registers
+any already-constructed object as a non-fallback singleton; `varco_core.di.is_user_bound(container,
+Interface, qualifier=None)` answers "does a non-fallback binding exist".
+
+**Removed** — "returns `None` when providify is not installed". providify has been a declared
+dependency of every varco package since 3.0; the guards and their documented `None` path are gone.
+
+**Removed** — varco never reads the process-global container internally. Applications may;
+providify's `di_global` fixture exists for their tests.
+
+**New** — `testkit/varco_conformance/di_wiring.py`, the ninth conformance module. Out-of-tree
+backends are unaffected (the testkit is never packaged). In-tree: every package subclasses it.
+
+### Tests (Plan 046)
+
+- The ninth conformance module (`testkit/varco_conformance/di_wiring.py`, `DIWiringConformance`) —
+  ten subclasses, one per package, each proving `bootstrap()` returns the same container, is
+  idempotent, never touches the process-global container, leaves `validate()` clean, every
+  `@Fallback` default is overridable, and the declared default set is complete.
+- P29-DESCRIPTOR-FALLBACK filed (`design/upstream-gaps/providify-descriptor-fallback-field.md`) —
+  `BindingDescriptor` carries no `fallback` field; guarded by a `strict=True` xfail in
+  `test_providify_contracts.py`.
+- The five providify-absence guard test modules/functions are deleted (`varco_redis`,
+  `varco_memcached`, `varco_ws`, `varco_fastapi`'s milestone_f) along with 045's four
+  `*_fallback_tier.py` seeds and their `test_validate_clean_*` legs — folded into the new
+  `di_wiring` subclasses.
+
 ### BREAKING — `@Fallback` framework defaults, providify >= 2.1.0 (Plan 045, DI-15 close-out / DI-3)
 
 `providify>=2.1.0` is now required (all ten packages). Every varco-owned binding of a varco seam

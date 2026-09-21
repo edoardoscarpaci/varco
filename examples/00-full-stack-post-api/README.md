@@ -173,14 +173,16 @@ curl -N http://localhost:8000/events/posts
 1. Builds a `JwtAuthority` (RSA-2048 key from env, or ephemeral in dev mode).
 2. Creates a `DIContainer` and provides an `SAConfig` via `make_sa_provider(Base, Post)`.
 3. Scans all backend packages in one pass:
+   - `bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))` — opt into Redis Streams (Plan 046 §D-streams; replaces the removed `redis_bootstrap(container, streams=True)`)
    - `sa_bootstrap(container)` — SQLAlchemy repo provider + UoW binding
-   - `redis_bootstrap(container, streams=True)` — Redis Streams event bus
+   - `redis_bootstrap(container)` — Redis Streams event bus (per the settings above)
    - `ws_bootstrap(container)` — WebSocket + SSE adapters
-   - `fastapi_bootstrap(container, setup_producer=True)` — FastAPI defaults + event producer
+   - `core_bootstrap(container)` — `varco_core` Class-A defaults, incl. `AbstractEventProducer → BusEventProducer`
+   - `fastapi_bootstrap(container)` — FastAPI defaults
    - `container.scan("example")` — app-level singletons (service, assembler, authorizer, consumer)
 4. Wires the `VarcoLifespan` with an async `_bootstrap` hook that runs at startup:
    - `create_tables(container)` — creates DB schema
-   - `redis_async_bootstrap(container, setup_cache=True)` — starts Redis cache
+   - `redis_async_bootstrap(container)` — starts Redis cache (always installs now, Plan 046)
    - Resolves and registers lifecycle components (bus → consumer → ws_bus → sse_bus → job_runner)
    - Resolves `PostService`, builds routers, and calls `app.include_router()`
 
@@ -241,12 +243,12 @@ DIContainer
 ├── IUoWProvider      ← sa_bootstrap()   [re-export of RepositoryProvider]
 ├── AsyncRepository[Post] ← bind_repositories(container, Post)
 │
-├── AbstractEventBus  ← redis_bootstrap(streams=True) [RedisStreamEventBus]
+├── AbstractEventBus  ← redis_bootstrap() w/ RedisEventBusSettings(use_streams=True) [RedisStreamEventBus]
 │
 ├── WebSocketEventBus ← ws_bootstrap()  [auto-discovered @Singleton]
 ├── SSEEventBus       ← ws_bootstrap()  [auto-discovered @Singleton]
 │
-├── AbstractEventProducer ← fastapi_bootstrap(setup_producer=True)
+├── AbstractEventProducer ← core_bootstrap()  [varco_core Class-A @Fallback default]
 ├── TrustStore, CORSConfig, TaskRegistry ← fastapi_bootstrap()
 │
 ├── PostAssembler     ← container.scan("example")  [@Singleton]
@@ -350,7 +352,11 @@ VARCO_REDIS_USE_STREAMS=true uv run uvicorn example.app:create_app --factory
 Or in code:
 
 ```python
-redis_bootstrap(container, streams=True)
+from varco_core.di import bind_instance
+from varco_redis.config import RedisEventBusSettings
+
+bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))
+redis_bootstrap(container)
 ```
 
 ### Add a custom route to PostRouter

@@ -7,8 +7,8 @@ This middleware bridges FastAPI's per-request lifecycle with the varco providify
 DI container.  It provides two complementary approaches:
 
 1. **Middleware approach** (via ``SessionMiddleware``):
-   ASGI middleware that stores the DI container in a ContextVar at the start
-   of each request.  Downstream code can read it via ``get_container()``.
+   ASGI middleware that stores the DI container (passed explicitly at
+   construction) for the request's scoped session/request context.
 
 2. **Depends approach** (recommended for most use cases):
    ``get_session_dependency(session_factory)`` creates a FastAPI ``Depends()``
@@ -51,22 +51,6 @@ T = TypeVar("T")
 
 def _generate_session_id() -> str:
     return str(uuid4())
-
-
-# ── ContextVar accessors ───────────────────────────────────────────────────────
-
-
-def get_container() -> Any | None:
-    """
-    Return the DI container set by ``SessionMiddleware``, or ``None``.
-
-    Returns ``None`` if ``SessionMiddleware`` is not installed or has not yet
-    set the container for this request.
-
-    Thread safety:  ✅ ContextVar read — task-local.
-    Async safety:   ✅ Pure read; no I/O.
-    """
-    return DIContainer.current()
 
 
 def get_session_dependency(session_factory: Any) -> Any:
@@ -119,6 +103,16 @@ class DISessionMiddleware(BaseHTTPMiddleware):
     Args:
         app:       The ASGI application to wrap.
         container: The providify ``DIContainer`` to store per request.
+                   Required, keyword-only (Plan 046 §D-locator — this
+                   middleware never reads the process-global container). Install
+                   via ``install_middleware_stack(app, [(DISessionMiddleware,
+                   {"container": container})])`` or
+                   ``app.add_middleware(DISessionMiddleware, container=container)``.
+
+    Raises:
+        TypeError: ``container`` was not supplied — Starlette's
+            ``add_middleware(cls, **kwargs)`` only ever passes keyword
+            arguments, so a positional container is rejected too.
 
     Thread safety:  ✅ Stores container reference (not a copy) — container
                        itself must be thread-safe for concurrent reads.
@@ -131,9 +125,9 @@ class DISessionMiddleware(BaseHTTPMiddleware):
           accessible from ContextVar without per-request isolation.
     """
 
-    def __init__(self, app: ASGIApp, *, container: DIContainer | None = None) -> None:
+    def __init__(self, app: ASGIApp, *, container: DIContainer) -> None:
         super().__init__(app)
-        self._container = container or DIContainer.current()
+        self._container = container
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """Store the container in the ContextVar for this request."""

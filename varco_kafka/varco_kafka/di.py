@@ -56,14 +56,12 @@ Overriding the default settings::
 
 from __future__ import annotations
 
-from typing import Any
+from providify import DIContainer
 
 # ── bootstrap ─────────────────────────────────────────────────────────────────
 
 
-def bootstrap(
-    container: Any = None,
-) -> Any:
+def bootstrap(container: DIContainer) -> DIContainer:
     """
     Bootstrap ``varco_kafka`` into a ``DIContainer``.
 
@@ -78,9 +76,11 @@ def bootstrap(
 
     Call this **once** at application startup, before resolving any singletons::
 
+        from providify import DIContainer
         from varco_kafka.di import bootstrap
 
-        container = bootstrap()
+        container = DIContainer()
+        bootstrap(container)
         bus = await container.aget(AbstractEventBus)
         await container.ashutdown()
 
@@ -102,12 +102,12 @@ def bootstrap(
         bootstrap(container)
 
     Args:
-        container: An existing ``DIContainer`` to scan into.
-                   When ``None``, ``DIContainer.current()`` is used —
-                   the process-level singleton.
+        container: The ``DIContainer`` to scan into. Required — this
+            function never creates one and never reads
+            the process-global container (Plan 046 §D-locator).
 
     Returns:
-        The ``DIContainer`` after scanning.
+        The same ``container`` passed in, after scanning.
 
     Edge cases:
         - Calling twice is safe — scanning is idempotent; already-registered
@@ -118,16 +118,6 @@ def bootstrap(
     Thread safety:  ✅ Bootstrap is intended for single-threaded startup only.
     Async safety:   ✅ Scanning is synchronous.  The function itself is sync.
     """
-    try:
-        from providify import DIContainer  # noqa: PLC0415
-    except ImportError:
-        return None
-
-    if container is None:
-        # Use the process-level singleton container so callers don't need
-        # to pass it around — consistent with create_varco_container().
-        container = DIContainer.current()
-
     # Discover all @Singleton/@Component classes in varco_kafka recursively.
     # KafkaEventBusSettings, KafkaChannelManagerSettings, KafkaEventBus,
     # KafkaHealthCheck, and KafkaChannelManager are all registered here.

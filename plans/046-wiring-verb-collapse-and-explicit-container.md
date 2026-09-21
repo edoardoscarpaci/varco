@@ -403,7 +403,7 @@ class DIWiringConformance:
 | `test_declared_defaults_are_fallbacks` | for each `(I, q)` in `expected_defaults`: `c.get_binding(I, qualifier=q).fallback is True` | `get_binding` |
 | `test_every_default_is_overridable_after_bootstrap` | for each `(I, q)`: after `bind_instance(c, I, MagicMock(spec=I), qualifier=q)` (or `Provider(qualifier=q)` where `I` is a generic alias) registered **after** bootstrap, `get_binding(I, qualifier=q).fallback is False` and every binding in `get_all_bindings(I, qualifier=q)` is non-fallback | 045's rule proven per package, from the suite |
 | `test_declared_defaults_are_complete` | `{(b.interface, b.qualifier) for b in fallback_bindings(c) if not b.exact_only} == set(expected_defaults)` | ⚠️ **the one private read**: `varco_conformance.di_wiring.fallback_bindings(container)` reads `container._bindings` — centralised in exactly one function, named as a shim for deletion, because `BindingDescriptor` carries no `fallback` field (`descriptor.py:49-54`) and every public read drops shadowed fallbacks (`container.py:2159-2169`). Same private read `varco_redis/tests/test_redis_di.py:62-66` already makes |
-| `test_redundant_install_after_scan_is_ambiguous` *(varco_fastapi subclass only)* | `container.install(VarcoFastAPIModule)` after `bootstrap()` → `AMBIGUOUS_BINDING` | pins 045 §D-validate's "double registration" finding as a documented pitfall, not a defect |
+| ~~`test_redundant_install_after_scan_is_ambiguous`~~ → **`test_redundant_install_after_scan_is_a_documented_noop`** *(varco_fastapi subclass only)* | `container.install(VarcoFastAPIModule)` after `bootstrap()` → **no-op** (0 new bindings, 0 errors) | **Corrected at build time (2026-09-21, operator-accepted):** the `AMBIGUOUS_BINDING` prediction was wrong — providify 2.1.0's `install()` is container-owned-deduplicated (`scanner.py:255ff`, `container.py:1019/7158/7194`), so a redundant install is a documented no-op, not a pitfall. `dependency-injection.md`'s Pitfalls row says the same |
 
 **P29 filing** (CLAUDE.md §"When you hit a providify limitation"): `design/upstream-gaps/providify-descriptor-fallback-field.md`
 — §1 cite `descriptor.py:49-54` (no field) and `container.py:7415-7418` (`describe()` walks
@@ -506,7 +506,7 @@ step lands); 12-16 last.
 
 ### Preflight and primitives
 
-0. [ ] **Preflight — confirm 045 landed, recount, confirm providify lines, measure the ⚠️s.**
+0. [x] **Preflight — confirm 045 landed, recount, confirm providify lines, measure the ⚠️s.**
        (a) `rg -c '@Fallback' varco_*/varco_*` ≥ 55; `rg -n 'setup_varco_defaults|setup_defaults' varco_*` → 0;
        `ls varco_core/varco_core/di.py` exists with `BACKEND_PRIORITY`; `uv run python -c "import importlib.metadata as m; print(m.version('providify'))"` → `2.1.0`.
        (b) Re-run §Context's entry-point `rg` → paste the count (expect 35); re-run the `current()`
@@ -527,7 +527,7 @@ step lands); 12-16 last.
        P29 numbering for Step 2.
        **Verify**: the preflight file has all six sections; every ⚠️ in §Risks has a measured value.
 
-1. [ ] `varco_core/tests/test_di_wiring_primitives.py` (**new, failing first**) — for
+1. [x] `varco_core/tests/test_di_wiring_primitives.py` (**new, failing first**) — for
        `varco_core.di`: `AlreadyBoundError` is a `RuntimeError` and its message names interface +
        qualifier; `is_user_bound()` is `False` on an empty container, `False` when only a `@Fallback`
        binding exists (scan `varco_core.flags`), `True` after `bind_instance()`, exact-qualifier when
@@ -547,7 +547,7 @@ step lands); 12-16 last.
        `__all__ = ["BACKEND_PRIORITY", "AlreadyBoundError", "bind_instance", "bootstrap", "is_user_bound"]`.
        **Verify**: `uv run pytest varco_core/tests/test_di_wiring_primitives.py varco_core/tests/test_di_constants.py -q` green; `uv run python scripts/import_budget.py --check --warn-only` unchanged.
 
-2. [ ] **P29 filing (§D-suite).** `design/upstream-gaps/providify-descriptor-fallback-field.md` in
+2. [x] **P29 filing (§D-suite).** `design/upstream-gaps/providify-descriptor-fallback-field.md` in
        the P27 report's eight-section shape; `UPSTREAM-GAPS.md` one "Open gaps" row (recreate the
        ledger from its header template if absent — CLAUDE.md's rule); strict xfail
        `test_binding_descriptor_carries_fallback` appended to
@@ -556,7 +556,7 @@ step lands); 12-16 last.
        **Verify**: `uv run pytest varco_core/tests/test_providify_contracts.py -q -rxX` → exactly
        one more `xfailed` than before, reason contains `GAP: P29-` (or `P28-`).
 
-3. [ ] `testkit/varco_conformance/di_wiring.py` (**new**) — `DIWiringConformance` per §D-suite
+3. [x] `testkit/varco_conformance/di_wiring.py` (**new**) — `DIWiringConformance` per §D-suite
        (the eight tests; the varco_fastapi-only ninth lives in that subclass), the
        `fallback_bindings(container)` shim (module docstring: "reads `container._bindings` —
        the one private read in the testkit; delete when P29 ships, guard:
@@ -569,7 +569,7 @@ step lands); 12-16 last.
 
 ### The ten bootstraps
 
-4. [ ] **`varco_kafka`, `varco_nats`, `varco_ws`** — `di.py` `bootstrap(container: DIContainer) ->
+4. [x] **`varco_kafka`, `varco_nats`, `varco_ws`** — `di.py` `bootstrap(container: DIContainer) ->
        DIContainer`: delete the guard and the `if container is None` branch, `from providify import
        DIContainer` at module scope, rewrite the module + function docstrings (Usage blocks pass a
        container; "returns `None`…" sentences gone; `varco_ws/di.py:21-22,96-97`). `varco_ws`
@@ -585,7 +585,7 @@ step lands); 12-16 last.
        `test_nats_fallback_tier.py`, and their `test_validate_clean_scan.py` legs after moving their
        assertions in). **Verify**: `make test PKG=varco_kafka`, `PKG=varco_nats`, `PKG=varco_ws`.
 
-5. [ ] **`varco_redis`** — `di.py`: `bootstrap(container) -> DIContainer` (delete `streams=`, the
+5. [x] **`varco_redis`** — `di.py`: `bootstrap(container) -> DIContainer` (delete `streams=`, the
        `import os`, `:150-154`, the guard, the `None` branch; keep 045 E2's
        `scan("varco_core.revocation")`); `async_bootstrap(container) -> DIContainer` = `bootstrap`
        + `ainstall(RedisCacheConfiguration)`, RIDER-1 block `:228-235` deleted;
@@ -600,7 +600,7 @@ step lands); 12-16 last.
        `bootstrap()`); `git rm` 045's `test_redis_fallback_tier.py` after folding.
        **Verify**: `make test PKG=varco_redis`; `rg -n 'os\.environ' varco_redis/varco_redis/di.py` → 0.
 
-6. [ ] **`varco_memcached`** — `di.py`: `bootstrap(container) -> DIContainer`; `async_bootstrap(container)
+6. [x] **`varco_memcached`** — `di.py`: `bootstrap(container) -> DIContainer`; `async_bootstrap(container)
        -> DIContainer` (no `setup_cache`); guards `:109-120` gone; `_logger.debug("providify not
        installed…")` gone; `__init__.py:23` docstring. Tests: `varco_memcached/tests/test_di.py` —
        delete the five `sys.modules["providify"]` tests and the `setup_cache=False` tests
@@ -608,7 +608,7 @@ step lands); 12-16 last.
        `test_stop_idempotency_regression.py:12` docstring. New `test_memcached_di_wiring.py`.
        **Verify**: `make test PKG=varco_memcached`.
 
-7. [ ] **`varco_casbin`** — `di.py`: `bootstrap(container) -> DIContainer` with the
+7. [x] **`varco_casbin`** — `di.py`: `bootstrap(container) -> DIContainer` with the
        `is_user_bound(CasbinSettings)` guard around `provide(_provide_casbin_settings)` (comment:
        "048 replaces this with `bind_settings()`"); `enable_policy_authorizer(container) ->
        DIContainer` + `is_user_bound(AbstractAuthorizer)` → `AlreadyBoundError` (its Edge-cases
@@ -619,7 +619,7 @@ step lands); 12-16 last.
        app binds its own `AbstractAuthorizer`, `enable_policy_authorizer` → `AlreadyBoundError`.
        New `test_casbin_di_wiring.py`. **Verify**: `make test PKG=varco_casbin`.
 
-8. [ ] **`varco_sa`, `varco_beanie`** — `di.py`: `bootstrap(container) -> DIContainer`
+8. [x] **`varco_sa`, `varco_beanie`** — `di.py`: `bootstrap(container) -> DIContainer`
        (`*entity_classes` removed; docstring example → `bootstrap(container);
        bind_repositories(container, User, Post)`); `bind_repositories(container, *classes) ->
        DIContainer` — per class, `is_user_bound(AsyncRepository[cls])` → `AlreadyBoundError`
@@ -632,7 +632,7 @@ step lands); 12-16 last.
        `pytest.mark.integration` only if Step 0(d) found the scan needs a server — then also a
        `COVERAGE.md` note). **Verify**: `make test PKG=varco_sa`, `PKG=varco_beanie` (no Docker).
 
-9. [ ] **`varco_fastapi`** — `di.py`: delete `create_varco_container` (`:445-506`),
+9. [x] **`varco_fastapi`** — `di.py`: delete `create_varco_container` (`:445-506`),
        `setup_event_producer` (`:548-624`), the two wrappers (`:735-765`) → `from varco_fastapi.router.mcp
        import bind_mcp_adapter` / `from varco_fastapi.router.skill import bind_skill_adapter` re-exports
        at module scope (keep both in `__all__`); `bootstrap(container) -> DIContainer` (`*packages`,
@@ -658,7 +658,7 @@ step lands); 12-16 last.
 
 ### The core helpers
 
-10. [ ] **`varco_core` `bind_*` trio + `enable_*` quartet** — `tls/di.py:44-78` → two
+10. [x] **`varco_core` `bind_*` trio + `enable_*` quartet** — `tls/di.py:44-78` → two
         `bind_instance()` calls, `-> DIContainer`; `retention/di.py` → one `bind_instance()`,
         delete `_bind_call_count` and its comment block `:45-59`, docstring `:77-82` → the rule
         (twice → `AlreadyBoundError`; "use `di_overrides` in tests"); `event/cloudevents.py:501-562`
@@ -677,7 +677,7 @@ step lands); 12-16 last.
         `test_flags_di.py`, `test_authorizing_audit.py` (`pytest.raises(AlreadyBoundError)` — also
         satisfies `RuntimeError`). **Verify**: `make test PKG=varco_core`.
 
-11. [ ] `varco_core/tests/test_no_service_locator.py` (**new**, §D-locator) — walks
+11. [x] `varco_core/tests/test_no_service_locator.py` (**new**, §D-locator) — walks
         `Path(__file__).parents[2].glob("varco_*/varco_*/**/*.py")`, asserts no line contains
         `DIContainer.current(`, `DIContainer.acurrent(`, `DIContainer.scoped(`, or
         `DIContainer.reset(`; failure message lists `file:line`. Docstring states what the global
@@ -686,7 +686,7 @@ step lands); 12-16 last.
 
 ### Docs, changelog, gates
 
-12. [ ] **Docs (§D-docs)** — `CLAUDE.md` (the table + three lines + §Test Conventions counts);
+12. [x] **Docs (§D-docs)** — `CLAUDE.md` (the table + three lines + §Test Conventions counts);
         `technical_docs/features/dependency-injection.md` §Wiring contract + Pitfalls + banner;
         `README.md:709-736`, `:3495-3497`, every `bootstrap()` without argument (`rg -n 'bootstrap\(\)' README.md`);
         `ARCHITECTURE.md:79,88,100,165,1469,1849`; the seven feature/doc files listed in §D-docs;
@@ -694,7 +694,7 @@ step lands); 12-16 last.
         to replace → `AlreadyBoundError`; qualify or `di_overrides`"); `testkit/varco_conformance/COVERAGE.md`
         (`di_wiring` matrix row, "nine", the casbin bullet). **Verify**: `rg -n 'DIContainer\.current|returns None if providify|providify is not installed|streams=True|setup_producer|create_varco_container|setup_event_producer' README.md ARCHITECTURE.md CLAUDE.md technical_docs docs examples varco_*/varco_*` → 0; `make docs`.
 
-13. [ ] **Gates + snapshot.** `uv run python scripts/api_surface.py` (regenerate — expected diff:
+13. [x] **Gates + snapshot.** `uv run python scripts/api_surface.py` (regenerate — expected diff:
         return annotations on `bind_clients`, `bind_clients_from`, `bind_mcp_adapter`,
         `bind_skill_adapter`, `bind_websocket_adapter`, `bind_sse_adapter`, `bind_repositories` ×2,
         `enable_tenant_membership`, `bootstrap`/`async_bootstrap` (`varco_memcached`), new
@@ -707,11 +707,11 @@ step lands); 12-16 last.
         passed `None`; fix the tests, never the annotation); `make test` (eleven suites; `xfailed`
         = 045's count + 1 for P29; `0 xpassed`).
 
-14. [ ] `CHANGELOG.md` `[Unreleased]` above the 045 block (§D-docs); `BACKLOG.md:75,89,91` →
+14. [x] `CHANGELOG.md` `[Unreleased]` above the 045 block (§D-docs); `BACKLOG.md:75,89,91` →
         `done (Plan 046)`; `plans/000-index-4-0-di-standardization.md` 046 row unchanged.
         **Verify**: `rg -n 'Plan 046' CHANGELOG.md BACKLOG.md` ≥ 3.
 
-15. [ ] **Handoff notes** (one paragraph each, appended to the neighbour plan's "Depends on"/header
+15. [x] **Handoff notes** (one paragraph each, appended to the neighbour plan's "Depends on"/header
         line, or to the index's row if the plan file does not yet exist): **047** — `bootstrap()`
         is the registration point for its `@Requires`-gated providers; `expected_defaults` per
         package is the seed of the catalogue and should be *generated* from it once the catalogue
@@ -868,28 +868,28 @@ testkit is never packaged). In-tree: every package subclasses it.
 
 ## Done criteria
 
-- [ ] Ten `def bootstrap(container: DIContainer) -> DIContainer` in `varco_*/varco_*/di.py`
+- [x] Ten `def bootstrap(container: DIContainer) -> DIContainer` in `varco_*/varco_*/di.py`
       (incl. `varco_core/varco_core/di.py`); `rg -n 'DIContainer\.current\(\)|\.acurrent\(\)' varco_*/varco_*` → 0;
       `test_no_service_locator.py` green.
-- [ ] `rg -n 'os\.environ' varco_redis/varco_redis/di.py` → 0; the streams replacement test passes
+- [x] `rg -n 'os\.environ' varco_redis/varco_redis/di.py` → 0; the streams replacement test passes
       with `"VARCO_REDIS_USE_STREAMS" not in os.environ`.
-- [ ] Zero `except ImportError` providify guards in wiring modules; the five guard tests are gone;
+- [x] Zero `except ImportError` providify guards in wiring modules; the five guard tests are gone;
       no docstring says "returns `None` if providify is not installed".
-- [ ] `create_varco_container`, `setup_event_producer`, `get_container`, `_bind_call_count`,
+- [x] `create_varco_container`, `setup_event_producer`, `get_container`, `_bind_call_count`,
       `streams=`, `setup_cache=`, `setup_producer=`, `*packages`, `*entity_classes` are gone.
-- [ ] `varco_core.di` exports `AlreadyBoundError`, `bind_instance`, `is_user_bound`, `bootstrap`
+- [x] `varco_core.di` exports `AlreadyBoundError`, `bind_instance`, `is_user_bound`, `bootstrap`
       (+ 045's `BACKEND_PRIORITY`); `import varco_core.di` still imports no providify.
-- [ ] Every `bind_*`/`enable_*` is typed `-> DIContainer` and raises `AlreadyBoundError` on a
+- [x] Every `bind_*`/`enable_*` is typed `-> DIContainer` and raises `AlreadyBoundError` on a
       repeat; the four adapters accept `qualifier=`.
-- [ ] `testkit/varco_conformance/di_wiring.py` exists; ten subclasses pass without Docker (or one
+- [x] `testkit/varco_conformance/di_wiring.py` exists; ten subclasses pass without Docker (or one
       beanie exception recorded in `COVERAGE.md`); `COVERAGE.md` has the row; `varco_casbin` has
       `pythonpath = ["../testkit"]`.
-- [ ] 045's four `*_fallback_tier.py` seeds and its `test_validate_clean_*` legs are folded into
+- [x] 045's four `*_fallback_tier.py` seeds and its `test_validate_clean_*` legs are folded into
       the subclasses and deleted.
-- [ ] P29 report + ledger row + strict xfail exist; `test_providify_contracts.py` has exactly one
+- [x] P29 report + ledger row + strict xfail exist; `test_providify_contracts.py` has exactly one
       more `xfailed`.
-- [ ] `api-surface` snapshot regenerated and committed with the signature changes; `make lint`,
+- [x] `api-surface` snapshot regenerated and committed with the signature changes; `make lint`,
       `make type-check`, `make test`, `make docs` green; no file under
       `/home/edoardo/projects/providify` modified.
-- [ ] CLAUDE.md table is the new shape; `dependency-injection.md` has §Wiring contract; CHANGELOG
+- [x] CLAUDE.md table is the new shape; `dependency-injection.md` has §Wiring contract; CHANGELOG
       BREAKING block = §Migration; BACKLOG `DI-2`/`DI-8`/`DI-13` → `done (Plan 046)`.

@@ -61,6 +61,8 @@ steps); `Makefile:157-227` (the no-`PKG` lint block at `:163-167`);
 > re-checks after 047/048 add their steps; Step 5 adds the missing step beside the new
 > `entry_points.py --check` so the documented claim becomes true (one line, same job).
 
+> **Handoff from Plan 046 (landed):** §Migration in `plans/046-wiring-verb-collapse-and-explicit-container.md` is the DI-2/DI-8/DI-13 CHANGELOG entry, already landed verbatim in `CHANGELOG.md`'s `[Unreleased]` section; the CLAUDE.md DI wiring verb taxonomy table is in its final shape for this plan to only polish, not restructure.
+
 ## Goal
 
 After this plan: **`technical_docs/features/dependency-injection.md` is the single DI document**,

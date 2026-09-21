@@ -221,3 +221,25 @@ async def test_collection_resource_payload_has_none_entity_pk_and_is_collection_
     payload = _payload_of(producer)
     assert payload["is_collection"] is True
     assert payload["entity_pk"] is None
+
+
+async def test_enable_authorization_audit_twice_raises_already_bound_error() -> None:
+    # Plan 046 §D-enable — the double-wrap guard is now AlreadyBoundError
+    # (a RuntimeError subclass, so `except RuntimeError` keeps working).
+    from providify import DIContainer
+    from varco_core.auth.di import enable_authorization_audit
+    from varco_core.di import AlreadyBoundError
+
+    container = DIContainer()
+    container.scan("varco_core", recursive=True)
+    enable_authorization_audit(container)
+
+    with pytest.raises(AlreadyBoundError):
+        enable_authorization_audit(container)
+
+    # AlreadyBoundError must still satisfy a pre-046 `except RuntimeError`.
+    container2 = DIContainer()
+    container2.scan("varco_core", recursive=True)
+    enable_authorization_audit(container2)
+    with pytest.raises(RuntimeError):
+        enable_authorization_audit(container2)

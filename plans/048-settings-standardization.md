@@ -65,6 +65,9 @@ tree. The varco venv is still 2.0.1 until 045's bump; Step 0 re-confirms.
 > a hand-rolled `from_env()`** and **11 loose `os.environ.get("VARCO_…")` reads** outside any
 > class — **four** registration shapes, not three (§Context inventory).
 
+> **Handoff from Plan 046 (landed):** the casbin `is_user_bound(CasbinSettings)` guard (`varco_casbin/varco_casbin/di.py`) and the redis `bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))`
+> docs (`varco_redis/varco_redis/di.py`, README.md, `technical_docs/features/dependency-injection.md`) are the two call sites 048's `bind_settings()` replaces. `varco_core.di.AlreadyBoundError` is available for a `SettingsAlreadyBoundError` to subclass.
+
 ## Goal
 
 After this plan: every varco settings object that reads the environment is a pydantic

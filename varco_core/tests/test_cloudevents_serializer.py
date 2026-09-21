@@ -305,6 +305,35 @@ class TestOptInByDefault:
         binding = container.get_binding(Serializer[Event])
         assert binding.fallback is False
 
+    async def test_bind_cloudevents_serializer_returns_the_container(self) -> None:
+        from providify import DIContainer  # noqa: PLC0415
+        from varco_core.event.cloudevents import (  # noqa: PLC0415
+            CloudEventsSettings,
+            bind_cloudevents_serializer,
+        )
+
+        container = DIContainer()
+        result = bind_cloudevents_serializer(container, CloudEventsSettings(source="/svc/test"))
+
+        assert result is container
+
+    async def test_bind_cloudevents_serializer_twice_raises(self) -> None:
+        # §D-bind — a second call used to silently swap the wire format
+        # again (last-registered-wins at equal priority); it now raises.
+        import pytest  # noqa: PLC0415
+        from providify import DIContainer  # noqa: PLC0415
+        from varco_core.di import AlreadyBoundError  # noqa: PLC0415
+        from varco_core.event.cloudevents import (  # noqa: PLC0415
+            CloudEventsSettings,
+            bind_cloudevents_serializer,
+        )
+
+        container = DIContainer()
+        bind_cloudevents_serializer(container, CloudEventsSettings(source="/svc/test"))
+
+        with pytest.raises(AlreadyBoundError):
+            bind_cloudevents_serializer(container, CloudEventsSettings(source="/svc/test-2"))
+
 
 # ── Open question 1 — the DLQ round-trip decision (plan §Open questions) ───────
 

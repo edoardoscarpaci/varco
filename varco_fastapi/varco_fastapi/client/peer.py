@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
+    from providify import DIContainer
     from varco_core.resilience.circuit_breaker import CircuitBreaker
 
     from varco_fastapi.client.base import AsyncVarcoClient, ClientProfile
@@ -318,8 +319,8 @@ class PeerRegistry:
 
 
 def bind_peers(
-    container: Any, mapping: Mapping[str, type], *, registry: PeerRegistry | None = None
-) -> None:
+    container: DIContainer, mapping: Mapping[str, type], *, registry: PeerRegistry | None = None
+) -> DIContainer:
     """
     Bind ``AsyncVarcoClient[RouterCls]`` for each peer name → router class.
 
@@ -330,6 +331,14 @@ def bind_peers(
                    ``PeerRegistry.from_env()`` — call sites needing a custom
                    ``secret_resolver``/``profiles`` should build one and pass
                    it explicitly.
+
+    Returns:
+        The same ``container`` passed in.
+
+    Raises:
+        AlreadyBoundError: Delegates to ``bind_clients`` (§D-bind) — a
+            non-fallback binding of one of the synthesized client classes
+            already exists.
     """
     reg = registry or PeerRegistry.from_env()
 
@@ -339,7 +348,7 @@ def bind_peers(
     for peer_name, router_cls in mapping.items():
         client = reg.client(peer_name, router_cls)
         client_classes.append(type(client))
-    bind_clients(container, *client_classes)
+    return bind_clients(container, *client_classes)
 
 
 __all__ = ["PeerConfig", "PeerRegistry", "SecretResolver", "bind_peers"]

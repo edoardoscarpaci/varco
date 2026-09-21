@@ -6,6 +6,7 @@ assertion shape.
 
 from __future__ import annotations
 
+import pytest
 from providify import DIContainer
 
 
@@ -45,8 +46,23 @@ async def test_enable_redis_token_revocation_binds_exactly_one_redis_store() -> 
 
     container = DIContainer()
     container.scan("varco_redis", recursive=True)
-    enable_redis_token_revocation(container)
+    result = enable_redis_token_revocation(container)
 
+    assert result is container
     store = await container.aget(AbstractTokenRevocationStore)
     assert isinstance(store, RedisTokenRevocationStore)
+    await container.ashutdown()
+
+
+async def test_enable_redis_token_revocation_twice_raises() -> None:
+    from varco_core.di import AlreadyBoundError
+    from varco_redis.di import enable_redis_token_revocation
+
+    container = DIContainer()
+    container.scan("varco_redis", recursive=True)
+    enable_redis_token_revocation(container)
+
+    with pytest.raises(AlreadyBoundError):
+        enable_redis_token_revocation(container)
+
     await container.ashutdown()

@@ -87,7 +87,6 @@ from varco_fastapi.middleware.security_headers import (
 )
 from varco_fastapi.middleware.session import (
     SessionMiddleware,
-    get_container,
     get_session_dependency,
 )
 from varco_fastapi.middleware.tracing import TracingMiddleware
@@ -198,7 +197,6 @@ __all__ = [
     "CORSConfig",
     "install_cors",
     "SessionMiddleware",
-    "get_container",
     "get_session_dependency",
     "install_middleware_stack",
     "MiddlewareEntry",

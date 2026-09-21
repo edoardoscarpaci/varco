@@ -342,7 +342,7 @@ System". Usage: README's "Consumer — EventConsumer + @listen".
 
 **`@listen` is declarative / `register_to` is imperative.** The decorator stores metadata on the function object at class-definition time. No subscription is created until `consumer.register_to(bus)` is called (typically in a `@PostConstruct` method). This separation makes the consumer bus-agnostic and testable.
 
-**`ChannelManager` implementations must satisfy `declare_channel(c)` ⟹ `channel_exists(c)` is `True` until `delete_channel(c)`** — declared-or-present, not "carries data". Enforced by `testkit/varco_conformance/channel_manager.py`, one of **eight** conformance modules (Plan 019 / RT2-C — see §Test Conventions' conformance paragraph).
+**`ChannelManager` implementations must satisfy `declare_channel(c)` ⟹ `channel_exists(c)` is `True` until `delete_channel(c)`** — declared-or-present, not "carries data". Enforced by `testkit/varco_conformance/channel_manager.py`, one of **nine** conformance modules (Plan 019 / RT2-C — see §Test Conventions' conformance paragraph).
 
 ### Service layer (varco_core.service)
 
@@ -379,12 +379,18 @@ function's own docstring for the "why".
 
 | Verb | Shape | Meaning | Example |
 |---|---|---|---|
-| `bootstrap(container=None, ...)` | sync, returns container or `None` | one per package; wraps `container.scan(pkg)`; returns `None` if providify is absent | `varco_kafka.di.bootstrap` |
-| `async_bootstrap(...)` | async, returns container | `bootstrap()` + an `await container.ainstall(SomeConfiguration)` step, only where an async connection must open before the singleton is usable | `varco_redis.di.async_bootstrap(setup_cache=True)`, `varco_memcached.di.async_bootstrap` |
-| `bind_*(container, ...)` | sync, mutates container | registers N *typed, per-item* generic bindings unknowable before app startup | `varco_sa.di.bind_repositories`, `varco_fastapi.client.bind_clients_from`, `varco_ws.di.bind_websocket_adapter` |
-| `enable_*(container)` | sync, mutates container | flips on an opt-in DI **binding** that would shadow an app default if auto-registered | `varco_casbin.di.enable_policy_authorizer`, `varco_core.tenancy.di.enable_tenant_membership` |
+| `bootstrap` | `(container: DIContainer) -> DIContainer` | one per package (ten, incl. `varco_core.di`); `container.scan(pkg, recursive=True)` (+ the package's own hand `provide()`s, idempotently); container **required**; never creates one, never reads the process-global container, never touches `os.environ`; returns the same object; safe to call twice | `varco_kafka.di.bootstrap(container)` |
+| `async_bootstrap` | `async (container) -> DIContainer` | `bootstrap()` + `await container.ainstall(<the package's connection-opening @Configuration>)`; no kwargs | `varco_redis.di.async_bootstrap`, `varco_memcached.di.async_bootstrap` |
+| `bind_*` | `(container, …, *, qualifier=None) -> DIContainer` | registers **non-fallback** bindings the app decides at wiring time; the primitive is `varco_core.di.bind_instance(container, Interface, obj, *, qualifier=None)`; a second registration of the same `(interface, qualifier)` raises `AlreadyBoundError` — qualify to have two, use `di_overrides` to replace in a test | `bind_instance`, `bind_repositories`, `bind_clients`/`bind_clients_from`/`bind_peers`, `bind_trust_store`, `bind_retention_registry`, `bind_cloudevents_serializer`, `bind_websocket_adapter`/`bind_sse_adapter`/`bind_mcp_adapter`/`bind_skill_adapter` |
+| `enable_*` | `(container, …) -> DIContainer` | flips on an opt-in binding that shadows a `@Fallback` default; raises `AlreadyBoundError` if a non-fallback binding of that seam already exists (yours or a previous `enable_*`) | `enable_policy_authorizer`, `enable_token_revocation`, `enable_redis_token_revocation`, `enable_feature_flags`, `enable_tenant_membership`, `enable_authorization_audit` (wraps the current binding — call it last) |
 | `mount_*(app, ...)` | sync, mutates the ASGI app | flips on an opt-in privileged **HTTP surface**, always behind an explicit acknowledgement kwarg | `varco_fastapi.tenancy.mount_tenant_admin`, `varco_fastapi.admin.mount_reliability_admin` |
 | `install_*(...)` | sync, **container-free**; **three shapes** | ⚠️ one verb, three shapes (Plan 022 / AB-3, extended Plan 037 / §D-S12-hook). **(a)** a process-global side effect (OTel instrument registration), taking no argument at all; **(b)** an ASGI-app mutation, taking and modifying an `app`; **(c)** a mutation of a caller-supplied SQLAlchemy object (a `Session`/`sessionmaker`/`async_sessionmaker`), container-free, returning an uninstall callable. Neither (a) nor (b) nor (c) takes a container — all are unrelated to `container.install(SomeConfiguration)` | (a) `install_cache_metrics`, `install_reliability_metrics` · (b) `install_middleware_stack`, `install_cors` · (c) `varco_sa.tenancy.rls_session.install_rls_tenant_hook` |
+
+Rule: varco never reads the process-global container — every helper takes the container
+(guarded by `varco_core/tests/test_no_service_locator.py`); a middleware gets it via
+`install_middleware_stack(app, [(DISessionMiddleware, {"container": container})])`.
+Rule: the ten packages subclass `varco_conformance.di_wiring.DIWiringConformance`; a new
+package or a new `@Fallback` default adds a row to its `expected_defaults` or the suite fails.
 
 Name collisions this table exists specifically to call out (audited at Plan 022's RL-8
 checkpoint — see `design/api-freeze-and-standards/api-break-candidates.md` for each verdict):
@@ -1264,12 +1270,14 @@ check — a chaos scenario is designed to provoke a real race under container fa
 occasional red run is a BACKLOG/operator-triage signal, not a merge blocker.
 
 **Conformance suite opt-in** (`testkit/varco_conformance`, Plan 012 / RT6, plus
-`channel_manager.py` added by Plan 019 / RT2-C) — a shared, never-packaged suite of behavioral
-contract tests, **eight** modules, one per `varco_core` ABC (`event_bus.py`, `cache.py`,
-`job_store.py`, `dlq.py`, `channel_manager.py`, `idempotency_store.py`, `webhook_subscription.py`,
-`token_revocation.py` — the last added by Plan 034 / S13b). Reached via one `pythonpath =
-["../testkit"]` line in a package's `[tool.pytest.ini_options]`; a backend opts in with a thin
-subclass overriding the abstract fixture:
+`channel_manager.py` added by Plan 019 / RT2-C and `di_wiring.py` added by Plan 046 / DI-13) — a
+shared, never-packaged suite of behavioral contract tests, **nine** modules, one per `varco_core`
+ABC plus `di_wiring.py` (`event_bus.py`, `cache.py`, `job_store.py`, `dlq.py`,
+`channel_manager.py`, `idempotency_store.py`, `webhook_subscription.py`, `token_revocation.py` —
+the last added by Plan 034 / S13b — and `di_wiring.py`, subclassed by all ten packages'
+`bootstrap()`). Reached via one `pythonpath = ["../testkit"]` line in a package's
+`[tool.pytest.ini_options]`; a backend opts in with a thin subclass overriding the abstract
+fixture:
 
 ```python
 from varco_conformance.event_bus import EventBusConformance

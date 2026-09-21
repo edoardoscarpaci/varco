@@ -41,6 +41,8 @@ reverse-shutdown guarantee — **050's**, cited here only to mark the boundary).
 **providify source of record**: `/home/edoardo/projects/providify` at 2.1.0 (`pyproject.toml:3`),
 the tree 045 pinned. Every `providify/…:line` below was read in that tree on 2026-09-15.
 
+> **Handoff from Plan 046 (landed):** `register(container)` = the package's own `bootstrap(container)` — every `bootstrap()` is now a plain, synchronous function of one required container with no event-loop dependency, so a `VarcoModule.register()` wrapper can call it directly.
+
 ## Goal
 
 After this plan: `varco_core.di.VarcoModule` is the one unit of wiring — a plain varco ABC with

@@ -74,6 +74,7 @@ from varco_fastapi.router.introspection import ResolvedRoute
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
+    from providify import DIContainer
     from varco_core.job.base import AbstractJobRunner, AbstractJobStore
     from varco_core.service.conversation import AbstractConversationStore
 
@@ -1018,19 +1019,20 @@ def _job_to_task_response(task_id: str, job: Any) -> dict[str, Any]:
 
 
 def bind_skill_adapter(
-    container: Any,
+    container: DIContainer,
     router_cls: type,
     *,
     agent_name: str,
     agent_description: str,
     agent_version: str = "1.0.0",
+    qualifier: str | None = None,
     client_cls: type | None = None,
     base_url: str | None = None,
     enabled_routes: set[str] | None = None,
     job_runner_cls: type | None = None,
     job_store_cls: type | None = None,
     conversation_store_cls: type | None = None,
-) -> None:
+) -> DIContainer:
     """
     Register a ``SkillAdapter`` singleton in a providify ``DIContainer``.
 
@@ -1043,6 +1045,10 @@ def bind_skill_adapter(
         agent_name:              Agent display name in the Agent Card.
         agent_description:       Agent description in the Agent Card.
         agent_version:           Semantic version string (default: ``"1.0.0"``).
+        qualifier:               Optional qualifier so multiple routers can
+                                 each have their own ``SkillAdapter`` binding
+                                 (§D-bind). ``None`` registers the unqualified
+                                 default.
         client_cls:              ``AsyncVarcoClient`` subclass for execution.
                                  Resolved from the container if registered.
         base_url:                Fallback base URL if ``client_cls`` is absent.
@@ -1055,27 +1061,29 @@ def bind_skill_adapter(
         conversation_store_cls:  Optional ``AbstractConversationStore`` subclass for
                                  multi-turn conversation history.  Resolved from the container.
 
+    Returns:
+        The same ``container`` passed in.
+
+    Raises:
+        AlreadyBoundError: A non-fallback ``SkillAdapter`` binding of the
+            same ``qualifier`` already exists.
+
     Edge cases:
-        - Calling twice replaces the previous binding.
-        - If providify is not installed, logs a warning and returns.
         - ``job_runner_cls`` without ``job_store_cls``: async submission works but
           ``GET /tasks/{id}`` always returns 404.
 
     Thread safety:  ✅ Registration at bootstrap (single-threaded).
     Async safety:   ✅ No I/O during registration.
     """
-    try:
-        # Presence probe — providify is an optional dependency.  `import
-        # providify` is deliberate — it triggers on providify's own absence,
-        # mirroring ``bind_mcp_adapter``'s guard.
-        import providify  # noqa: F401
-    except ImportError:
-        _logger.warning(
-            "bind_skill_adapter: providify not installed — SkillAdapter not registered in DI."
-        )
-        return
-
     from providify import Provider  # noqa: PLC0415
+    from varco_core.di import AlreadyBoundError, is_user_bound  # noqa: PLC0415
+
+    if is_user_bound(container, SkillAdapter, qualifier=qualifier):
+        raise AlreadyBoundError(
+            f"A non-fallback SkillAdapter binding qualifier={qualifier!r} already exists — "
+            "pass a different qualifier= to register another router's adapter, or use "
+            "providify's di_overrides/ContainerOverrides in a test."
+        )
 
     # Capture all args to avoid late-binding in the closure
     _router_cls = router_cls
@@ -1096,7 +1104,7 @@ def bind_skill_adapter(
         — the decoration-time ``returns=`` override means this closure's
         placeholder return annotation never needs patching.
         """
-        client = None
+        client: Any = None
         if _client_cls is not None:
             try:
                 client = container.get(_client_cls)
@@ -1104,7 +1112,7 @@ def bind_skill_adapter(
                 client = _client_cls(base_url=_base_url)
 
         # Resolve optional async job runner and store from the DI container
-        runner = None
+        runner: Any = None
         if _runner_cls is not None:
             try:
                 runner = container.get(_runner_cls)
@@ -1115,7 +1123,7 @@ def bind_skill_adapter(
                     _runner_cls,
                 )
 
-        store = None
+        store: Any = None
         if _store_cls is not None:
             try:
                 store = container.get(_store_cls)
@@ -1126,7 +1134,7 @@ def bind_skill_adapter(
                     _store_cls,
                 )
 
-        conv_store = None
+        conv_store: Any = None
         if _conv_store_cls is not None:
             try:
                 conv_store = container.get(_conv_store_cls)
@@ -1150,7 +1158,11 @@ def bind_skill_adapter(
             conversation_store=conv_store,
         )
 
-    container.provide(Provider(singleton=True)(_skill_adapter_factory), returns=SkillAdapter)
+    container.provide(
+        Provider(singleton=True, qualifier=qualifier)(_skill_adapter_factory),
+        returns=SkillAdapter,
+    )
+    return container
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────

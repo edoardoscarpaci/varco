@@ -43,6 +43,8 @@ assume it).
 **providify source of record**: `/home/edoardo/projects/providify` at 2.1.0. Every
 `providify/…:line` below was read on 2026-09-17.
 
+> **Handoff from Plan 046 (landed):** the `known_warnings` entries naming 050 across the ten `di_wiring` subclasses (`UNREACHABLE_PRE_DESTROY`/`UNMATCHED_DISPOSER`/`DISPOSER_OVERWRITTEN`, where present) are this plan's work list. `async_bootstrap` remains the only place a `@Configuration` is `ainstall`ed by a varco verb.
+
 ## Goal
 
 After this plan: every `VarcoModule` declares a `phase` (an `int`; `varco_core.di.Phase` names five)

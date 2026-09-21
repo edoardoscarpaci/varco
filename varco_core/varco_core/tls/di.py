@@ -32,8 +32,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from providify import Provider
-
+from varco_core.di import bind_instance
 from varco_core.tls.reload import ReloadingTrustStore
 from varco_core.tls.store import TrustStore
 
@@ -41,7 +40,7 @@ if TYPE_CHECKING:
     from providify import DIContainer
 
 
-def bind_trust_store(container: DIContainer, store: ReloadingTrustStore) -> None:
+def bind_trust_store(container: DIContainer, store: ReloadingTrustStore) -> DIContainer:
     """
     Register an already-constructed ``ReloadingTrustStore`` (and its ``TrustStore`` spec) as
     DI singletons.
@@ -55,7 +54,14 @@ def bind_trust_store(container: DIContainer, store: ReloadingTrustStore) -> None
             an unstarted store appear started.
 
     Returns:
-        None — both bindings are registered as a side effect on *container*.
+        The same ``container`` passed in — both bindings are registered as a
+        side effect (Plan 046 §D-bind — both calls go through
+        ``varco_core.di.bind_instance()``).
+
+    Raises:
+        AlreadyBoundError: A non-fallback ``ReloadingTrustStore`` or
+            ``TrustStore`` binding already exists — use providify's
+            ``di_overrides``/``ContainerOverrides`` in a test to replace it.
 
     Example::
 
@@ -67,15 +73,9 @@ def bind_trust_store(container: DIContainer, store: ReloadingTrustStore) -> None
         # elsewhere, DI-resolved:
         resolved = container.get(ReloadingTrustStore)
     """
-
-    def _store_factory() -> ReloadingTrustStore:
-        return store
-
-    def _spec_factory() -> TrustStore:
-        return store.spec
-
-    container.provide(Provider(singleton=True)(_store_factory), returns=ReloadingTrustStore)
-    container.provide(Provider(singleton=True)(_spec_factory), returns=TrustStore)
+    bind_instance(container, ReloadingTrustStore, store)
+    bind_instance(container, TrustStore, store.spec)
+    return container
 
 
 __all__ = ["bind_trust_store"]

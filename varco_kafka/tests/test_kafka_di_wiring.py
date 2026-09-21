@@ -1,0 +1,76 @@
+"""
+Plan 046 / Step 4 — `varco_kafka`'s `DIWiringConformance` subclass (§D-suite).
+
+Absorbs 045's `test_kafka_fallback_tier.py` (B1's fallback-tier assertions
+are now `test_declared_defaults_are_fallbacks`/
+`test_every_default_is_overridable_after_bootstrap`) and
+`test_validate_clean_scan.py` (folded into `test_validate_is_clean`'s
+`known_warnings`) — both are deleted by this step.
+"""
+
+from __future__ import annotations
+
+import pytest
+from providify import DIContainer, IssueKind
+from varco_conformance.di_wiring import DIWiringConformance
+from varco_core.auth.authorizer import AbstractAuthorizer
+from varco_core.cache.base import CacheBackend
+from varco_core.event import AbstractEventBus
+from varco_core.event.base import Event
+from varco_core.event.channel import ChannelManager
+from varco_core.event.deduplication import AbstractDeduplicator
+from varco_core.event.dlq import AbstractDeadLetterQueue
+from varco_core.event.producer import AbstractEventProducer
+from varco_core.event.serializer import Serializer
+from varco_core.flags import AbstractFeatureFlags
+from varco_core.lock import AbstractDistributedLock
+from varco_core.observability import OtelConfig
+from varco_core.revocation import AbstractTokenRevocationStore
+from varco_core.service.conversation import AbstractConversationStore
+from varco_core.tenancy.membership import AbstractTenantMembership
+from varco_kafka.channel import KafkaChannelManagerSettings
+from varco_kafka.config import KafkaEventBusSettings
+
+
+class TestVarcoKafkaDIWiringConformance(DIWiringConformance):
+    expected_defaults = (
+        (CacheBackend, "in_memory"),
+        (AbstractEventBus, "in_memory"),
+        (AbstractDeadLetterQueue, "in_memory"),
+        (AbstractDeduplicator, "in_memory"),
+        (AbstractDistributedLock, "in_memory"),
+        (AbstractConversationStore, "in_memory"),
+        (AbstractFeatureFlags, None),
+        (AbstractTokenRevocationStore, None),
+        (AbstractTenantMembership, None),
+        (AbstractEventProducer, None),
+        (Serializer[Event], None),
+        (AbstractAuthorizer, None),
+        (OtelConfig, None),
+        (AbstractEventBus, "kafka"),
+        (ChannelManager, "kafka"),
+        (KafkaChannelManagerSettings, None),
+        (KafkaEventBusSettings, None),
+        (AbstractDeadLetterQueue, None),
+    )
+
+    known_warnings = frozenset(
+        {
+            # Settings-shaped gaps — Plan 048's bind_settings() closes these,
+            # not this plan (§Risks: "048 for a settings MISSING_BINDING_DEFAULTED").
+            (IssueKind.MISSING_BINDING_DEFAULTED, "InMemoryEventBus.__init__"),
+            (IssueKind.MISSING_BINDING_DEFAULTED, "KafkaEventBus.__init__"),
+        }
+    )
+
+    @pytest.fixture
+    def bootstrap(self):
+        def _bootstrap(container: DIContainer) -> DIContainer:
+            from varco_core.di import bootstrap as core_bootstrap
+            from varco_kafka.di import bootstrap as kafka_bootstrap
+
+            core_bootstrap(container)
+            kafka_bootstrap(container)
+            return container
+
+        return _bootstrap

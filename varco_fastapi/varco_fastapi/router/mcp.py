@@ -69,6 +69,7 @@ from varco_fastapi.router.introspection import ResolvedRoute, introspect_routes
 if TYPE_CHECKING:
     from fastapi import FastAPI
     from mcp.types import Tool as _MCPTool
+    from providify import DIContainer
 
     from varco_fastapi.auth.server_auth import AbstractServerAuth
     from varco_fastapi.client.base import AsyncVarcoClient
@@ -937,14 +938,15 @@ class MCPAdapter:
 
 
 def bind_mcp_adapter(
-    container: Any,
+    container: DIContainer,
     router_cls: type,
     *,
+    qualifier: str | None = None,
     client_cls: type | None = None,
     base_url: str | None = None,
     tool_name_prefix: str = "",
     enabled_routes: set[str] | None = None,
-) -> None:
+) -> DIContainer:
     """
     Register an ``MCPAdapter`` singleton in a providify ``DIContainer``.
 
@@ -958,6 +960,9 @@ def bind_mcp_adapter(
     Args:
         container:        ``DIContainer`` instance.
         router_cls:       The ``VarcoRouter`` subclass to expose.
+        qualifier:        Optional qualifier so multiple routers can each
+                          have their own ``MCPAdapter`` binding (§D-bind).
+                          ``None`` registers the unqualified default.
         client_cls:       ``AsyncVarcoClient`` subclass for execution.
                           Resolved from the container if registered; constructed
                           directly otherwise.
@@ -965,28 +970,29 @@ def bind_mcp_adapter(
         tool_name_prefix: Prefix prepended to all tool names.
         enabled_routes:   Explicit route allowlist (``None`` = all mcp_enabled).
 
+    Returns:
+        The same ``container`` passed in.
+
+    Raises:
+        AlreadyBoundError: A non-fallback ``MCPAdapter`` binding of the same
+            ``qualifier`` already exists.
+
     Edge cases:
-        - Calling twice with the same ``router_cls`` replaces the previous binding.
         - If ``client_cls`` is not registered in the container, a bare client is
           constructed with ``base_url`` — suitable for local/test use only.
-        - If providify is not installed, this function is a no-op with a warning.
 
     Thread safety:  ✅ Registration is expected at bootstrap (single-threaded).
     Async safety:   ✅ No I/O during registration.
     """
-    try:
-        # Presence probe — providify is an optional dependency.  `import
-        # providify` is deliberate: it is what
-        # `test_bind_mcp_adapter_noop_without_providify` blocks by purging
-        # `sys.modules`, so the guard triggers on providify's own absence.
-        import providify  # noqa: F401
-    except ImportError:
-        _logger.warning(
-            "bind_mcp_adapter: providify not installed — MCPAdapter not registered in DI."
-        )
-        return
-
     from providify import Provider  # noqa: PLC0415
+    from varco_core.di import AlreadyBoundError, is_user_bound  # noqa: PLC0415
+
+    if is_user_bound(container, MCPAdapter, qualifier=qualifier):
+        raise AlreadyBoundError(
+            f"A non-fallback MCPAdapter binding qualifier={qualifier!r} already exists — "
+            "pass a different qualifier= to register another router's adapter, or use "
+            "providify's di_overrides/ContainerOverrides in a test."
+        )
 
     # Capture args in closure — avoids late-binding if bind_mcp_adapter is
     # called in a loop for multiple routers.
@@ -1003,7 +1009,7 @@ def bind_mcp_adapter(
         — the decoration-time ``returns=`` override means this closure's
         placeholder return annotation never needs patching.
         """
-        client = None
+        client: Any = None
         if _client_cls is not None:
             # Try to resolve from container first (preferred — gets auth, etc.)
             try:
@@ -1019,7 +1025,10 @@ def bind_mcp_adapter(
             enabled_routes=_enabled,
         )
 
-    container.provide(Provider(singleton=True)(_mcp_adapter_factory), returns=MCPAdapter)
+    container.provide(
+        Provider(singleton=True, qualifier=qualifier)(_mcp_adapter_factory), returns=MCPAdapter
+    )
+    return container
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────

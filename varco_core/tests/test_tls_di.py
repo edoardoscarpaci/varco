@@ -44,6 +44,34 @@ def test_bind_trust_store_no_lifecycle_side_effect() -> None:
         _ = store.context  # never started -> ResourceNotLoadedError, not a live context
 
 
+def test_bind_trust_store_returns_the_container() -> None:
+    from varco_core.tls.di import bind_trust_store
+    from varco_core.tls.reload import ReloadingTrustStore
+    from varco_core.tls.store import TrustStore
+
+    container = DIContainer()
+    store = ReloadingTrustStore(TrustStore())
+
+    result = bind_trust_store(container, store)
+
+    assert result is container
+
+
+def test_bind_trust_store_twice_raises() -> None:
+    from varco_core.di import AlreadyBoundError
+    from varco_core.tls.di import bind_trust_store
+    from varco_core.tls.reload import ReloadingTrustStore
+    from varco_core.tls.store import TrustStore
+
+    container = DIContainer()
+    store1 = ReloadingTrustStore(TrustStore())
+    store2 = ReloadingTrustStore(TrustStore())
+    bind_trust_store(container, store1)
+
+    with pytest.raises(AlreadyBoundError):
+        bind_trust_store(container, store2)
+
+
 def test_scan_varco_core_recursive_starts_no_watcher_and_registers_no_tls_binding() -> None:
     # The anti-implicit assertion (§D-T3-oq3): a documented, in-use scan pattern
     # (container.scan("varco_core", recursive=True)) must never auto-activate a

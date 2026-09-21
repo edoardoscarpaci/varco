@@ -136,7 +136,7 @@
       "bind_repositories": {
         "kind": "function",
         "module": "varco_beanie.di",
-        "signature": "(container: 'DIContainer', *entity_classes: 'type[DomainModel]') -> 'None'"
+        "signature": "(container: 'DIContainer', *entity_classes: 'type[DomainModel]') -> 'DIContainer'"
       }
     },
     "varco_casbin": {
@@ -1183,7 +1183,7 @@
       "enable_tenant_membership": {
         "kind": "function",
         "module": "varco_core.tenancy.di",
-        "signature": "(container: 'Any', settings: 'TenantMembershipSettings | None' = None) -> 'Any'"
+        "signature": "(container: 'DIContainer', settings: 'TenantMembershipSettings | None' = None) -> 'DIContainer'"
       },
       "error_code_for": {
         "kind": "function",
@@ -1686,22 +1686,22 @@
       "bind_clients": {
         "kind": "function",
         "module": "varco_fastapi.di",
-        "signature": "(container: 'Any', *client_classes: 'type') -> 'None'"
+        "signature": "(container: 'DIContainer', *client_classes: 'type') -> 'DIContainer'"
       },
       "bind_clients_from": {
         "kind": "function",
         "module": "varco_fastapi.di",
-        "signature": "(container: 'Any', *router_classes: 'type') -> 'None'"
+        "signature": "(container: 'DIContainer', *router_classes: 'type') -> 'DIContainer'"
       },
       "bind_mcp_adapter": {
         "kind": "function",
         "module": "varco_fastapi.router.mcp",
-        "signature": "(container: 'Any', router_cls: 'type', *, client_cls: 'type | None' = None, base_url: 'str | None' = None, tool_name_prefix: 'str' = '', enabled_routes: 'set[str] | None' = None) -> 'None'"
+        "signature": "(container: 'DIContainer', router_cls: 'type', *, qualifier: 'str | None' = None, client_cls: 'type | None' = None, base_url: 'str | None' = None, tool_name_prefix: 'str' = '', enabled_routes: 'set[str] | None' = None) -> 'DIContainer'"
       },
       "bind_skill_adapter": {
         "kind": "function",
         "module": "varco_fastapi.router.skill",
-        "signature": "(container: 'Any', router_cls: 'type', *, agent_name: 'str', agent_description: 'str', agent_version: 'str' = '1.0.0', client_cls: 'type | None' = None, base_url: 'str | None' = None, enabled_routes: 'set[str] | None' = None, job_runner_cls: 'type | None' = None, job_store_cls: 'type | None' = None, conversation_store_cls: 'type | None' = None) -> 'None'"
+        "signature": "(container: 'DIContainer', router_cls: 'type', *, agent_name: 'str', agent_description: 'str', agent_version: 'str' = '1.0.0', qualifier: 'str | None' = None, client_cls: 'type | None' = None, base_url: 'str | None' = None, enabled_routes: 'set[str] | None' = None, job_runner_cls: 'type | None' = None, job_store_cls: 'type | None' = None, conversation_store_cls: 'type | None' = None) -> 'DIContainer'"
       },
       "build_service": {
         "kind": "function",
@@ -1892,12 +1892,12 @@
       "async_bootstrap": {
         "kind": "function",
         "module": "varco_memcached.di",
-        "signature": "(container: 'Any' = None, *, setup_cache: 'bool' = True) -> 'Any'"
+        "signature": "(container: 'DIContainer') -> 'DIContainer'"
       },
       "bootstrap": {
         "kind": "function",
         "module": "varco_memcached.di",
-        "signature": "(container: 'Any' = None) -> 'Any'"
+        "signature": "(container: 'DIContainer') -> 'DIContainer'"
       }
     },
     "varco_nats": {
@@ -2148,7 +2148,7 @@
       "bind_repositories": {
         "kind": "function",
         "module": "varco_sa.di",
-        "signature": "(container: 'DIContainer', *entity_classes: 'type[DomainModel]') -> 'None'"
+        "signature": "(container: 'DIContainer', *entity_classes: 'type[DomainModel]') -> 'DIContainer'"
       },
       "conversation_metadata": {
         "kind": "constant",
@@ -2276,12 +2276,12 @@
       "bind_sse_adapter": {
         "kind": "function",
         "module": "varco_ws.di",
-        "signature": "(container: 'Any', *, event_type: 'Any' = None, channel: 'str' = '*', max_queue_size: 'int' = 100) -> 'None'"
+        "signature": "(container: 'DIContainer', *, qualifier: 'str | None' = None, event_type: 'Any' = None, channel: 'str' = '*', max_queue_size: 'int' = 100) -> 'DIContainer'"
       },
       "bind_websocket_adapter": {
         "kind": "function",
         "module": "varco_ws.di",
-        "signature": "(container: 'Any', *, event_type: 'Any' = None, channel: 'str' = '*', max_queue_size: 'int' = 100, backpressure_policy: 'Any' = None) -> 'None'"
+        "signature": "(container: 'DIContainer', *, qualifier: 'str | None' = None, event_type: 'Any' = None, channel: 'str' = '*', max_queue_size: 'int' = 100, backpressure_policy: 'Any' = None) -> 'DIContainer'"
       }
     }
   }
