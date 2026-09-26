@@ -392,3 +392,11 @@ async def create_isolated_database_url(container: Any, name: str) -> str:
         await admin_engine.dispose()
 
     return make_url(admin_url).set(database=name).render_as_string(hide_password=False)
+
+
+@pytest.fixture(autouse=True)
+def _select_sa_backends(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Plan 047 §D-tests — see varco_kafka's twin fixture docstring."""
+    monkeypatch.setenv("VARCO_DLQ_BACKEND", "sa")
+    monkeypatch.setenv("VARCO_IDEMPOTENCY_BACKEND", "sa")
+    monkeypatch.setenv("VARCO_JOB_STORE_BACKEND", "sa")

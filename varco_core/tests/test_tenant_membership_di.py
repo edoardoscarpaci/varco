@@ -100,27 +100,58 @@ class TestTenantMembershipSettingsFromEnv:
     def test_defaults_with_no_env(self) -> None:
         from varco_core.tenancy.membership import MissingClaimPolicy, TenantMembershipSettings
 
-        settings = TenantMembershipSettings.from_env({})
+        settings = TenantMembershipSettings.from_env()
 
         assert settings.claim_key == "tenants"
         assert settings.on_missing_claim is MissingClaimPolicy.ALLOW
 
-    def test_round_trips_both_vars(self) -> None:
+    def test_round_trips_both_vars(self, monkeypatch) -> None:
         from varco_core.tenancy.membership import MissingClaimPolicy, TenantMembershipSettings
 
-        settings = TenantMembershipSettings.from_env(
-            {
-                "VARCO_TENANT_MEMBERSHIP_CLAIM": "organizations",
-                "VARCO_TENANT_MEMBERSHIP_ON_MISSING": "deny",
-            }
-        )
+        monkeypatch.setenv("VARCO_TENANT_MEMBERSHIP_CLAIM", "organizations")
+        monkeypatch.setenv("VARCO_TENANT_MEMBERSHIP_ON_MISSING", "deny")
+
+        settings = TenantMembershipSettings.from_env()
 
         assert settings.claim_key == "organizations"
         assert settings.on_missing_claim is MissingClaimPolicy.DENY
 
-    def test_invalid_on_missing_raises(self) -> None:
+    def test_invalid_on_missing_raises(self, monkeypatch) -> None:
         import pytest
+        from pydantic import ValidationError
         from varco_core.tenancy.membership import TenantMembershipSettings
 
-        with pytest.raises(ValueError, match="VARCO_TENANT_MEMBERSHIP_ON_MISSING"):
-            TenantMembershipSettings.from_env({"VARCO_TENANT_MEMBERSHIP_ON_MISSING": "bogus"})
+        monkeypatch.setenv("VARCO_TENANT_MEMBERSHIP_ON_MISSING", "bogus")
+
+        with pytest.raises(ValidationError, match="VARCO_TENANT_MEMBERSHIP_ON_MISSING"):
+            TenantMembershipSettings.from_env()
+
+
+class TestTenantMembershipEnvTwin:
+    """Plan 047 §D-features — VARCO_TENANT_MEMBERSHIP_ENABLED twin, injecting
+    Inject[TenantMembershipSettings] rather than closing over it."""
+
+    async def test_env_enabled_activates_claim_membership(self, monkeypatch) -> None:
+        from varco_core.di import bootstrap
+        from varco_core.tenancy.membership import AbstractTenantMembership, ClaimTenantMembership
+
+        monkeypatch.setenv("VARCO_TENANT_MEMBERSHIP_ENABLED", "true")
+        container = DIContainer()
+        bootstrap(container)
+
+        provider = await container.aget(AbstractTenantMembership)
+        assert isinstance(provider, ClaimTenantMembership)
+        await container.ashutdown()
+
+    async def test_enable_tenant_membership_after_env_code_wins(self, monkeypatch) -> None:
+        from varco_core.di import bootstrap
+        from varco_core.tenancy.di import enable_tenant_membership
+        from varco_core.tenancy.membership import AbstractTenantMembership
+
+        monkeypatch.setenv("VARCO_TENANT_MEMBERSHIP_ENABLED", "true")
+        container = DIContainer()
+        bootstrap(container)
+        enable_tenant_membership(container)
+
+        assert container.get_binding(AbstractTenantMembership).fallback is False
+        await container.ashutdown()

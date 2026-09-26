@@ -23,6 +23,8 @@ from varco_core.event.dlq import AbstractDeadLetterQueue
 from varco_core.event.producer import AbstractEventProducer
 from varco_core.event.serializer import Serializer
 from varco_core.flags import AbstractFeatureFlags
+from varco_core.idempotency.base import AbstractIdempotencyStore
+from varco_core.job.base import AbstractJobStore
 from varco_core.lock import AbstractDistributedLock
 from varco_core.observability import OtelConfig
 from varco_core.revocation import AbstractTokenRevocationStore
@@ -45,6 +47,10 @@ class TestVarcoCoreDIWiringConformance(DIWiringConformance):
         (Serializer[Event], None),
         (AbstractAuthorizer, None),
         (OtelConfig, None),
+        # Plan 047 §D-vocab — the idempotency/job_store seam defaults,
+        # newly decorated as @Fallback @Singleton(qualifier="in_memory").
+        (AbstractIdempotencyStore, "in_memory"),
+        (AbstractJobStore, "in_memory"),
     )
 
     # InMemoryEventBus.__init__'s error_policy/dispatch_mode params have no

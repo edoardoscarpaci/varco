@@ -140,12 +140,17 @@ class TenantControlService:
         self._supervisor = supervisor
         self._pool = pool
 
-        self.node_id: str = (
-            node_id
-            or os.environ.get("VARCO_TENANCY_NODE_ID")
-            or f"{socket.gethostname()}:{os.getpid()}"
-        )
-        self.store_id: str | None = store_id or os.environ.get("VARCO_TENANCY_STORE_ID")
+        # Plan 048 / §D-loose: VARCO_TENANCY_NODE_ID/STORE_ID are now fields
+        # on TenancySettings rather than loose os.environ.get() reads —
+        # constructing TenancySettings() here is equivalent (same env
+        # names, same fallback-to-None-or-hostname behaviour) and gives
+        # 052's `varco diagnose` one settings object to introspect instead
+        # of an invisible read buried in this constructor.
+        from varco_core.tenancy.settings import TenancySettings
+
+        _settings = TenancySettings()
+        self.node_id: str = node_id or _settings.node_id or f"{socket.gethostname()}:{os.getpid()}"
+        self.store_id: str | None = store_id or _settings.store_id
         self.catalog_authority: bool = catalog_authority
 
         if not catalog_authority:

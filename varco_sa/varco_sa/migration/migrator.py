@@ -158,10 +158,12 @@ class AlembicMigrator(AbstractMigrator):
             # TenantIsolation.SCHEMA migrate concurrently without
             # contending on the same distributed lock (Plan 006's lock
             # semantics, applied per schema).
-            import dataclasses as _dataclasses
-
-            resolved_settings = _dataclasses.replace(
-                resolved_settings, lock_key=f"{resolved_settings.lock_key}:{schema}"
+            # Plan 048 / DI-6: MigrationSettings is now a pydantic
+            # VarcoSettings, not a dataclass — dataclasses.replace() no
+            # longer applies. model_copy(update=...) is pydantic's
+            # equivalent (works on a frozen model, same as replace()).
+            resolved_settings = resolved_settings.model_copy(
+                update={"lock_key": f"{resolved_settings.lock_key}:{schema}"}
             )
         self._settings = resolved_settings
         self._config: Any | None = None

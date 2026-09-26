@@ -69,7 +69,7 @@ def test_app_binding_registered_after_scan_wins_over_framework_default(
     app_provider_fn, is_app_instance = make_app_provider()
 
     container = DIContainer()
-    container.scan("varco_fastapi", recursive=True)
+    bootstrap(container)
     container.provide(app_provider_fn)
 
     resolved = container.get(interface)
@@ -84,7 +84,7 @@ def test_get_all_returns_only_the_app_binding_once_shadowed(
     app_provider_fn, is_app_instance = make_app_provider()
 
     container = DIContainer()
-    container.scan("varco_fastapi", recursive=True)
+    bootstrap(container)
     container.provide(app_provider_fn)
 
     results = container.get_all(interface)
@@ -98,7 +98,7 @@ def test_validate_reports_shadowed_framework_default(interface: type, make_app_p
     app_provider_fn, _ = make_app_provider()
 
     container = DIContainer()
-    container.scan("varco_fastapi", recursive=True)
+    bootstrap(container)
     container.provide(app_provider_fn)
 
     report = container.validate(raise_on_error=False)

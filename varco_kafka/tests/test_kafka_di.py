@@ -45,9 +45,17 @@ class TestKafkaChannelManagerSettingsDI:
         raised ``LookupError: Cannot resolve 'values: typing.Any'``.  Correct
         behaviour is a ready-to-use settings instance, because a pydantic
         ``BaseSettings`` must be built by a factory, never constructor-injected.
+
+        Plan 048 / DI-6: ``KafkaChannelManagerSettings`` is now bound by
+        ``bind_settings()`` inside ``bootstrap()`` (before ``scan()``), not
+        by a scanned module-level ``@Provider`` — a plain
+        ``container.scan("varco_kafka")`` with no ``bootstrap()`` call no
+        longer registers it (§Migration).
         """
+        from varco_kafka.di import bootstrap
+
         container = DIContainer()
-        container.scan("varco_kafka", recursive=True)
+        bootstrap(container)
 
         settings = container.get(KafkaChannelManagerSettings)
 
@@ -55,8 +63,10 @@ class TestKafkaChannelManagerSettingsDI:
         assert settings.bootstrap_servers
 
     def test_settings_are_a_singleton(self) -> None:
+        from varco_kafka.di import bootstrap
+
         container = DIContainer()
-        container.scan("varco_kafka", recursive=True)
+        bootstrap(container)
 
         assert container.get(KafkaChannelManagerSettings) is container.get(
             KafkaChannelManagerSettings
@@ -64,9 +74,11 @@ class TestKafkaChannelManagerSettingsDI:
 
     def test_user_supplied_settings_win_over_the_default(self) -> None:
         """The default provider registers at the lowest possible priority."""
+        from varco_kafka.di import bootstrap
+
         container = DIContainer()
-        container.scan("varco_kafka", recursive=True)
         container.provide(_custom_settings)
+        bootstrap(container)
 
         assert container.get(KafkaChannelManagerSettings).topic_prefix == "custom."
 
@@ -120,8 +132,10 @@ class TestKafkaEventBusSettingsCharacterization:
     """
 
     def test_characterization_settings_resolve_through_the_container(self) -> None:
+        from varco_kafka.di import bootstrap
+
         container = DIContainer()
-        container.scan("varco_kafka", recursive=True)
+        bootstrap(container)
 
         settings = container.get(KafkaEventBusSettings)
 
@@ -129,8 +143,10 @@ class TestKafkaEventBusSettingsCharacterization:
         assert settings.bootstrap_servers
 
     def test_characterization_settings_are_a_singleton(self) -> None:
+        from varco_kafka.di import bootstrap
+
         container = DIContainer()
-        container.scan("varco_kafka", recursive=True)
+        bootstrap(container)
 
         assert container.get(KafkaEventBusSettings) is container.get(KafkaEventBusSettings)
 
@@ -158,8 +174,10 @@ class TestKafkaEventBusSettingsCharacterization:
 
         monkeypatch.setattr(KafkaEventBus, "start", _noop_start)
 
+        from varco_kafka.di import bootstrap
+
         container = DIContainer()
-        container.scan("varco_kafka", recursive=True)
+        bootstrap(container)
 
         bus = await container.aget(AbstractEventBus, qualifier="kafka")
 
@@ -214,14 +232,45 @@ class TestKafkaEventBusSettingsConvertedShapeInvariants:
     """
 
     def test_app_supplied_settings_win_over_the_default(self) -> None:
+        from varco_kafka.di import bootstrap
+
         container = DIContainer()
-        container.scan("varco_kafka", recursive=True)
         container.provide(_custom_event_bus_settings)
+        bootstrap(container)
 
         assert container.get(KafkaEventBusSettings).bootstrap_servers == "custom:9092"
 
     def test_settings_resolve_through_their_base_interface(self) -> None:
+        from varco_kafka.di import bootstrap
+
         container = DIContainer()
-        container.scan("varco_kafka", recursive=True)
+        bootstrap(container)
 
         assert isinstance(container.get(EventBusSettings), KafkaEventBusSettings)
+
+
+class TestSettingsBoundOnceAndFailFast:
+    """Plan 048 / Step 9 — KafkaEventBusSettings goes through bind_settings()."""
+
+    def test_settings_bound_once_after_two_bootstrap_calls(self) -> None:
+        from providify import DIContainer
+        from varco_kafka.config import KafkaEventBusSettings
+        from varco_kafka.di import bootstrap
+
+        c = DIContainer()
+        bootstrap(c)
+        bootstrap(c)
+
+        assert len(c.get_all_bindings(KafkaEventBusSettings)) == 1
+
+    def test_bad_env_fails_bootstrap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from providify import DIContainer
+        from varco_core.settings import SettingsValidationError
+        from varco_kafka.di import bootstrap
+
+        monkeypatch.setenv("VARCO_KAFKA_ENABLE_AUTO_COMMIT", "notabool")
+
+        with pytest.raises(SettingsValidationError) as exc:
+            bootstrap(DIContainer())
+
+        assert "VARCO_KAFKA_ENABLE_AUTO_COMMIT" in str(exc.value)

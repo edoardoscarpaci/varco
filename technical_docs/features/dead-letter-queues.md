@@ -468,6 +468,16 @@ privileged as the tenant admin — so there is deliberately **no** env var
 that mounts it, ever. `server_auth=None` mounts unauthenticated and logs one
 WARNING at mount time naming the risk.
 
+## Selecting a DLQ backend via env (Plan 047)
+
+`VARCO_DLQ_BACKEND=<kafka|nats|redis|redis-streams|sa|beanie>` selects the live
+`AbstractDeadLetterQueue` backend once its package is bootstrapped — bootstrapping
+`varco_kafka`/`varco_sa`/etc. no longer makes it live by itself. Unset means
+`InMemoryDeadLetterQueue`. `sa`/`beanie` are *new* DI bindings as of Plan 047 (`SADeadLetterQueue`
+was previously hand-constructed only). See
+`technical_docs/features/dependency-injection.md`'s "Selecting a backend" section for the
+precedence rule and the dotted-path escape hatch.
+
 ## Pitfalls
 
 | Pitfall | Fix |

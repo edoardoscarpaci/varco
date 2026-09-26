@@ -191,6 +191,15 @@ lacks RFC 8693 can build its own internal issuer with the existing
 | 3 | `RequestContextMiddleware.enable_tenant_context` defaults `True` → `False`; setting the tenant from a claim without a chain, a catalog check or a membership check is removed | posture finding `tenant.unchained_claim_tenant_setter` |
 | 4 | `CrossCheckMode.STRICT` becomes the default | posture finding `tenant.cross_check_lenient` |
 
+## Enabling tenant membership via env (Plan 047)
+
+`VARCO_TENANT_MEMBERSHIP_ENABLED=true` is the env twin of
+`enable_tenant_membership(container, settings=None)` — a `@Requires`-gated `@Fallback` provider
+(`tenant_membership_when_enabled`, `varco_core.tenancy.di`) that reads
+`TenantMembershipSettings.from_env()` directly (the same default `enable_tenant_membership()`
+itself uses when no explicit `settings=` is given). Code always wins over the env form. See
+`technical_docs/features/dependency-injection.md`'s "Enabling a feature" section.
+
 ## Pitfalls
 
 | Pitfall | Why it bites |

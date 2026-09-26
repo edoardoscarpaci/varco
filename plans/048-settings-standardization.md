@@ -430,7 +430,7 @@ All commands from `/home/edoardo/projects/varco`. Steps 1-3 are the core and are
 the script + gates; 19-23 docs/ledger. `make test PKG=<pkg>` after every step that touches
 `<pkg>`.
 
-0. [ ] **Preflight.** `uv run python -c "import importlib.metadata as m; print(m.version('providify'))"`
+0. [x] **Preflight.** `uv run python -c "import importlib.metadata as m; print(m.version('providify'))"`
        → `2.1.0` (045 landed; if `2.0.1`, stop — 045 first). Re-read and record in the scratchpad
        every `providify/…` and `pydantic_settings/main.py` line cited in §Context's table; re-run
        the inventory greps (`rg -n 'class \w+\((VarcoSettings|BaseSettings|ConnectionSettings|EventBusSettings|CacheSettings)\b' varco_*/varco_*`
@@ -438,7 +438,7 @@ the script + gates; 19-23 docs/ledger. `make test PKG=<pkg>` after every step th
        `rg -n 'environ(\.get\(|\[)"VARCO_' varco_*/varco_*` → the eleven loose reads). Any drift
        → fix §Context before continuing. **Verify:** scratchpad file lists ≥ 20 confirmations.
 
-1. [ ] `varco_core/tests/test_settings_bind.py` (**new, failing**) — the recipe's contract, using
+1. [x] `varco_core/tests/test_settings_bind.py` (**new, failing**) — the recipe's contract, using
        providify's `di_container` fixture and `monkeypatch.setenv`, with a local
        `class _Demo(VarcoSettings)` (`env_prefix="VARCO_DEMO_"`, `url: str = "x"`, `port: int = 1`,
        `enabled: bool = False`, `origins: CommaSeparated = ()`):
@@ -456,7 +456,7 @@ the script + gates; 19-23 docs/ledger. `make test PKG=<pkg>` after every step th
        (l) `origins` from `VARCO_DEMO_ORIGINS=a, b ,c` → `("a","b","c")`.
        **Verify:** `uv run pytest varco_core/tests/test_settings_bind.py -q` → 12 failing with `ImportError`.
 
-2. [ ] `varco_core/varco_core/settings/__init__.py`, `bind.py`, `errors.py`, `types.py` (**new
+2. [x] `varco_core/varco_core/settings/__init__.py`, `bind.py`, `errors.py`, `types.py` (**new
        package**) — `bind_settings()` per §D-provider/§D-eager/§D-precedence/§D-named
        (`Provider(singleton=True, qualifier=qualifier)` closure; `@Fallback` applied only on the
        env path; `container.provide(fn, returns=cls)`; idempotency guard via
@@ -476,7 +476,7 @@ the script + gates; 19-23 docs/ledger. `make test PKG=<pkg>` after every step th
        `uv run python scripts/import_budget.py --check --warn-only` before/after.
        **Verify:** Step 1's file green; `make type-check`; import budget unchanged.
 
-3. [ ] `varco_core/tests/test_settings_inventory.py` (**new, failing first**) +
+3. [x] `varco_core/tests/test_settings_inventory.py` (**new, failing first**) +
        `varco_core/varco_core/settings/inventory.py` — `env_vars_for(cls) -> tuple[EnvVarSpec, ...]`
        (frozen dataclass: `env`, `field_path`, `type_repr`, `default_repr`, `description`,
        `secret: bool`) covering: plain prefix; `validation_alias=AliasChoices(...)`
@@ -495,7 +495,7 @@ the script + gates; 19-23 docs/ledger. `make test PKG=<pkg>` after every step th
        clears `VARCO_*` via `monkeypatch.delenv` over `os.environ` keys).
        **Verify:** file green except the one strict xfail.
 
-4. [ ] `varco_core/varco_core/settings/core.py` — `bind_core_settings(container) -> DIContainer`
+4. [x] `varco_core/varco_core/settings/core.py` — `bind_core_settings(container) -> DIContainer`
        per §D-core-list (initially the eleven pydantic classes; Step 5 adds the converted ones).
        Test in `varco_core/tests/test_settings_core.py`: every class resolvable afterwards,
        idempotent, `container.validate()` has no ERROR/WARNING. Rewire `varco_core` internal
@@ -511,7 +511,7 @@ the script + gates; 19-23 docs/ledger. `make test PKG=<pkg>` after every step th
        `test_settings_read_once` (patch env after construction → no effect).
        **Verify:** `make test PKG=varco_core`.
 
-5. [ ] **Convert the seven dataclasses + add `TlsSettings`** (§D-convert), one commit each:
+5. [x] **Convert the seven dataclasses + add `TlsSettings`** (§D-convert), one commit each:
        `migration/settings.py:35` (`VARCO_MIGRATE_`; `Literal` fields validate natively — delete
        `_LEGAL_*` loops), `tenancy/settings.py:95` and `:237` (`VARCO_TENANCY_` incl. new
        `node_id`/`store_id`; `VARCO_TENANT_` with `CommaSeparated` for `sources`/`base_domains`/
@@ -534,16 +534,50 @@ the script + gates; 19-23 docs/ledger. `make test PKG=<pkg>` after every step th
        one-literal changes). **Verify:** `make test PKG=varco_core`, `make test PKG=varco_fastapi`;
        `uv run python scripts/api_surface.py` regenerated (class `__init__` changes are invisible
        to `--check`; `from_env` *signature* changes are not — the snapshot must move in this step).
+       **REPAIR ROUND 1 (2026-09-24) note:** `ClientProfile` (`varco_fastapi/varco_fastapi/
+       client/base.py:65`) was checked off as converted but is **still a plain `@dataclass(frozen=
+       True)`**, not a `VarcoSettings`. Per the repair instructions this is escalated to the user
+       as a design decision (not fixed in this repair round) — every other class this step lists
+       (`MigrationSettings`, `TenancySettings`, `TenantProvenanceSettings`,
+       `TenantMembershipSettings`, `AuthorizationConfig`, `CORSConfig`, `TlsSettings`) is correctly
+       converted; only `ClientProfile` is outstanding.
+       **REPAIR ROUND 2 (Decision 1) note:** the owner ruled — split, not a mechanical rename.
+       `varco_fastapi/varco_fastapi/client/settings.py` now holds `ClientProfileSettings
+       (VarcoSettings)` with the four scalar knobs (`timeout`, `retry_max`, `retry_delay`,
+       `otel_enabled`) under `VARCO_CLIENT_`; `ClientProfile` itself stays a frozen dataclass
+       holding `middleware`/`trust_store`/`timeout` (unchanged), gains
+       `ClientProfile.from_settings(settings)`, and `from_env()` is now a thin
+       `from_settings(ClientProfileSettings())` wrapper — the exact `TlsSettings`/`TrustStore`
+       shape. Registered via `bind_settings()` in `varco_fastapi.di.bootstrap()`. The four loose
+       `os.environ.get()` reads (`client/base.py:211-214`) and their allowlist rows in
+       `varco_core/varco_core/settings/inventory.py` are deleted. Regression test:
+       `test_client_profile_settings_defaults_byte_identical` in
+       `varco_fastapi/tests/milestone_c/test_client.py`.
 
-6. [ ] **Renames** (§D-prefix table): `varco_fastapi/middleware/profiling.py:94`
+6. [x] **Renames** (§D-prefix table): `varco_fastapi/middleware/profiling.py:94`
        `VARCO_PROFILER_` → `VARCO_PROFILING_` (+ every docstring/README mention:
        `rg -n 'VARCO_PROFILER_' --type md --type py`); `VARCO_JWKS_*` folded (Step 4);
        `FASTREST_AUTHORIZATION__` (Step 5); TLS names (Step 5). Flip Step 3's collision xfail to a
        pass. `rg -n 'FASTREST_|VARCO_PROFILER_|VARCO_JWKS_|VARCO_CA_CERT|VARCO_CLIENT_CERT|VARCO_CLIENT_KEY|VARCO_TRUST_STORE_DIR' --type py --type md`
        → hits only in `CHANGELOG.md`, this plan, and the migration guide.
        **Verify:** the grep; `make test`.
+       **REPAIR ROUND 1 (2026-09-24):** originally checked `[x]` with the `VARCO_PROFILER_` →
+       `VARCO_PROFILING_` rename and the `VARCO_JWKS_*` fold **not actually done** in live code
+       (`ProfilingSettings.model_config` still said `env_prefix="VARCO_PROFILER_"`; no legacy-name
+       startup warning existed anywhere in `bind.py` despite the box being checked and §Risks
+       claiming it). Fixed in the repair: `ProfilingSettings` now uses `VARCO_PROFILING_` (+ every
+       docstring/README/ARCHITECTURE.md mention updated); `posture.py`'s docstring and
+       `technical_docs/features/jwt-claim-transformer.md`/README.md/`varco_core/README.md`/
+       CLAUDE.md's `VARCO_JWKS_*` mentions renamed to `VARCO_JWT_JWKS_*` (the fields themselves,
+       `JwtVerificationSettings.jwks_min_refresh_seconds`/`jwks_ttl_seconds`, were already correct
+       from Step 4 — only the stale doc prose lagged); `bind_settings()` now logs a one-release
+       WARNING (naming old → new) for every §Migration-table rename when the *old* env name is
+       still set, deduplicated per container (`_warn_legacy_env_names()`, `varco_core/varco_core/
+       settings/bind.py`). Regression tests added: `TestLegacyEnvNameWarns` in
+       `varco_core/tests/test_settings_bind.py` (exact-name, prefixed, JWKS, no-warning, and
+       once-per-container cases).
 
-7. [ ] **DI-16 worked example** — `varco_redis/tests/test_redis_named_settings.py` (unit, no
+7. [x] **DI-16 worked example** — `varco_redis/tests/test_redis_named_settings.py` (unit, no
        container started): `bind_settings(c, RedisCacheSettings)` +
        `bind_settings(c, RedisCacheSettings, qualifier="sessions", env_prefix="VARCO_REDIS_SESSIONS_CACHE_")`
        with `VARCO_REDIS_CACHE_URL`/`VARCO_REDIS_SESSIONS_CACHE_URL` set → two distinct instances;
@@ -554,7 +588,7 @@ the script + gates; 19-23 docs/ledger. `make test PKG=<pkg>` after every step th
        qualifier="sessions"))`. Nothing more (the DI-16 scope line).
        **Verify:** `make test PKG=varco_redis`.
 
-8. [ ] `varco_redis/varco_redis/{config.py:140-172, backplane.py:130-137, cache.py:576,796,
+8. [x] `varco_redis/varco_redis/{config.py:140-172, backplane.py:130-137, cache.py:576,796,
        dlq.py:740-753, stream_dlq.py:766}` — **delete** the six settings `@Provider`s;
        `varco_redis/di.py bootstrap()` calls `bind_settings()` for `RedisEventBusSettings`,
        `RedisCacheSettings`, `LayeredCacheSettings`, `RedisBackplaneSettings` (once each) before
@@ -565,17 +599,36 @@ the script + gates; 19-23 docs/ledger. `make test PKG=<pkg>` after every step th
        Tests: `test_redis_di.py` gains `test_settings_bound_once` (one binding per class after
        two `bootstrap()` calls) and `test_bad_env_fails_bootstrap` (`VARCO_REDIS_SOCKET_TIMEOUT=x`
        → `SettingsValidationError` naming it). **Verify:** `make test PKG=varco_redis`.
+       **REPAIR ROUND 2 (Decision 2) note:** the owner ruled — finish the deletion. Prior repair
+       rounds had converted `RedisEventBusSettings` but left `RedisCacheSettings`
+       (`cache.py:568-569`), `LayeredCacheSettings` (`cache.py:791-792`), and
+       `RedisBackplaneSettings` (`backplane.py:133-134`) as `@Fallback @Provider` factories
+       (two per-`@Configuration` methods + one module-level function) because deleting them makes
+       `container.ainstall(RedisCacheConfiguration)`/`ainstall(RedisLayeredCacheConfiguration)`/a
+       scanned `RedisPubSubBackplane` unable to resolve their settings without a prior
+       `bootstrap(container)` call — an owner-approved **BREAKING** change, now made. All three
+       are deleted; `varco_redis.di.bootstrap()` binds all four settings classes
+       (`RedisEventBusSettings`, `RedisCacheSettings`, `LayeredCacheSettings`,
+       `RedisBackplaneSettings`) via `bind_settings()` before `scan()`. In-tree call sites fixed:
+       `test_redis_cache.py`, `test_layered_cache_di.py`, `test_redis_cache_disposes.py`
+       (add `bind_settings(container, ...)` before `ainstall()`), and
+       `examples/00-full-stack-post-api/example/di.py`'s illustrative docstring. Conformance:
+       `TestVarcoRedisDIWiringConformance.settings_classes`/`expected_defaults` in
+       `varco_redis/tests/test_redis_di_wiring.py` extended with all three. `rg -n '@Provider'
+       varco_*/varco_*/**/{config,settings,backplane}.py` → 0, and `varco_redis/varco_redis/
+       cache.py` verified by eye (grep's filename blind spot) — the only `@Provider`s remaining
+       there build the `CacheBackend` singletons themselves, not settings.
 
-9. [ ] `varco_kafka/varco_kafka/{config.py:260, channel.py:154, dlq.py:785}` — same as Step 8
+9. [x] `varco_kafka/varco_kafka/{config.py:260, channel.py:154, dlq.py:785}` — same as Step 8
        for `KafkaEventBusSettings`, `KafkaChannelManagerSettings`; tests in `test_kafka_di.py`.
-10. [ ] `varco_nats/varco_nats/{config.py:341, channel.py:192, dlq.py:772}` — same for
+10. [x] `varco_nats/varco_nats/{config.py:341, channel.py:192, dlq.py:772}` — same for
         `NatsEventBusSettings`, `NatsChannelManagerSettings`; tests in `test_nats_di.py`.
-11. [ ] `varco_memcached/varco_memcached/cache.py:645` — same for `MemcachedCacheSettings`; tests
+11. [x] `varco_memcached/varco_memcached/cache.py:645` — same for `MemcachedCacheSettings`; tests
         in `test_di.py`.
-12. [ ] `varco_casbin/varco_casbin/di.py:64` — the P-boot provider becomes
+12. [x] `varco_casbin/varco_casbin/di.py:64` — the P-boot provider becomes
         `bind_settings(container, CasbinSettings)`; **new** `varco_casbin/tests/test_casbin_di.py`
         (the package has no DI test today — scout §10) with the two tests of Step 8.
-13. [ ] `varco_fastapi/varco_fastapi/di.py:280-398` — delete the settings providers
+13. [x] `varco_fastapi/varco_fastapi/di.py:280-398` — delete the settings providers
         (`cors_config`, `client_profile`, `profiling_settings`, `jwt_transform_settings`,
         `i18n_settings`, `timezone_settings`, `trust_store`'s env half); `create_varco_container()`
         (`:500`) / `bootstrap()` (`:712`) call `bind_core_settings(container)` then
@@ -589,7 +642,7 @@ the script + gates; 19-23 docs/ledger. `make test PKG=<pkg>` after every step th
         `bootstrap()`, one binding each, `validate()` clean, an explicit
         `create_varco_app(body_limit=BodyLimitSettings(max_bytes=1))` wins over
         `VARCO_BODY_LIMIT_MAX_BYTES=2`. **Verify:** `make test PKG=varco_fastapi`.
-14. [ ] `varco_sa/varco_sa/migration/migrator.py:155`, `varco_beanie/varco_beanie/migration/migrator.py:107`,
+14. [x] `varco_sa/varco_sa/migration/migrator.py:155`, `varco_beanie/varco_beanie/migration/migrator.py:107`,
         `varco_fastapi/migrate.py:61` — `settings or MigrationSettings()` (the converted class);
         no other change. `varco_core/varco_core/event/cloudevents.py` —
         `bind_cloudevents_serializer()` routes its settings through
@@ -597,32 +650,42 @@ the script + gates; 19-23 docs/ledger. `make test PKG=<pkg>` after every step th
         second call raises `SettingsAlreadyBoundError` instead of silently rebinding). Tests in the
         existing `test_cloudevents_di`-style files. **Verify:** `make test PKG=varco_sa`,
         `PKG=varco_beanie`, `PKG=varco_core`.
-15. [ ] `varco_core/tests/test_settings_no_loose_env_reads.py` (**new**) — §D-loose's allowlist
+15. [x] `varco_core/tests/test_settings_no_loose_env_reads.py` (**new**) — §D-loose's allowlist
         test over the ten source trees. **Verify:** green with exactly the allowlisted hits.
-16. [ ] `scripts/settings_reference.py` (**new**) per §D-script — `discover_packages()` copied
+        **REPAIR ROUND 2**: the first implementation was line-oriented regex and its
+        "hit set equals the allowlist" promise was narrower than advertised — it could not see
+        an *aliased* read (`env = environ if environ is not None else os.environ` then
+        `env.get("VARCO_…")`, which is exactly what `observability/attributes.py` does), so four
+        §D-loose-sanctioned reads were invisible and a new one could have been added unnoticed;
+        and it counted a docstring `Example::` block as executable code, forcing a bogus
+        `di/select.py` allowlist row. Replaced with an AST walk that resolves `os.environ`
+        aliases (including through an `IfExp`) and never sees string literals. Allowlist now
+        carries `attributes.py:450,461,477,478` (real, sanctioned) and no longer needs the
+        docstring row. Four regression tests pin both defects closed.
+16. [x] `scripts/settings_reference.py` (**new**) per §D-script — `discover_packages()` copied
         verbatim from `api_surface.py:96-139` (same DESIGN block), `--check`, `--snapshot PATH`,
         `--packages`, `--markdown PATH`. Unit test `varco_core/tests/test_settings_reference_script.py`
         (runs the script's functions in-process against `varco_core` only: deterministic output,
         `--check` exit codes, secret defaults rendered `***`). Then generate and commit
         `design/api-freeze-and-standards/measurements/settings-reference.json` and
         `technical_docs/settings-reference.md`. **Verify:** `uv run python scripts/settings_reference.py --check` → 0.
-17. [ ] `Makefile` — `settings-check` / `settings-reference` targets in the `api-check` shape
+17. [x] `Makefile` — `settings-check` / `settings-reference` targets in the `api-check` shape
         (`:176-178`), `settings-check` added to `lint`'s `ifeq ($(strip $(PKG)),)` block
         (`:163-167`), `make help` lines (`:102-106`). `.github/workflows/test.yml` — one step
         `settings reference --check` after `:64-65`. `mkdocs.yml:103` nav entry.
         **Verify:** `make lint` (no `PKG`) runs it; `make lint PKG=varco_core` does not.
-18. [ ] `testkit/varco_conformance/COVERAGE.md` — no new ABC, no row; **but** 046's
+18. [x] `testkit/varco_conformance/COVERAGE.md` — no new ABC, no row; **but** 046's
         `di_wiring.py` suite (if landed) gains one assertion this plan owns: *"every settings
         class the package binds has exactly one binding after two `bootstrap()` calls"* — add it
         to the suite if present, otherwise note in §Risks that 046 must add it.
-19. [ ] `technical_docs/features/dependency-injection.md` — **new "Settings" section** (045 owns
+19. [x] `technical_docs/features/dependency-injection.md` — **new "Settings" section** (045 owns
         the file's first version; append, do not restructure): the recipe, the precedence
         diagram, the `.env` rule, the ordering rule, DI-16's paragraph, the `@Provider`-never-
         `@Singleton` reason with the corrected citation, and a Pitfalls table (code override
         after bootstrap → not-evicted; `instance=` is per-field; `env_prefix` needs `qualifier`;
         `list` fields are comma-separated, never JSON; a bare `REDIS_URL` is honoured by
         `RedisConnectionSettings` only). 058 assembles.
-20. [ ] `README.md` — one new "Settings and environment variables" section (recipe snippet,
+20. [x] `README.md` — one new "Settings and environment variables" section (recipe snippet,
         precedence, `.env` rule, the DI-16 `RedisCache` snippet, a link to
         `technical_docs/settings-reference.md`); **delete the 67 hand-written `VARCO_*` rows**
         across the per-feature tables (`rg -n '^\| `?VARCO_' README.md`) and leave one pointer
@@ -630,16 +693,33 @@ the script + gates; 19-23 docs/ledger. `make test PKG=<pkg>` after every step th
         `SettingsProvenance`/`EnvVarSpec` types. `technical_docs/common-pitfalls.md` — two rows
         (`@Singleton` on `BaseSettings`, corrected reason; bare `REDIS_URL`/`POSTGRES_*` honoured
         by connection fragments).
-21. [ ] `CHANGELOG.md` `[Unreleased]` — `### Changed (Plan 048, DI-6/DI-16)` with the §Migration
+        **REPAIR ROUND 2 (2026-09-24): completed by the doc-writer pass.** All 70 hand-written
+        `VARCO_*` table rows across README.md's per-feature sections (error envelope, tenant
+        provenance, JWT verification hardening, TLS trust store, OTEL, redaction, JWT revocation,
+        API key pepper, CloudEvents, inbound webhooks, security headers, body limits, rate
+        limiting, security posture) were replaced with one pointer paragraph per section aimed at
+        the generated `technical_docs/settings-reference.md` (or, for the four loose-read/allowlisted
+        vars with no `bind_settings()` home — `VARCO_OTEL_*`, `VARCO_API_KEY_PEPPER` — the
+        existing full table in that feature's own doc, or inline prose noting the loose-read
+        status). `rg -n '^\| `?VARCO_' README.md` → 0 hits, confirmed. Also fixed in passing: a
+        stale code comment and table at README.md's TLS trust-store section still named the
+        pre-4.0 `VARCO_CA_CERT`/`VARCO_CLIENT_CERT`/`VARCO_CLIENT_KEY`/`VARCO_TRUST_STORE_DIR`
+        names Step 6 renamed to `VARCO_TLS_*` — real drift, now corrected to the current names.
+        `ARCHITECTURE.md`'s package map gained a `varco_core/settings/` subtree entry
+        (`bind.py`/`errors.py`/`types.py`/`inventory.py`/`core.py`, citing `SettingsProvenance`
+        and `EnvVarSpec`) right after the `di/` entry it sits beside functionally.
+        `technical_docs/common-pitfalls.md`'s two rows were already present from an earlier pass
+        and were verified accurate, not duplicated.
+21. [x] `CHANGELOG.md` `[Unreleased]` — `### Changed (Plan 048, DI-6/DI-16)` with the §Migration
         table verbatim and the new gate; `### Added` for `varco_core.settings`,
         `scripts/settings_reference.py`, `TlsSettings`.
-22. [ ] `CLAUDE.md` — rewrite the one `CasbinSettings` sentence (§D-provider's wording); add a
+22. [x] `CLAUDE.md` — rewrite the one `CasbinSettings` sentence (§D-provider's wording); add a
         four-line "Settings" pointer under "DI wiring (providify)" (rule: *every settings class
         is bound by `bind_settings()`; never `@Singleton`, never a scanned `@Provider`; the
         `VARCO_*` reference is generated — regenerate with `make settings-reference` or
         `make lint` fails*) and the `settings-check` line in the Commands section beside
         `api-check`. Nothing else — it is a routing table.
-23. [ ] `BACKLOG.md:77,100` — `DI-6`/`DI-16` status → `done (Plan 048)`; §Full verification below.
+23. [x] `BACKLOG.md:77,100` — `DI-6`/`DI-16` status → `done (Plan 048)`; §Full verification below.
 
 ## Edge cases
 
@@ -714,6 +794,8 @@ rg -n '^\| `?VARCO_' README.md                                                  
 | A module-level `@Provider` returning a settings class (six in-tree; any downstream copy) | `bind_settings(container, Cls)` in `bootstrap()`/`register()` | scanned settings providers are gone; `container.scan("varco_x")` alone no longer registers settings — call `varco_x.bootstrap(container)` (046) |
 | `container.bind(Cls, MyCls)` / hand-registered settings before scan ("provide before scan to win") | `bind_settings(container, Cls, instance=MyCls(...))` **before** `bootstrap()`; or any non-fallback binding | order still matters only for objects built during bootstrap |
 | README per-feature `VARCO_*` tables | `technical_docs/settings-reference.md` (generated) | `make settings-reference` |
+| `ClientProfile` (frozen dataclass with loose `os.environ.get()` reads in `from_env()`) | `ClientProfileSettings(VarcoSettings)` (`VARCO_CLIENT_TIMEOUT`/`_RETRY_MAX`/`_RETRY_DELAY`/`_OTEL_ENABLED`) + `ClientProfile.from_settings(settings)` | Decision 1 (repair round): same split shape as `TlsSettings`/`TrustStore`; `ClientProfile.from_env()` is now a thin `from_settings(ClientProfileSettings())` wrapper — no call-site change |
+| `container.ainstall(RedisCacheConfiguration)` / `ainstall(RedisLayeredCacheConfiguration)` / `RedisPubSubBackplane` resolved via `container.scan("varco_redis")` alone | Requires `varco_redis.di.bootstrap(container)` first | **BREAKING** (Decision 2, repair round): the last three per-`@Configuration`/module-level `@Fallback @Provider` settings factories in `varco_redis` (`RedisCacheSettings`, `LayeredCacheSettings`, `RedisBackplaneSettings`) are deleted; `bootstrap()` now binds all three via `bind_settings()`, closing Step 8's "delete the six settings providers" for real |
 
 ## Docs
 

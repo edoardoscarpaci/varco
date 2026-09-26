@@ -33,3 +33,30 @@ async def test_enable_feature_flags_swaps_the_default() -> None:
     after = await container.aget(AbstractFeatureFlags)
     assert isinstance(after, InMemoryFeatureFlags)
     await container.ashutdown()
+
+
+async def test_feature_flags_env_enabled_activates_the_twin(monkeypatch) -> None:
+    # Plan 047 §D-features — VARCO_FEATURE_FLAGS_ENABLED=true, no enable_*
+    # call, gated via feature_default("feature_flags"). Repair round,
+    # Decision 4: the twin is hand-registered by bootstrap() (mirroring
+    # the revocation twin), not scan-discovered — use bootstrap(), not a
+    # bare scan().
+    from varco_core.di import bootstrap
+
+    monkeypatch.setenv("VARCO_FEATURE_FLAGS_ENABLED", "true")
+    container = DIContainer()
+    bootstrap(container)
+
+    flags = await container.aget(AbstractFeatureFlags)
+    assert isinstance(flags, InMemoryFeatureFlags)
+    await container.ashutdown()
+
+
+async def test_feature_flags_env_disabled_keeps_null_default(monkeypatch) -> None:
+    monkeypatch.setenv("VARCO_FEATURE_FLAGS_ENABLED", "false")
+    container = DIContainer()
+    container.scan("varco_core", recursive=True)
+
+    flags = await container.aget(AbstractFeatureFlags)
+    assert isinstance(flags, NullFeatureFlags)
+    await container.ashutdown()

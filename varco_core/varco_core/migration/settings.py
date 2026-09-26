@@ -4,39 +4,46 @@ varco_core.migration.settings
 ``MigrationSettings`` — the ``VARCO_MIGRATE_*`` env-driven configuration for
 every migration posture (``off``/``check``/``upgrade``).
 
-DESIGN: frozen dataclass with ``from_env()``, not pydantic ``BaseSettings``
-    ✅ Matches ``SAConfig``/``BeanieSettings`` — a frozen dataclass is the
-       established shape for injectable settings objects in this repo.
-    ✅ Avoids the ``@Singleton``-on-``BaseSettings`` pitfall documented in
-       CLAUDE.md (providify cannot inject pydantic's ``**values`` ctor) —
-       registering this via a ``@Provider`` needs no special handling.
-    ✅ ``env=`` is injectable so tests never mutate ``os.environ`` — and so
-       ``build_service(prefix, factory, env={...})`` (composite deployments)
-       can pass a scoped mapping.
-    ❌ No automatic env-var validation/coercion helpers that pydantic gives
-       for free — ``from_env()`` does its own parsing.
+DESIGN: ``VarcoSettings`` (pydantic), not a hand-rolled ``from_env()``
+    **Plan 048 / DI-6: converted from a frozen dataclass with a hand-rolled
+    ``from_env(env: Mapping | None)`` to a pydantic ``VarcoSettings``.**
+    Same class name, same field names, every default literal
+    byte-identical. ``Literal["off", "check", "upgrade"]`` /
+    ``Literal["fail", "warn"]`` now validate natively — the old
+    ``_LEGAL_MODES``/``_LEGAL_ON_FAILURE`` manual-membership loops are gone,
+    replaced by pydantic's own enum-style error message (which still names
+    the legal values, satisfying
+    ``test_from_env_unknown_mode_raises_valueerror_naming_legal_values``).
+    The ``env: Mapping | None`` constructor parameter is gone — it was only
+    ever used by tests (grep: ``test_migration_contracts.py``); those now
+    use ``monkeypatch.setenv`` or plain keyword construction, matching every
+    other converted class in this plan (§D-convert).
+    ✅ Registered via ``bind_settings()`` like every other settings class —
+       one recipe, fail-fast at bootstrap, provenance tracked for 052.
+    ✅ Type validation (``lock_timeout: float``) is now pydantic's, not a
+       hand-rolled ``float(...)`` call that raises a bare ``ValueError``
+       with no env-var name in the message.
+    ❌ None — this is a pure shape conversion; no behavioural change.
 
-Thread safety:  ✅ Frozen — safe to share across coroutines/threads.
+Thread safety:  ✅ ``frozen=True`` — safe to share across coroutines/threads.
 Async safety:   ✅ No I/O.
 """
 
 from __future__ import annotations
 
-import os
-from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Literal
 
-_LEGAL_MODES = ("off", "check", "upgrade")
-_LEGAL_ON_FAILURE = ("fail", "warn")
+from pydantic import AliasChoices, Field
+from pydantic_settings import SettingsConfigDict
+
+from varco_core.config import VarcoSettings
 
 
-@dataclass(frozen=True)
-class MigrationSettings:
+class MigrationSettings(VarcoSettings):
     """
     Env-driven migration posture configuration.
 
-    Args:
+    Attributes:
         mode:        ``"off"`` (default, nothing runs) / ``"check"`` (fail
                      startup if the schema is behind, never writes DDL) /
                      ``"upgrade"`` (acquire lock, upgrade heads, release).
@@ -52,58 +59,30 @@ class MigrationSettings:
         target:      Revision target for ``upgrade()``. Env:
                      ``VARCO_MIGRATE_TARGET_REV``.
         dry_run:     Render without applying. Env: ``VARCO_MIGRATE_DRY_RUN``.
+
+    Edge cases:
+        - An out-of-set ``VARCO_MIGRATE_MODE``/``VARCO_MIGRATE_ON_FAILURE``
+          raises ``pydantic.ValidationError`` (wrapped as
+          ``SettingsValidationError`` when bound via ``bind_settings()``),
+          naming the legal literal values in the message.
+
+    Thread safety:  ✅ Frozen.
+    Async safety:   ✅ No I/O.
     """
+
+    model_config = SettingsConfigDict(
+        env_prefix="VARCO_MIGRATE_", frozen=True, populate_by_name=True
+    )
 
     mode: Literal["off", "check", "upgrade"] = "off"
     on_failure: Literal["fail", "warn"] = "fail"
     lock_key: str = "varco:migrate"
     lock_timeout: float = 30.0
     timeout: float = 300.0
-    target: str = "heads"
+    # ⚠️ The env var is VARCO_MIGRATE_TARGET_REV, not VARCO_MIGRATE_TARGET —
+    # a validation_alias is required to keep the old name working.
+    target: str = Field(default="heads", validation_alias=AliasChoices("VARCO_MIGRATE_TARGET_REV"))
     dry_run: bool = False
-
-    @classmethod
-    def from_env(cls, env: Mapping[str, str] | None = None) -> MigrationSettings:
-        """
-        Build ``MigrationSettings`` from environment variables.
-
-        Args:
-            env: Mapping to read from. ``None`` reads the real
-                 ``os.environ``. Tests and composite deployments pass a
-                 scoped mapping instead of mutating the process environ.
-
-        Returns:
-            A ``MigrationSettings`` reflecting the given environment, with
-            documented defaults for anything unset.
-
-        Raises:
-            ValueError: ``VARCO_MIGRATE_MODE`` or ``VARCO_MIGRATE_ON_FAILURE``
-                is set to a value outside their legal sets.
-        """
-        source = env if env is not None else os.environ
-
-        mode = source.get("VARCO_MIGRATE_MODE", "off")
-        if mode not in _LEGAL_MODES:
-            raise ValueError(
-                f"Invalid VARCO_MIGRATE_MODE={mode!r}. Legal values are: {', '.join(_LEGAL_MODES)}."
-            )
-
-        on_failure = source.get("VARCO_MIGRATE_ON_FAILURE", "fail")
-        if on_failure not in _LEGAL_ON_FAILURE:
-            raise ValueError(
-                f"Invalid VARCO_MIGRATE_ON_FAILURE={on_failure!r}. "
-                f"Legal values are: {', '.join(_LEGAL_ON_FAILURE)}."
-            )
-
-        return cls(
-            mode=mode,  # type: ignore[arg-type]
-            on_failure=on_failure,  # type: ignore[arg-type]
-            lock_key=source.get("VARCO_MIGRATE_LOCK_KEY", "varco:migrate"),
-            lock_timeout=float(source.get("VARCO_MIGRATE_LOCK_TIMEOUT", "30.0")),
-            timeout=float(source.get("VARCO_MIGRATE_TIMEOUT", "300.0")),
-            target=source.get("VARCO_MIGRATE_TARGET_REV", "heads"),
-            dry_run=source.get("VARCO_MIGRATE_DRY_RUN", "false").lower() in ("1", "true", "yes"),
-        )
 
 
 __all__ = ["MigrationSettings"]

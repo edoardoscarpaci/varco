@@ -668,12 +668,17 @@ class TestRedisStreamDLQSerialization:
 
 class TestRedisStreamDLQConfiguration:
     async def test_configuration_provides_abstract_dlq(
-        self, settings: RedisEventBusSettings, fake_redis: FakeRedis
+        self,
+        settings: RedisEventBusSettings,
+        fake_redis: FakeRedis,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """RedisStreamDLQConfiguration wires a connected RedisStreamDLQ."""
         from providify import DIContainer  # noqa: PLC0415
         from varco_core.event.dlq import AbstractDeadLetterQueue  # noqa: PLC0415
 
+        # Plan 047 §D-tests: "redis-streams" is a secondary DLQ value.
+        monkeypatch.setenv("VARCO_DLQ_BACKEND", "redis-streams")
         with patch("varco_redis.stream_dlq.aioredis") as mock_aioredis:
             mock_aioredis.from_url.return_value = fake_redis
             container = DIContainer()

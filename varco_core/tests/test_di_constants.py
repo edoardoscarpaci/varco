@@ -76,3 +76,50 @@ def test_importing_di_module_does_not_import_providify() -> None:
         check=True,
     )
     assert result.stdout.strip() == "False", "varco_core.di must not import providify"
+
+
+def test_env_override_priority_outranks_backend_priority() -> None:
+    # Plan 047 §D-precedence: the env-dotted-path tier must outrank the
+    # named-backend tier so a dotted override wins among fallbacks even
+    # when a shipped backend is also active.
+    from varco_core.di import BACKEND_PRIORITY, ENV_OVERRIDE_PRIORITY
+
+    assert isinstance(ENV_OVERRIDE_PRIORITY, int)
+    assert ENV_OVERRIDE_PRIORITY > BACKEND_PRIORITY > 0
+
+
+def test_env_override_priority_value_is_200() -> None:
+    # Pinned exact value (§D-precedence: "200").
+    from varco_core.di import ENV_OVERRIDE_PRIORITY
+
+    assert ENV_OVERRIDE_PRIORITY == 200
+
+
+def test_di_package_exports_plan_047_names() -> None:
+    # Plan 047 turns varco_core.di into a package; __init__.py must
+    # re-export 045/046's names unchanged plus the new selection/feature/
+    # introspection surface (Done criteria list).
+    import varco_core.di as di_module
+
+    for name in (
+        "BACKEND_PRIORITY",
+        "ENV_OVERRIDE_PRIORITY",
+        "AlreadyBoundError",
+        "bind_instance",
+        "bootstrap",
+        "is_user_bound",
+        "SEAMS",
+        "FEATURES",
+        "selected_by",
+        "feature_default",
+        "env_truthy",
+        "bind_env_overrides",
+        "check_backend_selection",
+        "inspect_backend_selection",
+        "inspect_bindings",
+        "catalogue",
+        "BackendSelectionError",
+        "CatalogueError",
+    ):
+        assert name in di_module.__all__, f"{name} missing from varco_core.di.__all__"
+        assert hasattr(di_module, name), f"{name} missing from varco_core.di"

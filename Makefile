@@ -104,6 +104,10 @@ help:
 	@echo "  make api-check               api_surface.py --check (removals + fn signature changes)"
 	@echo "  make asyncapi                regenerate the committed AsyncAPI 3.1.0 snapshot"
 	@echo "  make asyncapi-check          diff the AsyncAPI snapshot against live consumer wiring"
+	@echo "  make di-catalogue            regenerate the committed DI default-implementation catalogue"
+	@echo "  make di-catalogue-check      diff the DI catalogue against live bootstrapped containers"
+	@echo "  make settings-reference      regenerate the committed VARCO_* settings reference"
+	@echo "  make settings-check          diff the settings reference against the live tree"
 	@echo "  make format                  ruff format + fix (whole repo)"
 	@echo "  make format PKG=varco_redis  ruff format + fix (one package's source dirs)"
 	@echo "  make type-check              mypy (all ten source dirs)"
@@ -164,6 +168,8 @@ ifeq ($(strip $(PKG)),)
 	$(MAKE) api-check
 	$(MAKE) import-budget
 	$(MAKE) asyncapi-check
+	$(MAKE) di-catalogue-check
+	$(MAKE) settings-check
 endif
 
 # ── API surface gate ──────────────────────────────────────────────────────────
@@ -225,6 +231,40 @@ asyncapi-check:
 .PHONY: asyncapi
 asyncapi:
 	uv run --all-packages --all-extras varco export-asyncapi $(ASYNCAPI_ARGS)
+
+# ── DI catalogue gate ─────────────────────────────────────────────────────────
+# Plan 047 §D-script (DI-17). Same snapshot-plus-`--check` shape as
+# `api-check`: regenerates the default-implementation catalogue from every
+# package's own bootstrapped container and diffs it against the committed
+# design/api-freeze-and-standards/measurements/di-catalogue.json.
+#
+# Wired into `make lint`'s no-PKG path only, beside `api-check`/
+# `import-budget`/`asyncapi-check` — `make lint PKG=<one>` stays narrow.
+.PHONY: di-catalogue-check
+di-catalogue-check:
+	uv run --all-packages --all-extras python scripts/di_catalogue.py --check
+
+.PHONY: di-catalogue
+di-catalogue:
+	uv run --all-packages --all-extras python scripts/di_catalogue.py
+
+# ── Settings reference gate ───────────────────────────────────────────────────
+# Plan 048 / DI-6, §D-script. Same snapshot-plus-`--check` shape as
+# `api-check`/`di-catalogue-check`: regenerates the VARCO_* settings reference
+# (every bind_settings()-eligible class's env vars, defaults, secrecy) from the
+# live tree and diffs it against the committed
+# design/api-freeze-and-standards/measurements/settings-reference.json.
+#
+# Wired into `make lint`'s no-PKG path only, beside `api-check`/
+# `import-budget`/`asyncapi-check`/`di-catalogue-check` — `make lint PKG=<one>`
+# stays narrow.
+.PHONY: settings-check
+settings-check:
+	uv run --all-packages --all-extras python scripts/settings_reference.py --check
+
+.PHONY: settings-reference
+settings-reference:
+	uv run --all-packages --all-extras python scripts/settings_reference.py
 
 # ── Benchmarks ────────────────────────────────────────────────────────────────
 # Plan 028 / Phase 3 (P2), §D-P2-harness. Runs benchmarks/ as plain pytest

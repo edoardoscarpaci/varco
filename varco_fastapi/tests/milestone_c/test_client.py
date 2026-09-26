@@ -169,6 +169,39 @@ def test_client_profile_from_env_retry(monkeypatch):
     assert len(retry_mws) == 1
 
 
+def test_client_profile_settings_defaults_byte_identical():
+    """
+    Plan 048 / DI-6, §D-convert (Decision 1): ``ClientProfileSettings``'s
+    defaults must be byte-identical to the four loose ``os.environ.get()``
+    reads it replaced in ``ClientProfile.from_env()``.
+    """
+    from varco_fastapi.client.settings import ClientProfileSettings
+
+    settings = ClientProfileSettings()
+    assert settings.timeout == 30.0
+    assert settings.retry_max == 0
+    assert settings.retry_delay == 0.5
+    assert settings.otel_enabled is True
+
+
+def test_client_profile_from_settings_matches_from_env(monkeypatch):
+    """``from_settings()``/``from_env()`` produce the same middleware shape."""
+    from varco_fastapi.client.settings import ClientProfileSettings
+
+    monkeypatch.setenv("VARCO_CLIENT_RETRY_MAX", "2")
+    monkeypatch.setenv("VARCO_CLIENT_RETRY_DELAY", "0.2")
+    monkeypatch.setenv("VARCO_CLIENT_OTEL_ENABLED", "false")
+
+    via_env = ClientProfile.from_env()
+    via_settings = ClientProfile.from_settings(ClientProfileSettings())
+
+    assert [type(mw).__name__ for mw in via_env.middleware] == [
+        type(mw).__name__ for mw in via_settings.middleware
+    ]
+    assert via_env.timeout == via_settings.timeout
+    assert "OTelClientMiddleware" not in [type(mw).__name__ for mw in via_env.middleware]
+
+
 # ── ClientConfigurator ─────────────────────────────────────────────────────────
 
 

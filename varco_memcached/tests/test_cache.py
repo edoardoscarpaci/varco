@@ -376,6 +376,9 @@ class TestMemcachedCacheConfiguration:
 
         with patch("varco_memcached.cache.aiomcache.Client", return_value=fake_mc):
             container = DIContainer()
+            from varco_memcached.di import bootstrap
+
+            bootstrap(container)
             await container.ainstall(MemcachedCacheConfiguration)
 
             cache = await container.aget(CacheBackend)
@@ -389,6 +392,9 @@ class TestMemcachedCacheConfiguration:
 
         with patch("varco_memcached.cache.aiomcache.Client", return_value=fake_mc):
             container = DIContainer()
+            from varco_memcached.di import bootstrap
+
+            bootstrap(container)
             await container.ainstall(MemcachedCacheConfiguration)
 
             c1 = await container.aget(CacheBackend)

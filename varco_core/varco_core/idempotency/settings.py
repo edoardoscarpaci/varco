@@ -3,10 +3,14 @@ varco_core.idempotency.settings
 ================================
 ``IdempotencySettings`` — off by default (Plan 029 / D1a, Step 5).
 
-Registered with a providify ``@Provider``, never ``@Singleton`` — pydantic
-``BaseSettings`` subclasses accept a ``**values`` constructor providify
-cannot inject positionally (CLAUDE.md's providify rule, same treatment as
-``I18nSettings``/``CasbinSettings``).
+Bound by ``varco_core.settings.bind_settings()`` (Plan 048 / DI-6) from
+``bind_core_settings()``, never by a module-level ``@Provider`` or
+``@Singleton``. ``bind_settings()`` registers a ``@Provider`` *closure*
+because a pydantic ``BaseSettings.__init__`` carries 29 annotated, defaulted
+keyword parameters (``_env_prefix``, ``_env_file``, …) that providify's
+per-parameter resolver would otherwise treat as injection points and fill
+from whatever else happens to be bound — ``**values`` being skipped is not
+the actual trap. Same treatment as every other settings class in the tree.
 """
 
 from __future__ import annotations

@@ -129,6 +129,7 @@ from uuid import UUID
 import redis.asyncio as aioredis
 from providify import Configuration, Disposes, Fallback, InjectMeta, Provider
 from varco_core.di import BACKEND_PRIORITY
+from varco_core.di.select import selected_by
 from varco_core.event.dlq import AbstractDeadLetterQueue, DeadLetterEntry
 from varco_core.event.serializer import JsonEventSerializer
 
@@ -756,6 +757,7 @@ class RedisStreamDLQConfiguration:
     """
 
     @Fallback
+    @selected_by("dlq", "redis-streams")
     @Provider(singleton=True, priority=BACKEND_PRIORITY)
     async def redis_stream_dlq(
         self,

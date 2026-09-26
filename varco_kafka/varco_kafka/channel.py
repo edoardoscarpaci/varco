@@ -56,7 +56,7 @@ from typing import Any
 
 from aiokafka.admin import AIOKafkaAdminClient, NewTopic
 from aiokafka.errors import TopicAlreadyExistsError
-from providify import Fallback, Inject, PostConstruct, PreDestroy, Provider, Singleton
+from providify import Fallback, Inject, PostConstruct, PreDestroy, Singleton
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 from varco_core.config import VarcoSettings
@@ -126,33 +126,10 @@ class KafkaChannelManagerSettings(VarcoSettings):
         return f"{self.topic_prefix}{channel}"
 
 
-@Fallback
-@Provider(singleton=True)
-def kafka_channel_manager_settings() -> KafkaChannelManagerSettings:
-    """
-    Default ``KafkaChannelManagerSettings`` binding, discovered by
-    ``container.scan("varco_kafka", recursive=True)``.
-
-    DESIGN: ``@Provider`` factory instead of ``@Singleton`` on the class
-        A pydantic ``BaseSettings`` declares ``__init__(self, **values: Any)``.
-        providify resolves a ``ClassBinding`` by injecting the constructor
-        signature, so a class-level ``@Singleton`` made every resolution fail
-        with ``LookupError: Cannot resolve 'values: typing.Any'`` — which also
-        broke ``KafkaChannelManager`` (it injects these settings).  A factory
-        has no injectable parameters, so the container just calls it.
-        ✅ ``container.get(KafkaChannelManagerSettings)`` works after a plain scan.
-        ✅ Same precedent as ``varco_casbin/di.py`` and ``varco_fastapi/di.py``.
-        ❌ Settings are no longer discoverable by class decoration alone — this
-           module must stay importable by the scanner (it always is).
-
-    ``@Fallback`` — the in-process default; any application-supplied
-    provider wins regardless of registration order.
-
-    Returns:
-        ``KafkaChannelManagerSettings`` populated from ``VARCO_KAFKA_ADMIN_*``
-        environment variables (pydantic reads them at construction).
-    """
-    return KafkaChannelManagerSettings()
+# Plan 048 / DI-6, Step 9 — the `kafka_channel_manager_settings` @Fallback
+# @Provider that used to live here is gone. `KafkaChannelManagerSettings`
+# is now registered eagerly, fail-fast, by `bind_settings()` inside
+# `varco_kafka.di.bootstrap()` (before `scan()`).
 
 
 # ── KafkaChannelManager ───────────────────────────────────────────────────────

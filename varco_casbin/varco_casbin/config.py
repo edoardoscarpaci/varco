@@ -26,6 +26,7 @@ from __future__ import annotations
 from importlib import resources
 from typing import Final, Literal
 
+from pydantic import model_validator
 from pydantic_settings import SettingsConfigDict
 from varco_core.config import VarcoSettings
 
@@ -127,6 +128,27 @@ class CasbinSettings(VarcoSettings):
 
     auto_save: bool = True
     admin_role: str = "admin"
+
+    @model_validator(mode="after")
+    def _fail_fast_on_unknown_preset(self) -> CasbinSettings:
+        """
+        Plan 048 / DI-6: fail at ``bind_settings()`` time — not only at the
+        first ``resolve_model_text()`` call — for a preset name that is
+        obviously wrong, **without** narrowing ``model_preset`` to a
+        ``Literal`` (which would forbid overriding it via ``model_text``/
+        ``model_path``, the class's own documented resolution order:
+        ``model_preset`` is irrelevant whenever either of those is set, so
+        an invalid preset name paired with an explicit ``model_text`` must
+        stay legal). Mirrors ``resolve_model_text()``'s own check exactly.
+        """
+        if not self.model_text and not self.model_path and self.model_preset not in _PRESETS:
+            raise ValueError(
+                f"Unknown Casbin model preset {self.model_preset!r}. "
+                f"Valid presets: {sorted(_PRESETS)}. "
+                f"Set VARCO_CASBIN_MODEL_PRESET to one of these, or supply "
+                f"VARCO_CASBIN_MODEL_PATH / model_text for a custom model."
+            )
+        return self
 
     def resolve_model_text(self) -> str:
         """

@@ -208,10 +208,17 @@ async def running_server(
     prev_redis = os.environ.get("VARCO_REDIS_URL")
     prev_redis_cache = os.environ.get("VARCO_REDIS_CACHE_URL")
     prev_jwt_allow_any_audience = os.environ.get("VARCO_JWT_ALLOW_ANY_AUDIENCE")
+    # Plan 047 — bootstrapping varco_redis no longer makes it live by itself;
+    # without these, create_app() would silently run against InMemoryEventBus/
+    # InMemoryCache and this e2e test would never touch the containers above.
+    prev_event_bus_backend = os.environ.get("VARCO_EVENT_BUS_BACKEND")
+    prev_cache_backend = os.environ.get("VARCO_CACHE_BACKEND")
 
     os.environ["DATABASE_URL"] = db_url
     os.environ["VARCO_REDIS_URL"] = redis_url
     os.environ["VARCO_REDIS_CACHE_URL"] = redis_url
+    os.environ["VARCO_EVENT_BUS_BACKEND"] = "redis"
+    os.environ["VARCO_CACHE_BACKEND"] = "redis"
     # example/app.py constructs JwtBearerAuth(registry=..., required=False)
     # with no audience=. Since Plan 005 Phase 2, JwtBearerAuth() refuses to
     # construct with ValueError unless an audience is configured (a
@@ -280,6 +287,8 @@ async def running_server(
             ("VARCO_REDIS_URL", prev_redis),
             ("VARCO_REDIS_CACHE_URL", prev_redis_cache),
             ("VARCO_JWT_ALLOW_ANY_AUDIENCE", prev_jwt_allow_any_audience),
+            ("VARCO_EVENT_BUS_BACKEND", prev_event_bus_backend),
+            ("VARCO_CACHE_BACKEND", prev_cache_backend),
         ]:
             if prev is None:
                 os.environ.pop(key, None)

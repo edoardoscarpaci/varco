@@ -37,6 +37,7 @@ from varco_core.event.dlq import AbstractDeadLetterQueue
 from varco_core.event.producer import AbstractEventProducer
 from varco_core.event.serializer import Serializer
 from varco_core.flags import AbstractFeatureFlags
+from varco_core.idempotency.base import AbstractIdempotencyStore
 from varco_core.job.base import AbstractJobStore
 from varco_core.job.serializer import TaskSerializer
 from varco_core.job.task import TaskRegistry
@@ -64,16 +65,31 @@ CORE_DEFAULTS = (
 
 
 def _fastapi_expected_defaults() -> tuple[tuple[type, str | None], ...]:
+    from varco_core.authority.config import AuthorizationConfig
+    from varco_core.cache.config import CacheSettings
     from varco_core.context.defaults import TenantDefaultsProvider
+    from varco_core.exception.settings import ErrorEnvelopeSettings
     from varco_core.i18n.catalog import MessageCatalog
     from varco_core.i18n.settings import I18nSettings
+    from varco_core.idempotency.settings import IdempotencySettings
+    from varco_core.jwt.config import JwtVerificationSettings
     from varco_core.jwt.transform.config import JwtTransformSettings
     from varco_core.jwt.transform.registry import ClaimTransformerRegistry
+    from varco_core.migration.settings import MigrationSettings
+    from varco_core.tenancy.membership import TenantMembershipSettings
+    from varco_core.tenancy.settings import TenancySettings, TenantProvenanceSettings
+    from varco_core.tls.settings import TlsSettings
     from varco_core.tz.settings import TimezoneSettings
+    from varco_core.webhook.settings import WebhookSettings
     from varco_fastapi.auth.trust_store import TrustStore
     from varco_fastapi.client.base import ClientProfile
+    from varco_fastapi.client.settings import ClientProfileSettings
+    from varco_fastapi.middleware.body_limit import BodyLimitSettings
     from varco_fastapi.middleware.cors import CORSConfig
     from varco_fastapi.middleware.profiling import ProfilingSettings
+    from varco_fastapi.middleware.rate_limit import RateLimitSettings
+    from varco_fastapi.middleware.security_headers import SecurityHeadersSettings
+    from varco_fastapi.posture import SecurityPostureSettings
 
     return CORE_DEFAULTS + (
         (TrustStore, None),
@@ -88,12 +104,100 @@ def _fastapi_expected_defaults() -> tuple[tuple[type, str | None], ...]:
         (MessageCatalog, None),
         (TenantDefaultsProvider, None),
         (TaskSerializer, None),
-        (AbstractJobStore, None),
+        # Plan 047 §D-vocab — InMemoryJobStore moved to varco_core.job.memory
+        # with qualifier="in_memory" (a scanned varco_core default now, not
+        # a varco_fastapi one); the idempotency seam's in-process default
+        # also newly appears via the same core scan.
+        (AbstractJobStore, "in_memory"),
+        (AbstractIdempotencyStore, "in_memory"),
+        # Plan 048 / DI-6 — bind_core_settings() (called from both
+        # varco_core.di.bootstrap() indirectly via bind_settings and
+        # varco_fastapi.di.bootstrap() directly) now registers these eight
+        # as @Fallback bindings too, plus five varco_fastapi-owned settings
+        # classes bound the same way in bootstrap() (§D-core-list, Step 13).
+        (CacheSettings, None),
+        (IdempotencySettings, None),
+        (WebhookSettings, None),
+        (ErrorEnvelopeSettings, None),
+        (JwtVerificationSettings, None),
+        (SecurityPostureSettings, None),
+        (SecurityHeadersSettings, None),
+        (BodyLimitSettings, None),
+        (RateLimitSettings, None),
+        # Plan 048 / DI-6, Step 5 additions to §D-core-list —
+        # bind_core_settings() now also binds these six.
+        (MigrationSettings, None),
+        (TenancySettings, None),
+        (TenantProvenanceSettings, None),
+        (TenantMembershipSettings, None),
+        (AuthorizationConfig, None),
+        (TlsSettings, None),
+        # Decision 1 (this repair round) — ClientProfile split into a
+        # companion ClientProfileSettings, bound via bind_settings() in
+        # bootstrap() beside CORSConfig/BodyLimitSettings/etc.
+        (ClientProfileSettings, None),
+    )
+
+
+def _fastapi_settings_classes() -> tuple[type, ...]:
+    """
+    Plan 048 / DI-6, Step 18 — every class ``bind_core_settings()``/
+    ``bind_settings()`` binds via ``varco_fastapi.di.bootstrap()``.
+    Deliberately excludes the non-settings ``@Fallback``
+    ``@Singleton``/``@Provider`` defaults also present in
+    ``_fastapi_expected_defaults()`` (``TrustStore``, ``ClientProfile``,
+    ``ProfilingSettings``, ``ClaimTransformerRegistry``, ``TaskRegistry``,
+    ``MessageCatalog``, ``TenantDefaultsProvider``, ``TaskSerializer``) —
+    those are not ``bind_settings()``-registered and this assertion is
+    specifically about the settings recipe's idempotency.
+    """
+    from varco_core.authority.config import AuthorizationConfig
+    from varco_core.cache.config import CacheSettings
+    from varco_core.exception.settings import ErrorEnvelopeSettings
+    from varco_core.i18n.settings import I18nSettings
+    from varco_core.idempotency.settings import IdempotencySettings
+    from varco_core.jwt.config import JwtVerificationSettings
+    from varco_core.jwt.transform.config import JwtTransformSettings
+    from varco_core.migration.settings import MigrationSettings
+    from varco_core.tenancy.membership import TenantMembershipSettings
+    from varco_core.tenancy.settings import TenancySettings, TenantProvenanceSettings
+    from varco_core.tls.settings import TlsSettings
+    from varco_core.tz.settings import TimezoneSettings
+    from varco_core.webhook.settings import WebhookSettings
+    from varco_fastapi.client.settings import ClientProfileSettings
+    from varco_fastapi.middleware.body_limit import BodyLimitSettings
+    from varco_fastapi.middleware.cors import CORSConfig
+    from varco_fastapi.middleware.rate_limit import RateLimitSettings
+    from varco_fastapi.middleware.security_headers import SecurityHeadersSettings
+    from varco_fastapi.posture import SecurityPostureSettings
+
+    return (
+        CacheSettings,
+        IdempotencySettings,
+        WebhookSettings,
+        ErrorEnvelopeSettings,
+        JwtVerificationSettings,
+        JwtTransformSettings,
+        I18nSettings,
+        TimezoneSettings,
+        MigrationSettings,
+        TenancySettings,
+        TenantProvenanceSettings,
+        TenantMembershipSettings,
+        AuthorizationConfig,
+        TlsSettings,
+        SecurityPostureSettings,
+        SecurityHeadersSettings,
+        BodyLimitSettings,
+        RateLimitSettings,
+        CORSConfig,
+        ClientProfileSettings,
     )
 
 
 class TestVarcoFastapiDIWiringConformance(DIWiringConformance):
     expected_defaults = _fastapi_expected_defaults()
+    settings_classes = _fastapi_settings_classes()
 
     known_warnings = frozenset(
         {

@@ -74,6 +74,15 @@ module does not activate it) which unconditionally outranks the low-priority def
 the same `enable_*` verb shape as `varco_casbin.di.enable_policy_authorizer` (CLAUDE.md's DI
 wiring verb taxonomy).
 
+## Enabling via env (Plan 047)
+
+`VARCO_FEATURE_FLAGS_ENABLED=true` is the env twin of `enable_feature_flags(container)` — a
+`@Requires`-gated `@Fallback` provider (`feature_flags_when_enabled`, `varco_core.flags.di`),
+discovered by the same `container.scan("varco_core", recursive=True)` that discovers
+`NullFeatureFlags`; it is inert (never activates `InMemoryFeatureFlags`) unless the variable is
+truthy. Code always wins over the env form. See
+`technical_docs/features/dependency-injection.md`'s "Enabling a feature" section.
+
 ## Pitfalls
 
 | Pitfall | Why it happens | Fix |

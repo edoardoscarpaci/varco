@@ -32,6 +32,7 @@ from varco_core.event import AbstractEventBus
 from varco_core.event.config import EventBusSettings
 from varco_redis.bus import RedisEventBus
 from varco_redis.config import RedisEventBusSettings
+from varco_redis.di import bootstrap
 
 
 class TestRedisContainerValidates:
@@ -96,11 +97,18 @@ class TestRedisEventBusSettingsCharacterization:
 
     See ``varco_kafka/tests/test_kafka_di.py``'s sibling class for the full
     rationale; this mirrors it exactly for ``RedisEventBusSettings``.
+
+    **Plan 048 / DI-6, Step 8 note:** these now call ``bootstrap()`` rather
+    than a bare ``container.scan("varco_redis", recursive=True)`` —
+    ``RedisEventBusSettings`` is registered by ``bootstrap()``'s
+    ``bind_settings()`` call, not by a module-level scanned provider
+    anymore (§Migration: "``container.scan("varco_x")`` alone no longer
+    registers settings — call ``varco_x.bootstrap(container)``").
     """
 
     def test_characterization_settings_resolve_through_the_container(self) -> None:
         container = DIContainer()
-        container.scan("varco_redis", recursive=True)
+        bootstrap(container)
 
         settings = container.get(RedisEventBusSettings)
 
@@ -109,7 +117,7 @@ class TestRedisEventBusSettingsCharacterization:
 
     def test_characterization_settings_are_a_singleton(self) -> None:
         container = DIContainer()
-        container.scan("varco_redis", recursive=True)
+        bootstrap(container)
 
         assert container.get(RedisEventBusSettings) is container.get(RedisEventBusSettings)
 
@@ -128,7 +136,7 @@ class TestRedisEventBusSettingsCharacterization:
         monkeypatch.setattr(RedisEventBus, "start", _noop_start)
 
         container = DIContainer()
-        container.scan("varco_redis", recursive=True)
+        bootstrap(container)
 
         bus = await container.aget(AbstractEventBus, qualifier="redis")
 
@@ -173,13 +181,40 @@ class TestRedisEventBusSettingsConvertedShapeInvariants:
 
     def test_app_supplied_settings_win_over_the_default(self) -> None:
         container = DIContainer()
-        container.scan("varco_redis", recursive=True)
         container.provide(_custom_event_bus_settings)
+        bootstrap(container)
 
         assert container.get(RedisEventBusSettings).url == "redis://custom:6379/0"
 
     def test_settings_resolve_through_their_base_interface(self) -> None:
         container = DIContainer()
-        container.scan("varco_redis", recursive=True)
+        bootstrap(container)
 
         assert isinstance(container.get(EventBusSettings), RedisEventBusSettings)
+
+
+class TestSettingsBoundOnceAndFailFast:
+    """Plan 048 / Step 8 — RedisEventBusSettings goes through bind_settings()."""
+
+    def test_settings_bound_once_after_two_bootstrap_calls(self) -> None:
+        from providify import DIContainer
+        from varco_redis.config import RedisEventBusSettings
+        from varco_redis.di import bootstrap
+
+        c = DIContainer()
+        bootstrap(c)
+        bootstrap(c)
+
+        assert len(c.get_all_bindings(RedisEventBusSettings)) == 1
+
+    def test_bad_env_fails_bootstrap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from providify import DIContainer
+        from varco_core.settings import SettingsValidationError
+        from varco_redis.di import bootstrap
+
+        monkeypatch.setenv("VARCO_REDIS_SOCKET_TIMEOUT", "x")
+
+        with pytest.raises(SettingsValidationError) as exc:
+            bootstrap(DIContainer())
+
+        assert "VARCO_REDIS_SOCKET_TIMEOUT" in str(exc.value)

@@ -61,15 +61,13 @@ from providify import Configuration, DIContainer, Fallback, Provider
 # ── Plan 011 — i18n / timezone default bindings ─────────────────────────
 from varco_core.context.defaults import NullTenantDefaults, TenantDefaultsProvider
 from varco_core.i18n.catalog import MessageCatalog, NullMessageCatalog
-from varco_core.i18n.settings import I18nSettings
 from varco_core.job.serializer import DefaultTaskSerializer, TaskSerializer
 from varco_core.job.task import TaskRegistry
 
 # JWT claim-transform config types (Plan 002 Phase 2 step 20) — module-level
 # import for the same get_type_hints() reason documented above.
-from varco_core.jwt.transform.config import JwtTransformConfig, JwtTransformSettings
+from varco_core.jwt.transform.config import JwtTransformConfig
 from varco_core.jwt.transform.registry import ClaimTransformerRegistry
-from varco_core.tz.settings import TimezoneSettings
 
 # ── Module-level imports for DI type resolution ───────────────────────────────
 # These must live at module scope because ``from __future__ import annotations``
@@ -81,6 +79,7 @@ from varco_core.tz.settings import TimezoneSettings
 # type hint".
 from varco_fastapi.auth.trust_store import TrustStore
 from varco_fastapi.client.base import ClientProfile
+from varco_fastapi.client.settings import ClientProfileSettings
 from varco_fastapi.middleware.cors import CORSConfig
 from varco_fastapi.middleware.profiling import ProfilingSettings
 
@@ -259,7 +258,7 @@ class VarcoFastAPIModule:
     No explicit ``container.install(VarcoFastAPIModule)`` call is required.
 
     Registers (all overrideable via ``container.bind()`` before scanning):
-        - ``TrustStore``               — from ``VARCO_TRUST_STORE_DIR`` env vars
+        - ``TrustStore``               — from ``VARCO_TLS_TRUST_STORE_DIR`` env vars
         - ``CORSConfig``               — from ``VARCO_CORS_ORIGINS`` env var
         - ``ClientProfile``            — from ``VARCO_CLIENT_TIMEOUT`` env vars
         - ``JwtTransformSettings``     — from ``VARCO_JWT_TRANSFORM_*`` env vars
@@ -279,24 +278,12 @@ class VarcoFastAPIModule:
     @Provider(singleton=True)
     def trust_store(self) -> TrustStore:
         """
-        TLS trust store loaded from env vars (``VARCO_TRUST_STORE_DIR``, etc.).
+        TLS trust store loaded from env vars (``VARCO_TLS_TRUST_STORE_DIR``, etc.).
 
         Returns:
             A ``TrustStore`` configured from the environment.
         """
         return TrustStore.from_env()
-
-    @Fallback
-    @Provider(singleton=True)
-    def cors_config(self) -> CORSConfig:
-        """
-        CORS configuration from ``VARCO_CORS_ORIGINS`` env var. An unset
-        var yields an empty origin list — no cross-origin access (AB-5).
-
-        Returns:
-            A ``CORSConfig`` configured from the environment.
-        """
-        return CORSConfig.from_env()
 
     @Fallback
     @Provider(singleton=True)
@@ -313,7 +300,7 @@ class VarcoFastAPIModule:
     @Provider(singleton=True)
     def profiling_settings(self) -> ProfilingSettings:
         """
-        Diagnostic profiler settings loaded from ``VARCO_PROFILER_*`` env vars.
+        Diagnostic profiler settings loaded from ``VARCO_PROFILING_*`` env vars.
 
         ⚠️ The return annotation must NOT be quoted and ``ProfilingSettings``
         must stay imported at module scope (see the import block at the top of
@@ -333,22 +320,9 @@ class VarcoFastAPIModule:
         """
         return ProfilingSettings()
 
-    @Fallback
-    @Provider(singleton=True)
-    def jwt_transform_settings(self) -> JwtTransformSettings:
-        """
-        Flat ``VARCO_JWT_TRANSFORM_*`` claim-transform settings, loaded from
-        the environment (Plan 002 Phase 2).
-
-        ⚠️ ``@Provider``, never ``@Singleton`` — pydantic ``BaseSettings``
-        takes ``**values`` in its constructor; providify cannot resolve that
-        as an injectable signature (see ``feedback_di_defaults`` /
-        ``varco_casbin/di.py`` for the established precedent).
-
-        Returns:
-            A ``JwtTransformSettings`` instance built via ``.from_env()``.
-        """
-        return JwtTransformSettings.from_env()
+    # Plan 048 / DI-6, Step 13 — `jwt_transform_settings` used to live here as
+    # a `@Fallback @Provider`; `JwtTransformSettings` is now registered by
+    # `bind_core_settings()` (§D-core-list), called from `bootstrap()` below.
 
     @Fallback
     @Provider(singleton=True)
@@ -386,23 +360,9 @@ class VarcoFastAPIModule:
         """
         return TaskRegistry()
 
-    @Fallback
-    @Provider(singleton=True)
-    def i18n_settings(self) -> I18nSettings:
-        """
-        ``I18nSettings`` from ``VARCO_I18N_*`` env vars — off by default
-        (Plan 011, RD-1's I2 row).
-
-        ⚠️ ``@Provider``, never ``@Singleton`` — pydantic ``BaseSettings``
-        takes ``**values``; same rule as ``jwt_transform_settings`` above.
-        """
-        return I18nSettings()
-
-    @Fallback
-    @Provider(singleton=True)
-    def timezone_settings(self) -> TimezoneSettings:
-        """``TimezoneSettings`` from ``VARCO_TZ_*`` env vars — off by default."""
-        return TimezoneSettings()
+    # Plan 048 / DI-6, Step 13 — `i18n_settings`/`timezone_settings` used to
+    # live here too; `I18nSettings`/`TimezoneSettings` are now registered by
+    # `bind_core_settings()` as well (§D-core-list).
 
     @Fallback
     @Provider(singleton=True)
@@ -520,6 +480,30 @@ def bootstrap(container: DIContainer) -> DIContainer:
     Thread safety:  ✅ Bootstrap is intended for single-threaded startup only.
     Async safety:   ✅ No I/O during installation; providers are called lazily.
     """
+    # Plan 048 / DI-6, Step 13 — every settings class now goes through
+    # bind_settings()/bind_core_settings(), never a scanned @Provider (the
+    # `cors_config` etc. methods this module used to carry are gone). Call
+    # this BEFORE scan() so a settings class is already resolvable to any
+    # @Singleton the scan discovers that injects one.
+    from varco_core.settings import bind_settings
+    from varco_core.settings.core import bind_core_settings
+
+    from varco_fastapi.middleware.body_limit import BodyLimitSettings
+    from varco_fastapi.middleware.rate_limit import RateLimitSettings
+    from varco_fastapi.middleware.security_headers import SecurityHeadersSettings
+    from varco_fastapi.posture import SecurityPostureSettings
+
+    bind_core_settings(container)
+    for settings_cls in (
+        CORSConfig,
+        SecurityPostureSettings,
+        SecurityHeadersSettings,
+        BodyLimitSettings,
+        RateLimitSettings,
+        ClientProfileSettings,
+    ):
+        bind_settings(container, settings_cls)
+
     # The scanner discovers VarcoFastAPIModule (@Configuration) and calls
     # container.install(VarcoFastAPIModule) automatically — no explicit
     # install() call needed.

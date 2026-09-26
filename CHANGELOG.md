@@ -9,6 +9,97 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### BREAKING — one settings recipe, fail-fast at bootstrap, `VARCO_*` renames (Plan 048, DI-6 / DI-16)
+
+Every varco settings object that reads the environment is now a `pydantic_settings.BaseSettings`
+subclass registered through exactly one function — `varco_core.settings.bind_settings()` — which
+constructs it eagerly at the call (fail-fast, naming the offending env var) instead of the mix of
+module-level `@Fallback @Provider` factories, hand-rolled `is_user_bound()` guards, and lazily
+re-parsed `os.environ` reads that predated this plan. `container.scan("varco_x")` **alone no
+longer registers that package's settings** — call `varco_x.di.bootstrap(container)` instead (it
+now calls `bind_settings()`/`bind_core_settings()` before scanning).
+
+**Renamed env vars** (a one-release startup `WARNING` fires if the old name is still set):
+
+| Old | New |
+|---|---|
+| `FASTREST_AUTHORIZATION__<LABEL>__URL` / `__ISS` | `VARCO_AUTHORIZATION__<LABEL>__URL` / `__ISS` |
+| `VARCO_PROFILER_*` (e.g. `VARCO_PROFILER_ENABLED`) | `VARCO_PROFILING_*` (e.g. `VARCO_PROFILING_ENABLED`) — one feature, one prefix, matching the existing `varco_core.profiling`'s `VARCO_PROFILING_ENABLED` kill switch |
+| `VARCO_CA_CERT`, `VARCO_CLIENT_CERT`, `VARCO_CLIENT_KEY`, `VARCO_TRUST_STORE_DIR` | `VARCO_TLS_CA_CERT`, `VARCO_TLS_CLIENT_CERT`, `VARCO_TLS_CLIENT_KEY`, `VARCO_TLS_TRUST_STORE_DIR` (new `varco_core.tls.settings.TlsSettings`) |
+| `VARCO_JWKS_MIN_REFRESH_SECONDS`, `VARCO_JWKS_TTL_SECONDS` | `VARCO_JWT_JWKS_MIN_REFRESH_SECONDS`, `VARCO_JWT_JWKS_TTL_SECONDS` (fields on `JwtVerificationSettings`) |
+
+**Converted from a frozen dataclass with a hand-rolled `from_env(env: Mapping | None)` to a
+pydantic `VarcoSettings`** (same field names, same default literals; the `env=` mapping parameter
+is gone): `MigrationSettings`, `TenancySettings`, `TenantProvenanceSettings`,
+`TenantMembershipSettings`, `AuthorizationConfig`, `CORSConfig`. New: `varco_core.tls.settings.
+TlsSettings` (+ `TrustStore.from_settings()`).
+
+Two loose `os.environ.get("VARCO_...")` reads outside any settings class are now fields:
+`TenancySettings.node_id`/`store_id` (folds `VARCO_TENANCY_NODE_ID`/`STORE_ID`,
+`tenancy/control/service.py`).
+
+**`ClientProfile` split into a companion settings class.** `ClientProfile` (a frozen dataclass
+with non-env-representable fields — `middleware`, `trust_store`) stays a dataclass, but its four
+loose `os.environ.get()` reads are now `varco_fastapi.client.settings.ClientProfileSettings`
+(`VarcoSettings`, prefix `VARCO_CLIENT_`: `timeout`, `retry_max`, `retry_delay`, `otel_enabled`) —
+the same split shape `TrustStore`/`TlsSettings` already use. `ClientProfile.from_env()` is now a
+thin `from_settings(ClientProfileSettings())` wrapper; no call-site change.
+
+**`varco_redis` cache/backplane settings now require `bootstrap()` first.**
+`RedisCacheSettings`/`LayeredCacheSettings`/`RedisBackplaneSettings` — the last three
+per-`@Configuration`/module-level `@Fallback @Provider` settings factories in `varco_redis` — are
+deleted; `varco_redis.di.bootstrap(container)` now binds all four settings classes (adding
+`RedisEventBusSettings`) via `bind_settings()`. `await container.ainstall(RedisCacheConfiguration)`
+/ `ainstall(RedisLayeredCacheConfiguration)` / a scanned `RedisPubSubBackplane` no longer resolve
+their settings without a prior `bootstrap(container)` call.
+
+### Added (Plan 048)
+
+- `varco_core.settings`: `bind_settings()`, `provenance_of()`, `SettingsProvenance`,
+  `SettingsError`/`SettingsValidationError`/`SettingsAlreadyBoundError`, `CommaSeparated`,
+  `bind_core_settings()`, `varco_core.settings.inventory` (`env_vars_for()`,
+  `discover_settings_classes()`, `check_unique_env_names()`, `LOOSE_ENV_READ_ALLOWLIST`).
+- `scripts/settings_reference.py` / `make settings-reference` / `make settings-check` — the
+  generated `VARCO_*` reference (`technical_docs/settings-reference.md`), wired into `make
+  lint`'s no-`PKG` path and CI's `lint` job.
+- DI-16 worked example: `bind_settings(container, Cls, qualifier=..., env_prefix=...)` builds a
+  second, independently-configured instance of one settings class (demonstrated with
+  `RedisCacheSettings`, `varco_redis/tests/test_redis_named_settings.py`).
+
+### BREAKING — config-driven backend selection, one feature-enable convention (Plan 047, DI-4 / DI-12 / DI-17)
+
+Bootstrapping a backend package (`varco_kafka`, `varco_nats`, `varco_redis`, `varco_memcached`,
+`varco_sa`, `varco_beanie`) no longer makes it live. Each of the six seams (`cache`, `dlq`,
+`idempotency`, `job_store`, `event_bus`, `revocation`) is selected by one environment variable,
+`VARCO_<SEAM>_BACKEND=<name>` (or a dotted path `pkg.mod:Name`), resolved through providify
+`@Requires` — precedence is code binding > env dotted path > env named backend > the in-process
+`@Fallback` default (`memory`/`null`). See `plans/047-config-driven-backend-selection-and-catalogue.md`'s
+§Migration table for the exact variable per package.
+
+`InMemoryIdempotencyStore`/`InMemoryJobStore` are now resolvable by default (`qualifier=
+"in_memory"`) — previously neither carried any DI binding. `InMemoryJobStore` moved from
+`varco_fastapi.job.store` to `varco_core.job.memory` (the old import path still works, via a
+re-export). `SAIdempotencyStore` gained an additive `engine=` kwarg.
+
+### Added (Plan 047)
+
+- `varco_core.di` package: `SEAMS`/`FEATURES` registries, `selected_by()`, `feature_default()`,
+  `env_truthy()`, `bind_env_overrides()`, `check_backend_selection()`,
+  `inspect_backend_selection()`, `inspect_bindings()`, `catalogue()`, `BackendSelectionError`,
+  `CatalogueError`, `ENV_OVERRIDE_PRIORITY`.
+- Seven new selectable providers: `SAModule.dead_letter_queue`/`idempotency_store`/`job_store`,
+  `BeanieModule.idempotency_store`/`job_store`, `RedisStoresConfiguration.idempotency_store`/
+  `job_store`/`revocation_store`.
+- Three feature env twins: `VARCO_FEATURE_FLAGS_ENABLED`, `VARCO_TENANT_MEMBERSHIP_ENABLED`,
+  `VARCO_POLICY_AUTHORIZER_ENABLED` — `enable_*()` still wins over the env form.
+- `scripts/di_catalogue.py` / `make di-catalogue` / `make di-catalogue-check` — the generated
+  default-implementation catalogue (`technical_docs/di-catalogue.md`), wired into `make lint`'s
+  no-`PKG` path and CI's `lint` job.
+- `varco_fastapi.posture._collect_di()` — the `di.in_process_backend` `SecurityPosture` finding
+  (WARN in production) for a seam still served by its in-process default.
+- `create_varco_app(container, ...)` now calls `check_backend_selection(container)`, raising
+  `BackendSelectionError` on an unknown `VARCO_<SEAM>_BACKEND` value.
+
 ### BREAKING — one wiring contract: explicit container, no service locator, `AlreadyBoundError` (Plan 046, DI-2 / DI-8 / DI-13)
 
 Every `bootstrap()` requires a container and returns it. All ten (`varco_core.di` is new,

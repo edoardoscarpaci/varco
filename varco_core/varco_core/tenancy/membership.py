@@ -45,15 +45,16 @@ Async safety:   ✅ ``check()`` is ``async`` for ABC-compatibility with a
 from __future__ import annotations
 
 import logging
-import os
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from providify import Fallback, Singleton
+from pydantic import AliasChoices, Field
+from pydantic_settings import SettingsConfigDict
 
+from varco_core.config import VarcoSettings
 from varco_core.exception import ServiceException
 
 if TYPE_CHECKING:
@@ -71,7 +72,6 @@ __all__ = [
     "TenantMembershipSettings",
 ]
 
-_LEGAL_ON_MISSING = ("allow", "deny")
 
 _DEFAULT_MEMBERSHIP_CLAIM_KEY = "tenants"
 
@@ -88,32 +88,31 @@ class MissingClaimPolicy(StrEnum):
     DENY = "deny"  # 4.0 default
 
 
-@dataclass(frozen=True)
-class TenantMembershipSettings:
+class TenantMembershipSettings(VarcoSettings):
     """
     Env-driven configuration for ``enable_tenant_membership()`` (Plan 033 /
     S5, §D-S5-claim, Decision 4).
 
-    DESIGN: a plain frozen dataclass with a hand-written ``from_env()``,
-    living in this module rather than ``tenancy/settings.py``
+    DESIGN: ``VarcoSettings`` (pydantic), living in this module rather than
+    ``tenancy/settings.py``
     ✅ ``ClaimTenantMembership``/``MissingClaimPolicy`` — the only things
        this settings object configures — are already defined here;
-       colocating avoids a new inter-module import (``settings.py`` would
-       otherwise need to import ``MissingClaimPolicy`` from this module,
-       or this module would need to import a type from ``settings.py``
-       purely to hand it back to ``di.py``).
+       colocating avoids a new inter-module import.
     ✅ ``varco_core.tenancy.di`` (the only caller) already imports from
        ``membership.py`` — this adds no new import there.
-    ✅ Matches the house shape (`TenancySettings`, `TenantProvenanceSettings`)
-       — plain frozen dataclass, hand-written ``from_env()``, no pydantic.
+    **Plan 048 / DI-6: converted from a frozen dataclass with a
+    hand-written ``from_env(env: Mapping | None)`` to a pydantic
+    ``VarcoSettings``** — same field names, same default literals; the
+    ``env=`` parameter is gone (tests use ``monkeypatch.setenv``).
 
-    Args:
+    Attributes:
         claim_key: The ``AuthContext.metadata`` key holding the membership
             list. Env: ``VARCO_TENANT_MEMBERSHIP_CLAIM``. Defaults to
             ``"tenants"``.
         on_missing_claim: ``MissingClaimPolicy``. Env:
             ``VARCO_TENANT_MEMBERSHIP_ON_MISSING``. Defaults to ``ALLOW``
-            in 3.2 (flips to ``DENY`` in 4.0, per the 4.0 flip list).
+            in 3.2 (flips to ``DENY`` in 4.0, per the 4.0 flip list) —
+            **unchanged by this plan** (§Non-goals).
 
     Edge cases:
         - ``VARCO_TENANT_MEMBERSHIP`` itself (the ``null``/``claim``
@@ -124,38 +123,22 @@ class TenantMembershipSettings:
           only once that decision is already "yes") governs.
     """
 
-    claim_key: str = "tenants"
-    on_missing_claim: MissingClaimPolicy = MissingClaimPolicy.ALLOW
+    model_config = SettingsConfigDict(
+        env_prefix="VARCO_TENANT_MEMBERSHIP_", frozen=True, populate_by_name=True
+    )
 
-    @classmethod
-    def from_env(cls, env: Mapping[str, str] | None = None) -> TenantMembershipSettings:
-        """
-        Build ``TenantMembershipSettings`` from environment variables.
-
-        Args:
-            env: Mapping to read from. ``None`` reads the real
-                 ``os.environ``.
-
-        Returns:
-            A ``TenantMembershipSettings`` reflecting the given environment.
-
-        Raises:
-            ValueError: ``VARCO_TENANT_MEMBERSHIP_ON_MISSING`` set to a
-                value outside the legal set (``allow``/``deny``).
-        """
-        source = env if env is not None else os.environ
-
-        on_missing_raw = source.get("VARCO_TENANT_MEMBERSHIP_ON_MISSING", "allow")
-        if on_missing_raw not in _LEGAL_ON_MISSING:
-            raise ValueError(
-                f"Invalid VARCO_TENANT_MEMBERSHIP_ON_MISSING={on_missing_raw!r}. "
-                f"Legal values are: {', '.join(_LEGAL_ON_MISSING)}."
-            )
-
-        return cls(
-            claim_key=source.get("VARCO_TENANT_MEMBERSHIP_CLAIM", "tenants"),
-            on_missing_claim=MissingClaimPolicy(on_missing_raw),
-        )
+    # ⚠️ The env var is VARCO_TENANT_MEMBERSHIP_CLAIM, not
+    # VARCO_TENANT_MEMBERSHIP_CLAIM_KEY (the field's own name).
+    claim_key: str = Field(
+        default="tenants", validation_alias=AliasChoices("VARCO_TENANT_MEMBERSHIP_CLAIM")
+    )
+    # ⚠️ The env var is VARCO_TENANT_MEMBERSHIP_ON_MISSING, not
+    # VARCO_TENANT_MEMBERSHIP_ON_MISSING_CLAIM (the field's own name) —
+    # a validation_alias is required to keep the incumbent name working.
+    on_missing_claim: MissingClaimPolicy = Field(
+        default=MissingClaimPolicy.ALLOW,
+        validation_alias=AliasChoices("VARCO_TENANT_MEMBERSHIP_ON_MISSING"),
+    )
 
 
 @dataclass(frozen=True)

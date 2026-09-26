@@ -38,6 +38,9 @@ async def test_memcached_cache_configuration_reports_zero_unreachable_pre_destro
     monkeypatch.setattr(MemcachedCache, "stop", _record_stop)
 
     container = DIContainer()
+    from varco_memcached.di import bootstrap
+
+    bootstrap(container)
     await container.ainstall(MemcachedCacheConfiguration)
     await container.aget(CacheBackend)
 
@@ -62,6 +65,9 @@ async def test_memcached_cache_stop_runs_on_ashutdown(monkeypatch: pytest.Monkey
     monkeypatch.setattr(MemcachedCache, "stop", _record_stop)
 
     container = DIContainer()
+    from varco_memcached.di import bootstrap
+
+    bootstrap(container)
     await container.ainstall(MemcachedCacheConfiguration)
     await container.aget(CacheBackend)
     await container.ashutdown()

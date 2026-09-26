@@ -414,6 +414,17 @@ if TYPE_CHECKING:
     from varco_core.service.types import Assembler, ServiceProtocol
     from varco_core.service.validation import ValidatorServiceMixin
 
+    # ── Settings (Plan 048 / DI-6, DI-16) ────────────────────────────────────────────
+    from varco_core.settings import (
+        CommaSeparated,
+        SettingsAlreadyBoundError,
+        SettingsError,
+        SettingsProvenance,
+        SettingsValidationError,
+        bind_settings,
+        provenance_of,
+    )
+
     # ── Multitenancy (Plan 007) ─────────────────────────────────────────────────
     # Grep-checked for collisions against every existing top-level name before
     # export (the MigrationError/MigrationPlan lesson from Plan 006) — none of
@@ -555,6 +566,7 @@ _LAZY: Final[dict[str, str]] = {
     "ClaimTenantMembership": "varco_core.tenancy",
     "ClaimTransformError": "varco_core.jwt",
     "ClaimTransformer": "varco_core.jwt",
+    "CommaSeparated": "varco_core.settings",
     "CompositeHealthCheck": "varco_core.health",
     "CompositeStrategy": "varco_core.cache",
     "CompositeValidator": "varco_core.validation",
@@ -669,6 +681,10 @@ _LAZY: Final[dict[str, str]] = {
     "SchemaMigrationError": "varco_core.migration",
     "SchemaMigrationPlan": "varco_core.migration",
     "Serializer": "varco_core.serialization",
+    "SettingsAlreadyBoundError": "varco_core.settings",
+    "SettingsError": "varco_core.settings",
+    "SettingsProvenance": "varco_core.settings",
+    "SettingsValidationError": "varco_core.settings",
     "ServiceProtocol": "varco_core.service.types",
     "SoftDeleteAuditedDomainModel": "varco_core.model",
     "SoftDeleteDomainModel": "varco_core.model",
@@ -735,6 +751,7 @@ _LAZY: Final[dict[str, str]] = {
     "assert_tenant_matches": "varco_core.tenancy",
     "auth_context_from_snapshot": "varco_core.job",
     "auth_context_to_snapshot": "varco_core.job",
+    "bind_settings": "varco_core.settings",
     "build_tenant_source_chain": "varco_core.tenancy",
     "cached": "varco_core.cache",
     "cast_raw": "varco_core.model",
@@ -768,6 +785,7 @@ _LAZY: Final[dict[str, str]] = {
     "listen": "varco_core.event",
     "paged_response": "varco_core.dto.pagination",
     "provenance_context": "varco_core.tenancy",
+    "provenance_of": "varco_core.settings",
     "read_claim": "varco_core.jwt",
     "redact_mapping": "varco_core.redaction",
     "redact_query_string": "varco_core.redaction",
@@ -996,6 +1014,14 @@ __all__ = [
     "ValidatorServiceMixin",
     # ── Settings base ─────────────────────────────────────────────────────────────
     "VarcoSettings",
+    # ── Settings recipe (Plan 048 / DI-6, DI-16) ─────────────────────────────────────
+    "CommaSeparated",
+    "SettingsAlreadyBoundError",
+    "SettingsError",
+    "SettingsProvenance",
+    "SettingsValidationError",
+    "bind_settings",
+    "provenance_of",
     # ── Serialization ────────────────────────────────────────────────────────────
     "Serializer",
     "JsonSerializer",

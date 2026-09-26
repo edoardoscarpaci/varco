@@ -67,7 +67,7 @@ from typing import Any
 
 from nats import connect
 from nats.js.errors import NotFoundError
-from providify import Fallback, Inject, PostConstruct, PreDestroy, Provider, Singleton
+from providify import Fallback, Inject, PostConstruct, PreDestroy, Singleton
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 from varco_core.config import VarcoSettings
@@ -164,33 +164,10 @@ class NatsChannelManagerSettings(VarcoSettings):
         return subject.removeprefix(f"{self.subject_prefix}.").removeprefix(self.channel_prefix)
 
 
-@Fallback
-@Provider(singleton=True)
-def nats_channel_manager_settings() -> NatsChannelManagerSettings:
-    """
-    Default ``NatsChannelManagerSettings`` binding, discovered by
-    ``container.scan("varco_nats", recursive=True)``.
-
-    DESIGN: ``@Provider`` factory instead of ``@Singleton`` on the class
-        A pydantic ``BaseSettings`` declares ``__init__(self, **values: Any)``.
-        providify resolves a ``ClassBinding`` by injecting the constructor
-        signature, so a class-level ``@Singleton`` made every resolution fail
-        with ``LookupError: Cannot resolve 'values: typing.Any'`` — which also
-        broke ``NatsStreamManager`` (it injects these settings).  A factory has
-        no injectable parameters, so the container just calls it.
-        ✅ ``container.get(NatsChannelManagerSettings)`` works after a plain scan.
-        ✅ Same precedent as ``varco_casbin/di.py`` and ``varco_fastapi/di.py``.
-        ❌ Settings are no longer discoverable by class decoration alone — this
-           module must stay importable by the scanner (it always is).
-
-    ``@Fallback`` — the in-process default; any application-supplied
-    provider wins regardless of registration order.
-
-    Returns:
-        ``NatsChannelManagerSettings`` populated from ``VARCO_NATS_ADMIN_*``
-        environment variables (pydantic reads them at construction).
-    """
-    return NatsChannelManagerSettings()
+# Plan 048 / DI-6, Step 10 — the `nats_channel_manager_settings` @Fallback
+# @Provider that used to live here is gone. `NatsChannelManagerSettings`
+# is now registered eagerly, fail-fast, by `bind_settings()` inside
+# `varco_nats.di.bootstrap()` (before `scan()`).
 
 
 # ── NatsStreamManager ─────────────────────────────────────────────────────────

@@ -79,7 +79,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import redis.asyncio as aioredis
-from providify import Fallback, Provider, Singleton
+from providify import Singleton
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from varco_core.cache.backplane import (
@@ -126,15 +126,12 @@ class RedisBackplaneSettings(BaseSettings):
     redis_kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
-# NEVER @Singleton on a pydantic BaseSettings — providify's `**values`
-# constructor pitfall (CLAUDE.md). Register via a module-level @Provider,
-# same as every other varco_redis settings class that isn't shaped like
-# RedisEventBusSettings's own custom __init__.
-@Fallback
-@Provider(singleton=True)
-def _redis_backplane_settings() -> RedisBackplaneSettings:
-    """Default ``RedisBackplaneSettings``, reading ``VARCO_REDIS_CACHE_BACKPLANE_*`` env vars."""
-    return RedisBackplaneSettings()
+# Plan 048 / DI-6, Step 8, Decision 2 (BREAKING): the module-level
+# `@Fallback @Provider` that used to register `RedisBackplaneSettings` here
+# is REMOVED — `varco_redis.di.bootstrap()` now registers it via
+# `bind_settings()`, the one recipe every other settings class in the repo
+# uses. A container that only scans `varco_redis` without calling
+# `bootstrap()` first will not have this binding.
 
 
 # ── RedisPubSubBackplane ─────────────────────────────────────────────────────

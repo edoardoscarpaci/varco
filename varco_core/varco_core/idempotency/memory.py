@@ -20,6 +20,8 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 
+from providify import Fallback, Singleton
+
 from varco_core.idempotency.base import AbstractIdempotencyStore, ReserveOutcome
 from varco_core.idempotency.record import IdempotencyRecord
 
@@ -34,9 +36,19 @@ class _Entry:
     record: IdempotencyRecord | None = field(default=None)
 
 
+@Fallback
+@Singleton(qualifier="in_memory")
 class InMemoryIdempotencyStore(AbstractIdempotencyStore):
     """
     Single-process ``AbstractIdempotencyStore`` backed by a plain ``dict``.
+
+    Plan 047 §D-vocab — the ``idempotency`` seam's in-process default,
+    now a scanned ``@Fallback @Singleton(qualifier="in_memory")`` (it
+    previously carried no DI binding at all — the middleware took
+    ``store=`` explicitly). Same escape hatch as every other in-process
+    default: ``get(AbstractIdempotencyStore, qualifier="in_memory")``
+    always resolves this class, even when a backend is selected via
+    ``VARCO_IDEMPOTENCY_BACKEND`` or a code binding exists.
 
     Atomicity (§D-D1-atomic) is provided by a **lazily-created**
     ``asyncio.Lock`` guarding the whole dict — CLAUDE.md's rule that a lock

@@ -112,6 +112,7 @@ from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from aiokafka.structs import TopicPartition
 from providify import Configuration, Disposes, Fallback, InjectMeta, Provider
 from varco_core.di import BACKEND_PRIORITY
+from varco_core.di.select import selected_by
 from varco_core.event.base import Event
 from varco_core.event.dlq import (
     AbstractDeadLetterQueue,
@@ -770,6 +771,7 @@ class KafkaDLQConfiguration:
     """
 
     @Fallback
+    @selected_by("dlq", "kafka")
     @Provider(singleton=True, priority=BACKEND_PRIORITY)
     async def kafka_dlq(
         self,

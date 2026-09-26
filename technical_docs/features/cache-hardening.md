@@ -447,6 +447,14 @@ the two-step deploy recipe above, not a schema change.
   `varco_core/varco_core/observability/cache.py`,
   `varco_redis/varco_redis/backplane.py`.
 
+## Selecting a cache backend via env (Plan 047)
+
+`VARCO_CACHE_BACKEND=<redis|layered|memcached>` selects the live `CacheBackend` — bootstrapping
+`varco_redis`/`varco_memcached` no longer makes their cache live by itself; unset means
+`InMemoryCache`. `redis` and `layered` used to tie whenever `varco_redis` was scanned recursively
+(`AMBIGUOUS_BINDING`); each is now its own gated value, so exactly one is ever active. See
+`technical_docs/features/dependency-injection.md`'s "Selecting a backend" section.
+
 ## Pitfalls
 
 | Pitfall | Symptom | Root Cause | Fix |

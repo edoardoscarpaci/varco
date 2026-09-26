@@ -16,7 +16,7 @@ import pytest
 async def test_from_env_with_empty_environ_yields_documented_defaults() -> None:
     from varco_core.migration.settings import MigrationSettings
 
-    settings = MigrationSettings.from_env({})
+    settings = MigrationSettings.from_env()
 
     assert settings.mode == "off"
     assert settings.on_failure == "fail"
@@ -25,27 +25,32 @@ async def test_from_env_with_empty_environ_yields_documented_defaults() -> None:
     assert settings.lock_key == "varco:migrate"
 
 
-async def test_from_env_parses_mode_on_failure_and_lock_timeout() -> None:
+async def test_from_env_parses_mode_on_failure_and_lock_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from varco_core.migration.settings import MigrationSettings
 
-    settings = MigrationSettings.from_env(
-        {
-            "VARCO_MIGRATE_MODE": "upgrade",
-            "VARCO_MIGRATE_ON_FAILURE": "warn",
-            "VARCO_MIGRATE_LOCK_TIMEOUT": "5",
-        }
-    )
+    monkeypatch.setenv("VARCO_MIGRATE_MODE", "upgrade")
+    monkeypatch.setenv("VARCO_MIGRATE_ON_FAILURE", "warn")
+    monkeypatch.setenv("VARCO_MIGRATE_LOCK_TIMEOUT", "5")
+
+    settings = MigrationSettings.from_env()
 
     assert settings.mode == "upgrade"
     assert settings.on_failure == "warn"
     assert settings.lock_timeout == 5.0
 
 
-async def test_from_env_unknown_mode_raises_valueerror_naming_legal_values() -> None:
+async def test_from_env_unknown_mode_raises_valueerror_naming_legal_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pydantic import ValidationError
     from varco_core.migration.settings import MigrationSettings
 
-    with pytest.raises(ValueError) as exc:
-        MigrationSettings.from_env({"VARCO_MIGRATE_MODE": "nonsense"})
+    monkeypatch.setenv("VARCO_MIGRATE_MODE", "nonsense")
+
+    with pytest.raises(ValidationError) as exc:
+        MigrationSettings.from_env()
 
     # The three legal values must all be named in the error, per step 11.
     message = str(exc.value)

@@ -507,9 +507,22 @@ file** — the JSON under `design/` is a dev-tree snapshot, not packaged; the fu
 
 `varco_core.di.inspect_backend_selection(container) -> tuple[SeamSelection, ...]` (public reads
 only): per seam `value`, `source: "code" | "env-dotted" | "env" | "default"` — `code` iff
-`is_user_bound()`; else by `get_binding().priority` (`200` → dotted, `100` → env, `0` → `env` if the
-variable is set to the default name else `default`) — plus `live_owner`. Consumed by
-`SecurityPosture._collect_di` (§D-posture) and 052.
+`is_user_bound()`; **otherwise by the raw env-string's own shape, not by
+`get_binding().priority`**: unset/empty → `default` (`seam.default_value`); `":" in raw` →
+`env-dotted`; anything else → `env`. This is a deliberate, owner-ratified deviation from an
+earlier draft of this section that specified reading `get_binding().priority` instead
+(`200` → dotted, `100` → env, `0` → `default`) — **the shipped shape stands** (repair round,
+Decision 3): a priority read cannot distinguish "the app named a backend whose package was never
+bootstrapped" from "nothing was set" — both leave the *default's* binding at priority `0`, since
+the requested backend's own `@Fallback` binding was simply never registered. The raw env-string
+shape reports the *intent* (`source="env"`, naming what the operator asked for) even when that
+intent could not be satisfied; that inconsistent state — an env var naming a backend with no
+live binding — is exactly what `check_backend_selection()` already raises
+`BackendSelectionError` for, so `inspect_backend_selection()` does not need to duplicate that
+detection to stay safe. `live_owner` (from `get_binding()`) is the field that *does* report what
+actually ended up serving the seam, precisely so `source` and `live_owner` can disagree on this
+one edge case without either being wrong. Consumed by `SecurityPosture._collect_di`
+(§D-posture) and 052.
 
 ### §D-script — `scripts/di_catalogue.py`
 
@@ -652,7 +665,7 @@ docs, changelog, gates, handoff. `make test PKG=<pkg>` after every step touching
 
 ### Preflight and the core primitives
 
-0. [ ] **Preflight.** (a) 045 + 046 landed: `rg -c '@Fallback' varco_*/varco_*` ≥ 55;
+0. [x] **Preflight.** (a) 045 + 046 landed: `rg -c '@Fallback' varco_*/varco_*` ≥ 55;
        `rg -n 'def bootstrap\(container: DIContainer\) -> DIContainer' varco_*/varco_*/di.py | wc -l`
        → 10; `ls testkit/varco_conformance/di_wiring.py`; providify `2.1.0` installed. Whether 048
        landed (`ls varco_core/varco_core/settings/bind.py`) — record; it changes only Steps 8/13's
@@ -666,7 +679,7 @@ docs, changelog, gates, handoff. `make test PKG=<pkg>` after every step touching
        engine, §D-script). (d) Paste everything into
        `/tmp/claude-1000/…/scratchpad/047-preflight.txt`. **Verify**: the file has (a)–(c).
 
-1. [ ] **`varco_core/varco_core/di.py` → package `varco_core/varco_core/di/`** — `__init__.py`
+1. [x] **`varco_core/varco_core/di.py` → package `varco_core/varco_core/di/`** — `__init__.py`
        re-exports 045/046's names unchanged (`BACKEND_PRIORITY`, `AlreadyBoundError`,
        `bind_instance`, `is_user_bound`, `bootstrap`) plus the new ones; new constant
        `ENV_OVERRIDE_PRIORITY: Final[int] = 200` with the §D-precedence diagram as its docstring;
@@ -680,7 +693,7 @@ docs, changelog, gates, handoff. `make test PKG=<pkg>` after every step touching
        names, `interface_of()` resolves each ABC, names are unique, `value` regex.
        **Verify**: both files green; `uv run python scripts/import_budget.py --check --warn-only` unchanged.
 
-2. [ ] `varco_core/tests/test_di_selection.py` (**new, failing first**) per §D-tests row 1, then
+2. [x] `varco_core/tests/test_di_selection.py` (**new, failing first**) per §D-tests row 1, then
        `varco_core/varco_core/di/select.py`: `selected_by(seam, value)` (validates name/value,
        records into `_REGISTERED_VALUES: dict[str, set[str]]`, returns `Requires(env=…, value=…)`
        applied to the target — the value must not equal the seam's default name), `EnvFlag`,
@@ -690,13 +703,21 @@ docs, changelog, gates, handoff. `make test PKG=<pkg>` after every step touching
        Full docstrings (Args/Returns/Raises/Edge cases/Thread safety — the registry is import-time,
        single-threaded; Async safety — no awaits) and a `DESIGN:` block per §D-mechanism/§D-dotted/
        §D-check with the ✅/❌ rows. **Verify**: the test file green.
+       **REPAIR ROUND 2 (Decision 3) note:** the owner ruled that
+       `inspect_backend_selection()`'s shipped raw-env-string-shape `source` derivation stands as
+       the intended contract — §D-introspect's prose (above) is corrected to describe it that way
+       instead of the `get_binding().priority` reading it originally specified. The function's own
+       docstring now carries the same `Edge cases:` explanation (the not-bootstrapped case, and
+       why `source`/`live_owner` may disagree there). Pinned by
+       `test_inspect_backend_selection_sources_env_when_backend_package_not_bootstrapped`
+       (`varco_core/tests/test_di_introspect.py`).
 
-3. [ ] `varco_core/tests/test_di_features.py` (**new, failing first**) per §D-tests, then
+3. [x] `varco_core/tests/test_di_features.py` (**new, failing first**) per §D-tests, then
        `varco_core/varco_core/di/features.py`: `Feature` frozen dataclass, `FEATURES` (the three
        binding-shaped + the settings-shaped rows + `authorization_audit` marked `shape="wrapper",
        env=None`), `feature_default(feature)` decorator (§D-features). **Verify**: green.
 
-4. [ ] **Core bootstrap and the two seam defaults.** `varco_core/varco_core/di/__init__.py`
+4. [x] **Core bootstrap and the two seam defaults.** `varco_core/varco_core/di/__init__.py`
        `bootstrap()` = 046's scan + `bind_env_overrides(container)` + `container.provide(in_memory_revocation_store_when_selected)`
        and `provide(feature_flags_when_enabled)` guarded by the per-container registry (idempotent).
        `varco_core/varco_core/revocation/di.py` — add the N9 twin (`@selected_by("revocation","memory")
@@ -722,7 +743,7 @@ docs, changelog, gates, handoff. `make test PKG=<pkg>` after every step touching
 
 ### The backends
 
-5. [ ] **`varco_kafka`, `varco_nats`** — `@selected_by("event_bus","kafka")` on `KafkaEventBus`
+5. [x] **`varco_kafka`, `varco_nats`** — `@selected_by("event_bus","kafka")` on `KafkaEventBus`
        (`bus.py:95`, beside 045's `@Fallback @Singleton(priority=BACKEND_PRIORITY, qualifier="kafka")`),
        `@selected_by("dlq","kafka")` on `KafkaDLQConfiguration.dlq` (`dlq.py:787` — the **method**,
        `scope.py:878-883`); nats likewise (`bus.py:129`, `dlq.py:773`). Docstrings: one sentence
@@ -732,7 +753,7 @@ docs, changelog, gates, handoff. `make test PKG=<pkg>` after every step touching
        Existing `test_kafka_di.py:166`-style resolutions pass via the fixture.
        **Verify**: `make test PKG=varco_kafka`, `PKG=varco_nats`.
 
-6. [ ] **`varco_redis`** — gates: `RedisEventBusSelectorConfiguration.bus` (`bus.py:532`) and
+6. [x] **`varco_redis`** — gates: `RedisEventBusSelectorConfiguration.bus` (`bus.py:532`) and
        `RedisEventBus` (`bus.py:102`) both `@selected_by("event_bus","redis")`;
        `RedisDLQConfiguration.dlq` `("dlq","redis")`; `RedisStreamDLQConfiguration.dlq`
        `("dlq","redis-streams")`; `RedisCacheConfiguration.redis_cache` `("cache","redis")`;
@@ -751,11 +772,11 @@ docs, changelog, gates, handoff. `make test PKG=<pkg>` after every step touching
        for N6–N8, no server). **Verify**: `make test PKG=varco_redis`; `rg -n '_redis_active_bus'
        varco_redis` → 0.
 
-7. [ ] **`varco_memcached`** — `@selected_by("cache","memcached")` on
+7. [x] **`varco_memcached`** — `@selected_by("cache","memcached")` on
        `MemcachedCacheConfiguration.memcached_cache` (`cache.py:647`); conftest fixture;
        `test_memcached_di_wiring.py` `selectable`. **Verify**: `make test PKG=varco_memcached`.
 
-8. [ ] **`varco_sa`, `varco_beanie`** — `SAIdempotencyStore.__init__(*, url: str | None = None,
+8. [x] **`varco_sa`, `varco_beanie`** — `SAIdempotencyStore.__init__(*, url: str | None = None,
        engine: AsyncEngine | None = None, **engine_kwargs)` (exactly one; `start()` honours a given
        engine; `stop()` disposes only an engine it created — docstring `DESIGN:` ✅/❌); `SAModule`
        gains N1/N2/N3; `BeanieModule` gains N4/N5; `@selected_by("dlq","beanie")` on
@@ -767,7 +788,7 @@ docs, changelog, gates, handoff. `make test PKG=<pkg>` after every step touching
        `SAIdempotencyStore` signature change as a *function* note only if it is exported top-level
        (it is a class — invisible; recorded in §Migration regardless).
 
-9. [ ] **`varco_casbin`** — `policy_authorizer_when_enabled(engine: Inject[PolicyEngine]) ->
+9. [x] **`varco_casbin`** — `policy_authorizer_when_enabled(engine: Inject[PolicyEngine]) ->
        AbstractAuthorizer` twin (`@feature_default("policy_authorizer")`), registered by
        `bootstrap()` via `provide()` (idempotent guard); `enable_policy_authorizer` unchanged
        (046). CLAUDE.md's "never a scanned `@Configuration`" rule stays literally true. Tests in
@@ -778,7 +799,7 @@ docs, changelog, gates, handoff. `make test PKG=<pkg>` after every step touching
 
 ### Introspection, the suite, the script, posture
 
-10. [ ] `varco_core/tests/test_di_introspect.py` (**failing first**) then
+10. [x] `varco_core/tests/test_di_introspect.py` (**failing first**) then
         `varco_core/varco_core/di/introspect.py`: `BindingRecord`, `inspect_bindings()` (the one
         `_bindings` read, docstring naming P29 and the testkit alias), `Catalogue` +
         `catalogue(container)` + `to_dict()`/`from_dict()` (§D-introspect schema), `CatalogueError`.
@@ -790,7 +811,7 @@ docs, changelog, gates, handoff. `make test PKG=<pkg>` after every step touching
         casbin sa beanie fastapi; do uv run pytest varco_$p/tests/test_${p}_di_wiring.py -q; done`
         (ws has an empty `selectable` → skipped tests, not failures).
 
-11. [ ] `scripts/di_catalogue.py` (**new**, §D-script) + `varco_core/tests/test_di_catalogue_script.py`
+11. [x] `scripts/di_catalogue.py` (**new**, §D-script) + `varco_core/tests/test_di_catalogue_script.py`
         (in-process against `varco_core` only: deterministic, `--check` exit codes, a package that
         fails to import → non-zero with the name, duplicate `(seam, value)` → error). Generate and
         commit `design/api-freeze-and-standards/measurements/di-catalogue.json` and
@@ -800,7 +821,7 @@ docs, changelog, gates, handoff. `make test PKG=<pkg>` after every step touching
         `check_unique_env_names()` (§D-script). **Verify**: `uv run python scripts/di_catalogue.py
         --check` → 0; `make lint` runs it; `make lint PKG=varco_core` does not; `make docs`.
 
-12. [ ] **Posture + app check.** `varco_fastapi/varco_fastapi/posture.py` `_collect_di(container)`
+12. [x] **Posture + app check.** `varco_fastapi/varco_fastapi/posture.py` `_collect_di(container)`
         (§D-posture) wired into the collector list beside `_collect_local`; `create_varco_app()`
         calls `check_backend_selection(container)` when `container is not None` (before the
         lifespan is built; a `BackendSelectionError` therefore fails app construction — the
@@ -812,7 +833,7 @@ docs, changelog, gates, handoff. `make test PKG=<pkg>` after every step touching
 
 ### Docs, changelog, gates, handoff
 
-13. [ ] **Docs** per §D-docs (guide, README, CLAUDE.md three lines + commands line + decision-tree
+13. [x] **Docs** per §D-docs (guide, README, CLAUDE.md three lines + commands line + decision-tree
         branch + the two bullet amendments, ARCHITECTURE.md, common-pitfalls ×2, the eight feature
         docs, the redis module docstring, `examples/00-full-stack-post-api`'s compose/`.env`/README
         gaining `VARCO_EVENT_BUS_BACKEND=redis` etc. for the backends it bootstraps — and its test
@@ -820,20 +841,20 @@ docs, changelog, gates, handoff. `make test PKG=<pkg>` after every step touching
         README.md ARCHITECTURE.md CLAUDE.md technical_docs varco_*/varco_*` → 0; `make docs`;
         `make asyncapi-check` unchanged (consumers, not the bus, feed it).
 
-14. [ ] `CHANGELOG.md` `[Unreleased]` (§D-docs; BREAKING block = §Migration verbatim);
+14. [x] `CHANGELOG.md` `[Unreleased]` (§D-docs; BREAKING block = §Migration verbatim);
         `BACKLOG.md:90,93,94` → `done (Plan 047)`; `:130-134` Open Question 2 re-answer;
         `design/upstream-gaps/providify-conditional-registration.md` §5 — confirm 045's Resolution
         section already says "047 uses `@Requires` directly"; if not, one line. **Verify**:
         `rg -n 'Plan 047' CHANGELOG.md BACKLOG.md` ≥ 4.
 
-15. [ ] **Gates + snapshots.** `uv run python scripts/api_surface.py` (expected: the
+15. [x] **Gates + snapshots.** `uv run python scripts/api_surface.py` (expected: the
         `InMemoryJobStore` module-move note if it is a top-level `varco_fastapi` export; no
         removals) — commit `api-surface.{json,md}` here; `make lint` (`api-check`,
         `asyncapi-check`, `import-budget --warn-only`, `di-catalogue-check`, and 048's
         `settings-check` if landed — all green); `make type-check`; `make test` (eleven suites,
         `0 xpassed`; `xfailed` unchanged from 046's count — this plan files no gap).
 
-16. [ ] **Handoff notes** (one paragraph each, appended to the neighbour's header/"Depends on"
+16. [x] **Handoff notes** (one paragraph each, appended to the neighbour's header/"Depends on"
         line or the index row): **049** — the tri-state semantics (§D-features last paragraph) and
         the `FEATURES` registry are what each module's `enabled` state must honour; `VARCO_
         <FEATURE>_ENABLED` names are final. **050** — N1–N9's docstrings carry the "lifecycle is

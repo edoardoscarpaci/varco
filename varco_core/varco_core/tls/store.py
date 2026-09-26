@@ -48,6 +48,7 @@ from varco_core.tls.discovery import CERT_FILE_PATTERNS, iter_cert_files
 
 if TYPE_CHECKING:
     from varco_core.connection.ssl import SSLConfig
+    from varco_core.tls.settings import TlsSettings
 
 # The additive env vars this type reads on top of the existing VARCO_* names (§D-T3-env).
 _SSL_CERT_FILE_ENV = "SSL_CERT_FILE"
@@ -176,24 +177,37 @@ class TrustStore:
         Build a ``TrustStore`` from environment variables — additive, never a system-CA
         replacement (§D-T3-env).
 
-        Reads:
-            ``VARCO_TRUST_STORE_DIR`` → an entry in ``ca_folders``
-            ``VARCO_CA_CERT``         → ``ca_cert``
-            ``VARCO_CLIENT_CERT``     → ``client_cert``
-            ``VARCO_CLIENT_KEY``      → ``client_key``
-            ``SSL_CERT_FILE``         → ``ca_cert``, only if ``VARCO_CA_CERT`` left it unset
-                                        (``ca_cert`` is a single slot; both names target it,
-                                        varco's own name wins on conflict).
-            ``SSL_CERT_DIR``          → an entry in ``ca_folders`` (``ca_folders`` accepts
-                                        multiple entries, so this is additive alongside
-                                        ``VARCO_TRUST_STORE_DIR`` rather than a conflict).
+        **Plan 048 / DI-6: now a thin wrapper over ``from_settings(TlsSettings())``** — the
+        four ``VARCO_TLS_*`` names (renamed from the legacy, non-namespaced ``VARCO_CA_CERT``/
+        ``VARCO_CLIENT_CERT``/``VARCO_CLIENT_KEY``/``VARCO_TRUST_STORE_DIR``, §D-prefix rule 2)
+        are read via ``TlsSettings``, registered through ``bind_settings()`` like every other
+        settings class in this plan. ``SSL_CERT_FILE``/``SSL_CERT_DIR`` (no ``VARCO_`` prefix)
+        stay loose reads here — see the module DESIGN block.
+
+        Returns:
+            A fully populated ``TrustStore``. See ``from_settings()`` for the exact precedence.
+
+        Edge cases:
+            - Missing env vars produce ``None``/default values — system CAs only, byte-
+              identical to constructing ``TrustStore()`` directly.
+        """
+        return cls.from_settings()
+
+    @classmethod
+    def from_settings(cls, settings: TlsSettings | None = None) -> TrustStore:
+        """
+        Build a ``TrustStore`` from a ``TlsSettings`` instance, additively merging the
+        OpenSSL-standard ``SSL_CERT_FILE``/``SSL_CERT_DIR`` env vars on top (§D-T3-env).
+
+        Args:
+            settings: The ``TlsSettings`` to read ``VARCO_TLS_*`` values from. ``None``
+                (the default) constructs ``TlsSettings()`` — i.e. reads the real process
+                environment.
 
         Returns:
             A fully populated ``TrustStore``.
 
         Edge cases:
-            - Missing env vars produce ``None``/default values — system CAs only, byte-
-              identical to constructing ``TrustStore()`` directly.
             - **Divergence from OpenSSL semantics, stated loudly**: OpenSSL, ``uv``, and
               ``requests`` treat non-empty ``SSL_CERT_FILE``/``SSL_CERT_DIR`` as *replacing*
               the default trust store entirely. varco does not — both are merged additively
@@ -201,26 +215,28 @@ class TrustStore:
               dropping the system store because a sidecar exported one env var is a
               production-outage shape in a framework whose every other CA mechanism is
               additive. See ``technical_docs/features/tls-trust-and-hot-reload.md``.
+            - ``SSL_CERT_FILE`` names a single file, and ``ca_cert`` is a single slot —
+              ``settings.ca_cert`` (i.e. ``VARCO_TLS_CA_CERT``) wins if both are set;
+              ``SSL_CERT_FILE`` only fills the gap.
         """
-        ca_cert: Path | None = Path(v) if (v := os.environ.get("VARCO_CA_CERT")) else None
-        client_cert: Path | None = Path(v) if (v := os.environ.get("VARCO_CLIENT_CERT")) else None
-        client_key: Path | None = Path(v) if (v := os.environ.get("VARCO_CLIENT_KEY")) else None
+        from varco_core.tls.settings import TlsSettings
 
+        resolved = settings if settings is not None else TlsSettings()
+
+        ca_cert = resolved.ca_cert
         folders: list[Path] = []
-        if v := os.environ.get("VARCO_TRUST_STORE_DIR"):
-            folders.append(Path(v))
+        if resolved.trust_store_dir is not None:
+            folders.append(resolved.trust_store_dir)
         if v := os.environ.get(_SSL_CERT_DIR_ENV):
             folders.append(Path(v))
-        # SSL_CERT_FILE names a single file, and ca_cert is a single slot — varco's own
-        # VARCO_CA_CERT wins if both are set; SSL_CERT_FILE only fills the gap.
         if ca_cert is None and (v := os.environ.get(_SSL_CERT_FILE_ENV)):
             ca_cert = Path(v)
 
         return cls(
             ca_cert=ca_cert,
             ca_folders=folders or None,
-            client_cert=client_cert,
-            client_key=client_key,
+            client_cert=resolved.client_cert,
+            client_key=resolved.client_key,
         )
 
     def to_ssl_config(self) -> SSLConfig:

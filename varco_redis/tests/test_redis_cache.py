@@ -314,11 +314,13 @@ class TestRedisCacheConfiguration:
     async def test_provides_cache_backend(self, fake_redis: FakeRedis) -> None:
         from providify import DIContainer
         from varco_core.cache import CacheBackend
+        from varco_core.settings import bind_settings
 
         with patch("varco_redis.cache.aioredis") as mock_aioredis:
             mock_aioredis.from_url.return_value = fake_redis
 
             container = DIContainer()
+            bind_settings(container, RedisCacheSettings)
             await container.ainstall(RedisCacheConfiguration)
 
             cache = await container.aget(CacheBackend)
@@ -329,11 +331,13 @@ class TestRedisCacheConfiguration:
     async def test_singleton_returns_same_instance(self, fake_redis: FakeRedis) -> None:
         from providify import DIContainer
         from varco_core.cache import CacheBackend
+        from varco_core.settings import bind_settings
 
         with patch("varco_redis.cache.aioredis") as mock_aioredis:
             mock_aioredis.from_url.return_value = fake_redis
 
             container = DIContainer()
+            bind_settings(container, RedisCacheSettings)
             await container.ainstall(RedisCacheConfiguration)
 
             c1 = await container.aget(CacheBackend)

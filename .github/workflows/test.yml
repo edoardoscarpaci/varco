@@ -71,6 +71,10 @@ jobs:
       # appended to each entry's `observations` array — Step 13.
       - name: import budget --check (warn-only)
         run: uv run python scripts/import_budget.py --check --warn-only
+      - name: di catalogue --check
+        run: uv run python scripts/di_catalogue.py --check
+      - name: settings reference --check
+        run: uv run python scripts/settings_reference.py --check
   unit:
     name: Unit tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest

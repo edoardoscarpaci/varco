@@ -391,3 +391,39 @@ class TestDeadLetterPayloadIsTheEnvelope:
         restored = serializer.deserialize(entry.payload)
         assert isinstance(restored, CePlacedEvent)
         assert restored.event_id == event.event_id
+
+
+class TestBindCloudeventsSerializerRoutesThroughBindSettings:
+    """
+    Plan 048 / Step 14 — bind_cloudevents_serializer() must route its
+    settings through bind_settings(container, CloudEventsSettings,
+    instance=settings) (non-fallback), so a second call raises
+    SettingsAlreadyBoundError instead of silently rebinding.
+    """
+
+    async def test_second_call_raises_settings_already_bound_error(self) -> None:
+        from providify import DIContainer
+        from varco_core.event.cloudevents import (
+            CloudEventsSettings,
+            bind_cloudevents_serializer,
+        )
+        from varco_core.settings import SettingsAlreadyBoundError
+
+        container = DIContainer()
+        bind_cloudevents_serializer(container, CloudEventsSettings(source="/svc/orders"))
+
+        with pytest.raises(SettingsAlreadyBoundError):
+            bind_cloudevents_serializer(container, CloudEventsSettings(source="/svc/other"))
+
+    async def test_settings_resolvable_via_container_get(self) -> None:
+        from providify import DIContainer
+        from varco_core.event.cloudevents import (
+            CloudEventsSettings,
+            bind_cloudevents_serializer,
+        )
+
+        container = DIContainer()
+        bind_cloudevents_serializer(container, CloudEventsSettings(source="/svc/orders"))
+
+        resolved = container.get(CloudEventsSettings)
+        assert resolved.source == "/svc/orders"

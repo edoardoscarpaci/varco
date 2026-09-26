@@ -323,6 +323,15 @@ previously **no index at all** on `status`, so this is a free performance fix
 infrastructure tables — see `technical_docs/features/crypto-shredding.md`.
 Generate the revision from `jobs_metadata` via `autogenerate`.
 
+## Selecting a job store via env (Plan 047)
+
+`VARCO_JOB_STORE_BACKEND=<redis|sa|beanie>` selects the live `AbstractJobStore` — all three are
+*new* DI bindings as of Plan 047 (`RedisJobStore`/`SAJobStore`/`BeanieJobStore` previously
+carried no binding at all). Unset means `InMemoryJobStore`, whose canonical home moved to
+`varco_core.job.memory` (the old `varco_fastapi.job.store` import path still works, via a
+re-export). See `technical_docs/features/dependency-injection.md`'s "Selecting a backend"
+section.
+
 ## Pitfalls
 
 | Pitfall | Fix |

@@ -77,3 +77,14 @@ def redis_container_fresh():
 
     with RedisContainer() as container:
         yield container
+
+
+@pytest.fixture(autouse=True)
+def _select_redis_backends(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Plan 047 §D-tests — see varco_kafka's twin fixture docstring."""
+    monkeypatch.setenv("VARCO_EVENT_BUS_BACKEND", "redis")
+    monkeypatch.setenv("VARCO_DLQ_BACKEND", "redis")
+    monkeypatch.setenv("VARCO_CACHE_BACKEND", "redis")
+    monkeypatch.setenv("VARCO_IDEMPOTENCY_BACKEND", "redis")
+    monkeypatch.setenv("VARCO_JOB_STORE_BACKEND", "redis")
+    monkeypatch.setenv("VARCO_REVOCATION_BACKEND", "redis")

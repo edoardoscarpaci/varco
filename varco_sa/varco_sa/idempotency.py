@@ -114,10 +114,52 @@ class SAIdempotencyStore(AbstractIdempotencyStore):
     Async safety:   ✅ All methods are ``async def``.
     """
 
-    def __init__(self, *, url: str, **engine_kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        url: str | None = None,
+        engine: AsyncEngine | None = None,
+        **engine_kwargs: Any,
+    ) -> None:
+        """
+        Args:
+            url: Async SQLAlchemy connection URL. Mutually exclusive with
+                ``engine``. When given, ``start()`` builds a private engine
+                this store owns and disposes on ``stop()``.
+            engine: An already-constructed ``AsyncEngine`` to reuse (Plan
+                047 N2 — ``SAModule.idempotency_store()`` passes the app's
+                own pool). Mutually exclusive with ``url``. ``stop()``
+                never disposes an engine it did not create.
+            **engine_kwargs: Forwarded to ``create_async_engine()`` — only
+                meaningful with ``url=``.
+
+        Raises:
+            ValueError: Neither or both of ``url``/``engine`` were given.
+
+        DESIGN: additive `engine=` kwarg, `url=` stays first-keyword-optional
+            ✅ Reuses the app's own connection pool when DI-constructed
+               (N2) — a second, small-footprint engine per store is no
+               longer forced.
+            ✅ `stop()` disposing only a self-created engine means an
+               app-supplied engine survives this store's teardown, matching
+               `SAJobStore`/`SADeadLetterQueue`'s "caller owns the engine"
+               convention for the `engine=` path specifically.
+            ❌ One more constructor branch/guard than a single-source-of-
+               truth constructor. Accepted — every existing `url=` caller
+               is unaffected (additive).
+        """
+        if (url is None) == (engine is None):
+            raise ValueError(
+                "SAIdempotencyStore requires exactly one of url= or engine= — "
+                f"got url={url!r}, engine={engine!r}."
+            )
         self._url = url
         self._engine_kwargs = engine_kwargs
-        self._engine: AsyncEngine | None = None
+        self._engine: AsyncEngine | None = engine
+        # Tracks whether THIS store created the engine (and must therefore
+        # dispose it in stop()) — an app-supplied engine (engine=) is never
+        # disposed here, even though self._engine is already populated.
+        self._owns_engine = engine is None
 
     def _require_engine(self) -> AsyncEngine:
         if self._engine is None:
@@ -127,15 +169,18 @@ class SAIdempotencyStore(AbstractIdempotencyStore):
         return self._engine
 
     async def start(self) -> None:
-        """Create the engine and ensure ``varco_idempotency`` exists (idempotent)."""
+        """Create the engine (unless one was given) and ensure ``varco_idempotency`` exists (idempotent)."""
         if self._engine is None:
+            # __init__'s exactly-one-of guard guarantees self._url is set
+            # whenever self._engine was not given.
+            assert self._url is not None  # noqa: S101 - invariant, not user input
             self._engine = create_async_engine(self._url, **self._engine_kwargs)
         async with self._engine.begin() as conn:
             await conn.run_sync(idempotency_metadata.create_all, checkfirst=True)
 
     async def stop(self) -> None:
-        """Dispose the engine's connection pool. Safe to call if never started."""
-        if self._engine is not None:
+        """Dispose the engine's connection pool — only if this store created it."""
+        if self._engine is not None and self._owns_engine:
             await self._engine.dispose()
             self._engine = None
 

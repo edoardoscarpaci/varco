@@ -141,11 +141,9 @@ class TrustStore(_CoreTrustStore):
         """
         Build a ``TrustStore`` from standard environment variables — 3.0 behaviour, unchanged.
 
-        Reads:
-            ``VARCO_TRUST_STORE_DIR``  → ``ca_folder``
-            ``VARCO_CA_CERT``          → ``ca_cert`` (file path)
-            ``VARCO_CLIENT_CERT``      → ``client_cert``
-            ``VARCO_CLIENT_KEY``       → ``client_key``
+        **Plan 048 / DI-6**: delegates to ``varco_core.tls.settings.TlsSettings`` for the
+        actual env read — the four names moved from ``VARCO_CA_CERT``/``VARCO_CLIENT_CERT``/
+        ``VARCO_CLIENT_KEY``/``VARCO_TRUST_STORE_DIR`` to ``VARCO_TLS_*`` (§D-prefix rule 2).
 
         Returns:
             A fully populated ``TrustStore``.
@@ -156,17 +154,14 @@ class TrustStore(_CoreTrustStore):
             - Paths are not validated at construction time — ``build_ssl_context()`` will
               raise if a path does not exist.
         """
-        import os  # noqa: PLC0415 — matches the 3.0 implementation's own local import style
+        from varco_core.tls.settings import TlsSettings
 
-        ca_cert: Path | None = Path(v) if (v := os.environ.get("VARCO_CA_CERT")) else None
-        ca_folder: Path | None = Path(v) if (v := os.environ.get("VARCO_TRUST_STORE_DIR")) else None
-        client_cert: Path | None = Path(v) if (v := os.environ.get("VARCO_CLIENT_CERT")) else None
-        client_key: Path | None = Path(v) if (v := os.environ.get("VARCO_CLIENT_KEY")) else None
+        settings = TlsSettings()
         return cls(
-            ca_cert=ca_cert,
-            ca_folder=ca_folder,
-            client_cert=client_cert,
-            client_key=client_key,
+            ca_cert=settings.ca_cert,
+            ca_folder=settings.trust_store_dir,
+            client_cert=settings.client_cert,
+            client_key=settings.client_key,
         )
 
     def to_ssl_config(self) -> SSLConfig:

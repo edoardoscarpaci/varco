@@ -1,8 +1,9 @@
 """
-Failing tests for varco_core.tenancy.settings (Plan 007, Phase 1, step 1).
+Tests for varco_core.tenancy.settings (Plan 007, Phase 1, step 1;
+converted to pydantic ``VarcoSettings`` by Plan 048 / DI-6, Step 5).
 
 TenantIsolation / TenantScope / TenantStatus enums + TenancySettings
-(frozen, from_env()) — no backend deps.
+(frozen, ``from_env()``) — no backend deps.
 """
 
 from __future__ import annotations
@@ -29,14 +30,14 @@ def test_settings_is_frozen() -> None:
 
     settings = TenancySettings()
 
-    with pytest.raises(Exception):  # noqa: B017 - FrozenInstanceError from dataclasses
+    with pytest.raises(Exception):  # noqa: B017 - pydantic ValidationError on a frozen model
         settings.max_entries = 100  # type: ignore[misc]
 
 
 def test_from_env_with_empty_environ_yields_documented_defaults() -> None:
     from varco_core.tenancy.settings import TenancySettings, TenantIsolation
 
-    settings = TenancySettings.from_env({})
+    settings = TenancySettings.from_env()
 
     assert settings.isolation == TenantIsolation.SHARED
     assert settings.enforce_rls is False
@@ -47,23 +48,21 @@ def test_from_env_with_empty_environ_yields_documented_defaults() -> None:
     assert settings.global_writable is False
 
 
-def test_from_env_parses_all_documented_keys() -> None:
+def test_from_env_parses_all_documented_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     from varco_core.tenancy.settings import TenancySettings, TenantIsolation
 
-    settings = TenancySettings.from_env(
-        {
-            "VARCO_TENANCY_ISOLATION": "schema",
-            "VARCO_TENANCY_ENFORCE_RLS": "true",
-            "VARCO_TENANCY_SCHEMA_TEMPLATE": "t_{tenant_id}",
-            "VARCO_TENANCY_DB_TEMPLATE": "db_{tenant_id}",
-            "VARCO_TENANCY_MAX_ENTRIES": "10",
-            "VARCO_TENANCY_IDLE_TTL": "15.0",
-            "VARCO_TENANCY_CATALOG_TTL": "5.0",
-            "VARCO_TENANCY_FANOUT_FRAMEWORK_TABLES": "true",
-            "VARCO_TENANCY_GLOBAL_DSN": "postgresql://global",
-            "VARCO_TENANCY_GLOBAL_WRITABLE": "true",
-        }
-    )
+    monkeypatch.setenv("VARCO_TENANCY_ISOLATION", "schema")
+    monkeypatch.setenv("VARCO_TENANCY_ENFORCE_RLS", "true")
+    monkeypatch.setenv("VARCO_TENANCY_SCHEMA_TEMPLATE", "t_{tenant_id}")
+    monkeypatch.setenv("VARCO_TENANCY_DB_TEMPLATE", "db_{tenant_id}")
+    monkeypatch.setenv("VARCO_TENANCY_MAX_ENTRIES", "10")
+    monkeypatch.setenv("VARCO_TENANCY_IDLE_TTL", "15.0")
+    monkeypatch.setenv("VARCO_TENANCY_CATALOG_TTL", "5.0")
+    monkeypatch.setenv("VARCO_TENANCY_FANOUT_FRAMEWORK_TABLES", "true")
+    monkeypatch.setenv("VARCO_TENANCY_GLOBAL_DSN", "postgresql://global")
+    monkeypatch.setenv("VARCO_TENANCY_GLOBAL_WRITABLE", "true")
+
+    settings = TenancySettings.from_env()
 
     assert settings.isolation == TenantIsolation.SCHEMA
     assert settings.enforce_rls is True
@@ -77,14 +76,17 @@ def test_from_env_parses_all_documented_keys() -> None:
     assert settings.global_writable is True
 
 
-def test_from_env_invalid_isolation_raises_value_error() -> None:
+def test_from_env_invalid_isolation_raises_value_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic import ValidationError
     from varco_core.tenancy.settings import TenancySettings
 
-    with pytest.raises(ValueError):
-        TenancySettings.from_env({"VARCO_TENANCY_ISOLATION": "nonsense"})
+    monkeypatch.setenv("VARCO_TENANCY_ISOLATION", "nonsense")
+
+    with pytest.raises(ValidationError):
+        TenancySettings.from_env()
 
 
-def test_from_env_ignores_mount_admin_env_var_entirely() -> None:
+def test_from_env_ignores_mount_admin_env_var_entirely(monkeypatch: pytest.MonkeyPatch) -> None:
     """RD-9: no env var can ever mount/enable the privileged admin surface.
 
     TenancySettings has no field corresponding to a "mount admin" env var,
@@ -93,10 +95,12 @@ def test_from_env_ignores_mount_admin_env_var_entirely() -> None:
     """
     from varco_core.tenancy.settings import TenancySettings
 
-    settings = TenancySettings.from_env({"VARCO_TENANCY_MOUNT_ADMIN": "true"})
+    monkeypatch.setenv("VARCO_TENANCY_MOUNT_ADMIN", "true")
+
+    settings = TenancySettings.from_env()
 
     assert not hasattr(settings, "mount_admin")
-    assert "mount_admin" not in settings.__dataclass_fields__  # type: ignore[attr-defined]
+    assert "mount_admin" not in type(settings).model_fields
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -121,26 +125,30 @@ def test_rls_set_tenant_and_rls_require_tenant_default_false() -> None:
 def test_from_env_empty_environ_rls_flags_still_default_false() -> None:
     from varco_core.tenancy.settings import TenancySettings
 
-    settings = TenancySettings.from_env({})
+    settings = TenancySettings.from_env()
 
     assert settings.rls_set_tenant is False
     assert settings.rls_require_tenant is False
 
 
-def test_from_env_parses_rls_set_tenant_true() -> None:
+def test_from_env_parses_rls_set_tenant_true(monkeypatch: pytest.MonkeyPatch) -> None:
     from varco_core.tenancy.settings import TenancySettings
 
-    settings = TenancySettings.from_env({"VARCO_TENANCY_RLS_SET_TENANT": "true"})
+    monkeypatch.setenv("VARCO_TENANCY_RLS_SET_TENANT", "true")
+
+    settings = TenancySettings.from_env()
 
     assert settings.rls_set_tenant is True
 
 
-def test_from_env_parses_rls_require_tenant_via_numeric_one() -> None:
-    # Reuses the existing _bool helper (settings.py:148-152), which accepts
-    # "1"/"true"/"yes"/"on" — asserted here via the "1" spelling specifically.
+def test_from_env_parses_rls_require_tenant_via_numeric_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from varco_core.tenancy.settings import TenancySettings
 
-    settings = TenancySettings.from_env({"VARCO_TENANCY_RLS_REQUIRE_TENANT": "1"})
+    monkeypatch.setenv("VARCO_TENANCY_RLS_REQUIRE_TENANT", "1")
+
+    settings = TenancySettings.from_env()
 
     assert settings.rls_require_tenant is True
 
@@ -162,3 +170,21 @@ def test_byte_identical_defaults_assertion_still_passes_with_new_fields_present(
     assert settings.global_writable is False
     assert settings.rls_set_tenant is False
     assert settings.rls_require_tenant is False
+
+
+def test_node_id_and_store_id_default_none_and_read_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plan 048 / §D-loose: fold of the loose VARCO_TENANCY_NODE_ID/STORE_ID reads."""
+    from varco_core.tenancy.settings import TenancySettings
+
+    assert TenancySettings().node_id is None
+    assert TenancySettings().store_id is None
+
+    monkeypatch.setenv("VARCO_TENANCY_NODE_ID", "node-1")
+    monkeypatch.setenv("VARCO_TENANCY_STORE_ID", "store-1")
+
+    settings = TenancySettings.from_env()
+
+    assert settings.node_id == "node-1"
+    assert settings.store_id == "store-1"

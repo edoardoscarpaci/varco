@@ -53,7 +53,7 @@ _LABEL_PREFIX = "VARCO_JWT_TRANSFORM__"
 # Fallback source for a label's expected issuer when __ISS is not set —
 # mirrors the authority.config precedent so the two config blocks share one
 # label namespace (decision D-6).
-_AUTHORIZATION_ISS_PREFIX = "FASTREST_AUTHORIZATION__"
+_AUTHORIZATION_ISS_PREFIX = "VARCO_AUTHORIZATION__"
 
 # CanonicalClaim -> (settings field prefix, "canonical fallback path spec")
 _TARGET_FIELD_PREFIX: dict[CanonicalClaim, str] = {
@@ -250,7 +250,7 @@ class JwtTransformConfig:
 
         Raises:
             ClaimTransformError: Two labels declare (directly or via the
-                ``FASTREST_AUTHORIZATION__<LABEL>__ISS`` fallback) the same
+                ``VARCO_AUTHORIZATION__<LABEL>__ISS`` fallback) the same
                 resolved issuer value — a genuine ambiguity, rejected at
                 load time rather than silently picking one (fail fast).
         """

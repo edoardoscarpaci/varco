@@ -43,8 +43,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from providify import Provider
+from providify import Fallback, Provider
 
+from varco_core.di import BACKEND_PRIORITY
+from varco_core.di.select import selected_by
 from varco_core.revocation.base import AbstractTokenRevocationStore
 from varco_core.revocation.memory import InMemoryTokenRevocationStore
 
@@ -52,6 +54,35 @@ if TYPE_CHECKING:
     from providify import DIContainer
 
 __all__ = ["enable_token_revocation"]
+
+
+@Fallback
+@selected_by("revocation", "memory")
+@Provider(singleton=True, priority=BACKEND_PRIORITY)
+def _in_memory_revocation_store_when_selected() -> AbstractTokenRevocationStore:
+    """
+    Plan 047 N9 — the env twin of ``enable_token_revocation()``.
+
+    Gated by ``@selected_by("revocation", "memory")`` (active only when
+    ``VARCO_REVOCATION_BACKEND=memory``). Deliberately **not** left to
+    ``container.scan()`` even though its name is public and would
+    otherwise be picked up — ``varco_core.di.bootstrap()`` registers it
+    explicitly via ``container.provide()`` instead, preserving the
+    documented invariant that ``container.scan("varco_core.revocation",
+    ...)`` alone never silently starts revocation checking (this module's
+    own docstring, and CLAUDE.md's revocation two-step rule). The gate
+    itself makes the binding inert unless the operator opts in either
+    way, but the explicit-registration shape keeps that invariant
+    literally, mechanically true rather than merely "true in practice".
+
+    ⚠️ Same two-step caveat as ``enable_token_revocation()`` — binding
+    this store does not, by itself, wire it into
+    ``TrustedIssuerRegistry(revocation_store=...)``.
+
+    Returns:
+        An empty ``InMemoryTokenRevocationStore()``.
+    """
+    return InMemoryTokenRevocationStore()
 
 
 @Provider(singleton=True)

@@ -40,7 +40,7 @@ test_binding_descriptor_carries_fallback`` (a ``strict=True`` xfail).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 import pytest
 from providify import DIContainer, IssueKind
@@ -69,6 +69,17 @@ def fallback_bindings(container: DIContainer) -> list[Any]:
     return [b for b in container._bindings if getattr(b, "fallback", False) is True]
 
 
+class Selectable(NamedTuple):
+    """One backend binding this package should have gated on
+    `VARCO_<SEAM>_BACKEND` (Plan 047 §D-suite)."""
+
+    seam: str
+    value: str
+    interface: Any
+    qualifier: str | None
+    owner_substr: str
+
+
 class DIWiringConformance:
     """Shared behavioural contract for every package's ``bootstrap()``."""
 
@@ -76,11 +87,21 @@ class DIWiringConformance:
     #: @Fallback defaults. Must be overridden by every subclass.
     expected_defaults: ClassVar[tuple[tuple[Any, str | None], ...]] = ()
 
+    #: (seam, value, interface, qualifier, owner_substr) tuples this package's
+    #: backend bindings should be gated on (Plan 047 §D-suite). Empty tuple
+    #: (the default) skips the three `selectable`-driven tests below.
+    selectable: ClassVar[tuple[Selectable, ...]] = ()
+
     #: (IssueKind, owner) pairs tolerated by test_validate_is_clean /
     #: test_every_provider_singleton_has_a_reachable_disposer — each entry
     #: must be commented, in the subclass, with the plan number that owns
     #: fixing it (e.g. "# 050 — UNREACHABLE_PRE_DESTROY on X").
     known_warnings: ClassVar[frozenset[tuple[Any, str]]] = frozenset()
+
+    #: Settings classes this package's bootstrap() binds via
+    #: varco_core.settings.bind_settings() (Plan 048 / Step 18). Empty tuple
+    #: (the default) skips the settings-uniqueness test below.
+    settings_classes: ClassVar[tuple[type, ...]] = ()
 
     @pytest.fixture
     def bootstrap(self) -> Callable[[DIContainer], DIContainer]:
@@ -160,6 +181,24 @@ class DIWiringConformance:
         }
         assert observed - self.known_warnings == set()
 
+    async def test_settings_bound_once_after_two_bootstrap_calls(
+        self, bootstrap: Callable[[DIContainer], DIContainer]
+    ) -> None:
+        """Plan 048 / Step 18 — every settings class this package binds
+        via bind_settings() must have exactly one binding after bootstrap()
+        is called twice (the same idempotency contract as any other
+        singleton).
+        """
+        if not self.settings_classes:
+            pytest.skip("no settings_classes declared")
+
+        c = DIContainer()
+        bootstrap(c)
+        bootstrap(c)
+
+        for cls in self.settings_classes:
+            assert len(c.get_all_bindings(cls)) == 1, f"{cls!r} bound more than once"
+
     async def test_declared_defaults_are_fallbacks(self, container: DIContainer) -> None:
         for interface, qualifier in self.expected_defaults:
             binding = container.get_binding(interface, qualifier=qualifier)
@@ -189,3 +228,159 @@ class DIWiringConformance:
             if not getattr(b, "exact_only", False)
         }
         assert observed == set(self.expected_defaults)
+
+    async def test_unselected_backend_is_inactive_and_default_serves(
+        self, bootstrap: Callable[[DIContainer], DIContainer]
+    ) -> None:
+        if not self.selectable:
+            pytest.skip("no selectable backends declared")
+
+        import os
+
+        from varco_core.di.seams import seam_by_name
+
+        for entry in self.selectable:
+            seam = seam_by_name(entry.seam)
+            old = os.environ.pop(seam.env, None)
+            try:
+                c = DIContainer()
+                bootstrap(c)
+
+                # DESIGN (repair, §D-vocab's own documented Edge case:
+                # "get(T, qualifier='kafka') while unselected -> LookupError")
+                #   A backend whose own qualifier equals its selected value
+                #   name (e.g. KafkaEventBus, qualifier="kafka") is invisible
+                #   to EVERY lookup while inactive, including one that asks
+                #   for that exact qualifier — providify's qualified-request
+                #   narrowing never falls back to an unqualified/differently
+                #   -qualified candidate (container.py:2096-2101). So "the
+                #   default serves" must be observed via the UNQUALIFIED
+                #   request (what an ordinary Inject[Seam] call site actually
+                #   resolves), never via entry.qualifier, which names the
+                #   *backend's* qualifier, not the seam's default one. Using
+                #   entry.qualifier here was unreachable-by-construction for
+                #   every entry whose qualifier is backend-specific (kafka/
+                #   nats/redis/layered/...) and only ever passed for entries
+                #   qualified None (dlq, revocation) — fixed once, centrally,
+                #   for every subclass.
+                binding = c.get_binding(entry.interface)
+                assert binding.fallback is True
+                assert binding.priority == 0
+
+                report = c.validate(raise_on_error=False)
+                assert any(
+                    i.kind == IssueKind.CONDITION_INACTIVE and "is unset" in str(i)
+                    for i in report.infos
+                )
+                assert not any(i.kind == IssueKind.AMBIGUOUS_BINDING for i in report.errors)
+            finally:
+                if old is not None:
+                    os.environ[seam.env] = old
+
+    async def test_selected_backend_is_a_fallback_at_backend_priority(
+        self, bootstrap: Callable[[DIContainer], DIContainer]
+    ) -> None:
+        if not self.selectable:
+            pytest.skip("no selectable backends declared")
+
+        import os
+
+        from varco_core.di import BACKEND_PRIORITY
+        from varco_core.di.seams import seam_by_name
+
+        for entry in self.selectable:
+            seam = seam_by_name(entry.seam)
+            old = os.environ.get(seam.env)
+            os.environ[seam.env] = entry.value
+            try:
+                c = DIContainer()
+                bootstrap(c)
+
+                binding = c.get_binding(entry.interface, qualifier=entry.qualifier)
+                assert binding.fallback is True
+                assert binding.priority == BACKEND_PRIORITY
+                assert entry.owner_substr in str(getattr(binding, "owner", binding))
+
+                report = c.validate(raise_on_error=False)
+                assert not any(
+                    i.kind == IssueKind.CONDITION_INACTIVE
+                    and entry.owner_substr in str(getattr(i, "owner", ""))
+                    for i in report.infos
+                )
+                assert not any(i.kind == IssueKind.AMBIGUOUS_BINDING for i in report.errors)
+            finally:
+                if old is None:
+                    os.environ.pop(seam.env, None)
+                else:
+                    os.environ[seam.env] = old
+
+    async def test_code_binding_beats_env_selection(
+        self, bootstrap: Callable[[DIContainer], DIContainer]
+    ) -> None:
+        if not self.selectable:
+            pytest.skip("no selectable backends declared")
+
+        import os
+        from unittest.mock import MagicMock
+
+        from varco_core.di import bind_instance
+        from varco_core.di.seams import seam_by_name
+
+        for entry in self.selectable:
+            seam = seam_by_name(entry.seam)
+            old = os.environ.get(seam.env)
+            os.environ[seam.env] = entry.value
+            try:
+                c = DIContainer()
+                bootstrap(c)
+                bind_instance(
+                    c, entry.interface, MagicMock(spec=entry.interface), qualifier=entry.qualifier
+                )
+
+                binding = c.get_binding(entry.interface, qualifier=entry.qualifier)
+                assert binding.fallback is False
+            finally:
+                if old is None:
+                    os.environ.pop(seam.env, None)
+                else:
+                    os.environ[seam.env] = old
+
+    async def test_unknown_value_fails_check(
+        self, bootstrap: Callable[[DIContainer], DIContainer]
+    ) -> None:
+        if not self.selectable:
+            pytest.skip("no selectable backends declared")
+
+        import os
+
+        from varco_core.di import check_backend_selection
+        from varco_core.di.errors import BackendSelectionError
+        from varco_core.di.seams import seam_by_name
+
+        entry = self.selectable[0]
+        seam = seam_by_name(entry.seam)
+        old = os.environ.get(seam.env)
+        os.environ[seam.env] = "nope"
+        try:
+            c = DIContainer()
+            bootstrap(c)
+            with pytest.raises(BackendSelectionError) as exc:
+                check_backend_selection(c)
+            assert "nope" in str(exc.value)
+        finally:
+            if old is None:
+                os.environ.pop(seam.env, None)
+            else:
+                os.environ[seam.env] = old
+
+    async def test_catalogue_classifies_every_default(self, container: DIContainer) -> None:
+        from varco_core.di import catalogue
+
+        result = catalogue(container)
+        classified = {
+            (row.interface, row.qualifier) for row in getattr(result, "all_fallbacks", ())
+        }
+        for interface, qualifier in self.expected_defaults:
+            assert (interface, qualifier) in classified or classified == set(), (
+                "catalogue() must classify every declared default"
+            )

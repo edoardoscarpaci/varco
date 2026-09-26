@@ -125,6 +125,15 @@ error path, and **inside** `RequestContextMiddleware` so `current_tenant()`/the 
 populated before the scoping logic above reads them. This is asserted by
 `varco_fastapi/tests/test_idempotency_middleware.py::test_middleware_sits_inside_error_and_request_context_middlewares`.
 
+## Selecting an idempotency store via env (Plan 047)
+
+`VARCO_IDEMPOTENCY_BACKEND=<redis|sa|beanie>` selects the live `AbstractIdempotencyStore` —
+all three are *new* DI bindings as of Plan 047 (`RedisIdempotencyStore`/`SAIdempotencyStore`/
+`BeanieIdempotencyStore` previously carried no binding at all; the middleware always needed an
+explicit `store=`). Unset means `InMemoryIdempotencyStore` (now resolvable by default, `qualifier=
+"in_memory"`). Pass `container.get(AbstractIdempotencyStore)` to `IdempotencyMiddleware(store=…)`.
+See `technical_docs/features/dependency-injection.md`'s "Selecting a backend" section.
+
 ## Pitfalls
 
 | Pitfall | Why it happens | Fix |

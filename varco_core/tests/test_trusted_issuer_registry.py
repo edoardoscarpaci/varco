@@ -17,7 +17,7 @@ Testing strategy:
     authority objects satisfy the _SigningAuthority protocol (issuer: str,
     jwks() → JsonWebKeySet) without generating expensive crypto keys.
 
-    Almost all tests use include_env=False to avoid FASTREST_AUTHORIZATION__*
+    Almost all tests use include_env=False to avoid VARCO_AUTHORIZATION__*
     env var pollution; include_env=True cases patch from_env() explicitly.
 """
 
@@ -442,7 +442,7 @@ class TestFromContainerIncludeEnv:
     """
     Behaviour of the include_env flag.
 
-    include_env=False → registry starts empty (no FASTREST_AUTHORIZATION__* lookup)
+    include_env=False → registry starts empty (no VARCO_AUTHORIZATION__* lookup)
     include_env=True  → from_env() is called first, then DI authorities layered on top
     """
 
@@ -486,7 +486,7 @@ class TestFromContainerIncludeEnv:
         multi_proxy = _FakeInstanceProxy([di_authority])
 
         # Patch from_env() so it returns our pre-seeded env_registry instead
-        # of reading real FASTREST_AUTHORIZATION__* environment variables.
+        # of reading real VARCO_AUTHORIZATION__* environment variables.
         with patch.object(TrustedIssuerRegistry, "from_env", return_value=env_registry):
             registry = await TrustedIssuerRegistry.from_container(
                 multi_proxy,

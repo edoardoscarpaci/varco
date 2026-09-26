@@ -122,6 +122,19 @@ def bootstrap(container: DIContainer) -> DIContainer:
     Thread safety:  ✅ Bootstrap is intended for single-threaded startup only.
     Async safety:   ✅ Scanning is synchronous; the function itself is sync.
     """
+    # Plan 048 / DI-6, Step 10 — NatsEventBusSettings/
+    # NatsChannelManagerSettings are bound eagerly, fail-fast, via
+    # bind_settings() BEFORE scan(), rather than the two module-level
+    # @Fallback @Provider functions that used to live in
+    # varco_nats.config/varco_nats.channel.
+    from varco_core.settings import bind_settings
+
+    from varco_nats.channel import NatsChannelManagerSettings
+    from varco_nats.config import NatsEventBusSettings
+
+    bind_settings(container, NatsEventBusSettings)
+    bind_settings(container, NatsChannelManagerSettings)
+
     # Discover all @Singleton/@Component classes in varco_nats recursively.
     container.scan("varco_nats", recursive=True)
 

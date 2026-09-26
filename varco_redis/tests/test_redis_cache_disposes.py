@@ -28,10 +28,11 @@ from typing import Any
 import pytest
 from providify import DIContainer, IssueKind
 from varco_core.cache.base import CacheBackend
+from varco_core.settings import bind_settings
 from varco_redis.cache import (
     RedisCache,
     RedisCacheConfiguration,
-    RedisLayeredCacheConfiguration,
+    RedisCacheSettings,
 )
 
 
@@ -60,6 +61,7 @@ async def test_redis_cache_configuration_reports_zero_unreachable_pre_destroy_is
     monkeypatch.setattr(RedisCache, "stop", record_stop)
 
     container = DIContainer()
+    bind_settings(container, RedisCacheSettings)
     await container.ainstall(RedisCacheConfiguration)
     await container.aget(CacheBackend)
 
@@ -83,62 +85,12 @@ async def test_redis_cache_stop_runs_on_ashutdown(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(RedisCache, "stop", record_stop)
 
     container = DIContainer()
+    bind_settings(container, RedisCacheSettings)
     await container.ainstall(RedisCacheConfiguration)
     await container.aget(CacheBackend)
     await container.ashutdown()
 
     assert calls == ["stopped"]
-
-
-async def test_both_cache_configurations_installed_together_both_get_stopped(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # §D-C2-firstmatch — a recursive scan installs BOTH RedisCacheConfiguration
-    # and RedisLayeredCacheConfiguration, both binding CacheBackend. providify
-    # attaches @Disposes to the FIRST matching binding and breaks
-    # (container.py:6202-6214) — this proves neither instance leaks.
-    monkeypatch.setattr(RedisCache, "start", _noop_start)
-    stopped: list[str] = []
-
-    async def _record_redis_stop(self: Any) -> None:
-        stopped.append("redis")
-        self._redis = None
-
-    monkeypatch.setattr(RedisCache, "stop", _record_redis_stop)
-
-    from varco_core.cache.layered import LayeredCache
-    from varco_core.cache.memory import InMemoryCache
-
-    async def _layered_start(self: Any) -> None:
-        # Avoid real L2 Redis connect inside LayeredCache.start().
-        self._l1_started = True
-        self._l2_started = True
-
-    async def _record_layered_stop(self: Any) -> None:
-        stopped.append("layered")
-
-    monkeypatch.setattr(LayeredCache, "start", _layered_start)
-    monkeypatch.setattr(LayeredCache, "stop", _record_layered_stop)
-    monkeypatch.setattr(InMemoryCache, "start", lambda self: None)
-
-    container = DIContainer()
-    await container.ainstall(RedisCacheConfiguration)
-    await container.ainstall(RedisLayeredCacheConfiguration)
-    # Force both CacheBackend bindings to actually be instantiated —
-    # aget() alone would only construct the highest-priority one.
-    await container.aget_all(CacheBackend)
-
-    report = container.validate(raise_on_error=False)
-    bad_kinds = {IssueKind.UNMATCHED_DISPOSER, IssueKind.DISPOSER_OVERWRITTEN}
-    bad_issues = [i for i in report.issues if i.kind in bad_kinds]
-    assert bad_issues == []
-
-    await container.ashutdown()
-
-    # Both provider-produced CacheBackend instances must have been stopped —
-    # not just the one whose binding happened to receive the disposer.
-    assert "redis" in stopped
-    assert "layered" in stopped
 
 
 def test_provide_returns_the_provider_binding() -> None:
@@ -163,3 +115,56 @@ def test_provide_returns_the_provider_binding() -> None:
     binding = container.provide(factory, returns=CacheBackend)
 
     assert isinstance(binding, ProviderBinding)
+
+
+async def test_flipping_cache_backend_env_after_resolution_does_not_evict_singleton(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Plan 047 §D-tests: "resolve under redis, flip the variable to layered,
+    # resolve again (lazy predicate; the first singleton is NOT evicted,
+    # scope.py:1048-1053) -> both instantiated -> ashutdown() stops both —
+    # the same P24 contract."
+    monkeypatch.setattr(RedisCache, "start", _noop_start)
+    stopped: list[str] = []
+
+    async def _record_redis_stop(self: Any) -> None:
+        stopped.append("redis")
+        self._redis = None
+
+    monkeypatch.setattr(RedisCache, "stop", _record_redis_stop)
+
+    from varco_core.cache.layered import LayeredCache
+
+    async def _layered_start(self: Any) -> None:
+        self._l1_started = True
+        self._l2_started = True
+
+    async def _record_layered_stop(self: Any) -> None:
+        stopped.append("layered")
+
+    monkeypatch.setattr(LayeredCache, "start", _layered_start)
+    monkeypatch.setattr(LayeredCache, "stop", _record_layered_stop)
+
+    from varco_core.cache.base import CacheBackend
+    from varco_core.di import bootstrap as core_bootstrap
+    from varco_redis.di import bootstrap as redis_bootstrap
+
+    container = DIContainer()
+    core_bootstrap(container)
+    monkeypatch.setenv("VARCO_CACHE_BACKEND", "redis")
+    redis_bootstrap(container)
+
+    first = await container.aget(CacheBackend)
+    assert isinstance(first, RedisCache)
+
+    monkeypatch.setenv("VARCO_CACHE_BACKEND", "layered")
+    second = await container.aget(CacheBackend)
+
+    # The first singleton is not evicted by the env flip (lazy @Requires
+    # predicate re-evaluated on the NEXT get(), not a cache invalidation).
+    assert isinstance(second, LayeredCache)
+
+    await container.ashutdown()
+
+    assert "redis" in stopped
+    assert "layered" in stopped

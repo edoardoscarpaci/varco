@@ -558,10 +558,17 @@ def bind_cloudevents_serializer(
         )
     """
     from varco_core.di import bind_instance  # noqa: PLC0415
+    from varco_core.settings import bind_settings  # noqa: PLC0415
 
     serializer = CloudEventsJsonSerializer(settings)
 
-    bind_instance(container, CloudEventsSettings, settings)
+    # Plan 048 / Step 14 — routed through bind_settings() (non-fallback,
+    # since `instance=` is given) rather than bind_instance() directly, so
+    # CloudEventsSettings joins every other settings class's one recipe.
+    # CloudEventsSettings.source is required, so it is never a
+    # bind_core_settings() member (§D-core-list) — this explicit call
+    # remains its only registration path.
+    bind_settings(container, CloudEventsSettings, instance=settings)
     bind_instance(container, Serializer[Event], serializer)
     return container
 

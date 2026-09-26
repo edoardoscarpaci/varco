@@ -27,17 +27,18 @@ Async safety:   ✅ ``install_cors`` is synchronous (called at startup).
 
 from __future__ import annotations
 
-import os
-from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from pydantic import AliasChoices, Field
+from pydantic_settings import SettingsConfigDict
+from varco_core.config import VarcoSettings
+from varco_core.settings.types import CommaSeparated
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
 
-@dataclass(frozen=True)
-class CORSConfig:
+class CORSConfig(VarcoSettings):
     """
     CORS policy configuration.
 
@@ -87,143 +88,49 @@ class CORSConfig:
           equivalent for ``allow_origins``. ``restrictive()`` is kept as the
           explicit, self-documenting spelling.
 
+    **Plan 048 / DI-6: converted from a frozen dataclass to a
+    ``VarcoSettings``** — same class name, same field names, every default
+    literal byte-identical; ``from_env()``/``from_dict()`` are now the
+    inherited ``VarcoSettings`` versions (equivalent to ``cls()``/
+    ``cls.model_validate(d)``). Positional construction is gone — it was
+    never used in this codebase's own call sites (all keyword), but a
+    downstream ``CORSConfig("a")`` needs ``CORSConfig(allow_origins=("a",))``.
+
     Thread safety:  ✅ frozen=True.
     Async safety:   ✅ Pure value object; no I/O.
     """
 
-    allow_origins: tuple[str, ...] = ()
-    allow_methods: tuple[str, ...] = (
-        "GET",
-        "POST",
-        "PUT",
-        "PATCH",
-        "DELETE",
-        "OPTIONS",
+    model_config = SettingsConfigDict(env_prefix="VARCO_CORS_", frozen=True, populate_by_name=True)
+
+    allow_origins: CommaSeparated = Field(
+        default=(), validation_alias=AliasChoices("VARCO_CORS_ORIGINS")
     )
-    allow_headers: tuple[str, ...] = (
-        "Authorization",
-        "Content-Type",
-        "X-Request-ID",
-        "X-Correlation-ID",
-        "X-API-Key",
+    allow_methods: CommaSeparated = Field(
+        default=("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"),
+        validation_alias=AliasChoices("VARCO_CORS_METHODS"),
     )
-    allow_credentials: bool = True
+    allow_headers: CommaSeparated = Field(
+        default=(
+            "Authorization",
+            "Content-Type",
+            "X-Request-ID",
+            "X-Correlation-ID",
+            "X-API-Key",
+        ),
+        validation_alias=AliasChoices("VARCO_CORS_HEADERS"),
+    )
+    allow_credentials: bool = Field(
+        default=True, validation_alias=AliasChoices("VARCO_CORS_CREDENTIALS")
+    )
     max_age: int = 600
 
     allow_origin_regex: str | None = None
 
     allow_private_network: bool = False
 
-    expose_headers: Sequence[str] = ("X-Total-Count", "X-Page-Size", "Link")
+    expose_headers: CommaSeparated = ("X-Total-Count", "X-Page-Size", "Link")
 
     # ── Factory methods ────────────────────────────────────────────────────────
-
-    @classmethod
-    def from_env(cls) -> CORSConfig:
-        """
-        Build a ``CORSConfig`` from standard environment variables.
-
-        Reads ``VARCO_CORS_*`` env vars.  Unset vars fall back to the
-        dataclass defaults — so an unset ``VARCO_CORS_ORIGINS`` yields ``()``,
-        not ``("*",)``, as of 3.0.0 (Plan 022 / AB-5).
-
-        Returns:
-            A fully populated ``CORSConfig``.
-        """
-
-        def _split(value: str | None, default: tuple[str, ...]) -> tuple[str, ...]:
-            if not value:
-                return default
-            return tuple(v.strip() for v in value.split(",") if v.strip())
-
-        allow_origins = _split(
-            os.environ.get("VARCO_CORS_ORIGINS"),
-            (),
-        )
-        allow_methods = _split(
-            os.environ.get("VARCO_CORS_METHODS"),
-            ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"),
-        )
-        allow_headers = _split(
-            os.environ.get("VARCO_CORS_HEADERS"),
-            (
-                "Authorization",
-                "Content-Type",
-                "X-Request-ID",
-                "X-Correlation-ID",
-                "X-API-Key",
-            ),
-        )
-        credentials_str = os.environ.get("VARCO_CORS_CREDENTIALS", "true").lower()
-        allow_credentials = credentials_str not in ("false", "0", "no")
-
-        max_age_str = os.environ.get("VARCO_CORS_MAX_AGE", "600")
-        try:
-            max_age = int(max_age_str)
-        except ValueError:
-            max_age = 600
-
-        allow_origin_regex = os.environ.get("VARCO_CORS_ALLOW_ORIGIN_REGEX")
-
-        allow_private_network_str = os.environ.get(
-            "VARCO_CORS_ALLOW_PRIVATE_NETWORK", "false"
-        ).lower()
-        allow_private_network = allow_private_network_str not in ("false", "0", "no")
-
-        expose_headers = _split(
-            os.environ.get("VARCO_CORS_EXPOSE_HEADERS"),
-            ("X-Total-Count", "X-Page-Size", "Link"),
-        )
-
-        return cls(
-            allow_origins=allow_origins,
-            allow_methods=allow_methods,
-            allow_headers=allow_headers,
-            allow_credentials=allow_credentials,
-            allow_origin_regex=allow_origin_regex,
-            allow_private_network=allow_private_network,
-            expose_headers=expose_headers,
-            max_age=max_age,
-        )
-
-    @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> CORSConfig:
-        """
-        Build a ``CORSConfig`` from a dict.
-
-        Args:
-            d: Dict with optional keys matching the dataclass field names.
-                Tuple-typed fields also accept lists.
-
-        Returns:
-            A ``CORSConfig`` with values from the dict merged over defaults.
-        """
-        return cls(
-            allow_origins=tuple(d.get("allow_origins", ())),
-            allow_methods=tuple(
-                d.get(
-                    "allow_methods",
-                    ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"),
-                )
-            ),
-            allow_headers=tuple(
-                d.get(
-                    "allow_headers",
-                    (
-                        "Authorization",
-                        "Content-Type",
-                        "X-Request-ID",
-                        "X-Correlation-ID",
-                        "X-API-Key",
-                    ),
-                )
-            ),
-            allow_credentials=bool(d.get("allow_credentials", True)),
-            max_age=int(d.get("max_age", 600)),
-            expose_headers=tuple(d.get("expose_headers", ("X-Total-Count", "X-Page-Size", "Link"))),
-            allow_origin_regex=d.get("allow_origin_regex"),
-            allow_private_network=bool(d.get("allow_private_network", False)),
-        )
 
     @classmethod
     def restrictive(cls) -> CORSConfig:

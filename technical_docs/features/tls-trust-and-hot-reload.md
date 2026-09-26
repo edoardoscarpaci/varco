@@ -245,8 +245,10 @@ discovery-document fetch and the delegate `JwksUrlSource` it constructs, because
 issuer needs the same trust for its `.well-known` document and its JWKS endpoint.
 
 `TrustedIssuerRegistry.from_env()` builds a context from `TrustStore.from_env()` **only when at
-least one of the CA-triggering env vars is set** (`VARCO_TRUST_STORE_DIR`, `VARCO_CA_CERT`,
-`VARCO_CLIENT_CERT`, `VARCO_CLIENT_KEY`, `SSL_CERT_FILE`, `SSL_CERT_DIR`) — with none of them
+least one of the CA-triggering env vars is set** (`VARCO_TLS_TRUST_STORE_DIR`, `VARCO_TLS_CA_CERT`,
+`VARCO_TLS_CLIENT_CERT`, `VARCO_TLS_CLIENT_KEY` — renamed in 4.0 from the legacy, non-namespaced
+`VARCO_TRUST_STORE_DIR`/`VARCO_CA_CERT`/`VARCO_CLIENT_CERT`/`VARCO_CLIENT_KEY`, Plan 048 / DI-6 —
+plus `SSL_CERT_FILE`, `SSL_CERT_DIR`) — with none of them
 set, `ssl_context` stays `None`, so `from_env()`'s default behaviour is unchanged.
 
 ⚠️ **Out of scope: this fixes verification, not proxy handling.** `ssl_context=` has no bearing

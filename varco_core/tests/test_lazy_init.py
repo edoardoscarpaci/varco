@@ -204,5 +204,8 @@ def test_all_list_is_unchanged_in_length() -> None:
     # DEFAULT_REDACT_PATTERNS, EXTENDED_REDACT_PATTERNS,
     # PII_REDACT_PATTERNS), taking it to 277. Bump this number (with
     # a reason) whenever a plan legitimately adds/removes a top-level export.
-    assert len(varco_core.__all__) == 277
+    # Plan 048 / DI-6, DI-16 added 7 more (CommaSeparated,
+    # SettingsAlreadyBoundError, SettingsError, SettingsProvenance,
+    # SettingsValidationError, bind_settings, provenance_of), taking it to 284.
+    assert len(varco_core.__all__) == 284
     assert len(set(varco_core.__all__)) == len(varco_core.__all__)

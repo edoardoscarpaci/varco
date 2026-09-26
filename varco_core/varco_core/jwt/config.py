@@ -85,6 +85,17 @@ class JwtVerificationSettings(VarcoSettings):
                         checking without unwiring the store or a
                         redeploy — see the Open Question in the plan about
                         this being a foot-gun an operator could leave set.
+        jwks_min_refresh_seconds: Rate limit (seconds) between kid-not-found
+                        triggered global JWKS refreshes. Default ``10.0``.
+                        **Renamed in 4.0.0** (Plan 048 / DI-6, §D-prefix rule
+                        1 — every loose ``VARCO_*`` read folds into its
+                        owning settings class): was the loose
+                        ``VARCO_JWKS_MIN_REFRESH_SECONDS`` env read in
+                        ``TrustedIssuerRegistry.__init__``.
+        jwks_ttl_seconds: Proactive JWKS reload age threshold (seconds,
+                        Plan 002 C-4); ``0.0`` disables (only a kid-miss
+                        triggers a refresh). **Renamed in 4.0.0**: was the
+                        loose ``VARCO_JWKS_TTL_SECONDS`` env read.
 
     Thread safety:  ✅ ``frozen=True``.
     """
@@ -111,6 +122,20 @@ class JwtVerificationSettings(VarcoSettings):
     revocation_require_jti: bool = False
     revocation_skew_seconds: float = 60.0
     revocation_enabled: bool = True
+
+    # ── JWKS caching (folded from loose reads, Plan 048 / DI-6) ──────────────
+    jwks_min_refresh_seconds: float = 10.0
+    jwks_ttl_seconds: float = 0.0
+
+    @property
+    def enforce_iss(self) -> bool:
+        """
+        Short alias for ``enforce_issuer`` — matches the shorter
+        ``VARCO_JWT_ENFORCE_ISS`` env var name this field's
+        ``validation_alias`` already reads. Read-only; ``enforce_issuer``
+        remains the canonical field name.
+        """
+        return self.enforce_issuer
 
     @field_validator("revocation_failure_mode", mode="before")
     @classmethod

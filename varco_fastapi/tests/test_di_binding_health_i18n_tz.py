@@ -22,9 +22,16 @@ def _build_container() -> DIContainer:
     # recursive=True) already auto-installs VarcoFastAPIModule (its
     # @Configuration providers, including TaskSerializer, are all @Fallback
     # and self-registering) — the redundant explicit install() is dropped.
+    #
+    # Plan 048 / DI-6: I18nSettings/TimezoneSettings moved off a scanned
+    # @Fallback @Provider onto bind_core_settings() (§D-core-list), called
+    # from varco_fastapi.di.bootstrap() — a bare scan("varco_fastapi") no
+    # longer registers them (§Migration), so this helper calls bootstrap()
+    # instead of scanning both packages by hand.
+    from varco_fastapi.di import bootstrap
+
     container = DIContainer()
-    container.scan("varco_core", recursive=True)
-    container.scan("varco_fastapi", recursive=True)
+    bootstrap(container)
     return container
 
 

@@ -161,6 +161,25 @@ job** — it rides in `test.yml`'s existing `lint` job. Regenerate and commit wh
 `examples/00-full-stack-post-api`'s consumer wiring moves. Details:
 `technical_docs/features/asyncapi-export.md`.
 
+### DI catalogue gate (`scripts/di_catalogue.py`)
+
+`make di-catalogue` regenerates `technical_docs/di-catalogue.md` +
+`design/api-freeze-and-standards/measurements/di-catalogue.json` from every package's own
+bootstrapped container (Plan 047 / DI-17); `make di-catalogue-check` diffs it and fails on
+drift. Wired into `make lint`'s no-`PKG` path (beside `api-check`/`import-budget`/
+`asyncapi-check` — skipped by `make lint PKG=<one package>`) and CI's `lint` job. Regenerate and
+commit whenever a default, backend, or feature binding changes.
+
+### Settings reference gate (`scripts/settings_reference.py`)
+
+`make settings-reference` regenerates `technical_docs/settings-reference.md` +
+`design/api-freeze-and-standards/measurements/settings-reference.json` from every
+`bind_settings()`-eligible class discovered across the ten packages (Plan 048 / DI-6);
+`make settings-check` diffs it and fails on drift. Wired into `make lint`'s no-`PKG` path
+(beside `api-check`/`import-budget`/`asyncapi-check`/`di-catalogue-check` — skipped by
+`make lint PKG=<one package>`) and CI's `lint` job. Regenerate and commit whenever a settings
+field, prefix, or default changes.
+
 ### Import-time budget (`scripts/import_budget.py`)
 
 `scripts/import_budget.py` (Plan 028 / P1b) measures each distribution package's
@@ -369,6 +388,32 @@ bind_repositories(container, User, Post)
 bare, backends at `varco_core.di.BACKEND_PRIORITY`); a user binding always wins regardless of
 order; never mark a collection contribution (`HealthCheck`) `@Fallback`. Full model + pitfalls:
 `technical_docs/features/dependency-injection.md`.
+
+**Rule (Plan 047 / DI-4)**: a backend of one of the six selectable seams (`cache`, `dlq`,
+`idempotency`, `job_store`, `event_bus`, `revocation`) is live only when `VARCO_<SEAM>_BACKEND`
+names it (or a dotted path) — bootstrapping a package never makes it live. Precedence: code
+binding > env dotted path > env named backend > `@Fallback` default. Every backend binding is
+`@Fallback` **and** `selected_by(seam, value)`, never a plain non-fallback. `make di-catalogue`
+regenerates the generated catalogue; `make lint` fails on drift (`di-catalogue-check`).
+
+**Rule (Plan 047 / DI-12)**: a binding-shaped feature is switched by `enable_*(container)` or
+`VARCO_<FEATURE>_ENABLED`, both routed through `varco_core.di.features.feature_default(...)` —
+never an imperative env read inside `bootstrap()`.
+
+**Decision tree addition**: *"Making a backend/feature selectable, or adding a new default?"* →
+`varco_core.di` (`selected_by`/`feature_default`/`SEAMS`/`FEATURES`) — never a provider-body
+`if`, never `activate_profile`.
+
+The `enable_policy_authorizer` bullet above also has an env form: `VARCO_POLICY_AUTHORIZER_ENABLED=true`.
+The revocation two-step pitfall (`varco_core.revocation`) also applies to its env form —
+`VARCO_REVOCATION_BACKEND=redis` still needs `TrustedIssuerRegistry(revocation_store=...)`.
+
+**Rule (Plan 048 / DI-6)**: every settings class is bound by `varco_core.settings.
+bind_settings()` — never `@Singleton`, never a scanned `@Provider`, never a hand-rolled
+`is_user_bound()` idempotency guard. The `VARCO_*` reference is generated from the live tree —
+regenerate with `make settings-reference`, or `make lint` fails (`settings-check`). Full model,
+precedence, and a Pitfalls table: `technical_docs/features/dependency-injection.md`'s "Settings"
+section.
 
 ### DI wiring verb taxonomy
 
@@ -935,13 +980,13 @@ payload = await registry.verify(raw_token)
 Key sources (`varco_core.authority.sources`): `PemFile`, `PemFolder`, `JwksUrl`, `OidcDiscovery`. `TrustedIssuerRegistry.from_env()` reads issuer config from environment variables.
 
 **JWKS caching knobs**: `TrustedIssuerRegistry(min_refresh_interval=..., ttl_seconds=...)`
-(env: `VARCO_JWKS_MIN_REFRESH_SECONDS` default `10.0`, `VARCO_JWKS_TTL_SECONDS` default `0.0` =
+(env: `VARCO_JWT_JWKS_MIN_REFRESH_SECONDS` default `10.0`, `VARCO_JWT_JWKS_TTL_SECONDS` default `0.0` =
 disabled) tune when the in-memory keyset cache refreshes. `ttl_seconds` makes `get_key()`
 proactively reload once the cache is stale, without waiting for a `kid` miss.
 
 **Background JWKS refresh (Plan 041 / S22)**: `TrustedIssuerRegistry.start_refresh()`/
 `stop_refresh()` run a background task on the same `ttl_seconds`-derived period, so a registry
-can refresh without ever receiving a `verify()` call. **Off unless** `VARCO_JWKS_TTL_SECONDS`/
+can refresh without ever receiving a `verify()` call. **Off unless** `VARCO_JWT_JWKS_TTL_SECONDS`/
 `interval=` is positive, and it must be started explicitly — via
 `create_varco_app(jwks_refresh=JwksRefreshLifecycle(registry))` or a direct
 `await registry.start_refresh()` call — **never** by a scanned `@Configuration` (the same
@@ -1022,8 +1067,12 @@ enable_policy_authorizer(container)  # OPT-IN: binds PolicyEngineAuthorizer → 
   silently shadows an app's own authorizer.
 - `CasbinPolicyEngine` must be a **shared singleton** (DI handles this) — a per-call engine reloads
   policy every request.
-- `CasbinSettings` (pydantic `BaseSettings`) is registered via a `@Provider` in `bootstrap`, NOT
-  `@Singleton` — providify cannot inject pydantic's `**values` constructor.
+- `CasbinSettings` (and every settings class) is registered via `bind_settings()`'s `@Provider`
+  closure (`varco_core.settings`, Plan 048 / DI-6), never `@Singleton` — pydantic-settings'
+  `BaseSettings.__init__` carries 29 annotated, defaulted keyword parameters (`_env_prefix`,
+  `_env_file`, …) that providify's per-parameter resolver treats as injection points and
+  silently fills from whatever else happens to be bound (`providify/container.py:3753-3759`);
+  `**values` being skipped (`_annotations.py:574-578`) is not the actual trap.
 - The REST admin API is `build_policy_router(engine, server_auth=..., admin_role="admin")` (requires
   the `varco-casbin[fastapi]` extra) — a plain FastAPI `APIRouter` rather than a `VarcoRouter`
   (a standalone admin surface with its own JSON-body handlers; it predates `@route`'s full

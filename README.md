@@ -100,6 +100,7 @@ policy engine, field encryption, observability, profiling, …) — see
   - [ServiceProtocol](#serviceprotocol)
   - [Authorization order](#authorization-order)
   - [DI wiring](#di-wiring)
+  - [Settings and environment variables](#settings-and-environment-variables)
 - [Authorization](#authorization)
   - [Action](#action)
   - [ResourceGrant](#resourcegrant)
@@ -755,6 +756,96 @@ container.scan("varco_core", recursive=True)  # registers BaseAuthorizer, a @Fal
 container.bind(AbstractAuthorizer, MyAuthorizer)  # wins — registered AFTER, order doesn't matter
 ```
 
+### Settings and environment variables
+
+Every varco settings class is a `pydantic_settings.BaseSettings` subclass with a
+`VARCO_<FEATURE>_` prefix, registered through one recipe — `bind_settings()` — which constructs
+it eagerly, fail-fast, at the call:
+
+```python
+from providify import DIContainer
+from varco_core.settings import bind_settings
+from varco_redis.config import RedisEventBusSettings
+
+container = DIContainer()
+bind_settings(container, RedisEventBusSettings)  # raises SettingsValidationError on a bad env value, right here
+```
+
+Precedence, per field: an explicit `instance=` kwarg (code) > the process environment
+(`VARCO_X_FIELD`) > the class default. varco never reads a `.env` file — call
+`dotenv.load_dotenv()` yourself before `bootstrap()` if you want one.
+
+Named instances (DI-16) — build a second, independently-configured instance of one settings
+class:
+
+```python
+bind_settings(container, RedisCacheSettings)  # VARCO_REDIS_CACHE_*
+bind_settings(
+    container, RedisCacheSettings, qualifier="sessions", env_prefix="VARCO_REDIS_SESSIONS_CACHE_"
+)
+```
+
+The full, **generated** `VARCO_*` reference — every registered class, its env vars, types, and
+defaults — lives at
+[technical_docs/settings-reference.md](technical_docs/settings-reference.md) (regenerate with
+`make settings-reference`; `make lint` fails on drift). Full design:
+[technical_docs/features/dependency-injection.md](technical_docs/features/dependency-injection.md)'s
+"Settings" section.
+
+### Choosing a backend
+
+Six seams — `cache`, `dlq`, `idempotency`, `job_store`, `event_bus`, `revocation` — are each
+selected by **one environment variable**, `VARCO_<SEAM>_BACKEND=<name>`. **Bootstrapping a
+package no longer makes its backend live** — you must also name the seam:
+
+```bash
+export VARCO_EVENT_BUS_BACKEND=redis   # RedisEventBus (Pub/Sub) or RedisStreamEventBus,
+                                        # depending on VARCO_REDIS_USE_STREAMS
+export VARCO_CACHE_BACKEND=redis       # RedisCacheConfiguration.redis_cache
+export VARCO_DLQ_BACKEND=redis         # or "redis-streams" for RedisStreamDLQConfiguration
+```
+
+```python
+from providify import DIContainer
+import varco_core.di
+import varco_redis.di
+
+container = DIContainer()
+varco_core.di.bootstrap(container)
+varco_redis.di.bootstrap(container)  # a no-op selector until the env vars above are set
+```
+
+Unset means the in-process default (`memory`, or `null` for `revocation`) — the correct
+zero-config posture for dev/test, and a `SecurityPosture` `WARN` finding in production. A dotted
+path also works, for your own zero-argument class or factory:
+`VARCO_EVENT_BUS_BACKEND=myapp.buses:MyBus`. Code always wins over either env form —
+`bind_instance(container, AbstractEventBus, my_bus)` is unaffected by any of these variables.
+Full detail (the three-tier precedence, the redis `use_streams`/`redis-streams` asymmetry,
+`check_backend_selection()`): [technical_docs/features/dependency-injection.md](technical_docs/features/dependency-injection.md#selecting-a-backend).
+
+### Enabling a feature
+
+Three binding-shaped features are switchable by `enable_*(container)` (code) **or**
+`VARCO_<FEATURE>_ENABLED=true` (env), code always beating env:
+
+```python
+from varco_core.flags.di import enable_feature_flags
+
+enable_feature_flags(container)   # code form
+# — or, before bootstrap —
+# export VARCO_FEATURE_FLAGS_ENABLED=true
+```
+
+| Feature | Env var | Code verb |
+|---|---|---|
+| `feature_flags` | `VARCO_FEATURE_FLAGS_ENABLED` | `enable_feature_flags(container)` |
+| `tenant_membership` | `VARCO_TENANT_MEMBERSHIP_ENABLED` | `enable_tenant_membership(container)` |
+| `policy_authorizer` | `VARCO_POLICY_AUTHORIZER_ENABLED` | `enable_policy_authorizer(container)` |
+
+`enable_authorization_audit(container)` is the one exception — code-only, no env form (call it
+last, after the real authorizer is wired). Full matrix (categories, defaults):
+[technical_docs/features/dependency-injection.md](technical_docs/features/dependency-injection.md#enabling-a-feature).
+
 ---
 
 ## Authorization
@@ -934,14 +1025,12 @@ list(FastrestErrorCodes)  # all built-in codes — iterable because it's an Enum
 | `VALIDATION_ERROR` | `FASTREST_004` | 422 |
 | `INTERNAL_ERROR` | `FASTREST_500` | 500 |
 
-`ErrorEnvelopeSettings` (env prefix `VARCO_ERROR_`) governs what else the envelope carries:
-
-| Env var | Default | Meaning |
-|---|---|---|
-| `VARCO_ERROR_INCLUDE_MESSAGE_KEY` | `true` | Include the i18n `message_key` member |
-| `VARCO_ERROR_INCLUDE_PARAMS` | `true` | Include the structured `params` member |
-| `VARCO_ERROR_PROBLEM_DETAILS` | `false` | Emit an RFC 9457 Problem Details body instead |
-| `VARCO_ERROR_INCLUDE_DETAIL` | `true` | Include the `detail` member (`str(exc)`) on a mapped `ServiceException`. Byte-identical to pre-3.2 (Plan 035 / §D-S3b) — a **warn-only**, 4.0-flip-candidate knob, reported by `inspect_http_edge()` as `http.error.detail_exposed`. Set `false` to omit it now |
+`ErrorEnvelopeSettings` (env prefix `VARCO_ERROR_`) governs what else the envelope carries —
+whether to include the i18n `message_key`, the structured `params`, an RFC 9457 Problem Details
+body instead, and the `detail` member (`str(exc)`) on a mapped `ServiceException` (byte-identical
+to pre-3.2, a **warn-only** 4.0-flip candidate reported by `inspect_http_edge()` as
+`http.error.detail_exposed`). Every `VARCO_ERROR_*` name, type, and default:
+[technical_docs/settings-reference.md](technical_docs/settings-reference.md).
 
 See `technical_docs/features/error-taxonomy-and-i18n.md` for the full envelope shape and the S3
 fallback-leak fix this knob is adjacent to (unconditional, no toggle).
@@ -1326,25 +1415,14 @@ token = authority.sign(
 
 ### Env vars (`VARCO_TENANT_*`)
 
-All read by `TenantProvenanceSettings.from_env()`. Every one is unset by default; an unset
-`VARCO_TENANT_SOURCES` means `build_tenant_source_chain()` returns `None` — nothing changes.
-
-| Var | Default | Meaning |
-|---|---|---|
-| `VARCO_TENANT_SOURCES` | *(unset)* | Ordered, comma-separated: `jwt`, `subdomain`, `legacy`, `act_as`. Unset ⇒ no chain |
-| `VARCO_TENANT_CROSS_CHECK` | `lenient` | `lenient` \| `strict` |
-| `VARCO_TENANT_MIN_TRUST` | `low` | `low` \| `medium` \| `high` \| `highest` — claims below the floor are discarded |
-| `VARCO_TENANT_CLAIM_METADATA_KEY` | `tenant_id` | Key in `AuthContext.metadata` the JWT source reads |
-| `VARCO_TENANT_BASE_DOMAINS` | *(unset)* | Comma-separated. **Required** when `subdomain` is in the chain |
-| `VARCO_TENANT_TRUST_FORWARDED_HOST` | `false` | Read `X-Forwarded-Host`; the claim drops to `MEDIUM` trust |
-| `VARCO_TENANT_FORWARDED_HOST_HEADER` | `X-Forwarded-Host` | |
-| `VARCO_TENANT_RESERVED_LABELS` | `www,api,app,admin,static,cdn` | Subdomain labels that are never a tenant |
-| `VARCO_TENANT_LEGACY_HEADER` | `X-Tenant-Id` | Header the legacy source reads |
-| `VARCO_TENANT_MEMBERSHIP` | *(unset)* | `null` \| `claim`. Unset ⇒ `NullTenantMembership` |
-| `VARCO_TENANT_MEMBERSHIP_CLAIM` | `tenants` | `AuthContext.metadata` key holding the membership list |
-| `VARCO_TENANT_MEMBERSHIP_ON_MISSING` | `allow` | `allow` \| `deny`. **Flips to `deny` in 4.0** |
-| `VARCO_TENANT_ACT_AS_HEADER` | `X-Act-As-Tenant` | Act-as / RFC 8693 delegation only |
-| `VARCO_JWT_TRANSFORM_TENANTS_FIELD` | *(unset)* | Foreign name for the membership-list claim; the per-issuer `VARCO_JWT_TRANSFORM__<LABEL>__TENANTS_FIELD` form also exists |
+Read by `TenantProvenanceSettings`/`TenantMembershipSettings` (bound via `bind_settings()`,
+Plan 048). Every one is unset by default; an unset `VARCO_TENANT_SOURCES` means
+`build_tenant_source_chain()` returns `None` — nothing changes. Every `VARCO_TENANT_*` name
+(sources/cross-check/trust floor/base domains/forwarded-host/reserved labels/legacy header/
+membership/act-as) plus the per-issuer `VARCO_JWT_TRANSFORM__<LABEL>__TENANTS_FIELD` form:
+[technical_docs/settings-reference.md](technical_docs/settings-reference.md). One value worth
+calling out here because it is a scheduled 4.0 flip: `VARCO_TENANT_MEMBERSHIP_ON_MISSING`
+defaults to `allow` today and **flips to `deny` in 4.0**.
 
 ---
 
@@ -2875,7 +2953,7 @@ app = create_varco_app(
 )
 ```
 
-Off by default — `VARCO_JWKS_TTL_SECONDS` (default `0.0`) also sets the
+Off by default — `VARCO_JWT_JWKS_TTL_SECONDS` (default `0.0`) also sets the
 background refresher's period; `0.0` means the refresher never starts. See
 `technical_docs/features/jwt-claim-transformer.md`'s "JWKS caching knobs, and
 the background refresher" section for the full design, and
@@ -2904,19 +2982,11 @@ VARCO_TRUSTED_ISSUERS='[
 
 ### Verification hardening (VARCO_JWT_\*)
 
-`varco_core.jwt.config.JwtVerificationSettings` — env-var reference:
-
-| Env var | Default | Effect |
-|---|---|---|
-| `VARCO_JWT_LEEWAY_SECONDS` | `0.0` | clock-skew leeway for `exp`/`nbf` checks — fixes intermittent cross-host 401s |
-| `VARCO_JWT_AUDIENCE` | `None` | this service's expected `aud` — **required** unless `VARCO_JWT_ALLOW_ANY_AUDIENCE=true` (Plan 005 Phase 2 / U-13, **BREAKING security default**: `JwtBearerAuth` now *refuses to construct* with `ValueError` when omitted, instead of logging a warning and proceeding) |
-| `VARCO_JWT_ALLOW_ANY_AUDIENCE` | `false` | named escape hatch restoring the pre-Phase-2 "warn once and proceed with no audience enforcement" behaviour |
-| `VARCO_JWT_ENFORCE_ISS` | `true` | whether `TrustedIssuerRegistry.verify()` checks the token's `iss` claim against the resolved issuer's registered value (Plan 005 Phase 2 / U-13, **BREAKING security default**: previously never enforced here) |
-| `VARCO_JWT_TRANSFORM_*` | — | claim-transform mapping (global) — see the claim-transformer feature doc |
-| `VARCO_JWT_TRANSFORM__<LABEL>__*` | — | per-issuer claim-transform override, keyed by `iss` |
-| `VARCO_JWT_PROFILE__<NAME>__*` | — | named token profile declaration |
-| `VARCO_JWKS_MIN_REFRESH_SECONDS` | `10.0` | rate limit between kid-miss JWKS refreshes; also the floor a background refresher's period is clamped up to (Plan 041 / S22) |
-| `VARCO_JWKS_TTL_SECONDS` | `0.0` | proactive JWKS reload age threshold (`0` = disabled); also the background refresher's tick period when `interval=` is not passed explicitly (Plan 041 / S22) — `0` means the refresher never starts |
+`varco_core.jwt.config.JwtVerificationSettings` (bound via `bind_settings()`, Plan 048) governs
+audience/issuer enforcement, clock-skew leeway, claim-transform/token-profile lookups, and the
+JWKS refresh knobs (`VARCO_JWT_JWKS_MIN_REFRESH_SECONDS`/`VARCO_JWT_JWKS_TTL_SECONDS` — renamed
+from the pre-4.0 loose `VARCO_JWKS_*` reads). Every `VARCO_JWT_*` name, type, and default:
+[technical_docs/settings-reference.md](technical_docs/settings-reference.md).
 
 **Common pitfalls:**
 
@@ -3029,8 +3099,9 @@ from varco_core.tls import TrustStore
 store = TrustStore(ca_folders=Path("/etc/ssl/private-ca"))
 ctx = store.build_ssl_context()
 
-# From environment variables — VARCO_TRUST_STORE_DIR / VARCO_CA_CERT / VARCO_CLIENT_CERT /
-# VARCO_CLIENT_KEY, plus SSL_CERT_FILE / SSL_CERT_DIR (additive — see the table below)
+# From environment variables — VARCO_TLS_TRUST_STORE_DIR / VARCO_TLS_CA_CERT /
+# VARCO_TLS_CLIENT_CERT / VARCO_TLS_CLIENT_KEY (TlsSettings, Plan 048), plus SSL_CERT_FILE /
+# SSL_CERT_DIR (additive — see below)
 store = TrustStore.from_env()
 ```
 
@@ -3076,14 +3147,14 @@ jwks = JwksUrlSource("https://idp.internal/.well-known/jwks.json", ssl_context=c
 `HTTPS_PROXY` still apply exactly as before. This does not make "JWKS through a proxy" work; it
 was already unaffected either way.
 
-| Env var | Effect | Additive? |
-|---|---|---|
-| `VARCO_TRUST_STORE_DIR` | entry in `ca_folders` | ✅ |
-| `VARCO_CA_CERT` | `ca_cert` | ✅ |
-| `VARCO_CLIENT_CERT` | `client_cert` | ✅ |
-| `VARCO_CLIENT_KEY` | `client_key` | ✅ |
-| `SSL_CERT_FILE` | `ca_cert` (only if `VARCO_CA_CERT` left it unset) | ✅ — **diverges from OpenSSL**, which replaces the default trust store entirely |
-| `SSL_CERT_DIR` | entry in `ca_folders` | ✅ — **diverges from OpenSSL** the same way |
+`TlsSettings` (`VARCO_TLS_CA_CERT`/`VARCO_TLS_CLIENT_CERT`/`VARCO_TLS_CLIENT_KEY`/
+`VARCO_TLS_TRUST_STORE_DIR` — renamed in 4.0 from the legacy, non-namespaced
+`VARCO_CA_CERT`/`VARCO_CLIENT_CERT`/`VARCO_CLIENT_KEY`/`VARCO_TRUST_STORE_DIR`, which collided
+with `ClientProfile`'s `VARCO_CLIENT_` prefix) is bound via `bind_settings()`; full reference:
+[technical_docs/settings-reference.md](technical_docs/settings-reference.md). The two
+non-`VARCO_` OpenSSL-standard names, `SSL_CERT_FILE`/`SSL_CERT_DIR`, are read additively on top —
+`SSL_CERT_FILE` fills `ca_cert` only if `VARCO_TLS_CA_CERT` left it unset, `SSL_CERT_DIR` adds an
+entry to `ca_folders`.
 
 ⚠️ **`SSL_CERT_FILE`/`SSL_CERT_DIR` are additive in varco, not replace-semantics like OpenSSL/
 `uv`/`requests`.** Both are merged on top of `include_system_cas`'s default of `True` — varco
@@ -3487,7 +3558,8 @@ GET /jobs/{job_id}
 
 ```python
 from varco_core.job import AbstractJobRunner, JobRunner
-from varco_core.job.store import InMemoryJobStore
+from varco_core.job.memory import InMemoryJobStore  # canonical home since Plan 047;
+    # `varco_fastapi.job.store.InMemoryJobStore` still works as a re-export
 
 runner = JobRunner(InMemoryJobStore())
 await runner.start()
@@ -3509,6 +3581,11 @@ from varco_fastapi.lifespan import VarcoLifespan
 
 from varco_core.di import bind_instance, bootstrap as core_bootstrap
 from varco_redis.config import RedisEventBusSettings
+
+# Plan 047 — bootstrapping varco_redis/varco_sa no longer selects them; each
+# seam they serve needs VARCO_<SEAM>_BACKEND set too (see "Choosing a backend" above).
+# export VARCO_EVENT_BUS_BACKEND=redis
+# export VARCO_DLQ_BACKEND=sa
 
 container = DIContainer()
 # Redis Streams (at-least-once) — an explicit non-fallback settings instance
@@ -3822,16 +3899,10 @@ register_global_attribute_provider(
 > as a metric label. See the
 > [full decision table](technical_docs/features/observability-attributes.md).
 
-`VARCO_OTEL_*` env vars (no code required):
-
-| Env var | Default | Effect |
-|---|---|---|
-| `VARCO_OTEL_CAPTURE_PARAMS` | `true` | Process-wide `@span` parameter-capture kill switch. |
-| `VARCO_OTEL_CAPTURE_PARAMS_EXCLUDE` | *(empty)* | Comma-separated parameter names always excluded from capture. |
-| `VARCO_OTEL_GLOBAL_ATTRS` | *(empty)* | Literal `key=value` pairs, comma-separated. |
-| `VARCO_OTEL_GLOBAL_ATTR_ENV` | *(empty)* | `key=ENV_VAR_NAME` pairs — value read lazily from another env var (Kubernetes Downward API friendly). |
-| `VARCO_OTEL_GLOBAL_ATTRS_SPANS` | `true` | Apply the registry to spans. |
-| `VARCO_OTEL_GLOBAL_ATTRS_METRICS` | `true` | Apply the registry to metrics — the runtime rollback for a cardinality incident. |
+`VARCO_OTEL_*` env vars (no code required) — the capture kill switch, the exclude deny-list, and
+the global-attribute registry knobs. `OtelConfig` is code-only by design (Non-goal of Plan 048 /
+DI-6, so these stay loose reads, not a `bind_settings()`-registered class); full reference table:
+[technical_docs/features/observability-attributes.md](technical_docs/features/observability-attributes.md#env-var-reference).
 
 ### Auditing
 
@@ -3862,14 +3933,11 @@ class OrderService(AuditLogMixin, AsyncService[...]):
 ```
 
 `error_params()` is redacted on the error envelope by default
-(`ErrorEnvelopeSettings.redact_params=True`) — a secret-named key becomes `"[REDACTED]"` and a
-non-JSON value becomes `"<TypeName>"`. `RequestLoggingMiddleware(redactor=...)` gives a
-body/header/URL-logging subclass something to call; the default (`redactor=None`) is
-byte-identical to pre-3.2 logging.
-
-| Env var | Default | Effect |
-|---|---|---|
-| `VARCO_ERROR_REDACT_PARAMS` | `true` | Route `error_params()` through `redact_mapping()` + `json_safe()` before emitting it on the error envelope. |
+(`ErrorEnvelopeSettings.redact_params=True`, env `VARCO_ERROR_REDACT_PARAMS` — see
+[technical_docs/settings-reference.md](technical_docs/settings-reference.md)) — a secret-named
+key becomes `"[REDACTED]"` and a non-JSON value becomes `"<TypeName>"`.
+`RequestLoggingMiddleware(redactor=...)` gives a body/header/URL-logging subclass something to
+call; the default (`redactor=None`) is byte-identical to pre-3.2 logging.
 
 Full design (the pattern-constant table, the substring matcher's documented false positives, the
 hash-chain write-path-only rule, a Pitfalls table): `technical_docs/features/redaction.md`.
@@ -3903,7 +3971,7 @@ async with profiled("batch_export") as session:
 print(session.report.format())  # human-readable table to stderr/logs
 
 # 3. FastAPI: enable via env var or create_varco_app flag
-#    VARCO_PROFILER_ENABLED=true VARCO_PROFILER_ATTACH_HEADERS=true
+#    VARCO_PROFILING_ENABLED=true VARCO_PROFILING_ATTACH_HEADERS=true
 app = create_varco_app(container, enable_profiling=True)
 # → X-Profile-Wall-Ms + X-Profile-Mem-Kb headers on each response
 ```
@@ -4157,12 +4225,13 @@ store = await container.aget(AbstractTokenRevocationStore)
 registry = TrustedIssuerRegistry(revocation_store=store)  # still required — binding alone is not enough
 ```
 
-| Env var | Default | Meaning |
-|---|---|---|
-| `VARCO_JWT_REVOCATION_ENABLED` | `true` | Master kill-switch — consult the bound store *if one is wired at all* |
-| `VARCO_JWT_REVOCATION_FAILURE_MODE` | `fail_closed` | `fail_closed` (503 on a store outage) or `fail_open` (log + proceed) |
-| `VARCO_JWT_REVOCATION_REQUIRE_JTI` | `false` | `true` fails closed on a `jti`-less token at `TOKEN` scope — leave `false` for Auth0/Keycloak/Cognito issuers |
-| `VARCO_JWT_REVOCATION_SKEW_SECONDS` | `60.0` | Clock-skew tolerance added to a `TOKEN`-scope entry's TTL beyond the token's own `exp` |
+Or, without a code change: `VARCO_REVOCATION_BACKEND=redis` (uses `VARCO_REDIS_URL`) selects the
+same `RedisTokenRevocationStore` — the `TrustedIssuerRegistry(revocation_store=...)` second step
+is unchanged either way. See "Choosing a backend" above.
+
+`VARCO_JWT_REVOCATION_*` (the master kill-switch, `fail_closed`/`fail_open` failure mode, the
+`jti`-required flag, and the clock-skew allowance) — every name, type, and default:
+[technical_docs/settings-reference.md](technical_docs/settings-reference.md).
 
 Full design (the four-scope table, the not-valid-before watermark rule, the two-step DI footgun,
 a Pitfalls table): `technical_docs/features/credential-and-token-lifecycle.md`.
@@ -4190,9 +4259,11 @@ digest = hash_api_key("sk_live_abc123", pepper=os.environb.get(b"VARCO_API_KEY_P
 auth = ApiKeyAuth(hashed_keys={digest: AuthContext(user_id="svc_orders")})
 ```
 
-| Env var | Default | Meaning |
-|---|---|---|
-| `VARCO_API_KEY_PEPPER` | unset (plain SHA-256) | Process-wide pepper `ApiKeyAuth` reads when no explicit `pepper=` is given; must be identical wherever `hash_api_key()` is called offline and wherever `ApiKeyAuth` verifies at runtime, or every key silently 401s |
+`VARCO_API_KEY_PEPPER` (unset by default, plain SHA-256) is the process-wide pepper `ApiKeyAuth`
+reads when no explicit `pepper=` is given — it is a loose env read outside `bind_settings()`
+(Plan 048 / §D-loose, allowlisted — 053's surface), so it does not appear in the generated
+settings reference; it must be identical wherever `hash_api_key()` is called offline and
+wherever `ApiKeyAuth` verifies at runtime, or every key silently 401s.
 
 ⚠️ **The `?api_key=` query-parameter fallback is off by default** (`param=None`) — a credential in
 a URL is already in the access log, the proxy log, and the `Referer` header by the time anything
@@ -4247,10 +4318,10 @@ On the wire:
 }
 ```
 
-| Env var | Default | Meaning |
-|---|---|---|
-| `VARCO_CLOUDEVENTS_SOURCE` | *(none — required)* | Producer identity. There is no correct default for "who am I"; construction raises `ValidationError` without it |
-| `VARCO_CLOUDEVENTS_DATACONTENTTYPE` | `application/json` | Must end in `json`/`+json` — varco emits `data`, never `data_base64` |
+`VARCO_CLOUDEVENTS_SOURCE` is **required** — there is no correct default for "who am I", so
+construction raises `ValidationError` without it. `VARCO_CLOUDEVENTS_DATACONTENTTYPE` defaults to
+`application/json` and must end in `json`/`+json` (varco emits `data`, never `data_base64`). Full
+reference: [technical_docs/settings-reference.md](technical_docs/settings-reference.md).
 
 ⚠️ Four things to know before adopting:
 
@@ -4441,10 +4512,11 @@ A tampered/expired signature raises `WebhookSignatureError` (401); a replayed me
 `WebhookReplayError` (409). Both render through the standard error envelope with a
 `correlation_id`, and neither ever includes the secret or the signature value.
 
-| Env var | Default | Meaning |
-|---|---|---|
-| `VARCO_WEBHOOK_INBOUND_TOLERANCE_SECONDS` | `300.0` | Clock-skew tolerance accepted on an inbound delivery's timestamp — separate from the outbound `signature_tolerance_seconds` |
-| `VARCO_WEBHOOK_INBOUND_REPLAY_TTL_SECONDS` | `600.0` | Default TTL for `WebhookReplayGuard` entries — pass an explicit, longer `ttl_seconds=` for GitHub's multi-hour retry window |
+`VARCO_WEBHOOK_INBOUND_TOLERANCE_SECONDS` (clock-skew tolerance, default `300.0`, separate from
+the outbound `signature_tolerance_seconds`) and `VARCO_WEBHOOK_INBOUND_REPLAY_TTL_SECONDS`
+(default TTL for `WebhookReplayGuard` entries — pass an explicit, longer `ttl_seconds=` for
+GitHub's multi-hour retry window) — every name, type, and default:
+[technical_docs/settings-reference.md](technical_docs/settings-reference.md).
 
 Full design (the provider divergence table, why Standard Webhooks/Svix delegates to the shipped
 signer, the replay model, secret sourcing, the raw-body/body-limit story, a Pitfalls table):
@@ -4719,17 +4791,11 @@ app.add_middleware(SecurityHeadersMiddleware)  # added AFTER ErrorMiddleware →
 install_cors(app, CORSConfig.from_env())
 ```
 
-| Env var | Default | Meaning |
-|---|---|---|
-| `VARCO_SECURITY_HEADERS_ENABLED` | `true` | Master on/off switch |
-| `VARCO_SECURITY_HEADERS_PRESET` | `balanced` | `balanced` \| `strict` |
-| `VARCO_SECURITY_HEADERS_X_CONTENT_TYPE_OPTIONS` | `nosniff` | Set empty/unset to omit |
-| `VARCO_SECURITY_HEADERS_X_FRAME_OPTIONS` | `DENY` | `SAMEORIGIN` for a self-framing app |
-| `VARCO_SECURITY_HEADERS_REFERRER_POLICY` | `strict-origin-when-cross-origin` | |
-| `VARCO_SECURITY_HEADERS_HSTS_MAX_AGE` | `31536000` | `0` disables HSTS |
-| `VARCO_SECURITY_HEADERS_HSTS_INCLUDE_SUBDOMAINS` | `true` | |
-| `VARCO_SECURITY_HEADERS_TRUSTED_PROXIES` | `()` | CIDRs trusted for `X-Forwarded-Proto` (HSTS behind a TLS-terminating proxy) |
-| `VARCO_SECURITY_HEADERS_EXCLUDE_PATHS` | `("/docs", "/redoc", "/openapi.json")` | Path prefixes exempt from every header |
+`SecurityHeadersSettings` (env prefix `VARCO_SECURITY_HEADERS_`) covers the master switch, the
+`balanced`/`strict` preset, every individual header (content-type-options, frame-options,
+referrer-policy, HSTS max-age/subdomains), trusted proxies for `X-Forwarded-Proto`, and exempt
+path prefixes. Every name, type, and default:
+[technical_docs/settings-reference.md](technical_docs/settings-reference.md).
 
 ## Request body limits
 
@@ -4762,12 +4828,10 @@ app.add_middleware(BodyLimitMiddleware)
 app.add_middleware(ErrorMiddleware)  # added AFTER → ends up outside BodyLimitMiddleware
 ```
 
-| Env var | Default | Meaning |
-|---|---|---|
-| `VARCO_BODY_LIMIT_ENABLED` | `true` | Master on/off switch |
-| `VARCO_BODY_LIMIT_MAX_BYTES` | `10485760` (10 MiB) | The byte ceiling |
-| `VARCO_BODY_LIMIT_EXEMPT_PATHS` | `()` | Path prefixes exempt entirely |
-| `VARCO_BODY_LIMIT_TRUST_CONTENT_LENGTH` | `true` | Whether to also do the cheap pre-check (the cumulative count always runs) |
+`BodyLimitSettings` (env prefix `VARCO_BODY_LIMIT_`) covers the master switch, the byte ceiling
+(default 10 MiB), exempt path prefixes, and whether the cheap `Content-Length` pre-check also
+runs (the cumulative count always runs regardless). Every name, type, and default:
+[technical_docs/settings-reference.md](technical_docs/settings-reference.md).
 
 ## HTTP rate limiting
 
@@ -4824,15 +4888,10 @@ too. Use `RedisRateLimiter` (TTL-bounded) for any multi-process deployment, and 
 `technical_docs/features/http-edge-hardening.md`'s §D-S10-keyspace subsection for the full
 reasoning.
 
-| Env var | Default | Meaning |
-|---|---|---|
-| `VARCO_RATE_LIMIT_ENABLED` | `true` | Master on/off switch for a constructed instance |
-| `VARCO_RATE_LIMIT_FAIL_OPEN` | `true` | A limiter exception allows the request (`false` → 503) |
-| `VARCO_RATE_LIMIT_TRUSTED_PROXIES` | `()` | CIDRs trusted for `X-Forwarded-For` (the `IP` scope) |
-| `VARCO_RATE_LIMIT_TRUSTED_PROXY_HOPS` | `0` | Trusted proxy hops to skip from the right |
-| `VARCO_RATE_LIMIT_EMIT_DRAFT_HEADERS` | `false` | Emit the IETF draft-11 `RateLimit-Policy` header |
-| `VARCO_RATE_LIMIT_EXEMPT_PATHS` | `()` | Path prefixes exempt from every rule |
-| `VARCO_RATE_LIMIT_ERROR_LOG_INTERVAL` | `60.0` | Minimum seconds between repeated "limiter raised"/"unkeyable rule" log lines |
+`RateLimitSettings` (env prefix `VARCO_RATE_LIMIT_`) covers the master switch, fail-open/closed
+behaviour, trusted proxies and hop count for `X-Forwarded-For`, the IETF draft-11 header opt-in,
+exempt path prefixes, and the error-log interval. Every name, type, and default:
+[technical_docs/settings-reference.md](technical_docs/settings-reference.md).
 
 `Retry-After` is always sent on a 429 (RFC 9110 §10.2.3). `RateLimit`/`X-RateLimit-*` are never
 emitted — the `RateLimiter` ABC cannot report remaining quota. Full design (scope/stage model,
@@ -4886,11 +4945,10 @@ app = create_varco_app(container, extra_lifespan_components=[lifecycle])
 `.summary()` renders one line, always separating `NOT_ASSESSED` ("could not check") from the
 other three severities so it is never mistaken for a clean report.
 
-| Env var | Default | Meaning |
-|---|---|---|
-| `VARCO_SECURITY_ENV` | `production` | `"production"` \| `"development"` — **presentation only**; every check still runs in both modes, `WARN` findings are demoted to `INFO` in `development` |
-| `VARCO_SECURITY_ENFORCE` | `warn` | `"warn"` \| `"refuse"` — `"refuse"` raises at `start()` on any unsuppressed `HIGH` (or, in `production`, `WARN`) finding; never on `NOT_ASSESSED` alone |
-| `VARCO_SECURITY_SUPPRESS` | `""` | Comma-separated `check` ids to suppress — the finding is still produced, demoted to `INFO`, and flagged `suppressed=True` |
+`SecurityPostureSettings` (env prefix `VARCO_SECURITY_`) covers the `production`/`development`
+presentation mode (`VARCO_SECURITY_ENV`, **presentation only** — every check still runs in both
+modes), the `warn`/`refuse` enforcement mode, and the comma-separated suppression list. Every
+name, type, and default: [technical_docs/settings-reference.md](technical_docs/settings-reference.md).
 
 Full design (the collector table, the consolidated 4.0 flip list gathering every warn-only
 default across the 3.2 cycle, a Pitfalls table): `technical_docs/features/security-posture.md`.

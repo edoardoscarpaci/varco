@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from varco_memcached.di import async_bootstrap, bootstrap
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -213,3 +214,30 @@ class TestPackageReexport:
         assert "async_bootstrap" in varco_memcached.__all__, (
             "'async_bootstrap' missing from varco_memcached.__all__"
         )
+
+
+class TestSettingsBoundOnceAndFailFast:
+    """Plan 048 / Step 11 — MemcachedCacheSettings goes through bind_settings()."""
+
+    def test_settings_bound_once_after_two_bootstrap_calls(self) -> None:
+        from providify import DIContainer
+        from varco_memcached.cache import MemcachedCacheSettings
+        from varco_memcached.di import bootstrap
+
+        c = DIContainer()
+        bootstrap(c)
+        bootstrap(c)
+
+        assert len(c.get_all_bindings(MemcachedCacheSettings)) == 1
+
+    def test_bad_env_fails_bootstrap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from providify import DIContainer
+        from varco_core.settings import SettingsValidationError
+        from varco_memcached.di import bootstrap
+
+        monkeypatch.setenv("VARCO_MEMCACHED_CACHE_PORT", "notanint")
+
+        with pytest.raises(SettingsValidationError) as exc:
+            bootstrap(DIContainer())
+
+        assert "VARCO_MEMCACHED_CACHE_PORT" in str(exc.value)

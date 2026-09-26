@@ -25,6 +25,16 @@ from varco_redis.cache import (
     RedisLayeredCacheConfiguration,
 )
 
+
+@pytest.fixture(autouse=True)
+def _select_layered_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Plan 047 §D-tests: this module directly `ainstall()`s
+    # RedisLayeredCacheConfiguration, a secondary value for the `cache`
+    # seam — the package-wide conftest autouse fixture selects the
+    # primary value ("redis"), so this module overrides it locally.
+    monkeypatch.setenv("VARCO_CACHE_BACKEND", "layered")
+
+
 # ── FakeRedis (reused from test_redis_cache.py conventions) ──────────────────
 
 
@@ -120,6 +130,9 @@ class TestRedisLayeredCacheConfiguration:
             mock_aioredis.from_url.return_value = fake_redis
 
             container = DIContainer()
+            from varco_core.settings import bind_settings
+
+            bind_settings(container, LayeredCacheSettings)
             await container.ainstall(RedisLayeredCacheConfiguration)
             cache = await container.aget(CacheBackend)
 
@@ -136,6 +149,9 @@ class TestRedisLayeredCacheConfiguration:
             mock_aioredis.from_url.return_value = fake_redis
 
             container = DIContainer()
+            from varco_core.settings import bind_settings
+
+            bind_settings(container, LayeredCacheSettings)
             await container.ainstall(RedisLayeredCacheConfiguration)
             cache = await container.aget(CacheBackend)
 
@@ -152,6 +168,9 @@ class TestRedisLayeredCacheConfiguration:
             mock_aioredis.from_url.return_value = fake_redis
 
             container = DIContainer()
+            from varco_core.settings import bind_settings
+
+            bind_settings(container, LayeredCacheSettings)
             await container.ainstall(RedisLayeredCacheConfiguration)
             cache = await container.aget(CacheBackend)
 
@@ -170,6 +189,9 @@ class TestRedisLayeredCacheConfiguration:
             mock_aioredis.from_url.return_value = fake_redis
 
             container = DIContainer()
+            from varco_core.settings import bind_settings
+
+            bind_settings(container, LayeredCacheSettings)
             await container.ainstall(RedisLayeredCacheConfiguration)
             cache = await container.aget(CacheBackend)
 
@@ -186,6 +208,9 @@ class TestRedisLayeredCacheConfiguration:
             mock_aioredis.from_url.return_value = fake_redis
 
             container = DIContainer()
+            from varco_core.settings import bind_settings
+
+            bind_settings(container, LayeredCacheSettings)
             await container.ainstall(RedisLayeredCacheConfiguration)
 
             c1 = await container.aget(CacheBackend)
@@ -258,6 +283,9 @@ class TestRedisLayeredCacheConfiguration:
             mock_aioredis.from_url.return_value = fake_redis
 
             container = DIContainer()
+            from varco_core.settings import bind_settings
+
+            bind_settings(container, LayeredCacheSettings)
             await container.ainstall(RedisLayeredCacheConfiguration)
 
             cache = await container.aget(CacheBackend)

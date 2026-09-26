@@ -160,6 +160,16 @@ Auth0/Keycloak/Cognito deployment the moment a store is wired, punishing the app
 right thing. Automatic minting is on the 4.0 flip list, reported warn-only by Plan 036's
 `inspect_revocation_posture()`.
 
+## Selecting/enabling revocation via env (Plan 047)
+
+`VARCO_REVOCATION_BACKEND=<null|memory|redis>` is the env twin of
+`enable_token_revocation()`/`enable_redis_token_revocation()` — `null` (the default) is
+`NullTokenRevocationStore`, `memory` opts into `InMemoryTokenRevocationStore`, `redis` opts into
+`RedisTokenRevocationStore` (using `VARCO_REDIS_URL`). The two-step pitfall above is unchanged
+either way: binding a store is not enough — `TrustedIssuerRegistry(revocation_store=...)` still
+needs it explicitly. See `technical_docs/features/dependency-injection.md`'s "Selecting a
+backend" section for the code > env precedence rule.
+
 ## Pitfalls
 
 | Pitfall | Symptom | Fix |

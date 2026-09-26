@@ -54,3 +54,10 @@ def nats_url(request: pytest.FixtureRequest) -> str:
 
     with NatsContainer().with_command("-js") as container:
         yield container.nats_uri()
+
+
+@pytest.fixture(autouse=True)
+def _select_nats_backends(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Plan 047 §D-tests — see varco_kafka's twin fixture docstring."""
+    monkeypatch.setenv("VARCO_EVENT_BUS_BACKEND", "nats")
+    monkeypatch.setenv("VARCO_DLQ_BACKEND", "nats")

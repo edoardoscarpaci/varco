@@ -217,17 +217,17 @@ pipeline diagram, and Keycloak/Cognito/Auth0 recipes live in
 when it refreshes:
 
 ```bash
-export VARCO_JWKS_MIN_REFRESH_SECONDS=10   # rate limit between kid-miss refreshes (default)
-export VARCO_JWKS_TTL_SECONDS=300          # proactively reload once the cache is this old (default: 0 = disabled)
+export VARCO_JWT_JWKS_MIN_REFRESH_SECONDS=10   # rate limit between kid-miss refreshes (default)
+export VARCO_JWT_JWKS_TTL_SECONDS=300          # proactively reload once the cache is this old (default: 0 = disabled)
 ```
 
-By default (`VARCO_JWKS_TTL_SECONDS=0`), the registry only refreshes reactively — on
-a `kid` cache miss, rate-limited by `VARCO_JWKS_MIN_REFRESH_SECONDS`. Setting
-`VARCO_JWKS_TTL_SECONDS` makes `get_key()` proactively reload all sources once the
+By default (`VARCO_JWT_JWKS_TTL_SECONDS=0`), the registry only refreshes reactively — on
+a `kid` cache miss, rate-limited by `VARCO_JWT_JWKS_MIN_REFRESH_SECONDS`. Setting
+`VARCO_JWT_JWKS_TTL_SECONDS` makes `get_key()` proactively reload all sources once the
 cached keyset exceeds that age, even without a miss.
 
 A background refresher can now tick on its own too (Plan 041 / S22) —
-`registry.start_refresh()`/`stop_refresh()`, off by default (`VARCO_JWKS_TTL_SECONDS=0`),
+`registry.start_refresh()`/`stop_refresh()`, off by default (`VARCO_JWT_JWKS_TTL_SECONDS=0`),
 wired via `varco_fastapi.JwksRefreshLifecycle` + `create_varco_app(jwks_refresh=...)`. See
 `technical_docs/features/jwt-claim-transformer.md`'s "JWKS caching knobs, and the background
 refresher" section for the full design.

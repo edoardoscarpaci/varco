@@ -9,7 +9,7 @@ Covers (Plan 002, Phase 2, step 16):
     - ROLES_STRIP_PREFIX / ROLES_SHAPE / ROLES_REQUIRED.
     - PATH_SEPARATOR / STRICT.
     - Per-issuer mappings (VARCO_JWT_TRANSFORM__<LABEL>__*), inheritance,
-      __ISS fallback to FASTREST_AUTHORIZATION__<LABEL>__ISS, label normalisation.
+      __ISS fallback to VARCO_AUTHORIZATION__<LABEL>__ISS, label normalisation.
     - Unmapped issuer → IDENTITY, no error.
     - Conflicting __ISS across two labels → ClaimTransformError at load time.
     - Unknown claim path → empty (non-required) / ClaimTransformError (required).
@@ -178,8 +178,8 @@ class TestPerIssuerMapping:
 
     def test_iss_fallback_to_authorization_config_label(self, monkeypatch):
         # No __ISS on the transform label — falls back to
-        # FASTREST_AUTHORIZATION__KEYCLOAK__ISS.
-        monkeypatch.setenv("FASTREST_AUTHORIZATION__KEYCLOAK__ISS", "kc-fallback-iss")
+        # VARCO_AUTHORIZATION__KEYCLOAK__ISS.
+        monkeypatch.setenv("VARCO_AUTHORIZATION__KEYCLOAK__ISS", "kc-fallback-iss")
         monkeypatch.setenv("VARCO_JWT_TRANSFORM__KEYCLOAK__ROLES_FIELD", "realm_access.roles")
         signed = _sign(iss="kc-fallback-iss", realm_access={"roles": ["kc-role"]})
         token = JwtParser.parse(signed, _SECRET, algorithms=["HS256"])

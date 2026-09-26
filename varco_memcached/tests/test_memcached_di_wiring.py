@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 from providify import DIContainer, IssueKind
-from varco_conformance.di_wiring import DIWiringConformance
+from varco_conformance.di_wiring import DIWiringConformance, Selectable
 from varco_core.auth.authorizer import AbstractAuthorizer
 from varco_core.cache.base import CacheBackend
 from varco_core.event import AbstractEventBus
@@ -21,6 +21,8 @@ from varco_core.event.dlq import AbstractDeadLetterQueue
 from varco_core.event.producer import AbstractEventProducer
 from varco_core.event.serializer import Serializer
 from varco_core.flags import AbstractFeatureFlags
+from varco_core.idempotency.base import AbstractIdempotencyStore
+from varco_core.job.base import AbstractJobStore
 from varco_core.lock import AbstractDistributedLock
 from varco_core.observability import OtelConfig
 from varco_core.revocation import AbstractTokenRevocationStore
@@ -30,6 +32,7 @@ from varco_memcached.cache import MemcachedCacheSettings
 
 
 class TestVarcoMemcachedDIWiringConformance(DIWiringConformance):
+    settings_classes = (MemcachedCacheSettings,)
     expected_defaults = (
         (CacheBackend, "in_memory"),
         (AbstractEventBus, "in_memory"),
@@ -44,9 +47,15 @@ class TestVarcoMemcachedDIWiringConformance(DIWiringConformance):
         (Serializer[Event], None),
         (AbstractAuthorizer, None),
         (OtelConfig, None),
+        # Plan 047 §D-vocab — the idempotency/job_store seam defaults.
+        (AbstractIdempotencyStore, "in_memory"),
+        (AbstractJobStore, "in_memory"),
         (MemcachedCacheSettings, None),
         (CacheBackend, None),
     )
+
+    # Plan 047 §D-suite.
+    selectable = (Selectable("cache", "memcached", CacheBackend, None, "memcached_cache"),)
 
     known_warnings = frozenset(
         {

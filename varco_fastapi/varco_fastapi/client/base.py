@@ -38,12 +38,13 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import os
 import typing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, cast
 
 import httpx
+
+from varco_fastapi.client.settings import ClientProfileSettings
 
 if TYPE_CHECKING:
     from varco_fastapi.auth.trust_store import TrustStore
@@ -184,6 +185,11 @@ class ClientProfile:
         """
         Read middleware config from environment variables.
 
+        **Plan 048 / DI-6, §D-convert (Decision 1): now a thin wrapper over
+        ``from_settings(ClientProfileSettings())``** — same shape as
+        ``TrustStore.from_env()`` delegating to ``TrustStore.from_settings
+        (TlsSettings())``.
+
         Env vars::
 
             VARCO_CLIENT_TIMEOUT       — default timeout in seconds (default: 30)
@@ -200,6 +206,28 @@ class ClientProfile:
             - Unknown env var values → logged and defaults used.
             - ``VARCO_CLIENT_RETRY_MAX=0`` → no retry middleware added.
         """
+        return cls.from_settings()
+
+    @classmethod
+    def from_settings(cls, settings: ClientProfileSettings | None = None) -> ClientProfile:
+        """
+        Build a ``ClientProfile`` from a ``ClientProfileSettings`` instance.
+
+        Args:
+            settings: The ``ClientProfileSettings`` to read
+                ``VARCO_CLIENT_*`` values from. ``None`` (the default)
+                constructs ``ClientProfileSettings()`` — i.e. reads the
+                real process environment.
+
+        Returns:
+            Frozen ``ClientProfile`` with a ``middleware`` tuple built from
+            *settings* (``OTelClientMiddleware`` if ``otel_enabled``, always
+            ``CorrelationIdMiddleware``, ``RetryMiddleware`` if
+            ``retry_max > 0``) and ``timeout`` copied straight across.
+
+        Edge cases:
+            - ``settings.retry_max == 0`` → no ``RetryMiddleware`` added.
+        """
         from varco_core.resilience import RetryPolicy  # noqa: PLC0415
 
         from varco_fastapi.client.middleware import (  # noqa: PLC0415
@@ -208,19 +236,20 @@ class ClientProfile:
             RetryMiddleware,
         )
 
-        timeout = float(os.environ.get("VARCO_CLIENT_TIMEOUT", "30"))
-        retry_max = int(os.environ.get("VARCO_CLIENT_RETRY_MAX", "0"))
-        retry_delay = float(os.environ.get("VARCO_CLIENT_RETRY_DELAY", "0.5"))
-        otel_enabled = os.environ.get("VARCO_CLIENT_OTEL_ENABLED", "true").lower() == "true"
+        resolved = settings if settings is not None else ClientProfileSettings()
 
         mw: list[AbstractClientMiddleware] = []
-        if otel_enabled:
+        if resolved.otel_enabled:
             mw.append(OTelClientMiddleware())
         mw.append(CorrelationIdMiddleware())
-        if retry_max > 0:
-            mw.append(RetryMiddleware(RetryPolicy(max_attempts=retry_max, base_delay=retry_delay)))
+        if resolved.retry_max > 0:
+            mw.append(
+                RetryMiddleware(
+                    RetryPolicy(max_attempts=resolved.retry_max, base_delay=resolved.retry_delay)
+                )
+            )
 
-        return cls(middleware=tuple(mw), timeout=timeout)
+        return cls(middleware=tuple(mw), timeout=resolved.timeout)
 
     def with_middleware(self, *mw: AbstractClientMiddleware) -> ClientProfile:
         """

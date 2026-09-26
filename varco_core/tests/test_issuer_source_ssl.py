@@ -164,18 +164,18 @@ def test_from_env_produces_none_ssl_context_with_no_ca_env_vars_set(
     # Byte-identical-default proof: with no CA env var set, urlopen(context=None) — today's
     # behaviour, unchanged.
     for name in (
-        "VARCO_TRUST_STORE_DIR",
-        "VARCO_CA_CERT",
-        "VARCO_CLIENT_CERT",
-        "VARCO_CLIENT_KEY",
+        "VARCO_TLS_TRUST_STORE_DIR",
+        "VARCO_TLS_CA_CERT",
+        "VARCO_TLS_CLIENT_CERT",
+        "VARCO_TLS_CLIENT_KEY",
         "SSL_CERT_FILE",
         "SSL_CERT_DIR",
-        "FASTREST_AUTHORIZATION__SYS__URL",
-        "FASTREST_AUTHORIZATION__SYS__ISS",
+        "VARCO_AUTHORIZATION__SYS__URL",
+        "VARCO_AUTHORIZATION__SYS__ISS",
     ):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("FASTREST_AUTHORIZATION__SYS__URL", "jwks::https://example.com/jwks.json")
-    monkeypatch.setenv("FASTREST_AUTHORIZATION__SYS__ISS", "sys")
+    monkeypatch.setenv("VARCO_AUTHORIZATION__SYS__URL", "jwks::https://example.com/jwks.json")
+    monkeypatch.setenv("VARCO_AUTHORIZATION__SYS__ISS", "sys")
 
     from varco_core.authority.registry import TrustedIssuerRegistry
 
@@ -192,16 +192,16 @@ def test_from_env_produces_non_none_ssl_context_with_ca_cert_set(
     ca_path = write_pem(tmp_path / "ca.pem", ca)
 
     for name in (
-        "VARCO_TRUST_STORE_DIR",
-        "VARCO_CLIENT_CERT",
-        "VARCO_CLIENT_KEY",
+        "VARCO_TLS_TRUST_STORE_DIR",
+        "VARCO_TLS_CLIENT_CERT",
+        "VARCO_TLS_CLIENT_KEY",
         "SSL_CERT_FILE",
         "SSL_CERT_DIR",
     ):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("VARCO_CA_CERT", str(ca_path))
-    monkeypatch.setenv("FASTREST_AUTHORIZATION__SYS__URL", "jwks::https://example.com/jwks.json")
-    monkeypatch.setenv("FASTREST_AUTHORIZATION__SYS__ISS", "sys")
+    monkeypatch.setenv("VARCO_TLS_CA_CERT", str(ca_path))
+    monkeypatch.setenv("VARCO_AUTHORIZATION__SYS__URL", "jwks::https://example.com/jwks.json")
+    monkeypatch.setenv("VARCO_AUTHORIZATION__SYS__ISS", "sys")
 
     from varco_core.authority.registry import TrustedIssuerRegistry
 

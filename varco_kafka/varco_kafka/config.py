@@ -54,7 +54,6 @@ from __future__ import annotations
 import enum
 from typing import Any
 
-from providify import Fallback, Provider
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 from varco_core.event.config import EventBusSettings
@@ -224,40 +223,12 @@ class KafkaEventBusSettings(EventBusSettings):
         return f"{self.channel_prefix}{channel}"
 
 
-@Fallback
-@Provider(singleton=True)
-def kafka_event_bus_settings() -> KafkaEventBusSettings:
-    """
-    Default ``KafkaEventBusSettings`` binding, discovered by
-    ``container.scan("varco_kafka", recursive=True)``.
-
-    DESIGN: ``@Provider`` factory instead of ``@Singleton`` on the class
-        A pydantic ``BaseSettings`` declares ``__init__(self, **values: Any)``.
-        A class-level ``@Singleton`` resolves a ``ClassBinding`` by injecting
-        the constructor signature — on providify < 1.1.0 that made every
-        resolution fail with ``LookupError: Cannot resolve 'values:
-        typing.Any'``. On current providify (>=1.1.0) the per-parameter
-        resolver skips ``VAR_KEYWORD`` parameters outright
-        (``providify/_annotations.py:583-590``), so ``**values`` is no longer
-        the trap it used to be — but the sanctioned shape must not depend on
-        that third-party implementation detail, and this keeps the class
-        consistent with its sibling settings factory
-        (``kafka_channel_manager_settings`` in ``varco_kafka.channel``).
-        A factory has no injectable parameters, so the container just calls
-        it.
-        ✅ ``container.get(KafkaEventBusSettings)`` works after a plain scan.
-        ✅ Same precedent as ``varco_casbin/di.py`` and ``varco_fastapi/di.py``.
-        ❌ Settings are no longer discoverable by class decoration alone — this
-           module must stay importable by the scanner (it always is).
-
-    ``@Fallback`` — the in-process default; any application-supplied
-    provider wins regardless of registration order.
-
-    Returns:
-        ``KafkaEventBusSettings`` populated from ``VARCO_KAFKA_*`` environment
-        variables (pydantic reads them at construction).
-    """
-    return KafkaEventBusSettings()
+# Plan 048 / DI-6, Step 9 — the `kafka_event_bus_settings` @Fallback
+# @Provider that used to live here is gone. `KafkaEventBusSettings` is now
+# registered eagerly, fail-fast, by `bind_settings()` inside
+# `varco_kafka.di.bootstrap()` (before `scan()`) — a bad env value now
+# fails a plain `bootstrap()` call instead of only failing lazily the
+# first time something resolved the settings.
 
 
 __all__ = [

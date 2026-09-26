@@ -47,7 +47,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from providify import Fallback, Provider
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 from varco_core.event.config import EventBusSettings
@@ -136,40 +135,14 @@ class RedisEventBusSettings(EventBusSettings):
         return f"{self.channel_prefix}{channel}"
 
 
-@Fallback
-@Provider(singleton=True)
-def redis_event_bus_settings() -> RedisEventBusSettings:
-    """
-    Default ``RedisEventBusSettings`` binding, discovered by
-    ``container.scan("varco_redis", recursive=True)``.
-
-    DESIGN: ``@Provider`` factory instead of ``@Singleton`` on the class
-        A pydantic ``BaseSettings`` declares ``__init__(self, **values: Any)``.
-        A class-level ``@Singleton`` resolves a ``ClassBinding`` by injecting
-        the constructor signature — on providify < 1.1.0 that made every
-        resolution fail with ``LookupError: Cannot resolve 'values:
-        typing.Any'``. On current providify (>=1.1.0) the per-parameter
-        resolver skips ``VAR_KEYWORD`` parameters outright
-        (``providify/_annotations.py:583-590``), so ``**values`` is no longer
-        the trap it used to be — but the sanctioned shape must not depend on
-        that third-party implementation detail, and this keeps the class
-        consistent with its sibling settings factory
-        (``RedisBackplaneSettings`` in ``varco_redis.backplane``).
-        A factory has no injectable parameters, so the container just calls
-        it.
-        ✅ ``container.get(RedisEventBusSettings)`` works after a plain scan.
-        ✅ Same precedent as ``varco_casbin/di.py`` and ``varco_fastapi/di.py``.
-        ❌ Settings are no longer discoverable by class decoration alone — this
-           module must stay importable by the scanner (it always is).
-
-    ``@Fallback`` — the in-process default; any application-supplied
-    provider wins regardless of registration order.
-
-    Returns:
-        ``RedisEventBusSettings`` populated from ``VARCO_REDIS_*`` environment
-        variables (pydantic reads them at construction).
-    """
-    return RedisEventBusSettings()
+# Plan 048 / DI-6, Step 8 — the module-level `@Fallback @Provider` that used
+# to live here is GONE. `RedisEventBusSettings` is now registered exclusively
+# by `varco_redis.di.bootstrap()`'s `bind_settings(container,
+# RedisEventBusSettings)` call, before `container.scan("varco_redis",
+# recursive=True)` runs — one recipe, one registration, fail-fast with the
+# offending env var named (`SettingsValidationError`) instead of a bad value
+# surfacing lazily at first resolution. An app that scans `varco_redis`
+# WITHOUT calling `bootstrap()` must call `bind_settings()` itself.
 
 
 __all__ = [

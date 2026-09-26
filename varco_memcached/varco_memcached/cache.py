@@ -62,6 +62,7 @@ from pydantic_settings import SettingsConfigDict
 from varco_core.cache.base import CacheBackend, InvalidationStrategy
 from varco_core.cache.config import CacheSettings
 from varco_core.di import BACKEND_PRIORITY
+from varco_core.di.select import selected_by
 from varco_core.serialization import JsonSerializer, Serializer
 
 _logger = logging.getLogger(__name__)
@@ -617,35 +618,28 @@ class MemcachedCacheConfiguration:
         result = await cache.get("key")
         await container.ashutdown()
 
-    Overriding settings::
+    Overriding settings (Plan 048 / DI-6)::
 
-        # @Provider-decorated module-level function — provide() rejects bare
-        # lambdas and takes no second "interface" argument. Registered in
-        # any order — the default is @Fallback (Plan 045).
-        @Provider(singleton=True)
-        def memcached_cache_settings() -> MemcachedCacheSettings:
-            return MemcachedCacheSettings(
-                host=os.environ["MEMCACHED_HOST"],
-                key_prefix="myapp:",
-            )
+        from varco_core.settings import bind_settings
 
-        container.provide(memcached_cache_settings)
+        bind_settings(
+            container,
+            MemcachedCacheSettings,
+            instance=MemcachedCacheSettings(host=os.environ["MEMCACHED_HOST"], key_prefix="myapp:"),
+        )
         await container.ainstall(MemcachedCacheConfiguration)
     """
 
-    @Fallback
-    @Provider(singleton=True)
-    def memcached_cache_settings(self) -> MemcachedCacheSettings:
-        """
-        Default ``MemcachedCacheSettings`` pointing at ``localhost:11211``.
-
-        Returns:
-            A ``MemcachedCacheSettings`` with development-friendly defaults.
-        """
-        # Reads from VARCO_MEMCACHED_CACHE_* env vars if set.
-        return MemcachedCacheSettings.from_env()
+    # Plan 048 / DI-6, Step 11 — `memcached_cache_settings` used to live
+    # here as a `@Fallback @Provider` (lazily reading VARCO_MEMCACHED_
+    # CACHE_* only when the provider was actually resolved — a bad env
+    # value never failed a plain `bootstrap()` call, only an eventual
+    # `container.get(MemcachedCacheSettings)`). `MemcachedCacheSettings`
+    # is now registered eagerly, fail-fast, by `bind_settings()` inside
+    # `bootstrap()` (see `di.py`).
 
     @Fallback
+    @selected_by("cache", "memcached")
     @Provider(singleton=True, priority=BACKEND_PRIORITY)
     async def memcached_cache(
         self,

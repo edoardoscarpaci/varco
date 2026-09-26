@@ -296,8 +296,8 @@ when its in-memory keyset cache refreshes:
 
 ```python
 TrustedIssuerRegistry(
-    min_refresh_interval=10.0,  # VARCO_JWKS_MIN_REFRESH_SECONDS (default)
-    ttl_seconds=0.0,  # VARCO_JWKS_TTL_SECONDS (default — disabled)
+    min_refresh_interval=10.0,  # VARCO_JWT_JWKS_MIN_REFRESH_SECONDS (default)
+    ttl_seconds=0.0,  # VARCO_JWT_JWKS_TTL_SECONDS (default — disabled)
 )
 ```
 

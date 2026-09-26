@@ -23,6 +23,8 @@ docker compose up -d          # PostgreSQL + Redis
 DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost/example" \
 VARCO_REDIS_URL="redis://localhost:6379" \
 VARCO_REDIS_CACHE_URL="redis://localhost:6379" \
+VARCO_EVENT_BUS_BACKEND="redis" \
+VARCO_CACHE_BACKEND="redis" \
 uv run uvicorn example.app:create_app --factory --reload
 
 # 4. Open the interactive docs
@@ -291,6 +293,8 @@ uv run pytest example/example/tests/test_e2e_integration.py -m integration -v
 | `DATABASE_URL` | Yes | — | asyncpg PostgreSQL DSN |
 | `VARCO_REDIS_URL` | Yes | — | Redis URL for the event bus |
 | `VARCO_REDIS_CACHE_URL` | Yes | — | Redis URL for the cache backend |
+| `VARCO_EVENT_BUS_BACKEND` | Yes (since Plan 047) | `memory` | Set `redis` to make the bootstrapped Redis bus live — unset silently uses the in-process `InMemoryEventBus` instead |
+| `VARCO_CACHE_BACKEND` | Yes (since Plan 047) | `memory` | Set `redis` to make the bootstrapped Redis cache live — unset silently uses the in-process `InMemoryCache` instead |
 | `VARCO_JWT_PRIVATE_KEY_PEM` | No | auto-generated | RSA/EC PEM private key for JWT signing |
 | `VARCO_REDIS_USE_STREAMS` | No | `false` | Set `true` to use Redis Streams (at-least-once delivery) |
 | `VARCO_CORS_ORIGINS` | No | `*` | Comma-separated allowed CORS origins |

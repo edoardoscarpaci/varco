@@ -131,6 +131,13 @@ services:
       VARCO_REDIS_URL: "redis://redis:6379"
       VARCO_REDIS_CACHE_URL: "redis://redis:6379"
 
+      # ── Backend selection (Plan 047) ────────────────────────────────────────
+      # Bootstrapping varco_redis no longer makes it live by itself — name
+      # each seam explicitly, or the app falls back to the in-process
+      # InMemoryEventBus/InMemoryCache and the redis service above is unused.
+      VARCO_EVENT_BUS_BACKEND: "redis"
+      VARCO_CACHE_BACKEND: "redis"
+
       # ── JWT signing key ───────────────────────────────────────────────────
       # Leave blank (or remove) to auto-generate an ephemeral key at startup.
       # Set to a PEM string for persistent tokens across restarts:

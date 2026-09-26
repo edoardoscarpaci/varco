@@ -44,11 +44,11 @@ class JwksPostureReport:
                              entries never go stale on their own and are not
                              counted.
         ttl_seconds:         The registry's configured
-                             ``VARCO_JWKS_TTL_SECONDS`` value (or the
+                             ``VARCO_JWT_JWKS_TTL_SECONDS`` value (or the
                              constructor override) — "the age at which the
                              cached keyset is considered stale".
         min_refresh_interval: The registry's configured
-                             ``VARCO_JWKS_MIN_REFRESH_SECONDS`` value (or the
+                             ``VARCO_JWT_JWKS_MIN_REFRESH_SECONDS`` value (or the
                              constructor override) — the reactive-refresh
                              rate limit, and the floor a background period is
                              clamped up to.

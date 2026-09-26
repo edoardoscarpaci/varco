@@ -46,8 +46,10 @@ class TestNatsChannelManagerSettingsDI:
         behaviour is a ready-to-use settings instance, because a pydantic
         ``BaseSettings`` must be built by a factory, never constructor-injected.
         """
+        from varco_nats.di import bootstrap
+
         container = DIContainer()
-        container.scan("varco_nats", recursive=True)
+        bootstrap(container)
 
         settings = container.get(NatsChannelManagerSettings)
 
@@ -55,8 +57,10 @@ class TestNatsChannelManagerSettingsDI:
         assert settings.stream_name
 
     def test_settings_are_a_singleton(self) -> None:
+        from varco_nats.di import bootstrap
+
         container = DIContainer()
-        container.scan("varco_nats", recursive=True)
+        bootstrap(container)
 
         assert container.get(NatsChannelManagerSettings) is container.get(
             NatsChannelManagerSettings
@@ -64,9 +68,11 @@ class TestNatsChannelManagerSettingsDI:
 
     def test_user_supplied_settings_win_over_the_default(self) -> None:
         """The default provider registers at the lowest possible priority."""
+        from varco_nats.di import bootstrap
+
         container = DIContainer()
-        container.scan("varco_nats", recursive=True)
         container.provide(_custom_settings)
+        bootstrap(container)
 
         assert container.get(NatsChannelManagerSettings).stream_name == "custom-stream"
 
@@ -113,8 +119,10 @@ class TestNatsEventBusSettingsCharacterization:
     """
 
     def test_characterization_settings_resolve_through_the_container(self) -> None:
+        from varco_nats.di import bootstrap
+
         container = DIContainer()
-        container.scan("varco_nats", recursive=True)
+        bootstrap(container)
 
         settings = container.get(NatsEventBusSettings)
 
@@ -122,8 +130,10 @@ class TestNatsEventBusSettingsCharacterization:
         assert settings.servers
 
     def test_characterization_settings_are_a_singleton(self) -> None:
+        from varco_nats.di import bootstrap
+
         container = DIContainer()
-        container.scan("varco_nats", recursive=True)
+        bootstrap(container)
 
         assert container.get(NatsEventBusSettings) is container.get(NatsEventBusSettings)
 
@@ -141,8 +151,10 @@ class TestNatsEventBusSettingsCharacterization:
 
         monkeypatch.setattr(NatsEventBus, "start", _noop_start)
 
+        from varco_nats.di import bootstrap
+
         container = DIContainer()
-        container.scan("varco_nats", recursive=True)
+        bootstrap(container)
 
         bus = await container.aget(AbstractEventBus, qualifier="nats")
 
@@ -186,14 +198,45 @@ class TestNatsEventBusSettingsConvertedShapeInvariants:
     """Step 7 — invariants the ``@Singleton`` → ``@Provider`` conversion must not break."""
 
     def test_app_supplied_settings_win_over_the_default(self) -> None:
+        from varco_nats.di import bootstrap
+
         container = DIContainer()
-        container.scan("varco_nats", recursive=True)
         container.provide(_custom_event_bus_settings)
+        bootstrap(container)
 
         assert container.get(NatsEventBusSettings).servers == "nats://custom:4222"
 
     def test_settings_resolve_through_their_base_interface(self) -> None:
+        from varco_nats.di import bootstrap
+
         container = DIContainer()
-        container.scan("varco_nats", recursive=True)
+        bootstrap(container)
 
         assert isinstance(container.get(EventBusSettings), NatsEventBusSettings)
+
+
+class TestSettingsBoundOnceAndFailFast:
+    """Plan 048 / Step 10 — NatsEventBusSettings goes through bind_settings()."""
+
+    def test_settings_bound_once_after_two_bootstrap_calls(self) -> None:
+        from providify import DIContainer
+        from varco_nats.config import NatsEventBusSettings
+        from varco_nats.di import bootstrap
+
+        c = DIContainer()
+        bootstrap(c)
+        bootstrap(c)
+
+        assert len(c.get_all_bindings(NatsEventBusSettings)) == 1
+
+    def test_bad_env_fails_bootstrap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from providify import DIContainer
+        from varco_core.settings import SettingsValidationError
+        from varco_nats.di import bootstrap
+
+        monkeypatch.setenv("VARCO_NATS_MAX_DELIVER", "notanint")
+
+        with pytest.raises(SettingsValidationError) as exc:
+            bootstrap(DIContainer())
+
+        assert "VARCO_NATS_MAX_DELIVER" in str(exc.value)

@@ -8,11 +8,11 @@ Plan 033 / S6 (§D-S6-settings, open question 2), the env-driven
 
 §D-S6-oq2 — module placement: ``TenantProvenanceSettings`` lives in this
 module rather than a new one. ``settings.py`` was already one cohesive
-dataclass-plus-enums module for tenancy configuration, and a second,
-unrelated settings object here reads no differently than the first — the
-same reasoning Plan 037 recorded for its own, near-identical open question
-about ``rls_check.py``. ⚠️ **No field on ``TenancySettings`` moves or is
-added** — the two dataclasses are independent; only the module is shared.
+settings module for tenancy configuration, and a second, unrelated settings
+object here reads no differently than the first. ⚠️ **No field on
+``TenancySettings`` moves or is added except the two Plan 048 / §D-loose
+foldings below** — the two classes are otherwise independent; only the
+module is shared.
 
 ⚠️ **``TenantProvenanceSettings`` is not the RD-9 case.** RD-9 forbids a
 ``VARCO_TENANCY_MOUNT_ADMIN`` env var *forever* because a bare environment
@@ -30,15 +30,22 @@ DESIGN: three enum values, not six — RLS is additive
        *and* a flag rather than one flat value. Accepted — see the plan's
        "Alternatives considered" section for the rejected six-value form.
 
-DESIGN: frozen dataclass with ``from_env()``, mirroring ``MigrationSettings``
-    ✅ Matches the established shape for injectable settings objects in this
-       repo (``SAConfig``, ``BeanieSettings``, ``MigrationSettings``).
-    ✅ Avoids the ``@Singleton``-on-pydantic-``BaseSettings`` pitfall — this
-       is a plain frozen dataclass, safe to register via ``@Provider``.
-    ✅ ``env=`` is injectable so tests never mutate ``os.environ``.
-    ❌ No automatic env-var validation/coercion helpers pydantic gives for
-       free — ``from_env()`` does its own parsing, same trade-off as
-       ``MigrationSettings``.
+DESIGN: ``VarcoSettings`` (pydantic), not a hand-rolled ``from_env()``
+    **Plan 048 / DI-6: converted from frozen dataclasses with hand-rolled
+    ``from_env(env: Mapping | None)`` to pydantic ``VarcoSettings``.** Same
+    class names, same field names, every default literal byte-identical.
+    The ``env: Mapping | None`` constructor parameter is gone — tests now
+    use ``monkeypatch.setenv``. Two loose reads outside any class
+    (``VARCO_TENANCY_NODE_ID``/``VARCO_TENANCY_STORE_ID``,
+    ``tenancy/control/service.py``) are folded into ``TenancySettings`` as
+    ``node_id``/``store_id`` fields (§D-loose) — not a rename, a new field
+    with the same env-var name.
+    ✅ Registered via ``bind_settings()`` — one recipe, fail-fast, provenance.
+    ✅ ``Literal``/``StrEnum`` fields validate natively — the old
+       ``_LEGAL_ISOLATION``/``_LEGAL_TENANT_SOURCES``/``_LEGAL_CROSS_CHECK``/
+       ``_LEGAL_MIN_TRUST`` manual-membership checks are gone; pydantic's own
+       message still names the legal values.
+    ❌ None — pure shape conversion; no behavioural change to defaults.
 
 RD-9: **no** ``VARCO_TENANCY_MOUNT_ADMIN`` env var exists or is ever read.
     The privileged admin surface can only be mounted via an explicit,
@@ -53,17 +60,22 @@ Async safety:   ✅ No I/O.
 
 from __future__ import annotations
 
-import os
-from collections.abc import Mapping
-from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic_settings import SettingsConfigDict
+
+from varco_core.config import VarcoSettings
+from varco_core.settings.types import CommaSeparated
+from varco_core.tenancy.source import CrossCheckMode, TenantTrust
+
 if TYPE_CHECKING:
     from varco_core.auth.delegation import DelegationPolicy
-    from varco_core.tenancy.source import CrossCheckMode, TenantSourceChain, TenantTrust
+    from varco_core.tenancy.source import TenantSourceChain
 
-_LEGAL_ISOLATION = ("shared", "schema", "database")
+_DEFAULT_RESERVED_LABELS = ("www", "api", "app", "admin", "static", "cdn")
+_LEGAL_TENANT_SOURCES = ("jwt", "subdomain", "legacy", "act_as")
 
 
 class TenantIsolation(StrEnum):
@@ -91,8 +103,7 @@ class TenantStatus(StrEnum):
     DELETED = "deleted"
 
 
-@dataclass(frozen=True)
-class TenancySettings:
+class TenancySettings(VarcoSettings):
     """
     Env-driven multitenancy configuration.
 
@@ -100,7 +111,7 @@ class TenancySettings:
     behaviour: no pool, no extra engine/client, no symbolic schema, no
     control-plane surface constructed.
 
-    Args:
+    Attributes:
         isolation: ``TenantIsolation`` — storage isolation strategy.
                    Env: ``VARCO_TENANCY_ISOLATION``.
         enforce_rls: Hardening flag on ``SHARED`` — assert Postgres RLS is
@@ -137,6 +148,13 @@ class TenancySettings:
                    security control**; Postgres RLS (``enforce_rls``/
                    ``rls_set_tenant`` above) is. Env:
                    ``VARCO_TENANCY_ASSERT_TENANT_FILTER``.
+        node_id: Plan 048 / §D-loose fold of the loose
+                   ``VARCO_TENANCY_NODE_ID`` read
+                   (``tenancy/control/service.py``). Env:
+                   ``VARCO_TENANCY_NODE_ID``.
+        store_id: Plan 048 / §D-loose fold of the loose
+                   ``VARCO_TENANCY_STORE_ID`` read. Env:
+                   ``VARCO_TENANCY_STORE_ID``.
 
     Edge cases:
         - No key corresponding to "mount the admin surface" is recognised
@@ -154,87 +172,32 @@ class TenancySettings:
            alternative is one flag that means three things.
     """
 
+    model_config = SettingsConfigDict(
+        env_prefix="VARCO_TENANCY_", frozen=True, populate_by_name=True
+    )
+
     isolation: TenantIsolation = TenantIsolation.SHARED
     enforce_rls: bool = False
     schema_template: str = "t_{tenant_id}"
     db_template: str = "db_{tenant_id}"
     max_entries: int = 50
-    idle_ttl_s: float = 300.0
-    catalog_ttl_s: float = 60.0
+    idle_ttl_s: float = Field(
+        default=300.0, validation_alias=AliasChoices("VARCO_TENANCY_IDLE_TTL")
+    )
+    catalog_ttl_s: float = Field(
+        default=60.0, validation_alias=AliasChoices("VARCO_TENANCY_CATALOG_TTL")
+    )
     fanout_framework_tables: bool = False
     global_dsn: str | None = None
     global_writable: bool = False
     rls_set_tenant: bool = False
     rls_require_tenant: bool = False
     assert_tenant_filter: bool = False
-
-    @classmethod
-    def from_env(cls, env: Mapping[str, str] | None = None) -> TenancySettings:
-        """
-        Build ``TenancySettings`` from environment variables.
-
-        Args:
-            env: Mapping to read from. ``None`` reads the real
-                 ``os.environ``. Tests pass a scoped mapping instead of
-                 mutating the process environ.
-
-        Returns:
-            A ``TenancySettings`` reflecting the given environment, with
-            documented defaults for anything unset.
-
-        Raises:
-            ValueError: ``VARCO_TENANCY_ISOLATION`` set to a value outside
-                the legal set.
-        """
-        source = env if env is not None else os.environ
-
-        isolation = source.get("VARCO_TENANCY_ISOLATION", TenantIsolation.SHARED.value)
-        if isolation not in _LEGAL_ISOLATION:
-            raise ValueError(
-                f"Invalid VARCO_TENANCY_ISOLATION={isolation!r}. "
-                f"Legal values are: {', '.join(_LEGAL_ISOLATION)}."
-            )
-
-        def _bool(key: str, default: bool) -> bool:
-            raw = source.get(key)
-            if raw is None:
-                return default
-            return raw.strip().lower() in ("1", "true", "yes", "on")
-
-        defaults = cls()
-
-        return cls(
-            isolation=TenantIsolation(isolation),
-            enforce_rls=_bool("VARCO_TENANCY_ENFORCE_RLS", defaults.enforce_rls),
-            schema_template=source.get("VARCO_TENANCY_SCHEMA_TEMPLATE", defaults.schema_template),
-            db_template=source.get("VARCO_TENANCY_DB_TEMPLATE", defaults.db_template),
-            max_entries=int(source.get("VARCO_TENANCY_MAX_ENTRIES", defaults.max_entries)),
-            idle_ttl_s=float(source.get("VARCO_TENANCY_IDLE_TTL", defaults.idle_ttl_s)),
-            catalog_ttl_s=float(source.get("VARCO_TENANCY_CATALOG_TTL", defaults.catalog_ttl_s)),
-            fanout_framework_tables=_bool(
-                "VARCO_TENANCY_FANOUT_FRAMEWORK_TABLES",
-                defaults.fanout_framework_tables,
-            ),
-            global_dsn=source.get("VARCO_TENANCY_GLOBAL_DSN", defaults.global_dsn),
-            global_writable=_bool("VARCO_TENANCY_GLOBAL_WRITABLE", defaults.global_writable),
-            rls_set_tenant=_bool("VARCO_TENANCY_RLS_SET_TENANT", defaults.rls_set_tenant),
-            rls_require_tenant=_bool(
-                "VARCO_TENANCY_RLS_REQUIRE_TENANT", defaults.rls_require_tenant
-            ),
-            assert_tenant_filter=_bool(
-                "VARCO_TENANCY_ASSERT_TENANT_FILTER", defaults.assert_tenant_filter
-            ),
-        )
+    node_id: str | None = None
+    store_id: str | None = None
 
 
-_LEGAL_TENANT_SOURCES = ("jwt", "subdomain", "legacy", "act_as")
-_LEGAL_CROSS_CHECK = ("lenient", "strict")
-_LEGAL_MIN_TRUST = ("low", "medium", "high", "highest")
-_DEFAULT_RESERVED_LABELS_STR = "www,api,app,admin,static,cdn"
-
-
-@dataclass(frozen=True)
-class TenantProvenanceSettings:
+class TenantProvenanceSettings(VarcoSettings):
     """
     Env-driven tenant-provenance chain configuration (Plan 033 / S6,
     §D-S6-settings).
@@ -243,7 +206,7 @@ class TenantProvenanceSettings:
     means ``build_tenant_source_chain()`` returns ``None`` — nothing
     changes for an app that configures none of this.
 
-    Args:
+    Attributes:
         sources: Ordered source names, from ``VARCO_TENANT_SOURCES``
             (comma-separated: ``jwt``, ``subdomain``, ``legacy``, ``act_as``).
             Empty ⇒ no chain.
@@ -260,112 +223,66 @@ class TenantProvenanceSettings:
         legacy_header: Env: ``VARCO_TENANT_LEGACY_HEADER``.
 
     Raises:
-        ValueError: An unknown source name, or ``subdomain`` requested
-            without ``VARCO_TENANT_BASE_DOMAINS``.
+        ValidationError: An unknown source name, or ``subdomain`` requested
+            without ``VARCO_TENANT_BASE_DOMAINS`` (raised from a
+            ``model_validator(mode="after")``).
     """
 
-    sources: tuple[str, ...] = ()
-    cross_check: CrossCheckMode = None  # type: ignore[assignment]  # set in __post_init__ default below
-    min_trust: TenantTrust = None  # type: ignore[assignment]
+    model_config = SettingsConfigDict(env_prefix="VARCO_TENANT_", frozen=True)
+
+    sources: CommaSeparated = ()
+    cross_check: CrossCheckMode = CrossCheckMode.LENIENT
+    min_trust: TenantTrust = TenantTrust.LOW
     claim_metadata_key: str = "tenant_id"
-    base_domains: tuple[str, ...] = ()
+    base_domains: CommaSeparated = ()
     trust_forwarded_host: bool = False
     forwarded_host_header: str = "X-Forwarded-Host"
-    reserved_labels: frozenset[str] = frozenset()
+    reserved_labels: CommaSeparated = _DEFAULT_RESERVED_LABELS
     legacy_header: str = "X-Tenant-Id"
 
-    def __post_init__(self) -> None:
-        # Defaults that reference other modules (CrossCheckMode/TenantTrust)
-        # are applied here rather than as literal dataclass field defaults,
-        # to avoid importing varco_core.tenancy.source before it (and this
-        # module) both finish defining their own top-level names.
-        from varco_core.tenancy.source import CrossCheckMode, TenantTrust
-
-        if self.cross_check is None:
-            object.__setattr__(self, "cross_check", CrossCheckMode.LENIENT)
-        if self.min_trust is None:
-            object.__setattr__(self, "min_trust", TenantTrust.LOW)
-        if not self.reserved_labels:
-            object.__setattr__(
-                self, "reserved_labels", frozenset(_DEFAULT_RESERVED_LABELS_STR.split(","))
-            )
-
+    @field_validator("min_trust", mode="before")
     @classmethod
-    def from_env(cls, env: Mapping[str, str] | None = None) -> TenantProvenanceSettings:
+    def _min_trust_by_name(cls, value: object) -> object:
         """
-        Build ``TenantProvenanceSettings`` from environment variables.
-
-        Args:
-            env: Mapping to read from. ``None`` reads the real
-                 ``os.environ``.
-
-        Returns:
-            A ``TenantProvenanceSettings`` reflecting the given environment.
-
-        Raises:
-            ValueError: An unknown source name in ``VARCO_TENANT_SOURCES``,
-                an illegal ``VARCO_TENANT_CROSS_CHECK``/``VARCO_TENANT_MIN_TRUST``
-                value, or ``subdomain`` requested without
-                ``VARCO_TENANT_BASE_DOMAINS``.
+        Accept the enum's *name* (``"low"``/``"medium"``/``"high"``/``"highest"``,
+        case-insensitive), matching the old ``from_env()``'s
+        ``TenantTrust[min_trust_raw.upper()]`` lookup — ``TenantTrust`` is an
+        ``IntEnum``, so pydantic's native coercion expects the *value*
+        (``10``/``20``/…), not the name, and would otherwise reject
+        ``VARCO_TENANT_MIN_TRUST=medium``.
         """
-        from varco_core.tenancy.source import CrossCheckMode, TenantTrust
+        if isinstance(value, str) and not value.isdigit():
+            try:
+                return TenantTrust[value.upper()]
+            except KeyError as exc:
+                legal = ", ".join(t.name.lower() for t in TenantTrust)
+                raise ValueError(
+                    f"Invalid VARCO_TENANT_MIN_TRUST={value!r}. Legal values are: {legal}."
+                ) from exc
+        return value
 
-        source = env if env is not None else os.environ
-
-        raw_sources = source.get("VARCO_TENANT_SOURCES", "")
-        sources = tuple(s.strip() for s in raw_sources.split(",") if s.strip())
-        unknown = [s for s in sources if s not in _LEGAL_TENANT_SOURCES]
+    @field_validator("sources")
+    @classmethod
+    def _check_sources_are_legal(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Mirror the old ``from_env()``'s unknown-source-name guard."""
+        unknown = [s for s in value if s not in _LEGAL_TENANT_SOURCES]
         if unknown:
             raise ValueError(
                 f"Invalid VARCO_TENANT_SOURCES entry(ies): {', '.join(unknown)}. "
                 f"Legal values are: {', '.join(_LEGAL_TENANT_SOURCES)}."
             )
+        return value
 
-        cross_check_raw = source.get("VARCO_TENANT_CROSS_CHECK", "lenient")
-        if cross_check_raw not in _LEGAL_CROSS_CHECK:
-            raise ValueError(
-                f"Invalid VARCO_TENANT_CROSS_CHECK={cross_check_raw!r}. "
-                f"Legal values are: {', '.join(_LEGAL_CROSS_CHECK)}."
-            )
-
-        min_trust_raw = source.get("VARCO_TENANT_MIN_TRUST", "low")
-        if min_trust_raw not in _LEGAL_MIN_TRUST:
-            raise ValueError(
-                f"Invalid VARCO_TENANT_MIN_TRUST={min_trust_raw!r}. "
-                f"Legal values are: {', '.join(_LEGAL_MIN_TRUST)}."
-            )
-
-        base_domains_raw = source.get("VARCO_TENANT_BASE_DOMAINS", "")
-        base_domains = tuple(d.strip() for d in base_domains_raw.split(",") if d.strip())
-        if "subdomain" in sources and not base_domains:
+    @model_validator(mode="after")
+    def _check_subdomain_requires_base_domains(self) -> TenantProvenanceSettings:
+        """Mirror the old ``from_env()``'s ``subdomain`` + no-base-domains guard."""
+        if "subdomain" in self.sources and not self.base_domains:
             raise ValueError(
                 "VARCO_TENANT_SOURCES includes 'subdomain' but VARCO_TENANT_BASE_DOMAINS "
                 "is unset. A subdomain source requires at least one explicit base domain "
                 "(§D-S6-oq3) — set VARCO_TENANT_BASE_DOMAINS."
             )
-
-        def _bool(key: str, default: bool) -> bool:
-            raw = source.get(key)
-            if raw is None:
-                return default
-            return raw.strip().lower() in ("1", "true", "yes", "on")
-
-        reserved_raw = source.get("VARCO_TENANT_RESERVED_LABELS", _DEFAULT_RESERVED_LABELS_STR)
-        reserved_labels = frozenset(r.strip() for r in reserved_raw.split(",") if r.strip())
-
-        return cls(
-            sources=sources,
-            cross_check=CrossCheckMode(cross_check_raw),
-            min_trust=TenantTrust[min_trust_raw.upper()],
-            claim_metadata_key=source.get("VARCO_TENANT_CLAIM_METADATA_KEY", "tenant_id"),
-            base_domains=base_domains,
-            trust_forwarded_host=_bool("VARCO_TENANT_TRUST_FORWARDED_HOST", False),
-            forwarded_host_header=source.get(
-                "VARCO_TENANT_FORWARDED_HOST_HEADER", "X-Forwarded-Host"
-            ),
-            reserved_labels=reserved_labels,
-            legacy_header=source.get("VARCO_TENANT_LEGACY_HEADER", "X-Tenant-Id"),
-        )
+        return self
 
 
 def build_tenant_source_chain(
@@ -413,7 +330,7 @@ def build_tenant_source_chain(
                     base_domains=resolved.base_domains,
                     trust_forwarded_host=resolved.trust_forwarded_host,
                     forwarded_host_header=resolved.forwarded_host_header,
-                    reserved_labels=resolved.reserved_labels,
+                    reserved_labels=frozenset(resolved.reserved_labels),
                 )
             )
         elif name == "legacy":
@@ -428,6 +345,11 @@ def build_tenant_source_chain(
             from varco_core.tenancy.sources import ActAsTenantSource
 
             built.append(ActAsTenantSource(delegation_policy))
+        else:
+            raise ValueError(
+                f"Invalid tenant source {name!r} in VARCO_TENANT_SOURCES. Legal values are: "
+                "jwt, subdomain, legacy, act_as."
+            )
 
     return TenantSourceChain(
         sources=tuple(built), mode=resolved.cross_check, min_trust=resolved.min_trust

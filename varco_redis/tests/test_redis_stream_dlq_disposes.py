@@ -25,6 +25,9 @@ async def _noop_connect(self: Any) -> None:
 
 
 async def test_redis_stream_dlq_disconnect_runs_on_ashutdown(monkeypatch) -> None:
+    # Plan 047 §D-tests: "redis-streams" is a secondary DLQ value — the
+    # package conftest's autouse fixture selects "redis" as the primary.
+    monkeypatch.setenv("VARCO_DLQ_BACKEND", "redis-streams")
     monkeypatch.setattr(RedisStreamDLQ, "connect", _noop_connect)
     calls: list[str] = []
 

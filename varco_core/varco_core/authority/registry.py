@@ -65,6 +65,7 @@ if TYPE_CHECKING:
 
     from varco_core.authority.jwt_authority import JwtAuthority
     from varco_core.authority.multi_key_authority import MultiKeyAuthority
+    from varco_core.jwt.config import JwtVerificationSettings
 
 from varco_core.authority.exceptions import (
     IssuerNotFoundError,
@@ -151,6 +152,7 @@ class TrustedIssuerRegistry:
     __slots__ = (
         "_entries",
         "_lock",
+        "settings",
         "_last_refresh",
         "_min_refresh_interval",
         "_ttl_seconds",
@@ -189,20 +191,21 @@ class TrustedIssuerRegistry:
         min_refresh_interval: float | None = None,
         ttl_seconds: float | None = None,
         revocation_store: AbstractTokenRevocationStore | None = None,
+        settings: JwtVerificationSettings | None = None,
     ) -> None:
         """
         Args:
             min_refresh_interval: Rate limit (seconds) between kid-not-found
                 triggered global refreshes.  ``None`` (default) reads
-                ``VARCO_JWKS_MIN_REFRESH_SECONDS`` (default ``10.0`` —
+                *settings*'s ``jwks_min_refresh_seconds`` (default ``10.0`` —
                 identical to pre-Plan-002 behaviour, which hardcoded ``10.0``).
             ttl_seconds: Proactive reload age threshold (Plan 002 C-4).  When
                 the cached keyset's age exceeds this many seconds,
                 ``get_key()`` refreshes all sources BEFORE searching, instead
                 of waiting for a kid-miss.  ``None`` (default) reads
-                ``VARCO_JWKS_TTL_SECONDS`` (default ``0.0`` — disabled,
-                identical to pre-Plan-002 behaviour: only kid-miss triggers
-                a refresh).
+                *settings*'s ``jwks_ttl_seconds`` (default ``0.0`` —
+                disabled, identical to pre-Plan-002 behaviour: only kid-miss
+                triggers a refresh).
             revocation_store: Optional ``AbstractTokenRevocationStore``
                 (Plan 034 / S13, §D-S13-hook). ``None`` (the default) means
                 **no check, no await, no cost** — zero-config ``verify()``
@@ -212,6 +215,14 @@ class TrustedIssuerRegistry:
                 it here — that binding must be passed to this constructor
                 explicitly (§D-S13-di's two-step; ``varco_core`` never
                 reaches for the process-global container).
+            settings: ``JwtVerificationSettings`` captured ONCE at
+                construction time (Plan 048 / DI-6, §D-core-list) — this is
+                what makes ``verify()`` never re-read the environment on
+                every call, unlike the pre-048 ``JwtVerificationSettings.
+                from_env()`` calls this replaces. ``None`` (the default)
+                constructs ``JwtVerificationSettings()`` once, right here —
+                still reads the environment exactly once, just not on
+                every ``verify()``/``get_key()`` call.
         """
         # label → TrustedIssuerEntry
         self._entries: dict[str, TrustedIssuerEntry] = {}
@@ -219,19 +230,26 @@ class TrustedIssuerRegistry:
         # asyncio.Lock created lazily — must be inside a running event loop
         self._lock: asyncio.Lock | None = None
 
+        # Plan 048 / DI-6 — captured once; `verify()`/`_check_revocation()`
+        # read this object, never `JwtVerificationSettings.from_env()`
+        # again at call time.
+        if settings is None:
+            from varco_core.jwt.config import JwtVerificationSettings as _JwtVerificationSettings
+
+            settings = _JwtVerificationSettings()
+        self.settings = settings
+
         # Rate-limit for kid-not-found global refresh
         self._last_refresh: float = 0.0
         self._min_refresh_interval: float = (
             min_refresh_interval
             if min_refresh_interval is not None
-            else float(os.environ.get("VARCO_JWKS_MIN_REFRESH_SECONDS", "10.0"))
+            else self.settings.jwks_min_refresh_seconds
         )
 
         # Plan 002 C-4 — proactive age-based reload knobs (0.0 = disabled).
         self._ttl_seconds: float = (
-            ttl_seconds
-            if ttl_seconds is not None
-            else float(os.environ.get("VARCO_JWKS_TTL_SECONDS", "0.0"))
+            ttl_seconds if ttl_seconds is not None else self.settings.jwks_ttl_seconds
         )
         # Monotonic timestamp of the last successful full load/refresh.
         # 0.0 sentinel = "never loaded" — _should_proactively_reload() never
@@ -878,7 +896,7 @@ class TrustedIssuerRegistry:
             raise UnknownKidError(
                 f"No registered issuer has a key with kid={kid!r}. "
                 f"Registered issuers: {registered}. "
-                f"Check FASTREST_AUTHORIZATION__* env vars — the issuer may not be "
+                f"Check VARCO_AUTHORIZATION__* env vars — the issuer may not be "
                 f"configured, or the remote JWKS may not yet contain this kid.",
                 kid=kid,
             )
@@ -901,9 +919,7 @@ class TrustedIssuerRegistry:
             ) from e
 
         if leeway is None:
-            from varco_core.jwt.config import JwtVerificationSettings
-
-            leeway = JwtVerificationSettings.from_env().leeway_seconds
+            leeway = self.settings.leeway_seconds
 
         # verify_iat=False (PyJWT >= 2.10 added this check, default True):
         # varco's own revocation watermark rule (§D-S13-nvb) deliberately
@@ -938,9 +954,7 @@ class TrustedIssuerRegistry:
         # (env VARCO_JWT_ENFORCE_ISS, default True).
         effective_enforce_issuer = enforce_issuer
         if effective_enforce_issuer is None:
-            from varco_core.jwt.config import JwtVerificationSettings
-
-            effective_enforce_issuer = JwtVerificationSettings.from_env().enforce_issuer
+            effective_enforce_issuer = self.settings.enforce_issuer
 
         if effective_enforce_issuer:
             token_iss = raw.get("iss")
@@ -960,9 +974,7 @@ class TrustedIssuerRegistry:
         if self._revocation_store is not None:
             effective_check_revocation = check_revocation
             if effective_check_revocation is None:
-                from varco_core.jwt.config import JwtVerificationSettings
-
-                effective_check_revocation = JwtVerificationSettings.from_env().revocation_enabled
+                effective_check_revocation = self.settings.revocation_enabled
 
             if effective_check_revocation:
                 await self._check_revocation(
@@ -1011,9 +1023,7 @@ class TrustedIssuerRegistry:
               switch by being presented on a request that resolves a
               different ambient tenant.
         """
-        from varco_core.jwt.config import JwtVerificationSettings
-
-        settings = JwtVerificationSettings.from_env()
+        settings = self.settings
         effective_require_jti = (
             require_jti if require_jti is not None else settings.revocation_require_jti
         )
@@ -1145,10 +1155,10 @@ class TrustedIssuerRegistry:
     # varco_core.tls.TrustStore.from_env() itself reads (VARCO_* names + the additive
     # SSL_CERT_FILE/SSL_CERT_DIR pair, §D-T3-env).
     _CA_TRIGGER_ENV_VARS: ClassVar[tuple[str, ...]] = (
-        "VARCO_TRUST_STORE_DIR",
-        "VARCO_CA_CERT",
-        "VARCO_CLIENT_CERT",
-        "VARCO_CLIENT_KEY",
+        "VARCO_TLS_TRUST_STORE_DIR",
+        "VARCO_TLS_CA_CERT",
+        "VARCO_TLS_CLIENT_CERT",
+        "VARCO_TLS_CLIENT_KEY",
         "SSL_CERT_FILE",
         "SSL_CERT_DIR",
     )
@@ -1160,14 +1170,14 @@ class TrustedIssuerRegistry:
         """
         Construct a ``TrustedIssuerRegistry`` from environment variables.
 
-        Reads ``FASTREST_AUTHORIZATION__<LABEL>__URL`` and
-        ``FASTREST_AUTHORIZATION__<LABEL>__ISS`` pairs from the environment.
+        Reads ``VARCO_AUTHORIZATION__<LABEL>__URL`` and
+        ``VARCO_AUTHORIZATION__<LABEL>__ISS`` pairs from the environment.
 
         Also builds an ``ssl.SSLContext`` for the two URL-based issuer source kinds
         (``jwks::``/``oidc::``, Plan 026 / T5) from ``varco_core.tls.TrustStore.from_env()`` —
         but **only when at least one of the CA env vars it reads is actually set**
-        (``VARCO_TRUST_STORE_DIR``, ``VARCO_CA_CERT``, ``VARCO_CLIENT_CERT``,
-        ``VARCO_CLIENT_KEY``, ``SSL_CERT_FILE``, ``SSL_CERT_DIR``). With none of them set,
+        (``VARCO_TLS_TRUST_STORE_DIR``, ``VARCO_TLS_CA_CERT``, ``VARCO_TLS_CLIENT_CERT``,
+        ``VARCO_TLS_CLIENT_KEY``, ``SSL_CERT_FILE``, ``SSL_CERT_DIR``). With none of them set,
         ``ssl_context`` stays ``None`` — byte-identical to pre-Plan-026 behaviour
         (``urlopen(..., context=None)``, the stdlib default).
 
@@ -1177,10 +1187,10 @@ class TrustedIssuerRegistry:
 
         Example env vars::
 
-            FASTREST_AUTHORIZATION__SYSTEM_SVC__URL = pem::/etc/certs/system.pem
-            FASTREST_AUTHORIZATION__SYSTEM_SVC__ISS = system-svc
-            FASTREST_AUTHORIZATION__GOOGLE__URL = https://accounts.google.com
-            FASTREST_AUTHORIZATION__GOOGLE__ISS = https://accounts.google.com
+            VARCO_AUTHORIZATION__SYSTEM_SVC__URL = pem::/etc/certs/system.pem
+            VARCO_AUTHORIZATION__SYSTEM_SVC__ISS = system-svc
+            VARCO_AUTHORIZATION__GOOGLE__URL = https://accounts.google.com
+            VARCO_AUTHORIZATION__GOOGLE__ISS = https://accounts.google.com
 
         Args:
             revocation_store: Optional ``AbstractTokenRevocationStore``
@@ -1218,7 +1228,7 @@ class TrustedIssuerRegistry:
         API — it never calls ``container.aget_all(SomeType)`` directly.
 
         When ``include_env=True`` (the default), env-var configured issuers
-        (``FASTREST_AUTHORIZATION__*``) are loaded first so that the final
+        (``VARCO_AUTHORIZATION__*``) are loaded first so that the final
         registry combines both configuration sources in one call:
 
             ┌──────────────────────┐   ┌─────────────────────────────────────┐
@@ -1258,7 +1268,7 @@ class TrustedIssuerRegistry:
                                    new code — ``JwtAuthority`` is the fallback for
                                    simple single-key scenarios.
             include_env:           When ``True`` (default), also loads issuers
-                                   from ``FASTREST_AUTHORIZATION__*`` environment
+                                   from ``VARCO_AUTHORIZATION__*`` environment
                                    variables before resolving DI authorities.
                                    Set to ``False`` to use only DI-registered
                                    authorities.

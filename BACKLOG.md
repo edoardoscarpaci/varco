@@ -71,8 +71,8 @@ the whole-set done criteria: [`plans/000-index-4-0-di-standardization.md`](plans
 A row moves to `## ✅ Shipped` only when its plan is built and merged.
 
 - `DI-2`, `DI-8`, `DI-13` — plans/046-wiring-verb-collapse-and-explicit-container.md — `done (Plan 046)`
-- `DI-12`, `DI-4`, `DI-17` — plans/047-config-driven-backend-selection-and-catalogue.md
-- `DI-6`, `DI-16` — plans/048-settings-standardization.md
+- `DI-12`, `DI-4`, `DI-17` — plans/047-config-driven-backend-selection-and-catalogue.md — `done (Plan 047)`
+- `DI-6`, `DI-16` — plans/048-settings-standardization.md — `done (Plan 048)`
 - `DI-1`, `FLIP-1` — plans/049-varco-module-and-composable-app.md
 - `DI-9`, `DI-10` — plans/050-phased-lifecycle-and-di-wired-infrastructure.md
 - `DI-5` — plans/051-multi-binding-registries.md
@@ -120,6 +120,8 @@ Roll-forward rows that lost their un-IDed status here; none is DI-shaped and non
    **Answered (Plan 043 / P25 §5):** code or @Profile only; DI-4 not blocked via a public-API
    activate_profile() translation — see the report. **Superseded (Plan 047):** providify 2.1.0's
    `@Requires(env=, value=)` replaces the profile translation outright.
+   **Re-answered (Plan 047 §D-mechanism):** providify 2.1.0 ships `@Requires(env=, value=)`; used
+   directly, no profile translation.
 3. **Does 4.0.0 also renumber the 3.x → 4.0 deprecation windows?** `FLIP-034-1` assumes
    `since="4.0.0", removed_in="5.0.0"`. Confirm the nine existing `removed_in="4.0.0"` sites stay
    *un-removed* in 4.0.0 (12-month floor: not before 2027-08-31) and get re-labelled, or the

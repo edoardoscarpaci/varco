@@ -52,6 +52,7 @@ from varco_core.cache.config import CacheSettings
 from varco_core.cache.layered import LayeredCache
 from varco_core.cache.memory import InMemoryCache
 from varco_core.di import BACKEND_PRIORITY
+from varco_core.di.select import selected_by
 from varco_core.serialization import JsonSerializer, Serializer
 
 _logger = logging.getLogger(__name__)
@@ -523,9 +524,18 @@ class RedisCacheConfiguration:
     Providify ``@Configuration`` that wires ``RedisCache`` into the container.
 
     Provides:
-        ``RedisCacheSettings`` — default localhost settings; override before
-                                  installing this configuration.
         ``CacheBackend``        — started ``RedisCache`` singleton.
+
+    ⚠️ **BREAKING (Plan 048 / DI-6, Step 8, Decision 2)**: ``RedisCacheSettings``
+    is no longer registered by this class itself — call
+    ``varco_redis.di.bootstrap(container)`` (or
+    ``bind_settings(container, RedisCacheSettings)`` directly) BEFORE
+    ``await container.ainstall(RedisCacheConfiguration)``, or the ``settings``
+    parameter below has nothing to resolve to. This mirrors every other
+    settings class in the repo (``bind_settings()``/``bind_core_settings()``
+    is the one recipe, never a per-``@Configuration`` ``@Fallback @Provider``
+    method) — the prior exception (this class, ``RedisLayeredCacheConfiguration``,
+    and the backplane's module-level provider) is now closed.
 
     Lifecycle:
         The cache is started inside the provider and stopped automatically by
@@ -543,6 +553,7 @@ class RedisCacheConfiguration:
     Example::
 
         container = DIContainer()
+        bootstrap(container)  # registers RedisCacheSettings via bind_settings()
         await container.ainstall(RedisCacheConfiguration)
         cache = await container.aget(CacheBackend)
         await cache.set("key", value, ttl=300)
@@ -551,32 +562,19 @@ class RedisCacheConfiguration:
 
     Overriding settings::
 
-        # @Provider-decorated module-level function — provide() rejects bare
-        # lambdas and takes no second "interface" argument.  Register it
-        # Registered in any order — the default is @Fallback (Plan 045).
-        @Provider(singleton=True)
-        def redis_cache_settings() -> RedisCacheSettings:
-            return RedisCacheSettings(
-                url=os.environ["REDIS_URL"], key_prefix="myapp:"
-            )
+        from varco_core.settings import bind_settings
 
-        container.provide(redis_cache_settings)
+        container = DIContainer()
+        bind_settings(
+            container,
+            RedisCacheSettings,
+            instance=RedisCacheSettings(url=os.environ["REDIS_URL"], key_prefix="myapp:"),
+        )
         await container.ainstall(RedisCacheConfiguration)
     """
 
     @Fallback
-    @Provider(singleton=True)
-    def redis_cache_settings(self) -> RedisCacheSettings:
-        """
-        Default ``RedisCacheSettings`` pointing at ``redis://localhost:6379/0``.
-
-        Returns:
-            A ``RedisCacheSettings`` with development-friendly defaults.
-        """
-        # Reads from VARCO_REDIS_CACHE_* env vars if set.
-        return RedisCacheSettings.from_env()
-
-    @Fallback
+    @selected_by("cache", "redis")
     @Provider(singleton=True, priority=BACKEND_PRIORITY)
     async def redis_cache(
         self,
@@ -731,9 +729,14 @@ class RedisLayeredCacheConfiguration:
     (L1 ``InMemoryCache`` + L2 ``RedisCache``) into the container.
 
     Provides:
-        ``LayeredCacheSettings`` — all L1/L2 settings; override before
-                                    installing this configuration.
         ``CacheBackend``          — started ``LayeredCache`` singleton.
+
+    ⚠️ **BREAKING (Plan 048 / DI-6, Step 8, Decision 2)**: ``LayeredCacheSettings``
+    is no longer registered by this class itself — call
+    ``varco_redis.di.bootstrap(container)`` (or
+    ``bind_settings(container, LayeredCacheSettings)`` directly) BEFORE
+    ``await container.ainstall(RedisLayeredCacheConfiguration)``. See
+    ``RedisCacheConfiguration``'s docstring for the full rationale.
 
     Use this instead of ``RedisCacheConfiguration`` when you want a fast
     in-process L1 cache in front of Redis.  Common for read-heavy workloads
@@ -762,6 +765,7 @@ class RedisLayeredCacheConfiguration:
     Example::
 
         container = DIContainer()
+        bootstrap(container)  # registers LayeredCacheSettings via bind_settings()
         await container.ainstall(RedisLayeredCacheConfiguration)
         cache = await container.aget(CacheBackend)
         await cache.set("user:42", user_data, ttl=300)
@@ -770,35 +774,24 @@ class RedisLayeredCacheConfiguration:
 
     Overriding settings::
 
-        # @Provider-decorated module-level function — provide() rejects bare
-        # lambdas and takes no second "interface" argument.  Register it
-        # Registered in any order — the default is @Fallback (Plan 045).
-        @Provider(singleton=True)
-        def layered_cache_settings() -> LayeredCacheSettings:
-            return LayeredCacheSettings(
+        from varco_core.settings import bind_settings
+
+        container = DIContainer()
+        bind_settings(
+            container,
+            LayeredCacheSettings,
+            instance=LayeredCacheSettings(
                 url=os.environ["REDIS_URL"],
                 key_prefix="myapp:",
                 l1_max_size=1000,
                 l1_default_ttl=60.0,
-            )
-
-        container.provide(layered_cache_settings)
+            ),
+        )
         await container.ainstall(RedisLayeredCacheConfiguration)
     """
 
     @Fallback
-    @Provider(singleton=True)
-    def layered_cache_settings(self) -> LayeredCacheSettings:
-        """
-        Default ``LayeredCacheSettings`` with localhost Redis and unbounded L1.
-
-        Returns:
-            A ``LayeredCacheSettings`` with development-friendly defaults.
-        """
-        # Reads from VARCO_LAYERED_CACHE_* env vars if set.
-        return LayeredCacheSettings.from_env()
-
-    @Fallback
+    @selected_by("cache", "layered")
     @Provider(singleton=True, priority=BACKEND_PRIORITY)
     async def layered_cache(
         self,

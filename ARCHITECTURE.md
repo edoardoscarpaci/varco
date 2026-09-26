@@ -69,6 +69,33 @@ varco_core/              — Domain model, service layer, event system, resilien
   ├── mapper.py          — Type mapping utilities
   ├── meta.py            — FieldHint, ForeignKey, PrimaryKey; CompositeKey type aliases
   ├── providers.py       — DIContainer, DI wiring helpers
+  ├── di/                — a package since Plan 047 (was di.py): BACKEND_PRIORITY,
+  │   │                    ENV_OVERRIDE_PRIORITY, AlreadyBoundError, bind_instance(),
+  │   │                    is_user_bound(), bootstrap() (045/046, unchanged) + Plan 047's
+  │   │                    config-driven backend selection and catalogue
+  │   ├── seams.py       — Seam (frozen), SEAMS (the six selectable seams), seam_by_name(),
+  │   │                    interface_of() — VARCO_<SEAM>_BACKEND per seam
+  │   ├── select.py      — selected_by(), env_truthy()/EnvFlag, check_backend_selection(),
+  │   │                    bind_env_overrides() (the dotted-path VARCO_<SEAM>_BACKEND=pkg.mod:Name
+  │   │                    tier), inspect_backend_selection()
+  │   ├── features.py    — Feature (frozen), FEATURES (feature_flags/tenant_membership/
+  │   │                    policy_authorizer/authorization_audit), feature_default()
+  │   ├── introspect.py  — BindingRecord, inspect_bindings() (the one `container._bindings`
+  │   │                    read), Catalogue, catalogue(), CatalogueError
+  │   └── errors.py      — BackendSelectionError, CatalogueError
+  ├── settings/          — varco_core.settings: bind_settings()/bind_core_settings() (Plan 048 /
+  │   │                    DI-6, DI-16): the one `@Provider` closure recipe every
+  │   │                    `VarcoSettings`/`BaseSettings` subclass in the tree registers through —
+  │   │                    fail-fast at the call, never lazily on first resolve
+  │   ├── bind.py        — bind_settings(), provenance_of(), SettingsProvenance (frozen:
+  │   │                    cls/qualifier/env_prefix/fields/source)
+  │   ├── errors.py      — SettingsError, SettingsValidationError, SettingsAlreadyBoundError
+  │   ├── types.py       — CommaSeparated (comma-separated env decoding for list/tuple fields)
+  │   ├── inventory.py   — env_vars_for() → tuple[EnvVarSpec, ...] (frozen: env/field_path/
+  │   │                    type_repr/default_repr/description/secret), discover_settings_classes(),
+  │   │                    _EXCLUDED_SETTINGS, check_unique_env_names()
+  │   └── core.py        — bind_core_settings(container) — every varco_core-owned settings class
+  │                        with no package-specific home (§D-core-list)
   └── exception/         — Domain, service, query, HTTP exception hierarchy
 
 varco_kafka/             — Kafka event bus backend (aiokafka)
@@ -2061,7 +2088,7 @@ register_cpu_backend("pyinstrument", PyinstrumentBackend)
 
 **`ProfilingMiddleware`** (`varco_fastapi.middleware.profiling`) — ASGI middleware that
 profiles one HTTP request at a time:
-- Config via `ProfilingSettings` (env prefix `VARCO_PROFILER_`): `enabled`, `slow_threshold_ms`,
+- Config via `ProfilingSettings` (env prefix `VARCO_PROFILING_`): `enabled`, `slow_threshold_ms`,
   `mem_threshold_mb`, `attach_headers`, `skip_paths`, `top_n`, `track_rss`.
 - Uses a process-wide `asyncio.Lock` (lazy); concurrent requests **pass through unprofiled**
   rather than blocking.

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 from providify import DIContainer, IssueKind
-from varco_conformance.di_wiring import DIWiringConformance
+from varco_conformance.di_wiring import DIWiringConformance, Selectable
 from varco_core.auth.authorizer import AbstractAuthorizer
 from varco_core.cache.base import CacheBackend
 from varco_core.event import AbstractEventBus
@@ -23,6 +23,8 @@ from varco_core.event.dlq import AbstractDeadLetterQueue
 from varco_core.event.producer import AbstractEventProducer
 from varco_core.event.serializer import Serializer
 from varco_core.flags import AbstractFeatureFlags
+from varco_core.idempotency.base import AbstractIdempotencyStore
+from varco_core.job.base import AbstractJobStore
 from varco_core.lock import AbstractDistributedLock
 from varco_core.observability import OtelConfig
 from varco_core.revocation import AbstractTokenRevocationStore
@@ -33,6 +35,7 @@ from varco_nats.config import NatsEventBusSettings
 
 
 class TestVarcoNatsDIWiringConformance(DIWiringConformance):
+    settings_classes = (NatsEventBusSettings, NatsChannelManagerSettings)
     expected_defaults = (
         (CacheBackend, "in_memory"),
         (AbstractEventBus, "in_memory"),
@@ -47,11 +50,20 @@ class TestVarcoNatsDIWiringConformance(DIWiringConformance):
         (Serializer[Event], None),
         (AbstractAuthorizer, None),
         (OtelConfig, None),
+        # Plan 047 §D-vocab — the idempotency/job_store seam defaults.
+        (AbstractIdempotencyStore, "in_memory"),
+        (AbstractJobStore, "in_memory"),
         (AbstractEventBus, "nats"),
         (ChannelManager, "nats"),
         (NatsChannelManagerSettings, None),
         (NatsEventBusSettings, None),
         (AbstractDeadLetterQueue, None),
+    )
+
+    # Plan 047 §D-suite — gated backend bindings this package serves.
+    selectable = (
+        Selectable("event_bus", "nats", AbstractEventBus, "nats", "NatsEventBus"),
+        Selectable("dlq", "nats", AbstractDeadLetterQueue, None, "dlq"),
     )
 
     known_warnings = frozenset(

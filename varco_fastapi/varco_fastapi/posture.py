@@ -769,3 +769,58 @@ def _collect_local(
                 )
 
     return findings
+
+
+def _collect_di(container: Any) -> list[PostureFinding]:
+    """
+    Plan 047 §D-posture — one ``di.in_process_backend`` finding per seam
+    still served by its in-process default (``value == "memory"``).
+
+    ``revocation``'s default is ``"null"``, never reported here — that
+    finding belongs to 034's ``inspect_revocation_posture()`` (never
+    duplicated). A seam whose live binding is a **code** binding
+    (``source == "code"``) is never reported, regardless of its
+    configured value — the operator explicitly chose it.
+
+    Args:
+        container: A bootstrapped ``DIContainer``.
+
+    Returns:
+        Zero or more ``PostureFinding``s, ``check="di.in_process_backend"``.
+
+    Edge cases:
+        Severity is always ``WARN`` here, same as every other collector in
+        this module (see `_collect_auth`/`_collect_tenant`) — the
+        `development`-environment demotion to ``INFO`` is applied
+        centrally by `SecurityPostureLifecycle.start()`, which reads
+        `SecurityPostureSettings.environment` (`VARCO_SECURITY_ENV`). This
+        collector must never read a second, parallel environment variable
+        to pre-demote its own finding — doing so would let a deployment
+        that never set `VARCO_SECURITY_ENV` (and is therefore in the
+        `"production"` default) demote itself independently, defeating
+        `enforce="refuse"`. Never raises — an import/resolution failure
+        here would be a programming error, not an unassessed fact, since
+        every one of the six seams always has a live binding.
+    """
+    from varco_core.di.select import inspect_backend_selection  # noqa: PLC0415
+
+    findings: list[PostureFinding] = []
+    for selection in inspect_backend_selection(container):
+        if selection.seam == "revocation":
+            continue
+        if selection.source == "code":
+            continue
+        if selection.value != "memory":
+            continue
+        findings.append(
+            PostureFinding(
+                check="di.in_process_backend",
+                severity=PostureSeverity.WARN,
+                detail=f"{selection.seam} is served by {selection.live_owner} "
+                f"({selection.source}) — in-process, lost on restart, "
+                f"single-process only.",
+                remediation=f"set VARCO_{selection.seam.upper()}_BACKEND=<one of "
+                f"registered values> or bind_instance(...).",
+            )
+        )
+    return findings

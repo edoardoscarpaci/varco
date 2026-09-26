@@ -126,3 +126,11 @@ def bypass_beanie_collection_check(
                 classmethod(lambda cls: MagicMock()),
             )
             break
+
+
+@pytest.fixture(autouse=True)
+def _select_beanie_backends(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Plan 047 §D-tests — see varco_kafka's twin fixture docstring."""
+    monkeypatch.setenv("VARCO_DLQ_BACKEND", "beanie")
+    monkeypatch.setenv("VARCO_IDEMPOTENCY_BACKEND", "beanie")
+    monkeypatch.setenv("VARCO_JOB_STORE_BACKEND", "beanie")

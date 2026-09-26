@@ -4,12 +4,16 @@ varco_core.webhook.settings
 ``WebhookSettings`` — configuration for outbound webhook delivery
 (Plan 031 / D4a, Step 1).
 
-Not registered with a providify ``@Provider`` at import time (unlike
-``IdempotencySettings``'s aspirational docstring) — ``varco_core`` ships no
-DI wiring module of its own (CLAUDE.md: DI wiring lives in each backend's
-``di.py``); a consuming app or backend package registers this the same way
-it registers any other ``pydantic`` ``BaseSettings`` subclass, via its own
-``@Provider``.
+Bound by ``varco_core.settings.bind_settings()`` (Plan 048 / DI-6) from
+``bind_core_settings()``, never by a module-level ``@Provider`` or
+``@Singleton`` — see ``varco_core.idempotency.settings`` for why the recipe
+registers a ``@Provider`` *closure* rather than binding the class directly.
+
+⚠️ This docstring previously said ``varco_core`` ships no DI wiring module of
+its own and that a consuming app must register this class via its own
+``@Provider``. Both statements are obsolete: ``varco_core.di`` (Plan 047)
+and ``varco_core.settings`` (Plan 048) are that wiring, and
+``bind_core_settings(container)`` binds this class for you.
 """
 
 from __future__ import annotations

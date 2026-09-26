@@ -26,7 +26,7 @@ import pytest
 from providify import DIContainer, IssueKind, Provider
 from pymongo import AsyncMongoClient
 from varco_beanie.config import BeanieSettings
-from varco_conformance.di_wiring import DIWiringConformance
+from varco_conformance.di_wiring import DIWiringConformance, Selectable
 from varco_core.auth.authorizer import AbstractAuthorizer
 from varco_core.cache.base import CacheBackend
 from varco_core.event import AbstractEventBus
@@ -36,6 +36,8 @@ from varco_core.event.dlq import AbstractDeadLetterQueue
 from varco_core.event.producer import AbstractEventProducer
 from varco_core.event.serializer import Serializer
 from varco_core.flags import AbstractFeatureFlags
+from varco_core.idempotency.base import AbstractIdempotencyStore
+from varco_core.job.base import AbstractJobStore
 from varco_core.lock import AbstractDistributedLock
 from varco_core.observability import OtelConfig
 from varco_core.providers import RepositoryProvider
@@ -60,6 +62,9 @@ CORE_DEFAULTS = (
     (Serializer[Event], None),
     (AbstractAuthorizer, None),
     (OtelConfig, None),
+    # Plan 047 §D-vocab — the idempotency/job_store seam defaults.
+    (AbstractIdempotencyStore, "in_memory"),
+    (AbstractJobStore, "in_memory"),
 )
 
 
@@ -83,6 +88,17 @@ class TestVarcoBeanieDIWiringConformance(DIWiringConformance):
         (QueryApplicator, "beanie_aggregation"),
         (BinaryWalkingVisitor, "beanie"),
         (ASTVisitor, "beanie"),
+        # Plan 047 N4/N5 — gated beanie-backed idempotency/job_store.
+        (AbstractIdempotencyStore, None),
+        (AbstractJobStore, None),
+    )
+
+    # Plan 047 §D-suite — N4-N5 (idempotency/job_store, beanie-backed);
+    # dlq/beanie already exists (qualifier="beanie"), gated too.
+    selectable = (
+        Selectable("dlq", "beanie", AbstractDeadLetterQueue, "beanie", "BeanieDeadLetterQueue"),
+        Selectable("idempotency", "beanie", AbstractIdempotencyStore, None, "idempotency_store"),
+        Selectable("job_store", "beanie", AbstractJobStore, None, "job_store"),
     )
 
     known_warnings = frozenset(

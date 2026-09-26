@@ -57,6 +57,7 @@ from providify import Fallback, InjectMeta, Singleton
 from pydantic import Field
 from pymongo.errors import DuplicateKeyError
 from varco_core.di import BACKEND_PRIORITY
+from varco_core.di.select import selected_by
 from varco_core.event.base import Event
 from varco_core.event.dlq import (
     AbstractDeadLetterQueue,
@@ -121,6 +122,7 @@ def _ttl_index_entry(seconds: int) -> Any:
 
 @Fallback
 @Singleton(priority=BACKEND_PRIORITY, qualifier="beanie")
+@selected_by("dlq", "beanie")
 class BeanieDeadLetterQueue(AbstractDeadLetterQueue):
     """
     Beanie-backed ``AbstractDeadLetterQueue`` — mirrors ``SADeadLetterQueue``.

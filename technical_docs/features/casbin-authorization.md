@@ -159,6 +159,15 @@ attribute holder (ABAC).
   Docker) and, marked `@pytest.mark.integration`, against real Postgres via
   testcontainers (`uv run pytest varco_casbin/tests/ -m integration`).
 
+## Enabling via env (Plan 047)
+
+`VARCO_POLICY_AUTHORIZER_ENABLED=true` is the env twin of `enable_policy_authorizer(container)`
+— a `@Requires`-gated `@Fallback` provider, inert unless the operator opts in, registered by
+`varco_casbin.di.bootstrap()`. Code always wins: calling `enable_policy_authorizer(container)`
+with the variable also set is not an error — your call wins outright and the env twin is
+reported as `FALLBACK_SHADOWED` in `container.validate()`. See
+`technical_docs/features/dependency-injection.md`'s "Enabling a feature" section.
+
 ## Pitfalls
 
 | Pitfall | Symptom | Root Cause | Fix |

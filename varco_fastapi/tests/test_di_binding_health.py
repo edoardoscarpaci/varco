@@ -37,6 +37,7 @@ here, but it must never ship a binding that triggers it.
 from __future__ import annotations
 
 import ast
+import builtins
 import importlib
 import inspect
 import pkgutil
@@ -52,6 +53,11 @@ from providify import DIContainer, Provider
 from varco_core.observability.config import OtelConfig
 from varco_core.observability.di import OtelConfiguration
 from varco_fastapi.di import VarcoFastAPIModule
+
+#: `eval(annotation, fn.__globals__)` also implicitly sees `__builtins__` —
+#: a bare `-> object`/`-> str`/... nested @Provider return annotation is
+#: always resolvable regardless of what the enclosing function imports.
+_BUILTIN_NAMES = frozenset(dir(builtins))
 
 VARCO_PACKAGES = (
     "varco_core",
@@ -306,6 +312,55 @@ def _is_provider_decorator(node) -> bool:
     return False
 
 
+def _returns_overridden_providers(enclosing) -> set[str]:
+    """
+    Names passed as the first positional argument to a
+    ``<container>.provide(<name>, returns=<Interface>)`` call inside
+    ``enclosing``.
+
+    ``container.provide(fn, returns=X)`` never consults ``fn``'s own return
+    annotation at all — providify's interface resolution short-circuits to
+    the explicit ``returns=`` value (``ProviderBinding.__init__`` only
+    falls back to the annotation when ``interface is None``). A nested
+    provider registered exclusively this way structurally cannot trigger
+    the annotation-eval defect this test guards against, regardless of
+    what its own (never-consulted) return annotation names.
+
+    Args:
+        enclosing: The enclosing ``FunctionDef``/``AsyncFunctionDef`` node.
+
+    Returns:
+        Set of nested-function names registered only via ``returns=``.
+    """
+    overridden: set[str] = set()
+    for node in ast.walk(enclosing):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "provide"):
+            continue
+        if not any(kw.arg == "returns" for kw in node.keywords):
+            continue
+        if node.args and isinstance(node.args[0], ast.Name):
+            overridden.add(node.args[0].id)
+    return overridden
+
+
+def _provider_names_passed_to_provide(enclosing) -> set[str]:
+    """Every bare name passed as an argument to any ``.provide(...)`` call."""
+    names: set[str] = set()
+    for node in ast.walk(enclosing):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "provide"):
+            continue
+        for arg in node.args:
+            if isinstance(arg, ast.Name):
+                names.add(arg.id)
+    return names
+
+
 def _iter_source_files():
     """Yield every ``.py`` file in every varco package (sources + tests)."""
     from pathlib import Path
@@ -346,12 +401,22 @@ def test_regression_no_function_local_provider_with_unresolvable_return_type() -
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             patched = _annotation_patched_providers(node)
+            returns_overridden = _returns_overridden_providers(node)
+            provided_names = _provider_names_passed_to_provide(node)
             for child in ast.walk(node):
                 if child is node or not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
                 if not any(_is_provider_decorator(d) for d in child.decorator_list):
                     continue
-                if child.name in patched:
+                if child.name in patched or child.name in returns_overridden:
+                    continue
+                # A nested provider that is never passed to any
+                # `.provide(...)` call at all is decoration-only (e.g. a
+                # unit test inspecting the stamped `@Requires` marker) —
+                # it never reaches `ProviderBinding.__init__`, so its
+                # return annotation is never eval()'d and cannot poison a
+                # container. Exempt.
+                if child.name not in provided_names:
                     continue
                 returns = child.returns
                 if returns is None:
@@ -365,6 +430,8 @@ def test_regression_no_function_local_provider_with_unresolvable_return_type() -
                     while isinstance(root, ast.Attribute):
                         root = root.value
                 if not isinstance(root, ast.Name):
+                    continue
+                if root.id in _BUILTIN_NAMES:
                     continue
                 if root.id not in module_names:
                     offenders.append(

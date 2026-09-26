@@ -185,7 +185,7 @@ def create_varco_app(
         enable_error_middleware:    Add ``ErrorMiddleware`` (exception → JSON response).
         enable_profiling:           Add ``ProfilingMiddleware`` (diagnostic CPU/memory
                                     profiler).  Default: ``False``.  Also respects the
-                                    ``VARCO_PROFILER_ENABLED`` env var.  See
+                                    ``VARCO_PROFILING_ENABLED`` env var.  See
                                     ``ProfilingSettings`` for threshold/header options.
         enable_metrics:             Add ``MetricsMiddleware`` and mount ``MetricsRouter``
                                     at ``GET /metrics``.  Default: ``False``.  Requires
@@ -338,6 +338,16 @@ def create_varco_app(
 
         set_capture_enabled(capture_params)
 
+    # ── Step 0.5: Config-driven backend selection check (Plan 047 §D-check) ───
+    # Runs whenever a container is passed, independent of `validate=` — a
+    # typo'd VARCO_<SEAM>_BACKEND value is a startup misconfiguration, not a
+    # DI-graph-shape validation the `validate=False` escape hatch is meant
+    # to skip. Before the lifespan is built, so it fails app construction.
+    if container is not None:
+        from varco_core.di import check_backend_selection
+
+        check_backend_selection(container)
+
     # ── Step 1: Validate DI container ─────────────────────────────────────────
     if validate and container is not None:
         validate_container_bindings(container)
@@ -409,7 +419,10 @@ def create_varco_app(
     else:
         import os as _os
 
-        if _os.environ.get("VARCO_TENANCY_ISOLATION"):
+        # Plan 048 / DI-6, §D-loose — a presence check, not a value read
+        # (`in`, never `.get("VARCO_...")`); TenancySettings is the single
+        # settings object that actually parses this variable.
+        if "VARCO_TENANCY_ISOLATION" in _os.environ:
             _logger.warning(
                 "VARCO_TENANCY_ISOLATION is set but create_varco_app() received "
                 "no tenancy= argument — no tenancy lifecycle will run. Pass "

@@ -8,22 +8,29 @@ All singletons (``RedisEventBus``, ``RedisStreamEventBus`` via selector,
 ``@Singleton`` on the class itself and are discovered automatically by
 ``container.scan("varco_redis", recursive=True)``.
 
-``RedisEventBusSettings`` is the exception: pydantic ``BaseSettings``
+``RedisEventBusSettings``/``RedisCacheSettings``/``LayeredCacheSettings``/
+``RedisBackplaneSettings`` are the exception: pydantic ``BaseSettings``
 declares ``__init__(self, **values)``, which is not a shape ``@Singleton``
-should be applied to (see CLAUDE.md's pitfall table). It is registered
-instead by a ``@Fallback @Provider`` factory
-(``redis_event_bus_settings`` in ``varco_redis.config``), same as
-``RedisBackplaneSettings`` in ``varco_redis.backplane`` — both are
-discovered by the same ``scan()``.
+should be applied to (see CLAUDE.md's pitfall table). All four are
+registered by ``bootstrap()`` via ``bind_settings()`` (Plan 048 / DI-6,
+Step 8, Decision 2) — never a module-level or per-``@Configuration``
+``@Fallback @Provider`` factory any more.
 
-No ``@Configuration`` class or ``ainstall()`` call is required.
+No ``@Configuration`` class or ``ainstall()`` call is required for the
+event bus. ``RedisCacheConfiguration``/``RedisLayeredCacheConfiguration``
+still need an explicit ``await container.ainstall(...)`` to *start* the
+cache, but — as of Decision 2 — ``bootstrap(container)`` must run first so
+their settings are resolvable at all.
 
 Bus type selection
 ------------------
-Set ``VARCO_REDIS_USE_STREAMS=true`` to activate ``RedisStreamEventBus``
-(at-least-once, Redis Streams).  Default is ``RedisEventBus`` (at-most-once,
-Pub/Sub).  The selector lives in ``varco_redis.bus._redis_active_bus`` and is
-discovered automatically by scan.
+The bus is live only when ``VARCO_EVENT_BUS_BACKEND=redis`` (Plan 047
+§D-vocab) — bootstrapping this package alone no longer makes it the live
+bus. Once selected, set ``VARCO_REDIS_USE_STREAMS=true`` to activate
+``RedisStreamEventBus`` (at-least-once, Redis Streams) *within* that
+selection; the default is ``RedisEventBus`` (at-most-once, Pub/Sub). The
+selector is ``RedisEventBusSelectorConfiguration.bus()`` (a gated
+``@Configuration`` provider), discovered automatically by scan.
 
 Usage
 -----
@@ -159,10 +166,40 @@ def bootstrap(container: DIContainer) -> DIContainer:
     # WITHOUT calling bootstrap() must scan varco_core.revocation itself.
     container.scan("varco_core.revocation", recursive=True)
 
+    # Plan 048 / DI-6, Step 8 — every varco_redis settings class goes
+    # through bind_settings() (fail-fast, one recipe) BEFORE scan(), rather
+    # than a module-level/per-@Configuration @Fallback @Provider. Safe to
+    # call before an app's own code override too — bind_settings() never
+    # reads the environment when a non-fallback binding already exists
+    # (§D-precedence).
+    #
+    # ⚠️ BREAKING (Decision 2): RedisCacheSettings/LayeredCacheSettings/
+    # RedisBackplaneSettings used to be registered lazily, only when their
+    # owning @Configuration was installed (RedisCacheConfiguration /
+    # RedisLayeredCacheConfiguration) or scanned (backplane.py's
+    # module-level provider). They are now registered here, unconditionally
+    # — `container.ainstall(RedisCacheConfiguration)` /
+    # `ainstall(RedisLayeredCacheConfiguration)` / the backplane no longer
+    # resolve their settings without a prior `bootstrap(container)` call.
+    from varco_core.settings import bind_settings
+
+    from varco_redis.backplane import RedisBackplaneSettings
+    from varco_redis.cache import LayeredCacheSettings, RedisCacheSettings
+    from varco_redis.config import RedisEventBusSettings
+
+    for settings_cls in (
+        RedisEventBusSettings,
+        RedisCacheSettings,
+        LayeredCacheSettings,
+        RedisBackplaneSettings,
+    ):
+        bind_settings(container, settings_cls)
+
     # Discover all @Singleton/@Component classes and module-level @Provider
     # functions in varco_redis recursively.  This includes:
     #   - RedisEventBusSettings (@Singleton, reads VARCO_REDIS_* env vars)
-    #   - _redis_active_bus (@Provider, selects Pub/Sub or Streams)
+    #   - RedisEventBusSelectorConfiguration.bus (@Provider, gated on
+    #     VARCO_EVENT_BUS_BACKEND=redis; selects Pub/Sub or Streams)
     #   - RedisHealthCheck, RedisChannelManager (@Singleton)
     #   - RedisCache and related classes (@Singleton)
     container.scan("varco_redis", recursive=True)

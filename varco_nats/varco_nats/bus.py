@@ -104,6 +104,7 @@ from nats.js.api import ConsumerConfig
 from nats.js.errors import NotFoundError
 from providify import Fallback, Inject, InjectMeta, Instance, PostConstruct, PreDestroy, Singleton
 from varco_core.di import BACKEND_PRIORITY
+from varco_core.di.select import selected_by
 from varco_core.event.base import (
     CHANNEL_ALL,
     CHANNEL_DEFAULT,
@@ -128,6 +129,7 @@ _MSG_ID_HEADER = "Nats-Msg-Id"
 
 @Fallback
 @Singleton(priority=BACKEND_PRIORITY, qualifier="nats")
+@selected_by("event_bus", "nats")
 class NatsEventBus(AbstractEventBus):
     """
     ``AbstractEventBus`` backed by NATS JetStream via ``nats-py``.

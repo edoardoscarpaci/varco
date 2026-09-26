@@ -18,10 +18,12 @@ point (providify's qualified-binding-also-matches-unqualified-request rule,
 dependent instead of deterministic. Confirmed against source during this
 step — not changed.
 
-`RedisBackplaneSettings` is measured (Step 0(d)) to NOT register via
-`bootstrap()`'s scan today (a pre-existing gap, out of this plan's scope) —
-`expected_defaults` reflects the measured set, not the plan table's
-assumption, per the test-writer's note 4 principle.
+`RedisBackplaneSettings` used to NOT register via `bootstrap()`'s scan (a
+pre-existing gap) — closed by Decision 2 of the settings-standardization
+repair round: `RedisCacheSettings`/`LayeredCacheSettings`/
+`RedisBackplaneSettings` are now all registered by `bootstrap()` via
+`bind_settings()`, deleting the last three per-``@Configuration``/
+module-level `@Fallback @Provider` settings factories in `varco_redis`.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ import os
 
 import pytest
 from providify import DIContainer, IssueKind, Singleton
-from varco_conformance.di_wiring import DIWiringConformance
+from varco_conformance.di_wiring import DIWiringConformance, Selectable
 from varco_core.auth.authorizer import AbstractAuthorizer
 from varco_core.cache.base import CacheBackend
 from varco_core.di import BACKEND_PRIORITY
@@ -43,17 +45,26 @@ from varco_core.event.memory import InMemoryEventBus
 from varco_core.event.producer import AbstractEventProducer
 from varco_core.event.serializer import Serializer
 from varco_core.flags import AbstractFeatureFlags
+from varco_core.idempotency.base import AbstractIdempotencyStore
+from varco_core.job.base import AbstractJobStore
 from varco_core.lock import AbstractDistributedLock
 from varco_core.observability import OtelConfig
 from varco_core.revocation import AbstractTokenRevocationStore
 from varco_core.service.conversation import AbstractConversationStore
 from varco_core.tenancy.membership import AbstractTenantMembership
+from varco_redis.backplane import RedisBackplaneSettings
 from varco_redis.bus import RedisEventBus
 from varco_redis.cache import LayeredCacheSettings, RedisCacheSettings
 from varco_redis.config import RedisEventBusSettings
 
 
 class TestVarcoRedisDIWiringConformance(DIWiringConformance):
+    settings_classes = (
+        RedisEventBusSettings,
+        RedisCacheSettings,
+        LayeredCacheSettings,
+        RedisBackplaneSettings,
+    )
     expected_defaults = (
         (CacheBackend, "in_memory"),
         (AbstractEventBus, "in_memory"),
@@ -68,6 +79,9 @@ class TestVarcoRedisDIWiringConformance(DIWiringConformance):
         (Serializer[Event], None),
         (AbstractAuthorizer, None),
         (OtelConfig, None),
+        # Plan 047 §D-vocab — the idempotency/job_store seam defaults.
+        (AbstractIdempotencyStore, "in_memory"),
+        (AbstractJobStore, "in_memory"),
         (AbstractEventBus, "redis"),
         (AbstractEventBus, None),
         (RedisCacheSettings, None),
@@ -75,7 +89,28 @@ class TestVarcoRedisDIWiringConformance(DIWiringConformance):
         (LayeredCacheSettings, None),
         (ChannelManager, "redis"),
         (RedisEventBusSettings, None),
+        (RedisBackplaneSettings, None),
+        # Plan 047 N6/N7/N8 — new gated Redis stores; @Fallback-marked
+        # (and therefore visible to fallback_bindings()) regardless of
+        # whether VARCO_<SEAM>_BACKEND=redis is actually set.
+        (AbstractIdempotencyStore, None),
+        (AbstractJobStore, None),
         (AbstractDeadLetterQueue, None),
+    )
+
+    # Plan 047 §D-suite — the redis three-level shape: both the selector
+    # (unqualified) and RedisEventBus (qualifier="redis") gate on the same
+    # ("event_bus", "redis") value.
+    selectable = (
+        Selectable("event_bus", "redis", AbstractEventBus, None, "bus"),
+        Selectable("event_bus", "redis", AbstractEventBus, "redis", "RedisEventBus"),
+        Selectable("dlq", "redis", AbstractDeadLetterQueue, None, "dlq"),
+        Selectable("dlq", "redis-streams", AbstractDeadLetterQueue, None, "dlq"),
+        Selectable("cache", "redis", CacheBackend, None, "redis_cache"),
+        Selectable("cache", "layered", CacheBackend, None, "layered_cache"),
+        Selectable("idempotency", "redis", AbstractIdempotencyStore, None, "idempotency_store"),
+        Selectable("job_store", "redis", AbstractJobStore, None, "job_store"),
+        Selectable("revocation", "redis", AbstractTokenRevocationStore, None, "revocation_store"),
     )
 
     known_warnings = frozenset(
@@ -96,6 +131,46 @@ class TestVarcoRedisDIWiringConformance(DIWiringConformance):
             return container
 
         return _bootstrap
+
+    async def test_selected_backend_is_a_fallback_at_backend_priority(self, bootstrap) -> None:
+        """
+        Override: legitimate backend capability divergence (CLAUDE.md's
+        conformance-findings decision table) — ``RedisEventBus``
+        (qualifier="redis") deliberately carries NO ``priority=
+        BACKEND_PRIORITY`` (see this module's own docstring and
+        ``varco_redis/varco_redis/bus.py``): giving it one would tie it
+        with ``RedisEventBusSelectorConfiguration.bus()`` for the
+        *unqualified* injection point. So the qualified ``"redis"`` entry
+        is asserted at priority ``0``; every other selectable entry keeps
+        the base class's ``BACKEND_PRIORITY`` assertion.
+        """
+        import os
+
+        from varco_core.di import BACKEND_PRIORITY
+        from varco_core.di.seams import seam_by_name
+
+        for entry in self.selectable:
+            seam = seam_by_name(entry.seam)
+            old = os.environ.get(seam.env)
+            os.environ[seam.env] = entry.value
+            try:
+                c = DIContainer()
+                bootstrap(c)
+
+                binding = c.get_binding(entry.interface, qualifier=entry.qualifier)
+                assert binding.fallback is True
+                expected_priority = (
+                    0
+                    if (entry.seam, entry.qualifier) == ("event_bus", "redis")
+                    else BACKEND_PRIORITY
+                )
+                assert binding.priority == expected_priority
+                assert entry.owner_substr in str(getattr(binding, "owner", binding))
+            finally:
+                if old is None:
+                    os.environ.pop(seam.env, None)
+                else:
+                    os.environ[seam.env] = old
 
 
 def test_redis_selector_is_the_unqualified_winner() -> None:

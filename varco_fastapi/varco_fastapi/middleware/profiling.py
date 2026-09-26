@@ -4,19 +4,19 @@ varco_fastapi.middleware.profiling
 ASGI middleware that profiles individual HTTP requests using
 ``varco_core.profiling``.
 
-Opt-in and disabled by default — enable with the ``VARCO_PROFILER_ENABLED=true``
+Opt-in and disabled by default — enable with the ``VARCO_PROFILING_ENABLED=true``
 environment variable or by setting ``ProfilingSettings(enabled=True)``.
 
 Usage via ``create_varco_app``::
 
-    # Set env var VARCO_PROFILER_ENABLED=true before starting the server, or:
+    # Set env var VARCO_PROFILING_ENABLED=true before starting the server, or:
     app = create_varco_app(container, enable_profiling=True)
 
 Usage via app settings::
 
-    VARCO_PROFILER_ENABLED=true
-    VARCO_PROFILER_SLOW_THRESHOLD_MS=100
-    VARCO_PROFILER_ATTACH_HEADERS=true
+    VARCO_PROFILING_ENABLED=true
+    VARCO_PROFILING_SLOW_THRESHOLD_MS=100
+    VARCO_PROFILING_ATTACH_HEADERS=true
 
 DESIGN: serialised profiling via process-wide asyncio.Lock
     ``cProfile`` and ``tracemalloc`` are process-global — two concurrent sessions
@@ -63,15 +63,15 @@ _logger = logging.getLogger(__name__)
 class ProfilingSettings(VarcoSettings):
     """Configuration for ``ProfilingMiddleware``, loaded from environment variables.
 
-    All fields use the ``VARCO_PROFILER_`` prefix.
+    All fields use the ``VARCO_PROFILING_`` prefix.
 
     Example env vars::
 
-        VARCO_PROFILER_ENABLED=true
-        VARCO_PROFILER_SLOW_THRESHOLD_MS=100
-        VARCO_PROFILER_MEM_THRESHOLD_MB=5
-        VARCO_PROFILER_ATTACH_HEADERS=true
-        VARCO_PROFILER_TOP_N=10
+        VARCO_PROFILING_ENABLED=true
+        VARCO_PROFILING_SLOW_THRESHOLD_MS=100
+        VARCO_PROFILING_MEM_THRESHOLD_MB=5
+        VARCO_PROFILING_ATTACH_HEADERS=true
+        VARCO_PROFILING_TOP_N=10
 
     Attributes:
         enabled:             Whether to install the middleware at all (default ``False``).
@@ -91,7 +91,7 @@ class ProfilingSettings(VarcoSettings):
     Thread safety:  ✅ Frozen pydantic model.
     """
 
-    model_config = SettingsConfigDict(env_prefix="VARCO_PROFILER_", frozen=True)
+    model_config = SettingsConfigDict(env_prefix="VARCO_PROFILING_", frozen=True)
 
     enabled: bool = False
     skip_paths: frozenset[str] = frozenset({"/metrics", "/health", "/readyz"})

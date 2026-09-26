@@ -1,0 +1,2283 @@
+{
+  "classes": {
+    "varco_casbin.config.CasbinSettings": [
+      {
+        "default": "'memory'",
+        "description": "",
+        "env": "VARCO_CASBIN_ADAPTER",
+        "field": "adapter",
+        "secret": false,
+        "type": "typing.Literal['memory', 'file', 'sqlalchemy', 'beanie']"
+      },
+      {
+        "default": "'admin'",
+        "description": "",
+        "env": "VARCO_CASBIN_ADMIN_ROLE",
+        "field": "admin_role",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_CASBIN_AUTO_SAVE",
+        "field": "auto_save",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_CASBIN_DB_NAME",
+        "field": "db_name",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_CASBIN_DB_URL",
+        "field": "db_url",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_CASBIN_MODEL_PATH",
+        "field": "model_path",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "'rbac'",
+        "description": "",
+        "env": "VARCO_CASBIN_MODEL_PRESET",
+        "field": "model_preset",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_CASBIN_MODEL_TEXT",
+        "field": "model_text",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_CASBIN_POLICY_PATH",
+        "field": "policy_path",
+        "secret": false,
+        "type": "str | None"
+      }
+    ],
+    "varco_core.authority.config.AuthorizationConfig": [
+      {
+        "default": "()",
+        "description": "",
+        "env": "VARCO_AUTHORIZATION__ISSUERS",
+        "field": "issuers",
+        "secret": false,
+        "type": "tuple[varco_core.authority.config.IssuerConfig, ...]"
+      }
+    ],
+    "varco_core.cache.config.CacheSettings": [
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_CACHE_DEFAULT_TTL",
+        "field": "default_ttl",
+        "secret": false,
+        "type": "float | None"
+      }
+    ],
+    "varco_core.config.VarcoSettings": [],
+    "varco_core.connection.base.ConnectionSettings": [
+      {
+        "default": "'localhost'",
+        "description": "",
+        "env": "HOST",
+        "field": "host",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "0",
+        "description": "",
+        "env": "PORT",
+        "field": "port",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "SSL",
+        "field": "ssl",
+        "secret": false,
+        "type": "varco_core.connection.ssl.SSLConfig | None"
+      }
+    ],
+    "varco_core.event.cloudevents.CloudEventsSettings": [
+      {
+        "default": "'application/json'",
+        "description": "",
+        "env": "VARCO_CLOUDEVENTS_DATACONTENTTYPE",
+        "field": "datacontenttype",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "<required>",
+        "description": "",
+        "env": "VARCO_CLOUDEVENTS_SOURCE",
+        "field": "source",
+        "secret": false,
+        "type": "<class 'str'>"
+      }
+    ],
+    "varco_core.event.config.EventBusSettings": [
+      {
+        "default": "''",
+        "description": "",
+        "env": "CHANNEL_PREFIX",
+        "field": "channel_prefix",
+        "secret": false,
+        "type": "<class 'str'>"
+      }
+    ],
+    "varco_core.exception.settings.ErrorEnvelopeSettings": [
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_ERROR_INCLUDE_DETAIL",
+        "field": "include_detail",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_ERROR_INCLUDE_MESSAGE_KEY",
+        "field": "include_message_key",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_ERROR_INCLUDE_PARAMS",
+        "field": "include_params",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_ERROR_PROBLEM_DETAILS",
+        "field": "problem_details",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_ERROR_PROBLEM_TYPE_BASE",
+        "field": "problem_type_base",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_ERROR_REDACT_PARAMS",
+        "field": "redact_params",
+        "secret": false,
+        "type": "<class 'bool'>"
+      }
+    ],
+    "varco_core.i18n.settings.I18nSettings": [
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_I18N_CATALOG_DIR",
+        "field": "catalog_dir",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "'en'",
+        "description": "",
+        "env": "VARCO_I18N_DEFAULT_LOCALE",
+        "field": "default_locale",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "'messages'",
+        "description": "",
+        "env": "VARCO_I18N_DOMAIN",
+        "field": "domain",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_I18N_ENABLED",
+        "field": "enabled",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "'lang'",
+        "description": "",
+        "env": "VARCO_I18N_QUERY_PARAM",
+        "field": "query_param",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_I18N_SET_CONTENT_LANGUAGE",
+        "field": "set_content_language",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "('en',)",
+        "description": "",
+        "env": "VARCO_I18N_SUPPORTED_LOCALES",
+        "field": "supported_locales",
+        "secret": false,
+        "type": "tuple[str, ...]"
+      }
+    ],
+    "varco_core.idempotency.settings.IdempotencySettings": [
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_IDEMPOTENCY_ENABLED",
+        "field": "enabled",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "255",
+        "description": "",
+        "env": "VARCO_IDEMPOTENCY_MAX_KEY_LENGTH",
+        "field": "max_key_length",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "1048576",
+        "description": "",
+        "env": "VARCO_IDEMPOTENCY_MAX_STORED_BODY_BYTES",
+        "field": "max_stored_body_bytes",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "()",
+        "description": "",
+        "env": "VARCO_IDEMPOTENCY_REPLAY_HEADER_ALLOWLIST",
+        "field": "replay_header_allowlist",
+        "secret": false,
+        "type": "tuple[str, ...]"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_IDEMPOTENCY_REQUIRE_KEY",
+        "field": "require_key",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "86400.0",
+        "description": "",
+        "env": "VARCO_IDEMPOTENCY_TTL_SECONDS",
+        "field": "ttl_seconds",
+        "secret": false,
+        "type": "<class 'float'>"
+      }
+    ],
+    "varco_core.jwt.config.JwtVerificationSettings": [
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_JWT_ALLOW_ANY_AUDIENCE",
+        "field": "allow_any_audience",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_JWT_AUDIENCE",
+        "field": "audience",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_JWT_ENFORCE_ISS",
+        "field": "enforce_issuer",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "10.0",
+        "description": "",
+        "env": "VARCO_JWT_JWKS_MIN_REFRESH_SECONDS",
+        "field": "jwks_min_refresh_seconds",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "0.0",
+        "description": "",
+        "env": "VARCO_JWT_JWKS_TTL_SECONDS",
+        "field": "jwks_ttl_seconds",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "0.0",
+        "description": "",
+        "env": "VARCO_JWT_LEEWAY_SECONDS",
+        "field": "leeway_seconds",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_JWT_REVOCATION_ENABLED",
+        "field": "revocation_enabled",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "<RevocationFailureMode.FAIL_CLOSED: 'fail_closed'>",
+        "description": "",
+        "env": "VARCO_JWT_REVOCATION_FAILURE_MODE",
+        "field": "revocation_failure_mode",
+        "secret": false,
+        "type": "<enum 'RevocationFailureMode'>"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_JWT_REVOCATION_REQUIRE_JTI",
+        "field": "revocation_require_jti",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "60.0",
+        "description": "",
+        "env": "VARCO_JWT_REVOCATION_SKEW_SECONDS",
+        "field": "revocation_skew_seconds",
+        "secret": false,
+        "type": "<class 'float'>"
+      }
+    ],
+    "varco_core.jwt.transform.config.JwtTransformSettings": [
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_ACTOR_FIELD",
+        "field": "actor_field",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_ACTOR_REQUIRED",
+        "field": "actor_required",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "'auto'",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_ACTOR_SHAPE",
+        "field": "actor_shape",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_ACTOR_STRIP_PREFIX",
+        "field": "actor_strip_prefix",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_GRANTS_FIELD",
+        "field": "grants_field",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_GRANTS_REQUIRED",
+        "field": "grants_required",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "'auto'",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_GRANTS_SHAPE",
+        "field": "grants_shape",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_GRANTS_STRIP_PREFIX",
+        "field": "grants_strip_prefix",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_MERGE_SOURCES",
+        "field": "merge_sources",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_METADATA_FIELDS",
+        "field": "metadata_fields",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "'.'",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_PATH_SEPARATOR",
+        "field": "path_separator",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_ROLES_FIELD",
+        "field": "roles_field",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_ROLES_REQUIRED",
+        "field": "roles_required",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "'auto'",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_ROLES_SHAPE",
+        "field": "roles_shape",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_ROLES_STRIP_PREFIX",
+        "field": "roles_strip_prefix",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_SCOPES_FIELD",
+        "field": "scopes_field",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_SCOPES_REQUIRED",
+        "field": "scopes_required",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "'auto'",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_SCOPES_SHAPE",
+        "field": "scopes_shape",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_SCOPES_STRIP_PREFIX",
+        "field": "scopes_strip_prefix",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_STRICT",
+        "field": "strict",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_TENANT_FIELD",
+        "field": "tenant_field",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_TENANT_REQUIRED",
+        "field": "tenant_required",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "'auto'",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_TENANT_SHAPE",
+        "field": "tenant_shape",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_TENANT_STRIP_PREFIX",
+        "field": "tenant_strip_prefix",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_TENANTS_FIELD",
+        "field": "tenants_field",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_TENANTS_REQUIRED",
+        "field": "tenants_required",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "'auto'",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_TENANTS_SHAPE",
+        "field": "tenants_shape",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_TENANTS_STRIP_PREFIX",
+        "field": "tenants_strip_prefix",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "***",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_TOKEN_TYPE_FIELD",
+        "field": "token_type_field",
+        "secret": true,
+        "type": "str | None"
+      },
+      {
+        "default": "***",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_TOKEN_TYPE_REQUIRED",
+        "field": "token_type_required",
+        "secret": true,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "***",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_TOKEN_TYPE_SHAPE",
+        "field": "token_type_shape",
+        "secret": true,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "***",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_TOKEN_TYPE_STRIP_PREFIX",
+        "field": "token_type_strip_prefix",
+        "secret": true,
+        "type": "str | None"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_USER_ID_FIELD",
+        "field": "user_id_field",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_USER_ID_REQUIRED",
+        "field": "user_id_required",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "'auto'",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_USER_ID_SHAPE",
+        "field": "user_id_shape",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_JWT_TRANSFORM_USER_ID_STRIP_PREFIX",
+        "field": "user_id_strip_prefix",
+        "secret": false,
+        "type": "str | None"
+      }
+    ],
+    "varco_core.migration.settings.MigrationSettings": [
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_MIGRATE_DRY_RUN",
+        "field": "dry_run",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "'varco:migrate'",
+        "description": "",
+        "env": "VARCO_MIGRATE_LOCK_KEY",
+        "field": "lock_key",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "30.0",
+        "description": "",
+        "env": "VARCO_MIGRATE_LOCK_TIMEOUT",
+        "field": "lock_timeout",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "'off'",
+        "description": "",
+        "env": "VARCO_MIGRATE_MODE",
+        "field": "mode",
+        "secret": false,
+        "type": "typing.Literal['off', 'check', 'upgrade']"
+      },
+      {
+        "default": "'fail'",
+        "description": "",
+        "env": "VARCO_MIGRATE_ON_FAILURE",
+        "field": "on_failure",
+        "secret": false,
+        "type": "typing.Literal['fail', 'warn']"
+      },
+      {
+        "default": "'heads'",
+        "description": "",
+        "env": "VARCO_MIGRATE_TARGET_REV",
+        "field": "target",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "300.0",
+        "description": "",
+        "env": "VARCO_MIGRATE_TIMEOUT",
+        "field": "timeout",
+        "secret": false,
+        "type": "<class 'float'>"
+      }
+    ],
+    "varco_core.tenancy.membership.TenantMembershipSettings": [
+      {
+        "default": "'tenants'",
+        "description": "",
+        "env": "VARCO_TENANT_MEMBERSHIP_CLAIM",
+        "field": "claim_key",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "<MissingClaimPolicy.ALLOW: 'allow'>",
+        "description": "",
+        "env": "VARCO_TENANT_MEMBERSHIP_ON_MISSING",
+        "field": "on_missing_claim",
+        "secret": false,
+        "type": "<enum 'MissingClaimPolicy'>"
+      }
+    ],
+    "varco_core.tenancy.settings.TenancySettings": [
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_TENANCY_ASSERT_TENANT_FILTER",
+        "field": "assert_tenant_filter",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "60.0",
+        "description": "",
+        "env": "VARCO_TENANCY_CATALOG_TTL",
+        "field": "catalog_ttl_s",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "'db_{tenant_id}'",
+        "description": "",
+        "env": "VARCO_TENANCY_DB_TEMPLATE",
+        "field": "db_template",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_TENANCY_ENFORCE_RLS",
+        "field": "enforce_rls",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_TENANCY_FANOUT_FRAMEWORK_TABLES",
+        "field": "fanout_framework_tables",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_TENANCY_GLOBAL_DSN",
+        "field": "global_dsn",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_TENANCY_GLOBAL_WRITABLE",
+        "field": "global_writable",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "300.0",
+        "description": "",
+        "env": "VARCO_TENANCY_IDLE_TTL",
+        "field": "idle_ttl_s",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "<TenantIsolation.SHARED: 'shared'>",
+        "description": "",
+        "env": "VARCO_TENANCY_ISOLATION",
+        "field": "isolation",
+        "secret": false,
+        "type": "<enum 'TenantIsolation'>"
+      },
+      {
+        "default": "50",
+        "description": "",
+        "env": "VARCO_TENANCY_MAX_ENTRIES",
+        "field": "max_entries",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_TENANCY_NODE_ID",
+        "field": "node_id",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_TENANCY_RLS_REQUIRE_TENANT",
+        "field": "rls_require_tenant",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_TENANCY_RLS_SET_TENANT",
+        "field": "rls_set_tenant",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "'t_{tenant_id}'",
+        "description": "",
+        "env": "VARCO_TENANCY_SCHEMA_TEMPLATE",
+        "field": "schema_template",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_TENANCY_STORE_ID",
+        "field": "store_id",
+        "secret": false,
+        "type": "str | None"
+      }
+    ],
+    "varco_core.tenancy.settings.TenantProvenanceSettings": [
+      {
+        "default": "()",
+        "description": "",
+        "env": "VARCO_TENANT_BASE_DOMAINS",
+        "field": "base_domains",
+        "secret": false,
+        "type": "tuple[str, ...]"
+      },
+      {
+        "default": "'tenant_id'",
+        "description": "",
+        "env": "VARCO_TENANT_CLAIM_METADATA_KEY",
+        "field": "claim_metadata_key",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "<CrossCheckMode.LENIENT: 'lenient'>",
+        "description": "",
+        "env": "VARCO_TENANT_CROSS_CHECK",
+        "field": "cross_check",
+        "secret": false,
+        "type": "<enum 'CrossCheckMode'>"
+      },
+      {
+        "default": "'X-Forwarded-Host'",
+        "description": "",
+        "env": "VARCO_TENANT_FORWARDED_HOST_HEADER",
+        "field": "forwarded_host_header",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "'X-Tenant-Id'",
+        "description": "",
+        "env": "VARCO_TENANT_LEGACY_HEADER",
+        "field": "legacy_header",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "<TenantTrust.LOW: 10>",
+        "description": "",
+        "env": "VARCO_TENANT_MIN_TRUST",
+        "field": "min_trust",
+        "secret": false,
+        "type": "<enum 'TenantTrust'>"
+      },
+      {
+        "default": "('www', 'api', 'app', 'admin', 'static', 'cdn')",
+        "description": "",
+        "env": "VARCO_TENANT_RESERVED_LABELS",
+        "field": "reserved_labels",
+        "secret": false,
+        "type": "tuple[str, ...]"
+      },
+      {
+        "default": "()",
+        "description": "",
+        "env": "VARCO_TENANT_SOURCES",
+        "field": "sources",
+        "secret": false,
+        "type": "tuple[str, ...]"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_TENANT_TRUST_FORWARDED_HOST",
+        "field": "trust_forwarded_host",
+        "secret": false,
+        "type": "<class 'bool'>"
+      }
+    ],
+    "varco_core.tls.settings.TlsSettings": [
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_TLS_CA_CERT",
+        "field": "ca_cert",
+        "secret": false,
+        "type": "pathlib.Path | None"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_TLS_CLIENT_CERT",
+        "field": "client_cert",
+        "secret": false,
+        "type": "pathlib.Path | None"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_TLS_CLIENT_KEY",
+        "field": "client_key",
+        "secret": false,
+        "type": "pathlib.Path | None"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_TLS_TRUST_STORE_DIR",
+        "field": "trust_store_dir",
+        "secret": false,
+        "type": "pathlib.Path | None"
+      }
+    ],
+    "varco_core.tz.settings.TimezoneSettings": [
+      {
+        "default": "'UTC'",
+        "description": "",
+        "env": "VARCO_TZ_DEFAULT_TIMEZONE",
+        "field": "default_timezone",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_TZ_ENABLED",
+        "field": "enabled",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "'X-Timezone'",
+        "description": "",
+        "env": "VARCO_TZ_HEADER",
+        "field": "header",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "'tz'",
+        "description": "",
+        "env": "VARCO_TZ_QUERY_PARAM",
+        "field": "query_param",
+        "secret": false,
+        "type": "<class 'str'>"
+      }
+    ],
+    "varco_core.webhook.settings.WebhookSettings": [
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_WEBHOOK_ALLOW_INSECURE_HTTP",
+        "field": "allow_insecure_http",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_WEBHOOK_ALLOW_LIST",
+        "field": "allow_list",
+        "secret": false,
+        "type": "tuple[str, ...] | None"
+      },
+      {
+        "default": "20",
+        "description": "",
+        "env": "VARCO_WEBHOOK_DISABLE_AFTER_FAILURES",
+        "field": "disable_after_failures",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "()",
+        "description": "",
+        "env": "VARCO_WEBHOOK_EXTRA_DENY_RANGES",
+        "field": "extra_deny_ranges",
+        "secret": false,
+        "type": "tuple[str, ...]"
+      },
+      {
+        "default": "600.0",
+        "description": "",
+        "env": "VARCO_WEBHOOK_INBOUND_REPLAY_TTL_SECONDS",
+        "field": "inbound_replay_ttl_seconds",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "300.0",
+        "description": "",
+        "env": "VARCO_WEBHOOK_INBOUND_TOLERANCE_SECONDS",
+        "field": "inbound_tolerance_seconds",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_WEBHOOK_PERSIST_ALL_DELIVERIES",
+        "field": "persist_all_deliveries",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "10.0",
+        "description": "",
+        "env": "VARCO_WEBHOOK_REQUEST_TIMEOUT_SECONDS",
+        "field": "request_timeout_seconds",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "0.01",
+        "description": "",
+        "env": "VARCO_WEBHOOK_RETRY_BASE_DELAY_SECONDS",
+        "field": "retry_base_delay_seconds",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "8",
+        "description": "",
+        "env": "VARCO_WEBHOOK_RETRY_MAX_ATTEMPTS",
+        "field": "retry_max_attempts",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "0.2",
+        "description": "",
+        "env": "VARCO_WEBHOOK_RETRY_MAX_DELAY_SECONDS",
+        "field": "retry_max_delay_seconds",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "300.0",
+        "description": "",
+        "env": "VARCO_WEBHOOK_SIGNATURE_TOLERANCE_SECONDS",
+        "field": "signature_tolerance_seconds",
+        "secret": false,
+        "type": "<class 'float'>"
+      }
+    ],
+    "varco_fastapi.client.settings.ClientProfileSettings": [
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_CLIENT_OTEL_ENABLED",
+        "field": "otel_enabled",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "0.5",
+        "description": "",
+        "env": "VARCO_CLIENT_RETRY_DELAY",
+        "field": "retry_delay",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "0",
+        "description": "",
+        "env": "VARCO_CLIENT_RETRY_MAX",
+        "field": "retry_max",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "30.0",
+        "description": "",
+        "env": "VARCO_CLIENT_TIMEOUT",
+        "field": "timeout",
+        "secret": false,
+        "type": "<class 'float'>"
+      }
+    ],
+    "varco_fastapi.connection.HttpConnectionSettings": [
+      {
+        "default": "***",
+        "description": "",
+        "env": "AUTH",
+        "field": "auth",
+        "secret": true,
+        "type": "varco_core.connection.auth.BasicAuthConfig | varco_core.connection.auth.OAuth2Config | None"
+      },
+      {
+        "default": "''",
+        "description": "",
+        "env": "BASE_URL",
+        "field": "base_url",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "'localhost'",
+        "description": "",
+        "env": "HOST",
+        "field": "host",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "443",
+        "description": "",
+        "env": "PORT",
+        "field": "port",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "SSL",
+        "field": "ssl",
+        "secret": false,
+        "type": "varco_core.connection.ssl.SSLConfig | None"
+      },
+      {
+        "default": "30.0",
+        "description": "",
+        "env": "TIMEOUT",
+        "field": "timeout",
+        "secret": false,
+        "type": "<class 'float'>"
+      }
+    ],
+    "varco_fastapi.middleware.body_limit.BodyLimitSettings": [
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_BODY_LIMIT_ENABLED",
+        "field": "enabled",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "()",
+        "description": "",
+        "env": "VARCO_BODY_LIMIT_EXEMPT_PATHS",
+        "field": "exempt_paths",
+        "secret": false,
+        "type": "tuple[str, ...]"
+      },
+      {
+        "default": "10485760",
+        "description": "",
+        "env": "VARCO_BODY_LIMIT_MAX_BYTES",
+        "field": "max_bytes",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_BODY_LIMIT_TRUST_CONTENT_LENGTH",
+        "field": "trust_content_length",
+        "secret": false,
+        "type": "<class 'bool'>"
+      }
+    ],
+    "varco_fastapi.middleware.cors.CORSConfig": [
+      {
+        "default": "***",
+        "description": "",
+        "env": "VARCO_CORS_CREDENTIALS",
+        "field": "allow_credentials",
+        "secret": true,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "('Authorization', 'Content-Type', 'X-Request-ID', 'X-Correlation-ID', 'X-API-Key')",
+        "description": "",
+        "env": "VARCO_CORS_HEADERS",
+        "field": "allow_headers",
+        "secret": false,
+        "type": "tuple[str, ...]"
+      },
+      {
+        "default": "('GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS')",
+        "description": "",
+        "env": "VARCO_CORS_METHODS",
+        "field": "allow_methods",
+        "secret": false,
+        "type": "tuple[str, ...]"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_CORS_ALLOW_ORIGIN_REGEX",
+        "field": "allow_origin_regex",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "()",
+        "description": "",
+        "env": "VARCO_CORS_ORIGINS",
+        "field": "allow_origins",
+        "secret": false,
+        "type": "tuple[str, ...]"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_CORS_ALLOW_PRIVATE_NETWORK",
+        "field": "allow_private_network",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "('X-Total-Count', 'X-Page-Size', 'Link')",
+        "description": "",
+        "env": "VARCO_CORS_EXPOSE_HEADERS",
+        "field": "expose_headers",
+        "secret": false,
+        "type": "tuple[str, ...]"
+      },
+      {
+        "default": "600",
+        "description": "",
+        "env": "VARCO_CORS_MAX_AGE",
+        "field": "max_age",
+        "secret": false,
+        "type": "<class 'int'>"
+      }
+    ],
+    "varco_fastapi.middleware.profiling.ProfilingSettings": [
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_PROFILING_ATTACH_HEADERS",
+        "field": "attach_headers",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_PROFILING_ENABLED",
+        "field": "enabled",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "0.0",
+        "description": "",
+        "env": "VARCO_PROFILING_MEM_THRESHOLD_MB",
+        "field": "mem_threshold_mb",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "frozenset(['/health', '/metrics', '/readyz'])",
+        "description": "",
+        "env": "VARCO_PROFILING_SKIP_PATHS",
+        "field": "skip_paths",
+        "secret": false,
+        "type": "frozenset[str]"
+      },
+      {
+        "default": "0.0",
+        "description": "",
+        "env": "VARCO_PROFILING_SLOW_THRESHOLD_MS",
+        "field": "slow_threshold_ms",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "15",
+        "description": "",
+        "env": "VARCO_PROFILING_TOP_N",
+        "field": "top_n",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_PROFILING_TRACK_RSS",
+        "field": "track_rss",
+        "secret": false,
+        "type": "<class 'bool'>"
+      }
+    ],
+    "varco_fastapi.middleware.rate_limit.RateLimitSettings": [
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_RATE_LIMIT_EMIT_DRAFT_HEADERS",
+        "field": "emit_draft_headers",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_RATE_LIMIT_ENABLED",
+        "field": "enabled",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "60.0",
+        "description": "",
+        "env": "VARCO_RATE_LIMIT_ERROR_LOG_INTERVAL",
+        "field": "error_log_interval",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "()",
+        "description": "",
+        "env": "VARCO_RATE_LIMIT_EXEMPT_PATHS",
+        "field": "exempt_paths",
+        "secret": false,
+        "type": "tuple[str, ...]"
+      },
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_RATE_LIMIT_FAIL_OPEN",
+        "field": "fail_open",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "()",
+        "description": "",
+        "env": "VARCO_RATE_LIMIT_TRUSTED_PROXIES",
+        "field": "trusted_proxies",
+        "secret": false,
+        "type": "tuple[str, ...]"
+      },
+      {
+        "default": "0",
+        "description": "",
+        "env": "VARCO_RATE_LIMIT_TRUSTED_PROXY_HOPS",
+        "field": "trusted_proxy_hops",
+        "secret": false,
+        "type": "<class 'int'>"
+      }
+    ],
+    "varco_fastapi.middleware.security_headers.SecurityHeadersSettings": [
+      {
+        "default": "\"default-src 'none'; frame-ancestors 'none'\"",
+        "description": "",
+        "env": "VARCO_SECURITY_HEADERS_CSP",
+        "field": "csp",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_SECURITY_HEADERS_ENABLED",
+        "field": "enabled",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "('/docs', '/redoc', '/openapi.json')",
+        "description": "",
+        "env": "VARCO_SECURITY_HEADERS_EXCLUDE_PATHS",
+        "field": "exclude_paths",
+        "secret": false,
+        "type": "tuple[str, ...]"
+      },
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_SECURITY_HEADERS_HSTS_INCLUDE_SUBDOMAINS",
+        "field": "hsts_include_subdomains",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "31536000",
+        "description": "",
+        "env": "VARCO_SECURITY_HEADERS_HSTS_MAX_AGE",
+        "field": "hsts_max_age",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "'geolocation=(), microphone=(), camera=()'",
+        "description": "",
+        "env": "VARCO_SECURITY_HEADERS_PERMISSIONS_POLICY",
+        "field": "permissions_policy",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "<SecurityHeadersPreset.BALANCED: 'balanced'>",
+        "description": "",
+        "env": "VARCO_SECURITY_HEADERS_PRESET",
+        "field": "preset",
+        "secret": false,
+        "type": "<enum 'SecurityHeadersPreset'>"
+      },
+      {
+        "default": "'strict-origin-when-cross-origin'",
+        "description": "",
+        "env": "VARCO_SECURITY_HEADERS_REFERRER_POLICY",
+        "field": "referrer_policy",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "()",
+        "description": "",
+        "env": "VARCO_SECURITY_HEADERS_TRUSTED_PROXIES",
+        "field": "trusted_proxies",
+        "secret": false,
+        "type": "tuple[str, ...]"
+      },
+      {
+        "default": "'nosniff'",
+        "description": "",
+        "env": "VARCO_SECURITY_HEADERS_X_CONTENT_TYPE_OPTIONS",
+        "field": "x_content_type_options",
+        "secret": false,
+        "type": "str | None"
+      },
+      {
+        "default": "'DENY'",
+        "description": "",
+        "env": "VARCO_SECURITY_HEADERS_X_FRAME_OPTIONS",
+        "field": "x_frame_options",
+        "secret": false,
+        "type": "str | None"
+      }
+    ],
+    "varco_fastapi.posture.SecurityPostureSettings": [
+      {
+        "default": "'warn'",
+        "description": "",
+        "env": "VARCO_SECURITY_ENFORCE",
+        "field": "enforce",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "'production'",
+        "description": "",
+        "env": "VARCO_SECURITY_ENV",
+        "field": "environment",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "''",
+        "description": "",
+        "env": "VARCO_SECURITY_SUPPRESS",
+        "field": "suppress",
+        "secret": false,
+        "type": "<class 'str'>"
+      }
+    ],
+    "varco_kafka.channel.KafkaChannelManagerSettings": [
+      {
+        "default": "not env-readable \u2014 pass via instance=",
+        "description": "",
+        "env": null,
+        "field": "admin_kwargs",
+        "secret": false,
+        "type": "dict[str, typing.Any]"
+      },
+      {
+        "default": "'localhost:9092'",
+        "description": "",
+        "env": "VARCO_KAFKA_ADMIN_BOOTSTRAP_SERVERS",
+        "field": "bootstrap_servers",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "''",
+        "description": "",
+        "env": "VARCO_KAFKA_ADMIN_TOPIC_PREFIX",
+        "field": "topic_prefix",
+        "secret": false,
+        "type": "<class 'str'>"
+      }
+    ],
+    "varco_kafka.config.KafkaEventBusSettings": [
+      {
+        "default": "'latest'",
+        "description": "",
+        "env": "VARCO_KAFKA_AUTO_OFFSET_RESET",
+        "field": "auto_offset_reset",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "'localhost:9092'",
+        "description": "",
+        "env": "VARCO_KAFKA_BOOTSTRAP_SERVERS",
+        "field": "bootstrap_servers",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "''",
+        "description": "",
+        "env": "VARCO_KAFKA_CHANNEL_PREFIX",
+        "field": "channel_prefix",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "not env-readable \u2014 pass via instance=",
+        "description": "",
+        "env": null,
+        "field": "consumer_kwargs",
+        "secret": false,
+        "type": "dict[str, typing.Any]"
+      },
+      {
+        "default": "<KafkaDeliverySemantics.AT_LEAST_ONCE: 'at_least_once'>",
+        "description": "",
+        "env": "VARCO_KAFKA_DELIVERY_SEMANTICS",
+        "field": "delivery_semantics",
+        "secret": false,
+        "type": "<enum 'KafkaDeliverySemantics'>"
+      },
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_KAFKA_ENABLE_AUTO_COMMIT",
+        "field": "enable_auto_commit",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "'varco-default'",
+        "description": "",
+        "env": "VARCO_KAFKA_GROUP_ID",
+        "field": "group_id",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "not env-readable \u2014 pass via instance=",
+        "description": "",
+        "env": null,
+        "field": "producer_kwargs",
+        "secret": false,
+        "type": "dict[str, typing.Any]"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_KAFKA_TRANSACTIONAL_ID",
+        "field": "transactional_id",
+        "secret": false,
+        "type": "str | None"
+      }
+    ],
+    "varco_kafka.connection.KafkaConnectionSettings": [
+      {
+        "default": "***",
+        "description": "",
+        "env": "KAFKA_AUTH",
+        "field": "auth",
+        "secret": true,
+        "type": "varco_core.connection.auth.SaslConfig | varco_core.connection.auth.BasicAuthConfig | None"
+      },
+      {
+        "default": "'localhost:9092'",
+        "description": "",
+        "env": "KAFKA_BOOTSTRAP_SERVERS",
+        "field": "bootstrap_servers",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "'varco-default'",
+        "description": "",
+        "env": "KAFKA_GROUP_ID",
+        "field": "group_id",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "'localhost'",
+        "description": "",
+        "env": "KAFKA_HOST",
+        "field": "host",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "9092",
+        "description": "",
+        "env": "KAFKA_PORT",
+        "field": "port",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "KAFKA_SSL",
+        "field": "ssl",
+        "secret": false,
+        "type": "varco_core.connection.ssl.SSLConfig | None"
+      }
+    ],
+    "varco_memcached.cache.MemcachedCacheSettings": [
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_MEMCACHED_CACHE_DEFAULT_TTL",
+        "field": "default_ttl",
+        "secret": false,
+        "type": "float | None"
+      },
+      {
+        "default": "'localhost'",
+        "description": "",
+        "env": "VARCO_MEMCACHED_CACHE_HOST",
+        "field": "host",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "''",
+        "description": "",
+        "env": "VARCO_MEMCACHED_CACHE_KEY_PREFIX",
+        "field": "key_prefix",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "2",
+        "description": "",
+        "env": "VARCO_MEMCACHED_CACHE_POOL_SIZE",
+        "field": "pool_size",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "11211",
+        "description": "",
+        "env": "VARCO_MEMCACHED_CACHE_PORT",
+        "field": "port",
+        "secret": false,
+        "type": "<class 'int'>"
+      }
+    ],
+    "varco_nats.channel.NatsChannelManagerSettings": [
+      {
+        "default": "''",
+        "description": "",
+        "env": "VARCO_NATS_ADMIN_CHANNEL_PREFIX",
+        "field": "channel_prefix",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "not env-readable \u2014 pass via instance=",
+        "description": "",
+        "env": null,
+        "field": "connect_kwargs",
+        "secret": false,
+        "type": "dict[str, typing.Any]"
+      },
+      {
+        "default": "120.0",
+        "description": "",
+        "env": "VARCO_NATS_ADMIN_DUPLICATE_WINDOW_SECONDS",
+        "field": "duplicate_window_seconds",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "'nats://localhost:4222'",
+        "description": "",
+        "env": "VARCO_NATS_ADMIN_SERVERS",
+        "field": "servers",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "'varco-events'",
+        "description": "",
+        "env": "VARCO_NATS_ADMIN_STREAM_NAME",
+        "field": "stream_name",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "'varco'",
+        "description": "",
+        "env": "VARCO_NATS_ADMIN_SUBJECT_PREFIX",
+        "field": "subject_prefix",
+        "secret": false,
+        "type": "<class 'str'>"
+      }
+    ],
+    "varco_nats.config.NatsEventBusSettings": [
+      {
+        "default": "30.0",
+        "description": "",
+        "env": "VARCO_NATS_ACK_WAIT_SECONDS",
+        "field": "ack_wait_seconds",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_NATS_AUTO_CREATE_STREAM",
+        "field": "auto_create_stream",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "''",
+        "description": "",
+        "env": "VARCO_NATS_CHANNEL_PREFIX",
+        "field": "channel_prefix",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "not env-readable \u2014 pass via instance=",
+        "description": "",
+        "env": null,
+        "field": "connect_kwargs",
+        "secret": false,
+        "type": "dict[str, typing.Any]"
+      },
+      {
+        "default": "<NatsDeliverySemantics.AT_LEAST_ONCE: 'at_least_once'>",
+        "description": "",
+        "env": "VARCO_NATS_DELIVERY_SEMANTICS",
+        "field": "delivery_semantics",
+        "secret": false,
+        "type": "<enum 'NatsDeliverySemantics'>"
+      },
+      {
+        "default": "120.0",
+        "description": "",
+        "env": "VARCO_NATS_DUPLICATE_WINDOW_SECONDS",
+        "field": "duplicate_window_seconds",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "'varco-default'",
+        "description": "",
+        "env": "VARCO_NATS_DURABLE_NAME",
+        "field": "durable_name",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "5",
+        "description": "",
+        "env": "VARCO_NATS_MAX_DELIVER",
+        "field": "max_deliver",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "'nats://localhost:4222'",
+        "description": "",
+        "env": "VARCO_NATS_SERVERS",
+        "field": "servers",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "'varco-events'",
+        "description": "",
+        "env": "VARCO_NATS_STREAM_NAME",
+        "field": "stream_name",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "'varco'",
+        "description": "",
+        "env": "VARCO_NATS_SUBJECT_PREFIX",
+        "field": "subject_prefix",
+        "secret": false,
+        "type": "<class 'str'>"
+      }
+    ],
+    "varco_nats.connection.NatsConnectionSettings": [
+      {
+        "default": "***",
+        "description": "",
+        "env": "NATS_AUTH",
+        "field": "auth",
+        "secret": true,
+        "type": "varco_core.connection.auth.BasicAuthConfig | None"
+      },
+      {
+        "default": "'localhost'",
+        "description": "",
+        "env": "NATS_HOST",
+        "field": "host",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "4222",
+        "description": "",
+        "env": "NATS_PORT",
+        "field": "port",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "'nats://localhost:4222'",
+        "description": "",
+        "env": "NATS_SERVERS",
+        "field": "servers",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "NATS_SSL",
+        "field": "ssl",
+        "secret": false,
+        "type": "varco_core.connection.ssl.SSLConfig | None"
+      },
+      {
+        "default": "***",
+        "description": "",
+        "env": "NATS_TOKEN",
+        "field": "token",
+        "secret": true,
+        "type": "str | None"
+      }
+    ],
+    "varco_redis.backplane.RedisBackplaneSettings": [
+      {
+        "default": "'varco.cache.invalidate'",
+        "description": "",
+        "env": "VARCO_REDIS_CACHE_BACKPLANE_CHANNEL",
+        "field": "channel",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_REDIS_CACHE_BACKPLANE_HASH_KEYS",
+        "field": "hash_keys",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "not env-readable \u2014 pass via instance=",
+        "description": "",
+        "env": null,
+        "field": "redis_kwargs",
+        "secret": false,
+        "type": "dict[str, typing.Any]"
+      },
+      {
+        "default": "'redis://localhost:6379/0'",
+        "description": "",
+        "env": "VARCO_REDIS_CACHE_BACKPLANE_URL",
+        "field": "url",
+        "secret": false,
+        "type": "<class 'str'>"
+      }
+    ],
+    "varco_redis.cache.LayeredCacheSettings": [
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_LAYERED_CACHE_DECODE_RESPONSES",
+        "field": "decode_responses",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_LAYERED_CACHE_DEFAULT_TTL",
+        "field": "default_ttl",
+        "secret": false,
+        "type": "float | None"
+      },
+      {
+        "default": "''",
+        "description": "",
+        "env": "VARCO_LAYERED_CACHE_KEY_PREFIX",
+        "field": "key_prefix",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_LAYERED_CACHE_L1_DEFAULT_TTL",
+        "field": "l1_default_ttl",
+        "secret": false,
+        "type": "float | None"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_LAYERED_CACHE_L1_MAX_SIZE",
+        "field": "l1_max_size",
+        "secret": false,
+        "type": "int | None"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_LAYERED_CACHE_PROMOTE_TTL",
+        "field": "promote_ttl",
+        "secret": false,
+        "type": "float | None"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_LAYERED_CACHE_SOCKET_TIMEOUT",
+        "field": "socket_timeout",
+        "secret": false,
+        "type": "float | None"
+      },
+      {
+        "default": "'redis://localhost:6379/0'",
+        "description": "",
+        "env": "VARCO_LAYERED_CACHE_URL",
+        "field": "url",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "'write-through'",
+        "description": "",
+        "env": "VARCO_LAYERED_CACHE_WRITE_MODE",
+        "field": "write_mode",
+        "secret": false,
+        "type": "<class 'str'>"
+      }
+    ],
+    "varco_redis.cache.RedisCacheSettings": [
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_REDIS_CACHE_DECODE_RESPONSES",
+        "field": "decode_responses",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_REDIS_CACHE_DEFAULT_TTL",
+        "field": "default_ttl",
+        "secret": false,
+        "type": "float | None"
+      },
+      {
+        "default": "''",
+        "description": "",
+        "env": "VARCO_REDIS_CACHE_KEY_PREFIX",
+        "field": "key_prefix",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "not env-readable \u2014 pass via instance=",
+        "description": "",
+        "env": null,
+        "field": "redis_kwargs",
+        "secret": false,
+        "type": "dict[str, typing.Any]"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_REDIS_CACHE_SOCKET_TIMEOUT",
+        "field": "socket_timeout",
+        "secret": false,
+        "type": "float | None"
+      },
+      {
+        "default": "'redis://localhost:6379/0'",
+        "description": "",
+        "env": "VARCO_REDIS_CACHE_URL",
+        "field": "url",
+        "secret": false,
+        "type": "<class 'str'>"
+      }
+    ],
+    "varco_redis.config.RedisEventBusSettings": [
+      {
+        "default": "''",
+        "description": "",
+        "env": "VARCO_REDIS_CHANNEL_PREFIX",
+        "field": "channel_prefix",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_REDIS_DECODE_RESPONSES",
+        "field": "decode_responses",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "not env-readable \u2014 pass via instance=",
+        "description": "",
+        "env": null,
+        "field": "redis_kwargs",
+        "secret": false,
+        "type": "dict[str, typing.Any]"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "VARCO_REDIS_SOCKET_TIMEOUT",
+        "field": "socket_timeout",
+        "secret": false,
+        "type": "float | None"
+      },
+      {
+        "default": "'redis://localhost:6379/0'",
+        "description": "",
+        "env": "VARCO_REDIS_URL",
+        "field": "url",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_REDIS_USE_STREAMS",
+        "field": "use_streams",
+        "secret": false,
+        "type": "<class 'bool'>"
+      }
+    ],
+    "varco_redis.connection.RedisConnectionSettings": [
+      {
+        "default": "0",
+        "description": "",
+        "env": "REDIS_DB",
+        "field": "db",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "REDIS_DECODE_RESPONSES",
+        "field": "decode_responses",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "'localhost'",
+        "description": "",
+        "env": "REDIS_HOST",
+        "field": "host",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "***",
+        "description": "",
+        "env": "REDIS_PASSWORD",
+        "field": "password",
+        "secret": true,
+        "type": "str | None"
+      },
+      {
+        "default": "6379",
+        "description": "",
+        "env": "REDIS_PORT",
+        "field": "port",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "REDIS_SOCKET_TIMEOUT",
+        "field": "socket_timeout",
+        "secret": false,
+        "type": "float | None"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "REDIS_SSL",
+        "field": "ssl",
+        "secret": false,
+        "type": "varco_core.connection.ssl.SSLConfig | None"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "REDIS_USERNAME",
+        "field": "username",
+        "secret": false,
+        "type": "str | None"
+      }
+    ],
+    "varco_sa.connection.PostgresConnectionSettings": [
+      {
+        "default": "***",
+        "description": "",
+        "env": "POSTGRES_AUTH",
+        "field": "auth",
+        "secret": true,
+        "type": "varco_core.connection.auth.BasicAuthConfig | None"
+      },
+      {
+        "default": "'postgres'",
+        "description": "",
+        "env": "POSTGRES_DATABASE",
+        "field": "database",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "'localhost'",
+        "description": "",
+        "env": "POSTGRES_HOST",
+        "field": "host",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "10",
+        "description": "",
+        "env": "POSTGRES_MAX_OVERFLOW",
+        "field": "max_overflow",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "***",
+        "description": "",
+        "env": "POSTGRES_PASSWORD",
+        "field": "password",
+        "secret": true,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "5",
+        "description": "",
+        "env": "POSTGRES_POOL_SIZE",
+        "field": "pool_size",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "30.0",
+        "description": "",
+        "env": "POSTGRES_POOL_TIMEOUT",
+        "field": "pool_timeout",
+        "secret": false,
+        "type": "<class 'float'>"
+      },
+      {
+        "default": "5432",
+        "description": "",
+        "env": "POSTGRES_PORT",
+        "field": "port",
+        "secret": false,
+        "type": "<class 'int'>"
+      },
+      {
+        "default": "'public'",
+        "description": "",
+        "env": "POSTGRES_SCHEMA_NAME",
+        "field": "schema_name",
+        "secret": false,
+        "type": "<class 'str'>"
+      },
+      {
+        "default": "None",
+        "description": "",
+        "env": "POSTGRES_SSL",
+        "field": "ssl",
+        "secret": false,
+        "type": "varco_core.connection.ssl.SSLConfig | None"
+      },
+      {
+        "default": "'postgres'",
+        "description": "",
+        "env": "POSTGRES_USERNAME",
+        "field": "username",
+        "secret": false,
+        "type": "<class 'str'>"
+      }
+    ]
+  }
+}

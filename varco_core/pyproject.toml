@@ -109,7 +109,7 @@ packages = ["varco_core"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths    = ["tests"]
-pythonpath   = ["../testkit"]
+pythonpath   = ["../testkit", ".."]
 markers      = [
     "integration: requires external services (Docker); skipped by default — use -m integration to run",
 ]

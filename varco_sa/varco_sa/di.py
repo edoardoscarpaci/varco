@@ -54,19 +54,28 @@ Async safety:   ✅ All providers are synchronous — SQLAlchemy has no async
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
-from providify import Configuration, Fallback, Inject, PostConstruct, Provider
+from providify import Configuration, Fallback, Inject, InjectMeta, PostConstruct, Provider
 from varco_core.di import BACKEND_PRIORITY
+from varco_core.di.select import selected_by
+from varco_core.event.base import Event
+from varco_core.event.dlq import AbstractDeadLetterQueue
+from varco_core.idempotency.base import AbstractIdempotencyStore
+from varco_core.job.base import AbstractJobStore
 from varco_core.lock import AbstractDistributedLock
 from varco_core.model import DomainModel
 from varco_core.providers import RepositoryProvider
 from varco_core.repository import AsyncRepository
+from varco_core.serialization import Serializer
 from varco_core.service.base import IUoWProvider
 from varco_core.tenancy.settings import TenancySettings
 
 from varco_sa.advisory_lock import SAAdvisoryLock, SAXactAdvisoryLock
 from varco_sa.config import SAConfig
+from varco_sa.dlq import SADeadLetterQueue
+from varco_sa.idempotency import SAIdempotencyStore
+from varco_sa.job_store import SAJobStore
 
 if TYPE_CHECKING:
     # Avoid a hard circular import — DIContainer is only needed for the
@@ -298,6 +307,76 @@ class SAModule:
         Async safety:   ✅ Synchronous — no I/O at construction time.
         """
         return SAXactAdvisoryLock(config.engine)
+
+    @Fallback
+    @selected_by("dlq", "sa")
+    @Provider(singleton=True, priority=BACKEND_PRIORITY)
+    def dead_letter_queue(
+        self,
+        config: Inject[SAConfig],
+        serializer: Annotated[Serializer[Event] | None, InjectMeta(optional=True)] = None,
+    ) -> AbstractDeadLetterQueue:
+        """
+        Plan 047 N1 — live only when ``VARCO_DLQ_BACKEND=sa``.
+
+        Closes the CLAUDE.md ``SADeadLetterQueue``/``OutboxRelay``
+        "pass ``serializer=`` explicitly or they keep the
+        ``JsonEventSerializer`` default" pitfall **for this DI path**:
+        an optionally-injected ``Serializer[Event]`` is forwarded so a
+        bound serializer (e.g. ``CloudEventsJsonSerializer``) is honoured
+        automatically. ``SADeadLetterQueue`` itself still defaults to
+        ``JsonEventSerializer()`` when constructed by hand.
+
+        Args:
+            config: The scanned ``SAConfig`` singleton — ``.engine`` is
+                forwarded verbatim.
+            serializer: Optionally-injected ``Serializer[Event]``. ``None``
+                when nothing is bound, in which case ``SADeadLetterQueue``
+                falls back to ``JsonEventSerializer()`` internally.
+
+        Returns:
+            A ``SADeadLetterQueue(config.engine, serializer=serializer)``.
+        """
+        return SADeadLetterQueue(config.engine, serializer=serializer)
+
+    @Fallback
+    @selected_by("idempotency", "sa")
+    @Provider(singleton=True, priority=BACKEND_PRIORITY)
+    def idempotency_store(self, config: Inject[SAConfig]) -> AbstractIdempotencyStore:
+        """
+        Plan 047 N2 — live only when ``VARCO_IDEMPOTENCY_BACKEND=sa``.
+
+        Uses ``SAIdempotencyStore``'s additive ``engine=`` kwarg to reuse
+        the app's own pool (``config.engine``) rather than opening a
+        second, private engine.
+
+        ⚠️ Lifecycle is Plan 050's — nothing here calls
+        ``await store.start()`` (which also ensures the
+        ``varco_idempotency`` table exists); call it yourself until 050
+        wires it.
+
+        Args:
+            config: The scanned ``SAConfig`` singleton.
+
+        Returns:
+            A ``SAIdempotencyStore(engine=config.engine)``.
+        """
+        return SAIdempotencyStore(engine=config.engine)
+
+    @Fallback
+    @selected_by("job_store", "sa")
+    @Provider(singleton=True, priority=BACKEND_PRIORITY)
+    def job_store(self, config: Inject[SAConfig]) -> AbstractJobStore:
+        """
+        Plan 047 N3 — live only when ``VARCO_JOB_STORE_BACKEND=sa``.
+
+        Args:
+            config: The scanned ``SAConfig`` singleton.
+
+        Returns:
+            A ``SAJobStore(config.engine)``.
+        """
+        return SAJobStore(config.engine)
 
 
 # ── Per-entity repository binding helper ──────────────────────────────────────

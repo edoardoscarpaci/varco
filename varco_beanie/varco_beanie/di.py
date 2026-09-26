@@ -49,7 +49,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from providify import Configuration, Provider
+from providify import Configuration, Fallback, Provider
+from varco_core.di import BACKEND_PRIORITY
+from varco_core.di.select import selected_by
+from varco_core.idempotency.base import AbstractIdempotencyStore
+from varco_core.job.base import AbstractJobStore
 from varco_core.model import DomainModel
 from varco_core.providers import RepositoryProvider
 from varco_core.repository import AsyncRepository
@@ -95,6 +99,41 @@ class BeanieModule:
                        ``@PostConstruct`` — the container awaits it during
                        warm-up.
     """
+
+    @Fallback
+    @selected_by("idempotency", "beanie")
+    @Provider(singleton=True, priority=BACKEND_PRIORITY)
+    def idempotency_store(self) -> AbstractIdempotencyStore:
+        """
+        Plan 047 N4 — live only when ``VARCO_IDEMPOTENCY_BACKEND=beanie``.
+
+        Docstring note: ``IdempotencyDocument`` must be registered with
+        the app's ``init_beanie()`` before use — this provider does not
+        call ``init_beanie()`` itself.
+
+        Returns:
+            A ``BeanieIdempotencyStore()``.
+        """
+        from varco_beanie.idempotency import BeanieIdempotencyStore  # noqa: PLC0415
+
+        return BeanieIdempotencyStore()
+
+    @Fallback
+    @selected_by("job_store", "beanie")
+    @Provider(singleton=True, priority=BACKEND_PRIORITY)
+    def job_store(self) -> AbstractJobStore:
+        """
+        Plan 047 N5 — live only when ``VARCO_JOB_STORE_BACKEND=beanie``.
+
+        Docstring note: ``JobDocument`` must be registered with the app's
+        ``init_beanie()`` before use.
+
+        Returns:
+            A ``BeanieJobStore()``.
+        """
+        from varco_beanie.job_store import BeanieJobStore  # noqa: PLC0415
+
+        return BeanieJobStore()
 
 
 # ── Per-entity repository binding helper ──────────────────────────────────────

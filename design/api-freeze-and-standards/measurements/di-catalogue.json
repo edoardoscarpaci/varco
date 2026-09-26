@@ -1,0 +1,885 @@
+{
+  "features": [
+    {
+      "category": "security",
+      "code": "enable_authorization_audit",
+      "default": {
+        "category": "production-safe",
+        "implementation": "BaseAuthorizer"
+      },
+      "default_on": false,
+      "enabled": {
+        "implementation": "_policy_authorizer_when_enabled",
+        "owner": "_policy_authorizer_when_enabled"
+      },
+      "env": null,
+      "feature": "authorization_audit",
+      "interface": "varco_core.auth.authorizer:AbstractAuthorizer",
+      "shape": "wrapper"
+    },
+    {
+      "category": "integration",
+      "code": "enable_feature_flags",
+      "default": {
+        "category": "null",
+        "implementation": "NullFeatureFlags"
+      },
+      "default_on": false,
+      "enabled": {
+        "implementation": "_feature_flags_when_enabled",
+        "owner": "_feature_flags_when_enabled"
+      },
+      "env": "VARCO_FEATURE_FLAGS_ENABLED",
+      "feature": "feature_flags",
+      "interface": "varco_core.flags.base:AbstractFeatureFlags",
+      "shape": "binding"
+    },
+    {
+      "category": "integration",
+      "code": "enable_policy_authorizer",
+      "default": {
+        "category": "production-safe",
+        "implementation": "BaseAuthorizer"
+      },
+      "default_on": false,
+      "enabled": {
+        "implementation": "_policy_authorizer_when_enabled",
+        "owner": "_policy_authorizer_when_enabled"
+      },
+      "env": "VARCO_POLICY_AUTHORIZER_ENABLED",
+      "feature": "policy_authorizer",
+      "interface": "varco_core.auth.authorizer:AbstractAuthorizer",
+      "shape": "binding"
+    },
+    {
+      "category": "integration",
+      "code": "enable_tenant_membership",
+      "default": {
+        "category": "null",
+        "implementation": "NullTenantMembership"
+      },
+      "default_on": false,
+      "enabled": {
+        "implementation": "_tenant_membership_when_enabled",
+        "owner": "_tenant_membership_when_enabled"
+      },
+      "env": "VARCO_TENANT_MEMBERSHIP_ENABLED",
+      "feature": "tenant_membership",
+      "interface": "varco_core.tenancy.membership:AbstractTenantMembership",
+      "shape": "binding"
+    }
+  ],
+  "other_defaults": [
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:CasbinSettings[None]",
+      "interface": "varco_casbin.config:CasbinSettings",
+      "package": "varco_casbin",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "CasbinPolicyEngine",
+      "interface": "varco_core.auth.policy:PolicyEngine",
+      "package": "varco_core",
+      "priority": 100,
+      "qualifier": "casbin",
+      "shape": "class"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "CasbinPolicyEngine",
+      "interface": "varco_core.auth.policy:PolicyManagement",
+      "package": "varco_core",
+      "priority": 100,
+      "qualifier": "casbin",
+      "shape": "class"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:AuthorizationConfig[None]",
+      "interface": "varco_core.authority.config:AuthorizationConfig",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:CacheSettings[None]",
+      "interface": "varco_core.cache.config:CacheSettings",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "VarcoFastAPIModule.tenant_defaults_provider",
+      "interface": "varco_core.context.defaults:TenantDefaultsProvider",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "KafkaChannelManager",
+      "interface": "varco_core.event.channel:ChannelManager",
+      "package": "varco_core",
+      "priority": 100,
+      "qualifier": "kafka",
+      "shape": "class"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "NatsStreamManager",
+      "interface": "varco_core.event.channel:ChannelManager",
+      "package": "varco_core",
+      "priority": 100,
+      "qualifier": "nats",
+      "shape": "class"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "RedisChannelManager",
+      "interface": "varco_core.event.channel:ChannelManager",
+      "package": "varco_core",
+      "priority": 100,
+      "qualifier": "redis",
+      "shape": "class"
+    },
+    {
+      "category": "in-memory",
+      "implementation": "InMemoryDeduplicator",
+      "interface": "varco_core.event.deduplication:AbstractDeduplicator",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": "in_memory",
+      "shape": "class"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "BusEventProducer",
+      "interface": "varco_core.event.producer:AbstractEventProducer",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "class"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:ErrorEnvelopeSettings[None]",
+      "interface": "varco_core.exception.settings:ErrorEnvelopeSettings",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "VarcoFastAPIModule.message_catalog",
+      "interface": "varco_core.i18n.catalog:MessageCatalog",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:I18nSettings[None]",
+      "interface": "varco_core.i18n.settings:I18nSettings",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:IdempotencySettings[None]",
+      "interface": "varco_core.idempotency.settings:IdempotencySettings",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "VarcoFastAPIModule.task_serializer",
+      "interface": "varco_core.job.serializer:TaskSerializer",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "VarcoFastAPIModule.task_registry",
+      "interface": "varco_core.job.task:TaskRegistry",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:JwtVerificationSettings[None]",
+      "interface": "varco_core.jwt.config:JwtVerificationSettings",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:JwtTransformSettings[None]",
+      "interface": "varco_core.jwt.transform.config:JwtTransformSettings",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "VarcoFastAPIModule.claim_transformer_registry",
+      "interface": "varco_core.jwt.transform.registry:ClaimTransformerRegistry",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "in-memory",
+      "implementation": "InMemoryLock",
+      "interface": "varco_core.lock:AbstractDistributedLock",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": "in_memory",
+      "shape": "class"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "SAModule.sa_advisory_lock",
+      "interface": "varco_core.lock:AbstractDistributedLock",
+      "package": "varco_core",
+      "priority": 100,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:MigrationSettings[None]",
+      "interface": "varco_core.migration.settings:MigrationSettings",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "OtelConfiguration.otel_config",
+      "interface": "varco_core.observability.config:OtelConfig",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "BeanieRepositoryProvider",
+      "interface": "varco_core.providers:RepositoryProvider",
+      "package": "varco_core",
+      "priority": 100,
+      "qualifier": "beanie",
+      "shape": "class"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "SQLAlchemyRepositoryProvider",
+      "interface": "varco_core.providers:RepositoryProvider",
+      "package": "varco_core",
+      "priority": 100,
+      "qualifier": "sa",
+      "shape": "class"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "BeanieAggregationApplicator",
+      "interface": "varco_core.query.applicator.applicator:QueryApplicator",
+      "package": "varco_core",
+      "priority": 100,
+      "qualifier": "beanie_aggregation",
+      "shape": "class"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "BeanieQueryCompiler",
+      "interface": "varco_core.query.visitor.ast_visitor:ASTVisitor",
+      "package": "varco_core",
+      "priority": 100,
+      "qualifier": "beanie",
+      "shape": "class"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "BeanieQueryCompiler",
+      "interface": "varco_core.query.visitor.walking:BinaryWalkingVisitor",
+      "package": "varco_core",
+      "priority": 100,
+      "qualifier": "beanie",
+      "shape": "class"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "JsonEventSerializer",
+      "interface": "varco_core.serialization:Serializer",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "class"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "SAModule.uow_provider",
+      "interface": "varco_core.service.base:IUoWProvider",
+      "package": "varco_core",
+      "priority": 100,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "in-memory",
+      "implementation": "InMemoryConversationStore",
+      "interface": "varco_core.service.conversation:AbstractConversationStore",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": "in_memory",
+      "shape": "class"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:TenantMembershipSettings[None]",
+      "interface": "varco_core.tenancy.membership:TenantMembershipSettings",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:TenancySettings[None]",
+      "interface": "varco_core.tenancy.settings:TenancySettings",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:TenantProvenanceSettings[None]",
+      "interface": "varco_core.tenancy.settings:TenantProvenanceSettings",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:TlsSettings[None]",
+      "interface": "varco_core.tls.settings:TlsSettings",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:TimezoneSettings[None]",
+      "interface": "varco_core.tz.settings:TimezoneSettings",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:WebhookSettings[None]",
+      "interface": "varco_core.webhook.settings:WebhookSettings",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "VarcoFastAPIModule.trust_store",
+      "interface": "varco_fastapi.auth.trust_store:TrustStore",
+      "package": "varco_fastapi",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "VarcoFastAPIModule.client_profile",
+      "interface": "varco_fastapi.client.base:ClientProfile",
+      "package": "varco_fastapi",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:ClientProfileSettings[None]",
+      "interface": "varco_fastapi.client.settings:ClientProfileSettings",
+      "package": "varco_fastapi",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:BodyLimitSettings[None]",
+      "interface": "varco_fastapi.middleware.body_limit:BodyLimitSettings",
+      "package": "varco_fastapi",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:CORSConfig[None]",
+      "interface": "varco_fastapi.middleware.cors:CORSConfig",
+      "package": "varco_fastapi",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "VarcoFastAPIModule.profiling_settings",
+      "interface": "varco_fastapi.middleware.profiling:ProfilingSettings",
+      "package": "varco_fastapi",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:RateLimitSettings[None]",
+      "interface": "varco_fastapi.middleware.rate_limit:RateLimitSettings",
+      "package": "varco_fastapi",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:SecurityHeadersSettings[None]",
+      "interface": "varco_fastapi.middleware.security_headers:SecurityHeadersSettings",
+      "package": "varco_fastapi",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:SecurityPostureSettings[None]",
+      "interface": "varco_fastapi.posture:SecurityPostureSettings",
+      "package": "varco_fastapi",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:KafkaChannelManagerSettings[None]",
+      "interface": "varco_kafka.channel:KafkaChannelManagerSettings",
+      "package": "varco_kafka",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:KafkaEventBusSettings[None]",
+      "interface": "varco_kafka.config:KafkaEventBusSettings",
+      "package": "varco_kafka",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:MemcachedCacheSettings[None]",
+      "interface": "varco_memcached.cache:MemcachedCacheSettings",
+      "package": "varco_memcached",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:NatsChannelManagerSettings[None]",
+      "interface": "varco_nats.channel:NatsChannelManagerSettings",
+      "package": "varco_nats",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:NatsEventBusSettings[None]",
+      "interface": "varco_nats.config:NatsEventBusSettings",
+      "package": "varco_nats",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:RedisBackplaneSettings[None]",
+      "interface": "varco_redis.backplane:RedisBackplaneSettings",
+      "package": "varco_redis",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:LayeredCacheSettings[None]",
+      "interface": "varco_redis.cache:LayeredCacheSettings",
+      "package": "varco_redis",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:RedisCacheSettings[None]",
+      "interface": "varco_redis.cache:RedisCacheSettings",
+      "package": "varco_redis",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "varco.settings:RedisEventBusSettings[None]",
+      "interface": "varco_redis.config:RedisEventBusSettings",
+      "package": "varco_redis",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "SAModule.sa_xact_advisory_lock",
+      "interface": "varco_sa.advisory_lock:SAXactAdvisoryLock",
+      "package": "varco_sa",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "SSEEventBus",
+      "interface": "varco_ws.sse:SSEEventBus",
+      "package": "varco_ws",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "class"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "WebSocketEventBus",
+      "interface": "varco_ws.websocket:WebSocketEventBus",
+      "package": "varco_ws",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "class"
+    }
+  ],
+  "packages": [
+    "varco_casbin",
+    "varco_core",
+    "varco_fastapi",
+    "varco_kafka",
+    "varco_memcached",
+    "varco_nats",
+    "varco_redis",
+    "varco_sa",
+    "varco_ws"
+  ],
+  "providify": "2.1.0",
+  "schema_version": 1,
+  "seams": [
+    {
+      "backends": [
+        {
+          "implementation": "RedisCacheConfiguration.redis_cache",
+          "owner": "RedisCacheConfiguration.redis_cache",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "redis"
+        },
+        {
+          "implementation": "RedisLayeredCacheConfiguration.layered_cache",
+          "owner": "RedisLayeredCacheConfiguration.layered_cache",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "layered"
+        },
+        {
+          "implementation": "MemcachedCacheConfiguration.memcached_cache",
+          "owner": "MemcachedCacheConfiguration.memcached_cache",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "memcached"
+        }
+      ],
+      "default": {
+        "category": "in-memory",
+        "implementation": "InMemoryCache",
+        "package": "varco_core",
+        "qualifier": "in_memory",
+        "value": "memory"
+      },
+      "env": "VARCO_CACHE_BACKEND",
+      "interface": "varco_core.cache.base:CacheBackend",
+      "seam": "cache"
+    },
+    {
+      "backends": [
+        {
+          "implementation": "KafkaDLQConfiguration.kafka_dlq",
+          "owner": "KafkaDLQConfiguration.kafka_dlq",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "kafka"
+        },
+        {
+          "implementation": "NatsDLQConfiguration.nats_dlq",
+          "owner": "NatsDLQConfiguration.nats_dlq",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "nats"
+        },
+        {
+          "implementation": "RedisDLQConfiguration.redis_dlq",
+          "owner": "RedisDLQConfiguration.redis_dlq",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "redis"
+        },
+        {
+          "implementation": "RedisStreamDLQConfiguration.redis_stream_dlq",
+          "owner": "RedisStreamDLQConfiguration.redis_stream_dlq",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "redis-streams"
+        },
+        {
+          "implementation": "BeanieDeadLetterQueue",
+          "owner": "BeanieDeadLetterQueue",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": "beanie",
+          "shape": "class",
+          "value": "beanie"
+        },
+        {
+          "implementation": "SAModule.dead_letter_queue",
+          "owner": "SAModule.dead_letter_queue",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "sa"
+        }
+      ],
+      "default": {
+        "category": "in-memory",
+        "implementation": "InMemoryDeadLetterQueue",
+        "package": "varco_core",
+        "qualifier": "in_memory",
+        "value": "memory"
+      },
+      "env": "VARCO_DLQ_BACKEND",
+      "interface": "varco_core.event.dlq:AbstractDeadLetterQueue",
+      "seam": "dlq"
+    },
+    {
+      "backends": [
+        {
+          "implementation": "KafkaEventBus",
+          "owner": "KafkaEventBus",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": "kafka",
+          "shape": "class",
+          "value": "kafka"
+        },
+        {
+          "implementation": "NatsEventBus",
+          "owner": "NatsEventBus",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": "nats",
+          "shape": "class",
+          "value": "nats"
+        },
+        {
+          "implementation": "RedisEventBusSelectorConfiguration.bus",
+          "owner": "RedisEventBusSelectorConfiguration.bus",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "redis"
+        }
+      ],
+      "default": {
+        "category": "in-memory",
+        "implementation": "InMemoryEventBus",
+        "package": "varco_core",
+        "qualifier": "in_memory",
+        "value": "memory"
+      },
+      "env": "VARCO_EVENT_BUS_BACKEND",
+      "interface": "varco_core.event.base:AbstractEventBus",
+      "seam": "event_bus"
+    },
+    {
+      "backends": [
+        {
+          "implementation": "RedisStoresConfiguration.idempotency_store",
+          "owner": "RedisStoresConfiguration.idempotency_store",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "redis"
+        },
+        {
+          "implementation": "BeanieModule.idempotency_store",
+          "owner": "BeanieModule.idempotency_store",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "beanie"
+        },
+        {
+          "implementation": "SAModule.idempotency_store",
+          "owner": "SAModule.idempotency_store",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "sa"
+        }
+      ],
+      "default": {
+        "category": "in-memory",
+        "implementation": "InMemoryIdempotencyStore",
+        "package": "varco_core",
+        "qualifier": "in_memory",
+        "value": "memory"
+      },
+      "env": "VARCO_IDEMPOTENCY_BACKEND",
+      "interface": "varco_core.idempotency.base:AbstractIdempotencyStore",
+      "seam": "idempotency"
+    },
+    {
+      "backends": [
+        {
+          "implementation": "RedisStoresConfiguration.job_store",
+          "owner": "RedisStoresConfiguration.job_store",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "redis"
+        },
+        {
+          "implementation": "BeanieModule.job_store",
+          "owner": "BeanieModule.job_store",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "beanie"
+        },
+        {
+          "implementation": "SAModule.job_store",
+          "owner": "SAModule.job_store",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "sa"
+        }
+      ],
+      "default": {
+        "category": "in-memory",
+        "implementation": "InMemoryJobStore",
+        "package": "varco_core",
+        "qualifier": "in_memory",
+        "value": "memory"
+      },
+      "env": "VARCO_JOB_STORE_BACKEND",
+      "interface": "varco_core.job.base:AbstractJobStore",
+      "seam": "job_store"
+    },
+    {
+      "backends": [
+        {
+          "implementation": "_in_memory_revocation_store_when_selected",
+          "owner": "_in_memory_revocation_store_when_selected",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "memory"
+        },
+        {
+          "implementation": "RedisStoresConfiguration.revocation_store",
+          "owner": "RedisStoresConfiguration.revocation_store",
+          "package": "varco_core",
+          "priority": 100,
+          "qualifier": null,
+          "shape": "provider",
+          "value": "redis"
+        }
+      ],
+      "default": {
+        "category": "null",
+        "implementation": "NullTokenRevocationStore",
+        "package": "varco_core",
+        "qualifier": null,
+        "value": "null"
+      },
+      "env": "VARCO_REVOCATION_BACKEND",
+      "interface": "varco_core.revocation.base:AbstractTokenRevocationStore",
+      "seam": "revocation"
+    }
+  ],
+  "settings_defaults_count": 0
+}

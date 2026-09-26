@@ -35,32 +35,24 @@ Usage::
 
 from __future__ import annotations
 
-from providify import DIContainer, Inject, Provider
+import weakref
+
+from providify import DIContainer, Fallback, Inject, Provider
 from varco_core.auth import (
     AbstractAuthorizer,
     PolicyEngine,
     PolicyEngineAuthorizer,
     RequestMapper,
 )
-from varco_core.di import AlreadyBoundError, is_user_bound
+from varco_core.di import BACKEND_PRIORITY, AlreadyBoundError, is_user_bound
+from varco_core.di.features import feature_default
 
 from varco_casbin.config import CasbinSettings
 
-
-@Provider(singleton=True)
-def _provide_casbin_settings() -> CasbinSettings:
-    """
-    Provider that builds ``CasbinSettings`` from the environment.
-
-    Registered by ``bootstrap`` so the engine's ``Inject[CasbinSettings]``
-    resolves to a ready instance.  This is the deterministic alternative to
-    ``@Singleton`` on a pydantic ``BaseSettings`` (which providify cannot
-    construct — see the note in ``varco_casbin.config``).
-
-    Returns:
-        A ``CasbinSettings`` populated from ``VARCO_CASBIN_*`` env vars.
-    """
-    return CasbinSettings.from_env()
+#: Per-container idempotency guard for the policy_authorizer env twin
+#: (Plan 047 / Step 9) — see bootstrap()'s docstring/comment for why
+#: get_all_bindings()-based fn-identity detection does not work here.
+_CASBIN_TWIN_REGISTERED: weakref.WeakSet[DIContainer] = weakref.WeakSet()
 
 
 @Provider(singleton=True)
@@ -85,6 +77,33 @@ def _provide_policy_authorizer(
     return PolicyEngineAuthorizer(engine, RequestMapper())
 
 
+@Fallback
+@feature_default("policy_authorizer")
+@Provider(singleton=True, priority=BACKEND_PRIORITY)
+def _policy_authorizer_when_enabled(
+    engine: Inject[PolicyEngine],
+) -> AbstractAuthorizer:
+    """
+    Plan 047 / Step 9 — the env twin of ``enable_policy_authorizer()``.
+
+    Gated by ``@feature_default("policy_authorizer")``
+    (``VARCO_POLICY_AUTHORIZER_ENABLED``) — inert unless the operator
+    opts in. Registered by ``bootstrap()`` via ``container.provide()``
+    (guarded, idempotent) rather than left to ``scan()``: CLAUDE.md's
+    "never a scanned ``@Configuration`` that shadows the app's
+    authorizer" rule stays literally true — this stays a hand-registered
+    fallback, never something that activates merely because
+    ``varco_casbin`` was imported/scanned.
+
+    Args:
+        engine: The scanned ``CasbinPolicyEngine`` (as ``PolicyEngine``).
+
+    Returns:
+        A ``PolicyEngineAuthorizer`` using the default ``RequestMapper``.
+    """
+    return PolicyEngineAuthorizer(engine, RequestMapper())
+
+
 def bootstrap(container: DIContainer) -> DIContainer:
     """
     Bootstrap ``varco_casbin`` into a ``DIContainer``.
@@ -103,21 +122,34 @@ def bootstrap(container: DIContainer) -> DIContainer:
         The same ``container`` passed in, after scanning.
 
     Edge cases:
-        - Calling twice is safe: scanning is idempotent, and the
-          ``CasbinSettings`` provider is guarded by ``is_user_bound()`` so a
-          second ``bootstrap()`` call registers no second provider (Plan 048
-          replaces this hand guard with ``bind_settings()``'s own).
+        - Calling twice is safe: scanning is idempotent, and
+          ``CasbinSettings`` is bound via ``bind_settings()``'s own
+          per-``(cls, qualifier)`` idempotency guard (Plan 048 / DI-6,
+          Step 12) — a second ``bootstrap()`` call registers no second
+          binding.
         - ``container.ashutdown()`` must be awaited at process exit so the
           engine's ``@PreDestroy`` runs.
     """
+    # Plan 048 / DI-6, Step 12 — CasbinSettings goes through
+    # bind_settings() (fail-fast, one recipe) BEFORE scan(), rather than
+    # the module-level `_provide_casbin_settings` @Provider + hand-rolled
+    # is_user_bound() idempotency guard this used to be.
+    from varco_core.settings import bind_settings
+
+    bind_settings(container, CasbinSettings)
+
     container.scan("varco_casbin", recursive=True)
-    # pydantic BaseSettings cannot be a @Singleton under providify — register a
-    # clean provider (scan does not auto-register module-level @Provider
-    # funcs). Guarded: container.provide() always appends, so an unguarded
-    # second bootstrap() call would register a second, ambiguous provider —
-    # 048 replaces this hand guard with bind_settings()'s own idempotency.
-    if not is_user_bound(container, CasbinSettings):
-        container.provide(_provide_casbin_settings)
+    # Plan 047 / Step 9 — the policy_authorizer env twin. Guarded by a
+    # per-container WeakSet, NOT `get_all_bindings()` (which is
+    # activation-aware — `container.get_all_bindings(AbstractAuthorizer)`
+    # excludes our own binding whenever VARCO_POLICY_AUTHORIZER_ENABLED is
+    # unset, since @Requires-gated bindings are invisible while inactive.
+    # Checking `already_registered` that way is *always* False when the
+    # twin is inactive, so a repeat bootstrap() call would re-register it
+    # every time — measured live while implementing this step).
+    if container not in _CASBIN_TWIN_REGISTERED:
+        container.provide(_policy_authorizer_when_enabled)
+        _CASBIN_TWIN_REGISTERED.add(container)
     return container
 
 

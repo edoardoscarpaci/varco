@@ -352,6 +352,10 @@
         "kind": "class",
         "module": "varco_core.jwt.transform.protocol"
       },
+      "CommaSeparated": {
+        "kind": "constant",
+        "module": "typing"
+      },
       "CompositeHealthCheck": {
         "kind": "class",
         "module": "varco_core.health"
@@ -812,6 +816,22 @@
         "kind": "class",
         "module": "varco_core.service.types"
       },
+      "SettingsAlreadyBoundError": {
+        "kind": "class",
+        "module": "varco_core.settings.errors"
+      },
+      "SettingsError": {
+        "kind": "class",
+        "module": "varco_core.settings.errors"
+      },
+      "SettingsProvenance": {
+        "kind": "class",
+        "module": "varco_core.settings.bind"
+      },
+      "SettingsValidationError": {
+        "kind": "class",
+        "module": "varco_core.settings.errors"
+      },
       "SoftDeleteAuditedDomainModel": {
         "kind": "class",
         "module": "varco_core.model"
@@ -1075,6 +1095,11 @@
         "module": "varco_core.job.base",
         "signature": "(ctx: 'AuthContext') -> 'dict[str, Any]'"
       },
+      "bind_settings": {
+        "kind": "function",
+        "module": "varco_core.settings.bind",
+        "signature": "(container: 'DIContainer', cls: 'type[BaseSettings]', *, instance: 'BaseSettings | None' = None, qualifier: 'str | None' = None, env_prefix: 'str | None' = None) -> 'BaseSettings'"
+      },
       "build_tenant_source_chain": {
         "kind": "function",
         "module": "varco_core.tenancy.settings",
@@ -1239,6 +1264,11 @@
         "kind": "function",
         "module": "varco_core.tenancy.provenance",
         "signature": "(prov: 'TenantProvenance') -> 'Iterator[None]'"
+      },
+      "provenance_of": {
+        "kind": "function",
+        "module": "varco_core.settings.bind",
+        "signature": "(container: 'DIContainer', cls: 'type[BaseSettings]', *, qualifier: 'str | None' = None) -> 'SettingsProvenance'"
       },
       "read_claim": {
         "kind": "function",
@@ -1442,7 +1472,7 @@
       },
       "InMemoryJobStore": {
         "kind": "class",
-        "module": "varco_fastapi.job.store"
+        "module": "varco_core.job.memory"
       },
       "JobAcceptedResponse": {
         "kind": "class",

@@ -104,11 +104,19 @@ def bootstrap(container: DIContainer) -> DIContainer:
     Thread safety:  ✅ Bootstrap is intended for single-threaded startup only.
     Async safety:   ✅ Scanning is synchronous.
     """
-    # Discover all @Singleton/@Component classes and module-level @Provider
-    # functions in varco_memcached recursively.  Currently the package
-    # exposes MemcachedCacheSettings (@Singleton) and MemcachedHealthCheck
-    # (@Singleton).  MemcachedCache itself is registered by
-    # MemcachedCacheConfiguration during ainstall().
+    # Plan 048 / DI-6, Step 11 — MemcachedCacheSettings is bound eagerly,
+    # fail-fast, via bind_settings() BEFORE scan(), rather than the scanned
+    # @Fallback @Provider it used to be (which only read the environment
+    # lazily, the first time something resolved it). MemcachedHealthCheck
+    # (@Singleton) is still discovered by the scan below.  MemcachedCache
+    # itself is registered by MemcachedCacheConfiguration during
+    # ainstall().
+    from varco_core.settings import bind_settings
+
+    from varco_memcached.cache import MemcachedCacheSettings
+
+    bind_settings(container, MemcachedCacheSettings)
+
     container.scan("varco_memcached", recursive=True)
 
     return container

@@ -73,6 +73,7 @@ from providify import (
     Singleton,
 )
 from varco_core.di import BACKEND_PRIORITY
+from varco_core.di.select import selected_by
 from varco_core.event.base import (
     CHANNEL_ALL,
     CHANNEL_DEFAULT,
@@ -102,6 +103,7 @@ _POLL_INTERVAL: float = 0.01  # 10 ms
 
 @Fallback
 @Singleton(qualifier="redis")
+@selected_by("event_bus", "redis")
 class RedisEventBus(AbstractEventBus):
     """
     ``AbstractEventBus`` backed by Redis Pub/Sub via ``redis.asyncio``.
@@ -532,6 +534,7 @@ class RedisEventBusSelectorConfiguration:
     """
 
     @Fallback
+    @selected_by("event_bus", "redis")
     @Provider(singleton=True, priority=BACKEND_PRIORITY)
     def bus(
         self,

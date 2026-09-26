@@ -74,6 +74,7 @@ from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
 from aiokafka.structs import OffsetAndMetadata
 from providify import Fallback, Inject, InjectMeta, Instance, PostConstruct, PreDestroy, Singleton
 from varco_core.di import BACKEND_PRIORITY
+from varco_core.di.select import selected_by
 from varco_core.event.base import (
     CHANNEL_ALL,
     CHANNEL_DEFAULT,
@@ -94,9 +95,14 @@ _logger = logging.getLogger(__name__)
 
 @Fallback
 @Singleton(priority=BACKEND_PRIORITY, qualifier="kafka")
+@selected_by("event_bus", "kafka")
 class KafkaEventBus(AbstractEventBus):
     """
     ``AbstractEventBus`` backed by Apache Kafka via ``aiokafka``.
+
+    Plan 047 §D-vocab — live only when ``VARCO_EVENT_BUS_BACKEND=kafka``
+    (or a dotted-path/code override). Bootstrapping ``varco_kafka`` alone
+    no longer makes this the live bus (§D-unset's BREAKING consequence).
 
     Published events are serialized to JSON and sent to a Kafka topic
     named after the channel.  A background consumer task reads from all

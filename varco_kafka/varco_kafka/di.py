@@ -118,9 +118,26 @@ def bootstrap(container: DIContainer) -> DIContainer:
     Thread safety:  ✅ Bootstrap is intended for single-threaded startup only.
     Async safety:   ✅ Scanning is synchronous.  The function itself is sync.
     """
+    # Plan 048 / DI-6, Step 9 — KafkaEventBusSettings/
+    # KafkaChannelManagerSettings are bound eagerly, fail-fast, via
+    # bind_settings() BEFORE scan(), rather than the two module-level
+    # @Fallback @Provider functions that used to live in
+    # varco_kafka.config/varco_kafka.channel (which only read the
+    # environment lazily, the first time something resolved them). Safe
+    # to call before an app's own code override too — bind_settings()
+    # never reads the environment when a non-fallback binding already
+    # exists (§D-precedence).
+    from varco_core.settings import bind_settings
+
+    from varco_kafka.channel import KafkaChannelManagerSettings
+    from varco_kafka.config import KafkaEventBusSettings
+
+    bind_settings(container, KafkaEventBusSettings)
+    bind_settings(container, KafkaChannelManagerSettings)
+
     # Discover all @Singleton/@Component classes in varco_kafka recursively.
-    # KafkaEventBusSettings, KafkaChannelManagerSettings, KafkaEventBus,
-    # KafkaHealthCheck, and KafkaChannelManager are all registered here.
+    # KafkaEventBus, KafkaHealthCheck, and KafkaChannelManager are all
+    # registered here.
     container.scan("varco_kafka", recursive=True)
 
     return container

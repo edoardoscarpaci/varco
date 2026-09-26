@@ -66,3 +66,20 @@ def kafka_bootstrap(request: pytest.FixtureRequest) -> str:
         .with_env("KAFKA_TRANSACTION_STATE_LOG_MIN_ISR", "1") as container
     ):
         yield container.get_bootstrap_server()
+
+
+@pytest.fixture(autouse=True)
+def _select_kafka_backends(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Plan 047 §D-tests — the migration cost of §D-unset in tests: sets this
+    package's seam variables to its primary value so existing tests that
+    resolve a backend after bootstrap() keep seeing it live now that a
+    bootstrapped package is no longer automatically the live one.
+
+    Tests that exercise the unset path or a secondary value use
+    `monkeypatch.delenv`/`setenv` explicitly, which — because this fixture
+    also runs via `monkeypatch` — is naturally undone at the end of each
+    test regardless of ordering.
+    """
+    monkeypatch.setenv("VARCO_EVENT_BUS_BACKEND", "kafka")
+    monkeypatch.setenv("VARCO_DLQ_BACKEND", "kafka")

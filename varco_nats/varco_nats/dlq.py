@@ -93,6 +93,7 @@ from nats.js.api import RetentionPolicy
 from nats.js.errors import NotFoundError
 from providify import Configuration, Disposes, Fallback, InjectMeta, Provider
 from varco_core.di import BACKEND_PRIORITY
+from varco_core.di.select import selected_by
 from varco_core.event.base import Event
 from varco_core.event.dlq import (
     AbstractDeadLetterQueue,
@@ -760,6 +761,7 @@ class NatsDLQConfiguration:
     """
 
     @Fallback
+    @selected_by("dlq", "nats")
     @Provider(singleton=True, priority=BACKEND_PRIORITY)
     async def nats_dlq(
         self,
