@@ -3,11 +3,12 @@
 Plan 036 (3.2 security release, BACKLOG row **S9**). Research brief backing this feature:
 `design/research/006-multi-tenant-identity-and-hardening.md`.
 
-**Nothing runs unless an app opts in.** `SecurityPostureLifecycle` is a lifecycle component
-passed to `create_varco_app(..., extra_lifespan_components=[...])` — like `TenancyLifecycle` and
-`ReliabilityLifecycle` before it (`app.py:319-321,438` already collects them). An app that never
-passes one gets no report and no behaviour change. Auto-registration is a named 4.0 flip
-(row 1 below), not a 3.2 default.
+**Default-on since Plan 049 (FLIP-1).** `SecurityPostureModule` (a `VarcoModule` wrapping
+`SecurityPostureLifecycle` unchanged) is part of `varco_fastapi.default_modules()` — every app
+gets the preflight and its report with zero code. `VARCO_SECURITY_POSTURE_ENABLED=false` or
+`default_modules(exclude=(SecurityPostureModule,))` turns it off; the pre-049 hand-wired form
+(`LifecycleModule(SecurityPostureLifecycle(...))`) still works for an app that wants to fully
+replace the module. Row 1 of the flip list below is now `done (Plan 049)`.
 
 ## What it answers
 
@@ -16,16 +17,31 @@ permissive ones. `SecurityPostureLifecycle.start()` runs every collector, logs t
 `WARNING`, stores it as `.report`, and (only in opt-in `enforce="refuse"` mode) can raise.
 
 ```python
-from varco_fastapi import SecurityPostureLifecycle, SecurityPostureSettings, create_varco_app
+from varco_fastapi.app import create_varco_app
 
-lifecycle = SecurityPostureLifecycle(
+app = create_varco_app(container)  # SecurityPostureModule runs the default five collectors
+
+# After the app has started (e.g. in a test, or a health endpoint):
+app.state  # or capture the module instance yourself, see below
+```
+
+Passing a hand-built collector list (the pre-049 `SecurityPostureLifecycle(collectors=[...])`
+shape) now goes through the module's constructor:
+
+```python
+from varco_fastapi.modules import SecurityPostureModule, default_modules
+from varco_fastapi.posture import SecurityPostureSettings
+
+module = SecurityPostureModule(
     collectors=[...],  # see "Wiring a collector" below
     settings=SecurityPostureSettings(),  # reads VARCO_SECURITY_*
 )
-app = create_varco_app(container, extra_lifespan_components=[lifecycle])
+app = create_varco_app(
+    container, modules=[*default_modules(exclude=(SecurityPostureModule,)), module]
+)
 
 # After the app has started (e.g. in a test, or a health endpoint):
-lifecycle.report.summary()  # "2 info, 1 warn, 0 high, 1 not assessed (0 suppressed)"
+module.report.summary()  # "2 info, 1 warn, 0 high, 1 not assessed (0 suppressed)"
 ```
 
 ## The four-severity model
@@ -151,7 +167,7 @@ down in one place. Each row names the plan that owns the flip and the 3.2 escape
 
 | # | Default today (3.2) | 4.0 | Owner | 3.2 escape hatch / warn |
 |---|---|---|---|---|
-| 1 | `SecurityPostureLifecycle` is opt-in | Auto-registered by `create_varco_app` | 036 | Pass it in `extra_lifespan_components` |
+| 1 | `SecurityPostureLifecycle` is opt-in | Auto-registered by `create_varco_app` | 036 | `done (Plan 049 / FLIP-1)` — `SecurityPostureModule` is in `default_modules()` |
 | 2 | `SecurityPostureSettings.enforce="warn"` | `"refuse"` in `production` | 036 | `VARCO_SECURITY_ENFORCE=refuse` |
 | 3 | `mount_reliability_admin(server_auth=None)` warns and mounts | Refuses | 036 reports; mount owns the flip | `posture.admin_mount_unauthenticated` |
 | 4 | `build_webhook_router(server_auth=None)` mounts silently | Refuses | 036 reports (and adds the missing warning in Phase 1) | `posture.admin_mount_unauthenticated` |
@@ -177,4 +193,4 @@ feature docs (`tenant-provenance.md`, `http-edge-hardening.md`).
 | Treating `NOT_ASSESSED` as a pass | It means "could not check", not "checked and fine" — a Mongo-only app with `varco_sa` uninstalled reports `data.*` as `NOT_ASSESSED` forever, correctly | Read the summary's fourth count separately; `worst()` ranks `NOT_ASSESSED` above `INFO` for exactly this reason |
 | Setting `VARCO_SECURITY_ENV=development` to quiet startup | It changes **presentation only** — every check still runs and every `WARN` is still produced (just demoted to `INFO` and logged quieter); it never suppresses a finding or stops a check from running | Use `VARCO_SECURITY_SUPPRESS` for a knowingly-accepted finding, not the environment flag |
 | A typo in `VARCO_SECURITY_SUPPRESS` | An unknown `check` id suppresses nothing — there is no fuzzy match | The typo itself surfaces as `posture.unknown_suppression` at `INFO`; check the report for it |
-| Expecting a report with no wiring | The preflight is **opt-in** in 3.2 — an app that never constructs and passes a `SecurityPostureLifecycle` gets no findings and no log lines at all | Pass one via `extra_lifespan_components=[...]`; see flip-list row 1 for the 4.0 plan |
+| Expecting no report at all (pre-3.3 assumption) | ⚠️ Historical — as of Plan 049 (FLIP-1) `SecurityPostureModule` is in `default_modules()`, so every app gets the preflight unless it opts out | `VARCO_SECURITY_POSTURE_ENABLED=false` or `default_modules(exclude=(SecurityPostureModule,))` |

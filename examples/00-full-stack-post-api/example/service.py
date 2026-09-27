@@ -89,7 +89,7 @@ class PostService(
     - DTO ↔ domain translation via injected ``PostAssembler``.
     - Look-aside caching via ``CacheServiceMixin`` (DI-injected ``CacheBackend``).
     - Event publishing via ``AbstractEventProducer`` (optional — no-op if absent).
-    - Unit-of-work management via ``IUoWProvider`` (SAModule provides this).
+    - Unit-of-work management via ``IUoWProvider`` (SAConfiguration provides this).
 
     Class attributes:
         _cache_namespace: Prefix for all Redis cache keys (``"post"``).
@@ -124,7 +124,7 @@ class PostService(
     ) -> None:
         """
         Args:
-            uow_provider: Injected ``IUoWProvider`` — provided by SAModule.
+            uow_provider: Injected ``IUoWProvider`` — provided by SAConfiguration.
             authorizer:   Injected ``AbstractAuthorizer`` — defaults to
                           ``BaseAuthorizer`` (permissive) if no custom
                           authorizer is registered.

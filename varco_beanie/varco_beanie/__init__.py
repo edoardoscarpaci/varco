@@ -27,7 +27,7 @@ Quick start::
 providify DI integration::
 
     from pymongo import AsyncMongoClient
-    from varco_beanie import BeanieModule, BeanieSettings, bind_repositories
+    from varco_beanie import BeanieConfiguration, BeanieSettings, bind_repositories
     from providify import DIContainer, Provider
 
     container = DIContainer()
@@ -37,7 +37,7 @@ providify DI integration::
         return BeanieSettings(mongo_client=AsyncMongoClient(...), db_name="mydb", entity_classes=(User,))
 
     container.provide(settings)
-    container.install(BeanieModule)
+    container.install(BeanieConfiguration)
     bind_repositories(container, User)
 
     repo = await container.aget(AsyncRepository[User])
@@ -48,7 +48,7 @@ from varco_core.deprecation import deprecated_alias
 from varco_beanie.bootstrap import BeanieFastrestApp
 from varco_beanie.conversation import BeanieConversationStore, ConversationTurnDocument
 from varco_beanie.deduplication import BeanieDeduplicator, DeduplicationDocument
-from varco_beanie.di import BeanieModule, BeanieSettings, bind_repositories
+from varco_beanie.di import BeanieConfiguration, BeanieSettings, bind_repositories
 from varco_beanie.dlq import BeanieDeadLetterQueue, DeadLetterDocument
 from varco_beanie.factory import BeanieDocRegistry, BeanieModelFactory
 from varco_beanie.health import BeanieHealthCheck
@@ -78,7 +78,7 @@ __all__ = [
     "BeanieRepositoryProvider",
     # DI integration
     "BeanieSettings",
-    "BeanieModule",
+    "BeanieConfiguration",
     "bind_repositories",
     # Bootstrap
     "BeanieFastrestApp",

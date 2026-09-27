@@ -117,7 +117,7 @@
     },
     {
       "category": "production-safe",
-      "implementation": "VarcoFastAPIModule.tenant_defaults_provider",
+      "implementation": "VarcoFastAPIConfiguration.tenant_defaults_provider",
       "interface": "varco_core.context.defaults:TenantDefaultsProvider",
       "package": "varco_core",
       "priority": 0,
@@ -180,7 +180,7 @@
     },
     {
       "category": "production-safe",
-      "implementation": "VarcoFastAPIModule.message_catalog",
+      "implementation": "VarcoFastAPIConfiguration.message_catalog",
       "interface": "varco_core.i18n.catalog:MessageCatalog",
       "package": "varco_core",
       "priority": 0,
@@ -207,7 +207,7 @@
     },
     {
       "category": "production-safe",
-      "implementation": "VarcoFastAPIModule.task_serializer",
+      "implementation": "VarcoFastAPIConfiguration.task_serializer",
       "interface": "varco_core.job.serializer:TaskSerializer",
       "package": "varco_core",
       "priority": 0,
@@ -216,7 +216,7 @@
     },
     {
       "category": "production-safe",
-      "implementation": "VarcoFastAPIModule.task_registry",
+      "implementation": "VarcoFastAPIConfiguration.task_registry",
       "interface": "varco_core.job.task:TaskRegistry",
       "package": "varco_core",
       "priority": 0,
@@ -243,7 +243,7 @@
     },
     {
       "category": "production-safe",
-      "implementation": "VarcoFastAPIModule.claim_transformer_registry",
+      "implementation": "VarcoFastAPIConfiguration.claim_transformer_registry",
       "interface": "varco_core.jwt.transform.registry:ClaimTransformerRegistry",
       "package": "varco_core",
       "priority": 0,
@@ -261,7 +261,7 @@
     },
     {
       "category": "production-safe",
-      "implementation": "SAModule.sa_advisory_lock",
+      "implementation": "SAConfiguration.sa_advisory_lock",
       "interface": "varco_core.lock:AbstractDistributedLock",
       "package": "varco_core",
       "priority": 100,
@@ -342,7 +342,7 @@
     },
     {
       "category": "production-safe",
-      "implementation": "SAModule.uow_provider",
+      "implementation": "SAConfiguration.uow_provider",
       "interface": "varco_core.service.base:IUoWProvider",
       "package": "varco_core",
       "priority": 100,
@@ -414,7 +414,7 @@
     },
     {
       "category": "production-safe",
-      "implementation": "VarcoFastAPIModule.trust_store",
+      "implementation": "VarcoFastAPIConfiguration.trust_store",
       "interface": "varco_fastapi.auth.trust_store:TrustStore",
       "package": "varco_fastapi",
       "priority": 0,
@@ -423,7 +423,7 @@
     },
     {
       "category": "production-safe",
-      "implementation": "VarcoFastAPIModule.client_profile",
+      "implementation": "VarcoFastAPIConfiguration.client_profile",
       "interface": "varco_fastapi.client.base:ClientProfile",
       "package": "varco_fastapi",
       "priority": 0,
@@ -459,7 +459,7 @@
     },
     {
       "category": "production-safe",
-      "implementation": "VarcoFastAPIModule.profiling_settings",
+      "implementation": "VarcoFastAPIConfiguration.profiling_settings",
       "interface": "varco_fastapi.middleware.profiling:ProfilingSettings",
       "package": "varco_fastapi",
       "priority": 0,
@@ -576,7 +576,7 @@
     },
     {
       "category": "production-safe",
-      "implementation": "SAModule.sa_xact_advisory_lock",
+      "implementation": "SAConfiguration.sa_xact_advisory_lock",
       "interface": "varco_sa.advisory_lock:SAXactAdvisoryLock",
       "package": "varco_sa",
       "priority": 0,
@@ -705,8 +705,8 @@
           "value": "beanie"
         },
         {
-          "implementation": "SAModule.dead_letter_queue",
-          "owner": "SAModule.dead_letter_queue",
+          "implementation": "SAConfiguration.dead_letter_queue",
+          "owner": "SAConfiguration.dead_letter_queue",
           "package": "varco_core",
           "priority": 100,
           "qualifier": null,
@@ -778,8 +778,8 @@
           "value": "redis"
         },
         {
-          "implementation": "BeanieModule.idempotency_store",
-          "owner": "BeanieModule.idempotency_store",
+          "implementation": "BeanieConfiguration.idempotency_store",
+          "owner": "BeanieConfiguration.idempotency_store",
           "package": "varco_core",
           "priority": 100,
           "qualifier": null,
@@ -787,8 +787,8 @@
           "value": "beanie"
         },
         {
-          "implementation": "SAModule.idempotency_store",
-          "owner": "SAModule.idempotency_store",
+          "implementation": "SAConfiguration.idempotency_store",
+          "owner": "SAConfiguration.idempotency_store",
           "package": "varco_core",
           "priority": 100,
           "qualifier": null,
@@ -819,8 +819,8 @@
           "value": "redis"
         },
         {
-          "implementation": "BeanieModule.job_store",
-          "owner": "BeanieModule.job_store",
+          "implementation": "BeanieConfiguration.job_store",
+          "owner": "BeanieConfiguration.job_store",
           "package": "varco_core",
           "priority": 100,
           "qualifier": null,
@@ -828,8 +828,8 @@
           "value": "beanie"
         },
         {
-          "implementation": "SAModule.job_store",
-          "owner": "SAModule.job_store",
+          "implementation": "SAConfiguration.job_store",
+          "owner": "SAConfiguration.job_store",
           "package": "varco_core",
           "priority": 100,
           "qualifier": null,

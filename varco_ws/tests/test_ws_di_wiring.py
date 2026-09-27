@@ -59,7 +59,12 @@ CORE_DEFAULTS = (
 )
 
 
+from varco_ws.modules import WsModule  # noqa: E402
+
+
 class TestVarcoWsDIWiringConformance(DIWiringConformance):
+    module_cls = WsModule
+
     expected_defaults = CORE_DEFAULTS + (
         (WebSocketEventBus, None),
         (SSEEventBus, None),

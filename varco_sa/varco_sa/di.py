@@ -7,7 +7,7 @@ Providify DI integration for the SQLAlchemy async backend.
 per-entity ``AsyncRepository[D]`` bindings are wired into a ``DIContainer``
 with a minimal setup API.
 
-``SAModule`` is a scan-marker ``@Configuration``.  The concrete singletons
+``SAConfiguration`` is a scan-marker ``@Configuration``.  The concrete singletons
 (``SQLAlchemyRepositoryProvider``, ``SAHealthCheck``) are registered
 automatically when ``container.scan("varco_sa")`` is called — no explicit
 ``@Provider`` factories are needed.
@@ -19,7 +19,7 @@ Typical usage::
 
     from providify import DIContainer, Provider
     from varco_sa.bootstrap import SAConfig
-    from varco_sa.di import SAModule, bind_repositories
+    from varco_sa.di import SAConfiguration, bind_repositories
     from myapp.models import User, Post          # your DomainModel subclasses
 
     class Base(DeclarativeBase): pass
@@ -38,7 +38,7 @@ Typical usage::
     container.provide(sa_config)
 
     # 2. Install the module (scan-marker) and scan varco_sa
-    container.install(SAModule)
+    container.install(SAConfiguration)
     container.scan("varco_sa", recursive=True)
 
     # 3. Bind per-entity AsyncRepository[D] — must come after scan
@@ -87,12 +87,12 @@ if TYPE_CHECKING:
 
 
 @Configuration
-class SAModule:
+class SAConfiguration:
     """
     ``@Configuration`` module for the SQLAlchemy async backend.
 
     Discovered and auto-installed by ``container.scan("varco_sa", recursive=True)``.
-    No explicit ``container.install(SAModule)`` call is required.
+    No explicit ``container.install(SAConfiguration)`` call is required.
 
     Registers:
         - ``IUoWProvider`` → ``SQLAlchemyRepositoryProvider`` singleton (via
@@ -142,7 +142,7 @@ class SAModule:
         §D-S12-hook).
 
         Runs eagerly at ``container.scan("varco_sa", recursive=True)``/
-        ``container.install(SAModule)`` time — a ``@Configuration``'s
+        ``container.install(SAConfiguration)`` time — a ``@Configuration``'s
         ``@PostConstruct`` executes as soon as the module itself is
         installed, unlike a ``@Singleton``'s ``@PostConstruct`` (deferred
         until first resolution).
@@ -192,7 +192,7 @@ class SAModule:
         Re-expose ``SQLAlchemyRepositoryProvider`` as the ``IUoWProvider`` interface.
 
         ``AsyncService.__init__`` injects ``IUoWProvider`` — this binding satisfies
-        that requirement as soon as scan auto-installs ``SAModule``.
+        that requirement as soon as scan auto-installs ``SAConfiguration``.
 
         DESIGN: type re-export via @Configuration over RepositoryProvider subclassing IUoWProvider
             ✅ Avoids a circular import:
@@ -406,9 +406,9 @@ def bind_repositories(
 
     Prerequisites
     -------------
-    ``SAModule`` must be installed before calling this function —
+    ``SAConfiguration`` must be installed before calling this function —
     the generated providers inject ``RepositoryProvider`` which is registered
-    by ``SAModule.repository_provider()``.
+    by ``SAConfiguration.repository_provider()``.
 
     Args:
         container:       The ``DIContainer`` to register bindings into.
@@ -488,7 +488,7 @@ def _bind_repo_provider(container: DIContainer, entity_cls: type[DomainModel]) -
 
     def _repo_factory(provider: RepositoryProvider) -> AsyncRepository[Any, Any]:
         # provider is injected by the container (resolved as RepositoryProvider
-        # singleton from SAModule.repository_provider()).
+        # singleton from SAConfiguration.repository_provider()).
         # get_repository() returns the correct AsyncSQLAlchemyRepository
         # subtype for entity_cls, creating a fresh AsyncSession per call.
         return provider.get_repository(entity_cls)
@@ -512,7 +512,7 @@ def bootstrap(container: DIContainer) -> DIContainer:
     """
     Bootstrap ``varco_sa`` into a ``DIContainer``.
 
-    Installs :class:`SAModule` and calls
+    Installs :class:`SAConfiguration` and calls
     ``container.scan("varco_sa", recursive=True)`` to discover
     ``SQLAlchemyRepositoryProvider`` and ``SAHealthCheck``. Call
     :func:`bind_repositories` separately for per-entity ``AsyncRepository[D]``
@@ -566,7 +566,7 @@ def bootstrap(container: DIContainer) -> DIContainer:
     Async safety:   ✅ All operations are synchronous — SQLAlchemy has no
                        async init step at construction time.
     """
-    # SAModule is an empty backward-compat @Configuration — install() is a no-op.
+    # SAConfiguration is an empty backward-compat @Configuration — install() is a no-op.
     # _sa_uow_provider is a module-level @Provider discovered by scan automatically,
     # so no explicit install() is needed.
     container.scan("varco_sa", recursive=True)
@@ -641,7 +641,7 @@ async def create_tables(container: DIContainer) -> None:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 __all__ = [
-    "SAModule",
+    "SAConfiguration",
     "bind_repositories",
     "bootstrap",
     "create_tables",

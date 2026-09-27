@@ -387,15 +387,18 @@ async def test_unknown_route_returns_404(inmemory_client: httpx.AsyncClient) -> 
 
 async def test_metrics_not_mounted_when_disabled() -> None:
     """
-    ``create_varco_app(enable_metrics=False)`` must NOT mount ``GET /metrics``.
+    A default ``create_varco_app()`` (no ``MetricsModule``) must NOT mount
+    ``GET /metrics``.
 
     Verified by checking that a request to ``/metrics`` returns 404.
     """
+    from providify import DIContainer  # noqa: PLC0415
+
     from varco_fastapi import create_varco_app  # noqa: PLC0415
 
     # Build a minimal app WITHOUT metrics — no prometheus setup needed.
     disabled_app = create_varco_app(
-        enable_metrics=False,
+        DIContainer(),
         validate=False,
     )
 

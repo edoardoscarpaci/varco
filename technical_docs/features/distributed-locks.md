@@ -94,7 +94,8 @@ async with session_factory() as session:
         # COMMIT here releases the lock automatically — no release() call.
 ```
 
-`AbstractDistributedLock` DI binding (`varco_sa.di.SAModule`):
+`AbstractDistributedLock` DI binding (`varco_sa.di.SAConfiguration`, renamed from
+`SAModule` by Plan 049 §D-names):
 `AbstractDistributedLock` → `SAAdvisoryLock` remains the **default** binding
 so upgrading to a Plan-005-Phase-5 release does not silently change any
 app's runtime behaviour. `SAXactAdvisoryLock` is always separately

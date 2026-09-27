@@ -26,7 +26,7 @@ first, ``current_request_context()`` second.
 Both built-in error-rendering paths — ``varco_fastapi.exceptions.
 add_exception_handlers()`` and ``varco_fastapi.middleware.error.
 ErrorMiddleware`` — read this mirror and, when given a ``message_catalog=``
-(threaded from ``create_varco_app(i18n=...)``'s resolved
+(threaded from ``LocalizationModule(i18n=...)``'s resolved
 ``MessageCatalog``), pass ``message_resolver=catalog.format_message`` into
 ``error_message_for()`` and set the ``Content-Language`` header themselves.
 This was **not** true before Plan 011's drift-fix pass — an earlier

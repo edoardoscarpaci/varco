@@ -70,7 +70,7 @@ def test_create_varco_app_with_tenancy_none_registers_nothing() -> None:
     # validation before this test's actual assertion is ever reached (same
     # pattern as test_app_migrations.py's equivalent create_varco_app()
     # calls).
-    app = create_varco_app(DIContainer(), tenancy=None, validate=False)
+    app = create_varco_app(DIContainer(), validate=False)
 
     assert not any("tenancy" in str(route.path).lower() for route in app.router.routes)
 
@@ -83,7 +83,7 @@ def test_isolation_env_var_without_tenancy_kwarg_logs_one_warning(
     from varco_fastapi.app import create_varco_app
 
     with caplog.at_level(logging.WARNING):
-        create_varco_app(DIContainer(), tenancy=None, validate=False)
+        create_varco_app(DIContainer(), validate=False)
 
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert any("VARCO_TENANCY_ISOLATION" in r.getMessage() for r in warnings)

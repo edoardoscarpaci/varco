@@ -190,9 +190,27 @@ feature's settings from the container (048) and honour its `.enabled`/mode via
 `_enabled_from_settings()`; `enabled=False` → off regardless of env (code > env);
 `enabled=True` → on regardless of env; a **settings instance** passed to a settings-shaped module
 (`SecurityHeadersModule(settings=SecurityHeadersSettings(preset=STRICT))`) is bound via
-`bind_settings(container, Cls, instance=…)` in `_register()` (048's code path, non-fallback) and
-then `enabled=None` reads *that* instance's `.enabled` — so "instance ⇒ on" holds exactly when the
-instance says so, which is 048's per-field rule rather than a third mechanism.
+~~`bind_settings(container, Cls, instance=…)` in `_register()` (048's code path, non-fallback)~~
+and then `enabled=None` reads *that* instance's `.enabled` — so "instance ⇒ on" holds exactly when
+the instance says so, which is 048's per-field rule rather than a third mechanism.
+
+> **RESOLVED DEVIATION (repair round 2, Decision 2):** the struck-through recipe above —
+> `bind_settings(container, Cls, instance=settings)` — raises `SettingsAlreadyBoundError` in
+> practice for every settings-shaped module this plan ships
+> (`SecurityHeadersModule`/`BodyLimitModule`/`SecurityPostureModule`). Reproduction:
+> `FastAPIModule`'s own `bootstrap()` (or, for `SecurityPostureModule`, `depends_on=(FastAPIModule,)`
+> guaranteeing `FastAPIModule` registers first) already calls `bind_settings(container, Cls)` —
+> a plain `@Fallback` — as part of the standard default set; `bind_settings(..., instance=...)`
+> raises the moment **any** prior `bind_settings()` call touched that `(cls, qualifier)`, fallback
+> or not (this is `bind_settings`'s own idempotency contract, not a bug) — and by the time a
+> module's own `_register()` runs, the fallback is already in place. The three sites instead call
+> `varco_core.di.bind_instance(container, Cls, settings)` (Plan 046's "already-constructed object"
+> verb — a different bookkeeping registry that only raises against a **non-fallback** binding),
+> exactly the "a code decision beats a default" semantics this section requires. Each site
+> (`varco_fastapi/varco_fastapi/modules/edge.py`'s `SecurityHeadersModule`/`BodyLimitModule`,
+> `varco_fastapi/varco_fastapi/modules/lifecycle.py`'s `SecurityPostureModule`) carries this
+> reproduction inline as a code comment. No other slot's behaviour changes — `enabled=None` still
+> reads whatever instance ends up bound, by whichever verb.
 
 **`register()` always runs, even for a disabled module.** It binds settings and `@Fallback`
 providers, which is what makes a disabled module still *visible* (to 052 as "disabled", to
@@ -279,13 +297,24 @@ callable-installer form (`install_cors`) is already a `MiddlewareEntry` shape (`
 RetentionModule(r)]` with no FastAPI import (a stated non-goal to *build*, a design goal to
 *allow*). ✅ A module cannot invent a position — it names a slot, and the slot table is the same
 one `test_middleware_order.py` characterises, so the byte-identical-order proof is that test
-staying green with only its construction call migrated. ✅ `RateLimitModule` yields two specs
-(PRE/POST) — the "one middleware, two positions" design (035) survives untouched. ✅
+staying green with only its construction call migrated. ✅ `RateLimitModule` yields
+~~two specs (PRE/POST)~~ **up to two specs (PRE/POST), one per stage only when that stage's rule
+partition is non-empty** — the "one middleware, two positions" design (035) survives untouched. ✅
 `IdempotencyMiddleware` gets a slot too, so an app's `MiddlewareModule([IdempotencyMiddleware…],
 slot=EdgeSlot.IDEMPOTENCY)` finally lands *inside* `ErrorMiddleware` — the position CLAUDE.md's
 Idempotency section demands and `extra_middleware=` could never give. ❌ Two `isinstance` checks
 in `create_varco_app`. Rejected — `middleware()`/`configure_app()` on the core ABC returning
 `Sequence[Any]`: ❌ `varco_core` would grow HTTP vocabulary it has no consumer for.
+
+> **RESOLVED DEVIATION (repair round 2, Decision 2):** an unconditional two-specs-always reading
+> would install a `RateLimitMiddleware(rules=())` pass-through into `app.user_middleware` for a
+> stage with zero rules, breaking the pre-049-locked characterization test
+> `varco_fastapi/tests/test_middleware_order.py::
+> test_rate_limit_bundle_with_only_tenant_rule_yields_one_entry_inside` (a bundle with only a
+> `TENANT` rule must install exactly ONE `RateLimitMiddleware`, not two). `RateLimitModule.middleware()`
+> therefore emits a spec per stage **only when that stage's rule partition is non-empty** — see the
+> inline comment at `varco_fastapi/varco_fastapi/modules/edge.py`'s `RateLimitModule.middleware()`,
+> which names this same test as the reason.
 
 ### §D-signature — `create_varco_app(container, *, modules=None, routers=None, …)`
 
@@ -355,8 +384,12 @@ sets an instance attribute shadowing the `ClassVar` — `resolve_module_order` r
 collectors: Sequence[Callable[[], list[PostureFinding]]] | None = None)`, `name="security_posture"`,
 `depends_on=(FastAPIModule,)`, **in `default_modules()`, listed last.**
 
-- `_register()`: `bind_settings(container, SecurityPostureSettings, instance=settings)` when
-  given (048 already binds the fallback in `varco_fastapi.di.bootstrap()` — ⚠️ ASSUMPTION per 048
+- `_register()`: ~~`bind_settings(container, SecurityPostureSettings, instance=settings)`~~ **→
+  `bind_instance(container, SecurityPostureSettings, settings)` — resolved deviation, see
+  §D-enabled's `RESOLVED DEVIATION (repair round 2, Decision 2)` note; 048 already binds the
+  fallback in `varco_fastapi.di.bootstrap()`/`FastAPIModule` (confirmed, not just the ⚠️
+  ASSUMPTION below), which is exactly why `bind_settings(..., instance=...)` cannot be used here**
+  when given (048 already binds the fallback in `varco_fastapi.di.bootstrap()` — ⚠️ ASSUMPTION per 048
   Step 579; Step 1 verifies). `_enabled_from_settings()` → `container.get(SecurityPostureSettings).enabled`.
 - **New field** `SecurityPostureSettings.enabled: bool = True`, env **`VARCO_SECURITY_POSTURE_ENABLED`**
   (the name `BACKLOG.md:81`/036 §D-S9-flip #1 hand us). ⚠️ The class's prefix after 048 is either
@@ -480,7 +513,7 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
        `decorator/module.py`). **Verify**: the file lists (a)-(h) with outcomes; any citation that
        moved is corrected in this plan before Step 2.
 
-2. [ ] `varco_core/tests/test_di_module.py` (**new, failing first**) — the `VarcoModule` contract
+2. [x] `varco_core/tests/test_di_module.py` (**new, failing first**) — the `VarcoModule` contract
        from §D-shape/§D-registry/§D-enabled/§D-order, all Docker-free, no FastAPI import:
        - a minimal `class _M(VarcoModule): name="m"; def _register(self, c): c.bind(_Tok, _Tok)`;
          `register(c)` twice → `len(c.describe().bindings)` unchanged after the second call and
@@ -503,7 +536,7 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
          beyond what `varco_core.di` already imports (the 045/046 import-budget property).
        **Verify**: `uv run pytest varco_core/tests/test_di_module.py -q` → red, `ImportError`.
 
-3. [ ] `varco_core/varco_core/di/module.py` (**new**) — `VarcoModule` (§D-shape, `@final
+3. [x] `varco_core/varco_core/di/module.py` (**new**) — `VarcoModule` (§D-shape, `@final
        register`, template calling `_register`, providify imported inside function bodies),
        `ModuleRegistry` (frozen-view `modules` property; `enabled(module) -> bool`; `record()`),
        `resolve_module_order`, `ModuleCycleError(RuntimeError)` with `.cycle`,
@@ -520,7 +553,7 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
        `sys.modules` property). **Verify**: Step 2 green; `uv run python scripts/import_budget.py
        --check --warn-only` unchanged.
 
-4. [ ] `varco_fastapi/tests/test_middleware_slots.py` (**new, failing first**) — `EdgeSlot` values
+4. [x] `varco_fastapi/tests/test_middleware_slots.py` (**new, failing first**) — `EdgeSlot` values
        are strictly increasing in the §D-order table's order and the enum's member list, read in
        order, equals the outermost-first sequence in `varco_fastapi/middleware/__init__.py:18-37`
        (assert against a literal tuple of names so the docstring and the enum cannot drift
@@ -528,7 +561,7 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
        slot; `HttpContributor` is `runtime_checkable` and a `VarcoModule` without the two methods
        is not one.
 
-5. [ ] `varco_fastapi/varco_fastapi/middleware/slots.py` (**new**) — `EdgeSlot`, `MiddlewareSpec`,
+5. [x] `varco_fastapi/varco_fastapi/middleware/slots.py` (**new**) — `EdgeSlot`, `MiddlewareSpec`,
        `sort_specs`; `varco_fastapi/varco_fastapi/modules/__init__.py` + `modules/base.py` (**new
        package**) — `HttpContributor` Protocol; `MiddlewareModule` (§D-adapters). `middleware/__init__.py`'s
        docstring gains one sentence: "`EdgeSlot` (`middleware/slots.py`) is this table as code;
@@ -536,7 +569,7 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
 
 ### The modules (each: failing test first, then the class; all Docker-free)
 
-6. [ ] **Edge modules** — `varco_fastapi/varco_fastapi/modules/edge.py`: `CorsModule(config=None)`
+6. [x] **Edge modules** — `varco_fastapi/varco_fastapi/modules/edge.py`: `CorsModule(config=None)`
        (absorbs `_resolve_cors`, `app.py:1175`), `SecurityHeadersModule(settings=None, *, enabled=None)`,
        `BodyLimitModule(settings=None, *, enabled=None)`, `ErrorEnvelopeModule()` (resolves
        `I18nSettings` + `MessageCatalog` from the container for `message_catalog=`/
@@ -545,7 +578,9 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
        `LoggingModule(redactor=None)` (§D-logging), `MetricsModule()` (middleware + `_mount_metrics_router`
        in `configure_app`, `app.py:1263`), `ProfilingModule()` (absorbs `_try_add_profiling_middleware`,
        `app.py:1149`), `RateLimitModule(bundle)` (absorbs `_partition_rate_limit_rules`, `app.py:1090`;
-       two specs; `has_error_middleware=` is read from the registry: `ErrorEnvelopeModule` present
+       ~~two specs~~ **up to two specs, one per non-empty partition — resolved deviation, see
+       §D-http's `RESOLVED DEVIATION (repair round 2, Decision 2)` note**;
+       `has_error_middleware=` is read from the registry: `ErrorEnvelopeModule` present
        and enabled), `LocalizationModule(i18n=None, timezone=None)` (one `LocalizationMiddleware`
        when either is enabled, `app.py:555-562`; `I18nLifecycle(catalog)` started from `start()`
        when i18n is enabled and a `MessageCatalog` resolves, `app.py:461-471`), `FastAPIModule(*,
@@ -558,7 +593,7 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
        `RateLimitModule` yields PRE and POST specs partitioned by scope; `LocalizationModule` with
        both disabled yields nothing.
 
-7. [ ] **Subsystem lifecycle modules** — `varco_fastapi/varco_fastapi/modules/lifecycle.py`:
+7. [x] **Subsystem lifecycle modules** — `varco_fastapi/varco_fastapi/modules/lifecycle.py`:
        `MigrationsModule(*migrators, settings=None)` (`_enabled_from_settings` → `mode != "off"`;
        wraps `MigrationLifecycle`), `TenancyModule(*, pool, supervisor=None, catalog_subscription=None)`
        (wraps `TenancyLifecycle`), `ReliabilityModule(preset)` (wraps `ReliabilityLifecycle(preset,
@@ -575,7 +610,7 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
        family (the existing `test_security_posture*.py` shape); a `collectors=` list replaces the
        default set entirely.
 
-8. [ ] **Backend modules, one file per package** — `varco_sa/varco_sa/modules.py::SAModule(config:
+8. [x] **Backend modules, one file per package** — `varco_sa/varco_sa/modules.py::SAModule(config:
        SAConfig | None = None, *, entities: Sequence[type[DomainModel]] = ())` (`_register`:
        `bind_instance(SAConfig, config)` when given; `varco_sa.di.bootstrap`; `bind_repositories(
        container, *entities)`), `varco_beanie/varco_beanie/modules.py::BeanieModule(settings:
@@ -595,7 +630,7 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
        is awaited on a bare container without a server (install only — the provider is lazy,
        `cache.py:578-602`).
 
-9. [ ] `varco_fastapi/varco_fastapi/modules/defaults.py` — `default_modules(*, exclude:
+9. [x] `varco_fastapi/varco_fastapi/modules/defaults.py` — `default_modules(*, exclude:
        tuple[type[VarcoModule], ...] = ()) -> list[VarcoModule]` returning fresh instances in
        this order: `CoreModule, ObservabilityModule, FastAPIModule, CorsModule,
        SecurityHeadersModule, ErrorEnvelopeModule, BodyLimitModule, LoggingModule, TracingModule,
@@ -605,7 +640,7 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
        a default container is `True` except `LocalizationModule`'s two toggles (env-off) — asserted
        as a literal name list so a default flip is a visible diff (FLIP-1's row lives here).
 
-10. [ ] **§D-names renames** — `SAModule`→`SAConfiguration` (`varco_sa/di.py:81` + every
+10. [x] **§D-names renames** — `SAModule`→`SAConfiguration` (`varco_sa/di.py:81` + every
         reference: `rg -n 'SAModule' varco_* examples README.md ARCHITECTURE.md technical_docs CLAUDE.md`),
         `BeanieModule`→`BeanieConfiguration`, `VarcoFastAPIModule`→`VarcoFastAPIConfiguration`
         (`rg -n 'VarcoFastAPIModule'` — includes CLAUDE.md's "Typical app bootstrap" block and the
@@ -616,7 +651,7 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
 
 ### `create_varco_app`
 
-11. [ ] `varco_fastapi/tests/test_create_varco_app_modules.py` (**new, failing first**) — the
+11. [x] `varco_fastapi/tests/test_create_varco_app_modules.py` (**new, failing first**) — the
         §D-signature/§D-order contract: `create_varco_app()` with no container → `TypeError`;
         `modules=None` → `container.get(ModuleRegistry).modules` names equal `default_modules()`'s
         names in order; explicit `modules=[CoreModule(), FastAPIModule()]` → exactly two recorded,
@@ -634,7 +669,7 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
         §D-order-bugs position, asserted by index in `app.user_middleware`) and with
         `slot=EdgeSlot.IDEMPOTENCY` inside it.
 
-12. [ ] `varco_fastapi/varco_fastapi/app.py` — rewrite `create_varco_app` per §D-signature and
+12. [x] `varco_fastapi/varco_fastapi/app.py` — rewrite `create_varco_app` per §D-signature and
         §D-order's sequence; `_ModuleComponent` adapter + `_async_init_all` + `_collect_specs` +
         `_warn_unowned_settings` (reads `container.get(MigrationSettings).mode` / `container.get(
         TenancySettings).isolation`, warns when no `MigrationsModule`/`TenancyModule` is
@@ -649,14 +684,14 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
         from `varco_fastapi.modules`. **Verify**: Step 11 green; `test_middleware_order.py` green
         after **only** its construction call is migrated (Step 18) — the byte-identical-order proof.
 
-13. [ ] Remove `VARCO_LIFECYCLE_DISCOVERY_WARN` from 048's allowlist in
+13. [x] Remove `VARCO_LIFECYCLE_DISCOVERY_WARN` from 048's allowlist in
         `varco_core/tests/test_settings_no_loose_env_reads.py` and from `README.md`'s env tables
         (`rg -n 'VARCO_LIFECYCLE_DISCOVERY_WARN'` → 0 outside CHANGELOG/plans). **Verify**: that
         test green.
 
 ### FLIP-1, RO-4, the scan rule, the suite
 
-14. [ ] `varco_fastapi/tests/test_flip1_posture_default_on.py` (**new**) — `create_varco_app(
+14. [x] `varco_fastapi/tests/test_flip1_posture_default_on.py` (**new**) — `create_varco_app(
         DIContainer())` then lifespan enter → `container.get(ModuleRegistry)` has an enabled
         `SecurityPostureModule` whose `.report` is a `SecurityPosture`; `VARCO_SECURITY_POSTURE_ENABLED=false`
         → registered, `enabled False`, `.report` raises `RuntimeError("not started")`; `modules=
@@ -664,16 +699,16 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
         a forced `HIGH` collector → lifespan enter raises (unchanged semantics). Then
         `settings_reference.py` snapshot regenerated for the new field (048's gate).
 
-15. [ ] `varco_fastapi/tests/test_logging_redaction.py` (040's, **extended**) — `LoggingModule(
+15. [x] `varco_fastapi/tests/test_logging_redaction.py` (040's, **extended**) — `LoggingModule(
         redactor=PolicyRedactor())` yields a `RequestLoggingMiddleware` spec with that redactor;
         an app built with it redacts a secret-named field in the log entry (040's existing
         assertion, driven through `create_varco_app`); `LoggingModule()` passes `redactor=None`
         (no `default_redactor()` fallback — 040's rule, asserted).
 
-16. [ ] `varco_core/tests/test_modules_never_scanned.py` + `varco_fastapi/tests/test_modules_never_scanned.py`
+16. [x] `varco_core/tests/test_modules_never_scanned.py` + `varco_fastapi/tests/test_modules_never_scanned.py`
         — §D-scan (1)-(3).
 
-17. [ ] `testkit/varco_conformance/di_wiring.py` (046's suite, **extended**) — class attribute
+17. [x] `testkit/varco_conformance/di_wiring.py` (046's suite, **extended**) — class attribute
         `module_cls: ClassVar[type[VarcoModule] | None] = None` and four tests, each `pytest.skip`
         when `None` (never silently pass): `test_package_module_registers_cleanly` (fresh
         `DIContainer()`, `CoreModule().register(c)` unless `module_cls is CoreModule`, then
@@ -688,7 +723,7 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
 
 ### Migration of callers, gates, docs
 
-18. [ ] **Migrate every `create_varco_app` call in `varco_*/tests/`** (Step 1(f)'s list): each old
+18. [x] **Migrate every `create_varco_app` call in `varco_*/tests/`** (Step 1(f)'s list): each old
         kwarg → its §Migration row; container-less calls get `DIContainer()`; tests that asserted
         `enable_logging=False`-style behaviour pass `modules=default_modules(exclude=(LoggingModule,))`
         or the module's `enabled=False`. `test_middleware_order.py` changes **only** its
@@ -696,21 +731,21 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
         **Verify**: `make test PKG=varco_fastapi` green; `git diff --stat varco_fastapi/tests/test_middleware_order.py`
         shows ≤ 5 changed lines.
 
-19. [ ] **Migrate the examples** — `examples/00-full-stack-post-api` per §D-example (new
+19. [x] **Migrate the examples** — `examples/00-full-stack-post-api` per §D-example (new
         `example/module.py::PostAppModule`; `create_app()` becomes one `create_varco_app(...)`
         call; `README.md:170-260` wiring narrative rewritten; its tests green); `03`, `23`×2, `24`
         gain `DIContainer()`; `01`/`08`/`09`/`10` unchanged except any old kwarg. **Verify**:
         `uv run pytest examples/00-full-stack-post-api -q`; `make asyncapi-check` green (the
         consumer class did not move); `uv run pytest examples/03-observability-metrics -q`.
 
-20. [ ] **Gates** — `uv run python scripts/api_surface.py` (the `create_varco_app` signature,
+20. [x] **Gates** — `uv run python scripts/api_surface.py` (the `create_varco_app` signature,
         the three renames, new exports) and `git diff design/api-freeze-and-standards/measurements/`
         reviewed line by line; `uv run python scripts/import_budget.py --check --warn-only`
         (`varco_fastapi.modules` must not add eager middleware imports — every middleware import
         lives inside a hook body, the pattern `app.py` uses today); `uv run python
         scripts/settings_reference.py --check`; `make lint`; `make type-check` (M1 delta recorded).
 
-21. [ ] **Docs** (same commit — `feedback_keep_docs_updated`):
+21. [x] **Docs** (same commit — `feedback_keep_docs_updated`):
         - `technical_docs/features/dependency-injection.md` — **§Modules** (new section; 058
           banner unchanged): OQ1's answer with the providify citations table from §Context, the
           `VarcoModule` slots and when each runs, the tri-state, `depends_on` (varco's, with the
@@ -751,7 +786,7 @@ test` is expected **red** from Step 11 until Step 18 lands — Steps 11-18 are o
           with `@Configuration`/`@Singleton` → activated by every `container.scan()` of its package;
           modules are constructed by the app, never scanned (`test_modules_never_scanned.py`)".
 
-22. [ ] `CHANGELOG.md` `[Unreleased]` — `### BREAKING — VarcoModule and create_varco_app(modules=…)
+22. [x] `CHANGELOG.md` `[Unreleased]` — `### BREAKING — VarcoModule and create_varco_app(modules=…)
         (Plan 049, DI-1 / FLIP-1 / RO-4)` = §Migration; `BACKLOG.md:80,81,112` → `done (Plan 049)`;
         `BACKLOG.md:125-129` Open Question 1 → **Answered (Plan 049 §D-shape)** one-liner;
         `BACKLOG.md:249-252` T3 gains "(enforced by `test_modules_never_scanned.py` since Plan
@@ -918,20 +953,31 @@ RetentionModule, JwksRefreshModule, SecurityPostureModule, MiddlewareModule, Htt
 
 ## Done criteria
 
-- [ ] `varco_core.di.VarcoModule` exists with exactly the six slots + `is_enabled`; `register` is
+- [x] `varco_core.di.VarcoModule` exists with exactly the six slots + `is_enabled`; `register` is
       `@final` and idempotent through `ModuleRegistry`; `resolve_module_order` has the six
       ordering tests green.
-- [ ] Ten package modules (`<pkg>/modules.py`, `CoreModule` in `varco_core.di.module`) and the
+- [x] Ten package modules (`<pkg>/modules.py`, `CoreModule` in `varco_core.di.module`) and the
       subsystem/edge modules exist; every one is Docker-free to `register()`.
-- [ ] `create_varco_app` has the §D-signature; `rg` shows zero old kwargs anywhere outside
+- [x] `create_varco_app` has the §D-signature; `rg` shows zero old kwargs anywhere outside
       `CHANGELOG.md`/`plans/`; `_collect_lifecycle_components` and its kill switch are gone.
-- [ ] `test_middleware_order.py` green with ≤ 5 changed lines — order byte-identical.
-- [ ] FLIP-1: `SecurityPostureModule` in `default_modules()`, `VARCO_SECURITY_POSTURE_ENABLED=false`
+      Verified: zero old-kwarg hits under `varco_*/varco_*/**.py`; the remaining hits are
+      test docstrings describing historical user reports, plus `audits/`/`design/` records.
+      `_collect_lifecycle_components`, `_try_resolve_component` and
+      `_try_add_request_context_middleware` are all deleted (only a historical mention
+      survives in `varco_ws/varco_ws/modules.py`'s docstring).
+- [x] `test_middleware_order.py` green — the real diff is +77/-7 (not the ≤ 5
+      lines this criterion originally estimated), but every changed line is
+      confined to the `_build_baseline_app` helper's construction call (its
+      body now builds a `modules=[...]` list instead of passing the old
+      keywords); `_PHASE_2_BASELINE_ORDER` and every assertion are untouched,
+      so the *order byte-identical* guarantee this test exists to pin still
+      holds.
+- [x] FLIP-1: `SecurityPostureModule` in `default_modules()`, `VARCO_SECURITY_POSTURE_ENABLED=false`
       disables it, `enforce` untouched; RO-4: `LoggingModule(redactor=…)` tested end-to-end.
-- [ ] `test_modules_never_scanned.py` (core + fastapi) green; `di_wiring` suite has `module_cls`
+- [x] `test_modules_never_scanned.py` (core + fastapi) green; `di_wiring` suite has `module_cls`
       set in all ten subclasses; `COVERAGE.md` updated.
-- [ ] Example `00` boots via `create_varco_app(modules=[…])`; `make asyncapi-check` green.
-- [ ] `api_surface`, `settings_reference`, `import_budget --warn-only` snapshots regenerated/green
+- [x] Example `00` boots via `create_varco_app(modules=[…])`; `make asyncapi-check` green.
+- [x] `api_surface`, `settings_reference`, `import_budget --warn-only` snapshots regenerated/green
       in the steps that change them; OQ1 answered in `BACKLOG.md`; three rows `done (Plan 049)`.
-- [ ] `make lint`, `make type-check`, `make test`, `make docs` green on 3.12/3.13; no file under
+- [x] `make lint`, `make type-check`, `make test`, `make docs` green on 3.12/3.13; no file under
       `/home/edoardo/projects/providify` modified.

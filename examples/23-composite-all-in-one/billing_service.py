@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 
 from fastapi import FastAPI
+from providify import DIContainer
 from varco_fastapi.router.endpoint import route
 from varco_fastapi.router.presets import GenericRouter
 
@@ -41,6 +42,7 @@ def create_billing_app() -> FastAPI:
             return {"service": "billing", "db": db_url}
 
     return create_varco_app(
+        DIContainer(),
         routers=[BillingRouter],
         title="Billing Service",
         version="1.0.0",

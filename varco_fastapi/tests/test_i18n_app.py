@@ -39,17 +39,18 @@ def _fr_catalog() -> DictMessageCatalog:
 
 
 async def test_lang_query_param_end_to_end_sets_content_language_header() -> None:
+    from varco_fastapi.modules.edge import ErrorEnvelopeModule, LocalizationModule
+
     container = DIContainer()
     container.provide(_fr_catalog)
     app = create_varco_app(
         container,
         routers=[BoomRouter],
-        # AMBIGUITY NOTE: step 35 only says "create_varco_app(i18n=None)
-        # registering nothing by default" — the accepted shape (I18nSettings
-        # instance vs. dict vs. bool) is not pinned down. Passing an
-        # I18nSettings instance here as the most-consistent-with-existing-
-        # kwargs (tenancy=, reliability=) guess; reconcile if wrong.
-        i18n=I18nSettings(enabled=True, supported_locales=("en", "fr")),
+        # Plan 049 / DI-1 migration: i18n= is now LocalizationModule(i18n=).
+        modules=[
+            LocalizationModule(i18n=I18nSettings(enabled=True, supported_locales=("en", "fr"))),
+            ErrorEnvelopeModule(),
+        ],
         validate=False,
     )
     transport = ASGITransport(app=app)

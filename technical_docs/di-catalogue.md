@@ -25,7 +25,7 @@ providify: `2.1.0` · packages: varco_casbin, varco_core, varco_fastapi, varco_k
 | `redis` | `RedisDLQConfiguration.redis_dlq` | varco_core | see 050 |
 | `redis-streams` | `RedisStreamDLQConfiguration.redis_stream_dlq` | varco_core | see 050 |
 | `beanie` | `BeanieDeadLetterQueue` | varco_core | see 050 |
-| `sa` | `SAModule.dead_letter_queue` | varco_core | see 050 |
+| `sa` | `SAConfiguration.dead_letter_queue` | varco_core | see 050 |
 
 ### `event_bus` (`VARCO_EVENT_BUS_BACKEND`)
 
@@ -42,8 +42,8 @@ providify: `2.1.0` · packages: varco_casbin, varco_core, varco_fastapi, varco_k
 |---|---|---|---|
 | `memory` (default) | `InMemoryIdempotencyStore` | varco_core | in-process |
 | `redis` | `RedisStoresConfiguration.idempotency_store` | varco_core | see 050 |
-| `beanie` | `BeanieModule.idempotency_store` | varco_core | see 050 |
-| `sa` | `SAModule.idempotency_store` | varco_core | see 050 |
+| `beanie` | `BeanieConfiguration.idempotency_store` | varco_core | see 050 |
+| `sa` | `SAConfiguration.idempotency_store` | varco_core | see 050 |
 
 ### `job_store` (`VARCO_JOB_STORE_BACKEND`)
 
@@ -51,8 +51,8 @@ providify: `2.1.0` · packages: varco_casbin, varco_core, varco_fastapi, varco_k
 |---|---|---|---|
 | `memory` (default) | `InMemoryJobStore` | varco_core | in-process |
 | `redis` | `RedisStoresConfiguration.job_store` | varco_core | see 050 |
-| `beanie` | `BeanieModule.job_store` | varco_core | see 050 |
-| `sa` | `SAModule.job_store` | varco_core | see 050 |
+| `beanie` | `BeanieConfiguration.job_store` | varco_core | see 050 |
+| `sa` | `SAConfiguration.job_store` | varco_core | see 050 |
 
 ### `revocation` (`VARCO_REVOCATION_BACKEND`)
 
@@ -80,23 +80,23 @@ providify: `2.1.0` · packages: varco_casbin, varco_core, varco_fastapi, varco_k
 | `varco_core.auth.policy:PolicyManagement` | `CasbinPolicyEngine` | varco_core | production-safe |
 | `varco_core.authority.config:AuthorizationConfig` | `varco.settings:AuthorizationConfig[None]` | varco_core | production-safe |
 | `varco_core.cache.config:CacheSettings` | `varco.settings:CacheSettings[None]` | varco_core | production-safe |
-| `varco_core.context.defaults:TenantDefaultsProvider` | `VarcoFastAPIModule.tenant_defaults_provider` | varco_core | production-safe |
+| `varco_core.context.defaults:TenantDefaultsProvider` | `VarcoFastAPIConfiguration.tenant_defaults_provider` | varco_core | production-safe |
 | `varco_core.event.channel:ChannelManager` | `KafkaChannelManager` | varco_core | production-safe |
 | `varco_core.event.channel:ChannelManager` | `NatsStreamManager` | varco_core | production-safe |
 | `varco_core.event.channel:ChannelManager` | `RedisChannelManager` | varco_core | production-safe |
 | `varco_core.event.deduplication:AbstractDeduplicator` | `InMemoryDeduplicator` | varco_core | in-memory |
 | `varco_core.event.producer:AbstractEventProducer` | `BusEventProducer` | varco_core | production-safe |
 | `varco_core.exception.settings:ErrorEnvelopeSettings` | `varco.settings:ErrorEnvelopeSettings[None]` | varco_core | production-safe |
-| `varco_core.i18n.catalog:MessageCatalog` | `VarcoFastAPIModule.message_catalog` | varco_core | production-safe |
+| `varco_core.i18n.catalog:MessageCatalog` | `VarcoFastAPIConfiguration.message_catalog` | varco_core | production-safe |
 | `varco_core.i18n.settings:I18nSettings` | `varco.settings:I18nSettings[None]` | varco_core | production-safe |
 | `varco_core.idempotency.settings:IdempotencySettings` | `varco.settings:IdempotencySettings[None]` | varco_core | production-safe |
-| `varco_core.job.serializer:TaskSerializer` | `VarcoFastAPIModule.task_serializer` | varco_core | production-safe |
-| `varco_core.job.task:TaskRegistry` | `VarcoFastAPIModule.task_registry` | varco_core | production-safe |
+| `varco_core.job.serializer:TaskSerializer` | `VarcoFastAPIConfiguration.task_serializer` | varco_core | production-safe |
+| `varco_core.job.task:TaskRegistry` | `VarcoFastAPIConfiguration.task_registry` | varco_core | production-safe |
 | `varco_core.jwt.config:JwtVerificationSettings` | `varco.settings:JwtVerificationSettings[None]` | varco_core | production-safe |
 | `varco_core.jwt.transform.config:JwtTransformSettings` | `varco.settings:JwtTransformSettings[None]` | varco_core | production-safe |
-| `varco_core.jwt.transform.registry:ClaimTransformerRegistry` | `VarcoFastAPIModule.claim_transformer_registry` | varco_core | production-safe |
+| `varco_core.jwt.transform.registry:ClaimTransformerRegistry` | `VarcoFastAPIConfiguration.claim_transformer_registry` | varco_core | production-safe |
 | `varco_core.lock:AbstractDistributedLock` | `InMemoryLock` | varco_core | in-memory |
-| `varco_core.lock:AbstractDistributedLock` | `SAModule.sa_advisory_lock` | varco_core | production-safe |
+| `varco_core.lock:AbstractDistributedLock` | `SAConfiguration.sa_advisory_lock` | varco_core | production-safe |
 | `varco_core.migration.settings:MigrationSettings` | `varco.settings:MigrationSettings[None]` | varco_core | production-safe |
 | `varco_core.observability.config:OtelConfig` | `OtelConfiguration.otel_config` | varco_core | production-safe |
 | `varco_core.providers:RepositoryProvider` | `BeanieRepositoryProvider` | varco_core | production-safe |
@@ -105,7 +105,7 @@ providify: `2.1.0` · packages: varco_casbin, varco_core, varco_fastapi, varco_k
 | `varco_core.query.visitor.ast_visitor:ASTVisitor` | `BeanieQueryCompiler` | varco_core | production-safe |
 | `varco_core.query.visitor.walking:BinaryWalkingVisitor` | `BeanieQueryCompiler` | varco_core | production-safe |
 | `varco_core.serialization:Serializer` | `JsonEventSerializer` | varco_core | production-safe |
-| `varco_core.service.base:IUoWProvider` | `SAModule.uow_provider` | varco_core | production-safe |
+| `varco_core.service.base:IUoWProvider` | `SAConfiguration.uow_provider` | varco_core | production-safe |
 | `varco_core.service.conversation:AbstractConversationStore` | `InMemoryConversationStore` | varco_core | in-memory |
 | `varco_core.tenancy.membership:TenantMembershipSettings` | `varco.settings:TenantMembershipSettings[None]` | varco_core | production-safe |
 | `varco_core.tenancy.settings:TenancySettings` | `varco.settings:TenancySettings[None]` | varco_core | production-safe |
@@ -113,12 +113,12 @@ providify: `2.1.0` · packages: varco_casbin, varco_core, varco_fastapi, varco_k
 | `varco_core.tls.settings:TlsSettings` | `varco.settings:TlsSettings[None]` | varco_core | production-safe |
 | `varco_core.tz.settings:TimezoneSettings` | `varco.settings:TimezoneSettings[None]` | varco_core | production-safe |
 | `varco_core.webhook.settings:WebhookSettings` | `varco.settings:WebhookSettings[None]` | varco_core | production-safe |
-| `varco_fastapi.auth.trust_store:TrustStore` | `VarcoFastAPIModule.trust_store` | varco_fastapi | production-safe |
-| `varco_fastapi.client.base:ClientProfile` | `VarcoFastAPIModule.client_profile` | varco_fastapi | production-safe |
+| `varco_fastapi.auth.trust_store:TrustStore` | `VarcoFastAPIConfiguration.trust_store` | varco_fastapi | production-safe |
+| `varco_fastapi.client.base:ClientProfile` | `VarcoFastAPIConfiguration.client_profile` | varco_fastapi | production-safe |
 | `varco_fastapi.client.settings:ClientProfileSettings` | `varco.settings:ClientProfileSettings[None]` | varco_fastapi | production-safe |
 | `varco_fastapi.middleware.body_limit:BodyLimitSettings` | `varco.settings:BodyLimitSettings[None]` | varco_fastapi | production-safe |
 | `varco_fastapi.middleware.cors:CORSConfig` | `varco.settings:CORSConfig[None]` | varco_fastapi | production-safe |
-| `varco_fastapi.middleware.profiling:ProfilingSettings` | `VarcoFastAPIModule.profiling_settings` | varco_fastapi | production-safe |
+| `varco_fastapi.middleware.profiling:ProfilingSettings` | `VarcoFastAPIConfiguration.profiling_settings` | varco_fastapi | production-safe |
 | `varco_fastapi.middleware.rate_limit:RateLimitSettings` | `varco.settings:RateLimitSettings[None]` | varco_fastapi | production-safe |
 | `varco_fastapi.middleware.security_headers:SecurityHeadersSettings` | `varco.settings:SecurityHeadersSettings[None]` | varco_fastapi | production-safe |
 | `varco_fastapi.posture:SecurityPostureSettings` | `varco.settings:SecurityPostureSettings[None]` | varco_fastapi | production-safe |
@@ -131,7 +131,7 @@ providify: `2.1.0` · packages: varco_casbin, varco_core, varco_fastapi, varco_k
 | `varco_redis.cache:LayeredCacheSettings` | `varco.settings:LayeredCacheSettings[None]` | varco_redis | production-safe |
 | `varco_redis.cache:RedisCacheSettings` | `varco.settings:RedisCacheSettings[None]` | varco_redis | production-safe |
 | `varco_redis.config:RedisEventBusSettings` | `varco.settings:RedisEventBusSettings[None]` | varco_redis | production-safe |
-| `varco_sa.advisory_lock:SAXactAdvisoryLock` | `SAModule.sa_xact_advisory_lock` | varco_sa | production-safe |
+| `varco_sa.advisory_lock:SAXactAdvisoryLock` | `SAConfiguration.sa_xact_advisory_lock` | varco_sa | production-safe |
 | `varco_ws.sse:SSEEventBus` | `SSEEventBus` | varco_ws | production-safe |
 | `varco_ws.websocket:WebSocketEventBus` | `WebSocketEventBus` | varco_ws | production-safe |
 

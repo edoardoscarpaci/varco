@@ -58,11 +58,15 @@ class TestCreateVarcoAppDefaultRetention:
 
 class TestRetentionLifecycleWiring:
     def test_interval_zero_registers_component_but_starts_no_task(self) -> None:
-        from varco_fastapi.retention import RetentionLifecycle  # noqa: PLC0415
+        from varco_core.di.module import CoreModule
+        from varco_fastapi.modules.lifecycle import RetentionModule
 
         container = DIContainer()
-        lifecycle = RetentionLifecycle(_registry(), container=container, interval=0.0)
-        app = create_varco_app(container, retention=lifecycle, validate=False)
+        app = create_varco_app(
+            container,
+            modules=[CoreModule(), RetentionModule(_registry(), interval=0.0)],
+            validate=False,
+        )
         assert app is not None
 
     async def test_interval_positive_starts_and_stops_cleanly(self) -> None:
@@ -126,11 +130,23 @@ class TestRetentionLifecycleWiring:
     def test_retention_component_appended_not_prepended(self) -> None:
         """Retention resolves job-runner/schedule bindings other components
         may set up, so it must be appended, never prepended — same rule as
-        ReliabilityLifecycle."""
+        ReliabilityLifecycle.
+
+        Plan 049 / DI-1 migration: ``extra_lifespan_components=``/
+        ``retention=`` are now ``LifecycleModule(marker)``/
+        ``RetentionModule(registry)`` — module list order (not lifespan
+        ``*components`` order directly) is what ``create_varco_app``
+        resolves via ``resolve_module_order`` before building the
+        ``_ModuleComponent`` list, so this test now lists
+        ``LifecycleModule`` before ``RetentionModule`` and asserts the same
+        relative order survives into ``VarcoLifespan``'s captured
+        components.
+        """
         import unittest.mock as mock
 
         import varco_fastapi.lifespan as lifespan_module
-        from varco_fastapi.retention import RetentionLifecycle  # noqa: PLC0415
+        from varco_core.di.module import CoreModule, LifecycleModule
+        from varco_fastapi.modules.lifecycle import RetentionModule
 
         captured: list[tuple] = []
         original_init = lifespan_module.VarcoLifespan.__init__
@@ -139,18 +155,29 @@ class TestRetentionLifecycleWiring:
             captured.append(components)
             return original_init(self, *components, **kwargs)
 
-        marker = object()
+        class _Marker:
+            async def start(self) -> None: ...
+            async def stop(self) -> None: ...
+
+        marker = _Marker()
 
         container = DIContainer()
-        lifecycle = RetentionLifecycle(_registry(), container=container, interval=0.0)
+        retention_module = RetentionModule(_registry(), interval=0.0)
 
         with mock.patch.object(lifespan_module.VarcoLifespan, "__init__", _spy_init):
             create_varco_app(
                 container,
-                extra_lifespan_components=[marker],
-                retention=lifecycle,
+                modules=[CoreModule(), LifecycleModule(marker), retention_module],
                 validate=False,
             )
 
         components = captured[-1]
-        assert components.index(marker) < components.index(lifecycle)
+        marker_index = next(
+            i
+            for i, c in enumerate(components)
+            if getattr(getattr(c, "_module", None), "_component", None) is marker
+        )
+        retention_index = next(
+            i for i, c in enumerate(components) if getattr(c, "_module", None) is retention_module
+        )
+        assert marker_index < retention_index

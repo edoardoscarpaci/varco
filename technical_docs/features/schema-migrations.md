@@ -6,8 +6,8 @@ Alembic) and `varco_beanie.migration.BeanieMigrator` (MongoDB) — plus an ASGI
 lifespan component (`varco_fastapi.MigrationLifecycle`) and a `varco migrate` CLI.
 
 **Nothing in this feature runs by default.** `VARCO_MIGRATE_MODE` defaults to
-`off`; with `migrations=None` (the default) `create_varco_app` builds an identical
-`VarcoLifespan` to the one it built before this feature existed. Every posture below
+`off`; with no `MigrationsModule` in `modules=` (the default) `create_varco_app` builds an
+identical lifespan to the one it built before this feature existed. Every posture below
 is opt-in.
 
 ---
@@ -43,6 +43,7 @@ current before it accepts traffic.
 ```python
 from sqlalchemy.ext.asyncio import create_async_engine
 from varco_fastapi import create_varco_app
+from varco_fastapi.modules import MigrationsModule, default_modules
 from varco_sa.migration import AlembicMigrator
 
 engine = create_async_engine("postgresql+asyncpg://…")
@@ -51,7 +52,7 @@ migrator = AlembicMigrator(engine, script_location="alembic")
 app = create_varco_app(
     container,
     routers=[...],
-    migrations=migrator,  # ← the only new argument
+    modules=[MigrationsModule(migrator), *default_modules()],  # ← list it before the defaults
 )
 ```
 
@@ -63,12 +64,12 @@ VARCO_MIGRATE_MODE=upgrade uvicorn myapp:app
 the event bus, before the `OutboxRelay`, before the `JobRunner` — so nothing touches a
 table that does not exist yet.
 
-`migrations=` accepts a single `AbstractMigrator` or a sequence of them; a sequence
-runs **sequentially, in the order given** (a dual-backend service passing its Postgres
-and Mongo migrators). `migration_settings=` overrides the env-resolved settings.
+`MigrationsModule(*migrators, settings=None)` accepts a single `AbstractMigrator` or several;
+several run **sequentially, in the order given** (a dual-backend service passing its Postgres
+and Mongo migrators). `settings=` overrides the env-resolved `MigrationSettings`.
 
-> **`VARCO_MIGRATE_MODE` set but no `migrations=` passed** logs one WARNING naming the
-> env var and runs nothing. Silently ignoring a set env var is the failure mode that
+> **`VARCO_MIGRATE_MODE` set but no `MigrationsModule` in `modules=`** logs one WARNING naming
+> the env var and runs nothing. Silently ignoring a set env var is the failure mode that
 > wastes the most operator time, so it is loud.
 
 `varco_fastapi` imports **only** `varco_core.migration` — never `varco_sa`,
@@ -680,7 +681,7 @@ package already has.
 | Input / state | Behaviour |
 |---|---|
 | `VARCO_MIGRATE_MODE` unset | nothing registered, nothing runs — identical to before this feature |
-| `VARCO_MIGRATE_MODE=upgrade`, `migrations=` not passed | one WARNING naming the env var; nothing runs |
+| `VARCO_MIGRATE_MODE=upgrade`, no `MigrationsModule` in `modules=` | one WARNING naming the env var; nothing runs |
 | `VARCO_MIGRATE_MODE=nonsense` | `ValueError` naming the three legal values |
 | Virgin database, `mode="upgrade"` | full `upgrade heads` from base; both branches applied |
 | Virgin database, `mode="check"` | `PendingMigrationsError` listing every revision; startup fails |
@@ -749,7 +750,7 @@ indicates a defect in the shipped code:
 | **`ensure_table()` and migrations both active** | Alembic's `CREATE TABLE` fails against a table `ensure_table()` already created | The two mechanisms are mutually exclusive *per deployment*, and the hazard is directional (`create_all(checkfirst=True)` against an Alembic table is a harmless no-op; the reverse is not) | Run `varco migrate adopt` (or `AlembicMigrator.adopt_framework_tables()`) **once**, then pick one mechanism. Order matters: adopt, then upgrade |
 | **`upgrade head` (singular) with the framework branch present** | Only the app's tables (or only the framework's) get migrated; the other branch silently stays behind | `varco_sa` ships its own Alembic branch (`branch_labels=("varco",)`) in the wheel, so there are **two** heads | Always `heads` (plural) — every varco command defaults to it. Or opt out with `include_framework_branch=False` + `get_target_metadata(..., include_framework=True)` |
 | **`index_mode="create"` on a large Mongo collection** | Pod startup blocks for minutes-to-hours; on a replica set the build replicates and can stall secondaries | An index build is real work, and `create` runs it inside the ASGI lifespan at exactly the moment a rolling deploy starts N new pods | Leave `index_mode="check"` (the default, independent of `mode`) and run `varco migrate index -t … --create` as a pre-deploy job |
-| **`VARCO_MIGRATE_MODE` set but no `migrations=` passed** | Env var is set, nothing migrates, no error | `create_varco_app` has no migrator to run — it now logs one WARNING naming the env var rather than staying silent | Pass `migrations=<AbstractMigrator>` to `create_varco_app` |
+| **`VARCO_MIGRATE_MODE` set but no `MigrationsModule` in `modules=`** | Env var is set, nothing migrates, no error | `create_varco_app` has no migrator to run — it now logs one WARNING naming the env var rather than staying silent | Add `MigrationsModule(<AbstractMigrator>)` to `modules=`, listed before `*default_modules()` |
 | **`from varco_core import MigrationError`** gets the wrong class | `except MigrationError` never catches a schema-migration failure | `varco_core.migrator` (domain data/field migration) already owns the top-level `MigrationError`/`MigrationPlan` names, so the schema-migration versions are deliberately **not** re-exported | `from varco_core.migration import MigrationError, MigrationPlan`. Every other migration name (`AbstractMigrator`, `Revision`, `MigrationReport`, `MigrationSettings`, `InMemoryMigrator`, the other exceptions) *is* on `varco_core` |
 | **`varco migrate upgrade` without `--all-tenants` under db-per-tenant** | Only the global/framework schema advances; every tenant is left N revisions behind with no error | The default target is the single, non-fanned-out migrator | Use `varco migrate upgrade --all-tenants` (or `--tenant <id>` for one), which runs global-then-fan-out via `TenantFanoutMigrator` |
 | **Global migration run after the tenant fan-out** | Tenant-table foreign keys to global tables fail mid-migration | `TenantFanoutMigrator` orders the global/framework run before every tenant's specifically to prevent this | Never pass `--skip-global` unless you have already run the global migration separately and know it is current |

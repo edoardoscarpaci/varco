@@ -190,7 +190,7 @@ class VarcoCRUDRouter(VarcoRouter[D, PK, C, R, U], Generic[D, PK, C, R, U, S]):
             _tags = ["orders"]
 
         # With DI:
-        container.install(VarcoFastAPIModule)
+        container.install(VarcoFastAPIConfiguration)
         # DI injects service, job_runner, task_registry, task_serializer via __init__.
         router = container.get(OrderRouter)
         app.include_router(router.build_router())
@@ -438,7 +438,7 @@ class VarcoCRUDRouter(VarcoRouter[D, PK, C, R, U], Generic[D, PK, C, R, U, S]):
             serializer: ``TaskSerializer`` to attach to every ``VarcoTask``.
                         When ``None``, falls back to ``DEFAULT_SERIALIZER``.
                         Injected from the DI container by ``build_router()``; tests
-                        that don't install ``VarcoFastAPIModule`` get the default.
+                        that don't install ``VarcoFastAPIConfiguration`` get the default.
 
         Edge cases:
             - ``type_args is None`` → PK coercion in ``read``/``update``/``patch``/

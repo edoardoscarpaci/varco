@@ -9,6 +9,68 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### BREAKING — `VarcoModule` and `create_varco_app(modules=…)` (Plan 049, DI-1 / FLIP-1 / RO-4)
+
+`create_varco_app(container, *, modules=None, ...)` replaces the eleven hand-passed keyword
+objects (`migrations`, `tenancy`, `reliability`, `retention`, `jwks_refresh`, `i18n`, `timezone`,
+`security_headers`, `body_limit`, `rate_limit`, `extra_lifespan_components`) — plus six
+`enable_*` booleans and `cors` — with a `modules=` list of `varco_core.di.VarcoModule` instances.
+`container` is now **required**; `modules=None` installs `varco_fastapi.default_modules()`, and
+an explicit list installs **exactly** those (nothing inserted implicitly). Every one of the ten
+packages ships exactly one `VarcoModule` (`CoreModule`, `FastAPIModule`, `SAModule`,
+`BeanieModule`, `RedisModule`, `KafkaModule`, `NatsModule`, `MemcachedModule`, `CasbinModule`,
+`WsModule`); `LifecycleModule`/`MiddlewareModule` replace the pre-049 `extra_lifespan_components=`
+/`extra_middleware=` escape hatches. Full old-keyword → new-module table:
+`plans/049-varco-module-and-composable-app.md`'s §Migration; usage:
+[README.md's "Wiring an app"](README.md#wiring-an-app); design:
+`technical_docs/features/dependency-injection.md`'s §Modules.
+
+**Open Question 1 answered** (`BACKLOG.md`): `VarcoModule` is a plain varco ABC, never a
+providify `@Configuration` subclass — a `@Configuration` is auto-installed by
+`container.scan(...)`, which would make a module-shaped `@Configuration` silently activate the
+moment its package is scanned. Enforced by `test_modules_never_scanned.py` (`varco_core` +
+`varco_fastapi`).
+
+**FLIP-1**: `SecurityPostureModule` is in `default_modules()` — every app now gets the security
+posture preflight with zero code. `enforce` stays `"warn"` (Plan 054 owns the flip to
+`"refuse"`); `VARCO_SECURITY_POSTURE_ENABLED=false` (new field, default `true`) or
+`default_modules(exclude=(SecurityPostureModule,))` turns it off. Measured added latency: one
+extra `start()` running five already-in-memory collectors — sub-millisecond on a default
+container.
+
+**RO-4**: `LoggingModule(redactor=...)` — the redactor keyword Plan 040 declined to add directly
+to `create_varco_app`. `LoggingModule()` (no redactor) is still "no redaction" — it never falls
+back to `default_redactor()`.
+
+**⚠️ Deleted, not deprecated**: `_collect_lifecycle_components`/`_try_resolve_component` (the
+hidden container-scanning lifecycle discovery) and the `VARCO_LIFECYCLE_DISCOVERY_WARN` kill
+switch it grew — `CoreModule.start()`/`stop()` now starts/stops the resolved
+`AbstractEventBus`/`AbstractJobRunner` directly (duck-typed — the ABC itself declares neither
+method), and `WsModule.start()`/`stop()` does the same for the two `varco_ws` push adapters.
+
+**Three renames** (Plan 049 §D-names — no alias, per `BACKLOG.md:53`): `varco_sa.di.SAModule` →
+`SAConfiguration`; `varco_beanie.di.BeanieModule` → `BeanieConfiguration`;
+`varco_fastapi.di.VarcoFastAPIModule` → `VarcoFastAPIConfiguration`. The freed `*Module` names
+now belong to each package's new `VarcoModule` (e.g. `varco_sa.modules.SAModule`).
+
+**Implementation notes (departures from the plan's literal recipe, both proven necessary by the
+code, not by preference)**: (1) `SecurityHeadersModule`/`BodyLimitModule`/`SecurityPostureModule`
+bind a passed settings instance via `bind_instance` rather than `bind_settings(...,
+instance=...)` — the latter raises `SettingsAlreadyBoundError` the moment `FastAPIModule`'s own
+`@Fallback` binding of the same class has already registered, which it always has by the time
+these modules run (`default_modules()`'s stable list order lists `FastAPIModule` before all
+three — not a `depends_on` declaration on any of them; `SecurityPostureModule`'s own
+`depends_on=(CoreModule,)` does not by itself order it after `FastAPIModule`).
+(2) `RateLimitModule.middleware()` emits a `MiddlewareSpec` per stage only when that stage's rule
+partition is non-empty — an unconditional two-specs-always reading would install a
+`RateLimitMiddleware(rules=())` pass-through, which an existing byte-identical-order
+characterization test proves is not the pre-049 behaviour.
+(3) **Repair round 2**: `FastAPIModule.middleware()` contributes `RequestContextMiddleware`
+**unconditionally** (with `AbstractServerAuth` resolved when bound, in anonymous mode when not)
+rather than omitting it when no `AbstractServerAuth` is bound — a mid-review gating regression,
+briefly present only in this unreleased plan's own working tree, now reverted to restore the
+pre-049 always-present contract. Not a breaking change: it never shipped.
+
 ### BREAKING — one settings recipe, fail-fast at bootstrap, `VARCO_*` renames (Plan 048, DI-6 / DI-16)
 
 Every varco settings object that reads the environment is now a `pydantic_settings.BaseSettings`

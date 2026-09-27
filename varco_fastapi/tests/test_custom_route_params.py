@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from fastapi import Body, Depends, Query, Request
 from fastapi.testclient import TestClient
+from providify import DIContainer
 from pydantic import BaseModel
 from varco_core.auth.base import AuthContext
 from varco_fastapi.app import create_varco_app
@@ -67,7 +68,7 @@ def test_query_param_is_parsed_and_coerced():
             # If FastAPI parsed correctly, ``days`` is an int, not the raw string.
             return {"days": days, "is_int": isinstance(days, int)}
 
-    client = TestClient(create_varco_app(routers=[R], validate=False))
+    client = TestClient(create_varco_app(DIContainer(), routers=[R], validate=False))
     resp = client.get("/q/window", params={"days": "7"})
     assert resp.status_code == 200
     assert resp.json() == {"days": 7, "is_int": True}
@@ -83,7 +84,7 @@ def test_query_param_default_applies():
         async def window(self, days: int = Query(30, ge=1)) -> dict:
             return {"days": days}
 
-    client = TestClient(create_varco_app(routers=[R], validate=False))
+    client = TestClient(create_varco_app(DIContainer(), routers=[R], validate=False))
     resp = client.get("/q/window")
     assert resp.status_code == 200
     assert resp.json() == {"days": 30}
@@ -99,7 +100,7 @@ def test_query_param_validation_rejects_invalid():
         async def window(self, days: int = Query(30, ge=1)) -> dict:
             return {"days": days}
 
-    client = TestClient(create_varco_app(routers=[R], validate=False))
+    client = TestClient(create_varco_app(DIContainer(), routers=[R], validate=False))
     resp = client.get("/q/window", params={"days": "0"})  # ge=1 violated
     assert resp.status_code == 422
 
@@ -117,7 +118,7 @@ def test_body_model_is_parsed():
         async def echo(self, payload: EchoBody = Body(...)) -> dict:
             return {"echo": payload.message * payload.times}
 
-    client = TestClient(create_varco_app(routers=[R], validate=False))
+    client = TestClient(create_varco_app(DIContainer(), routers=[R], validate=False))
     resp = client.post("/b/echo", json={"message": "hi", "times": 3})
     assert resp.status_code == 200
     assert resp.json() == {"echo": "hihihi"}
@@ -133,7 +134,7 @@ def test_body_validation_rejects_bad_payload():
         async def echo(self, payload: EchoBody = Body(...)) -> dict:
             return {"echo": payload.message}
 
-    client = TestClient(create_varco_app(routers=[R], validate=False))
+    client = TestClient(create_varco_app(DIContainer(), routers=[R], validate=False))
     resp = client.post("/b/echo", json={"times": 2})  # missing "message"
     assert resp.status_code == 422
 
@@ -151,7 +152,7 @@ def test_depends_dependency_is_injected():
         async def thing(self, dep: str = Depends(_dependency_value)) -> dict:
             return {"dep": dep}
 
-    client = TestClient(create_varco_app(routers=[R], validate=False))
+    client = TestClient(create_varco_app(DIContainer(), routers=[R], validate=False))
     resp = client.get("/d/thing")
     assert resp.status_code == 200
     assert resp.json() == {"dep": "injected"}
@@ -170,7 +171,7 @@ def test_path_param_is_type_coerced():
         async def item(self, item_id: int) -> dict:
             return {"item_id": item_id, "is_int": isinstance(item_id, int)}
 
-    client = TestClient(create_varco_app(routers=[R], validate=False))
+    client = TestClient(create_varco_app(DIContainer(), routers=[R], validate=False))
     resp = client.get("/p/item/42")
     assert resp.status_code == 200
     assert resp.json() == {"item_id": 42, "is_int": True}
@@ -186,7 +187,7 @@ def test_path_param_invalid_type_rejected():
         async def item(self, item_id: int) -> dict:
             return {"item_id": item_id}
 
-    client = TestClient(create_varco_app(routers=[R], validate=False))
+    client = TestClient(create_varco_app(DIContainer(), routers=[R], validate=False))
     resp = client.get("/p/item/not-a-number")
     assert resp.status_code == 422
 
@@ -204,7 +205,7 @@ def test_request_is_injected():
         async def echo_header(self, request: Request) -> dict:
             return {"ua": request.headers.get("user-agent", "")}
 
-    client = TestClient(create_varco_app(routers=[R], validate=False))
+    client = TestClient(create_varco_app(DIContainer(), routers=[R], validate=False))
     resp = client.get("/r/echo-header", headers={"User-Agent": "varco-test"})
     assert resp.status_code == 200
     assert resp.json() == {"ua": "varco-test"}
@@ -243,7 +244,7 @@ def test_all_param_kinds_together():
             }
 
     client = TestClient(
-        create_varco_app(routers=[R], validate=False), raise_server_exceptions=False
+        create_varco_app(DIContainer(), routers=[R], validate=False), raise_server_exceptions=False
     )
     resp = client.post(
         "/reports/7/summary",
@@ -280,7 +281,7 @@ def test_combined_handler_still_enforces_guard():
             return {"ok": True}
 
     client = TestClient(
-        create_varco_app(routers=[R], validate=False), raise_server_exceptions=False
+        create_varco_app(DIContainer(), routers=[R], validate=False), raise_server_exceptions=False
     )
     resp = client.post(
         "/reports/7/summary",
@@ -304,7 +305,7 @@ def test_ctx_only_handler_still_works():
         async def whoami(self, ctx: AuthContext) -> dict:
             return {"anonymous": ctx.user_id is None}
 
-    client = TestClient(create_varco_app(routers=[R], validate=False))
+    client = TestClient(create_varco_app(DIContainer(), routers=[R], validate=False))
     resp = client.get("/legacy/whoami")
     assert resp.status_code == 200
     assert resp.json() == {"anonymous": True}
@@ -320,7 +321,7 @@ def test_no_param_handler_still_works():
         async def ping(self) -> dict:
             return {"pong": True}
 
-    client = TestClient(create_varco_app(routers=[R], validate=False))
+    client = TestClient(create_varco_app(DIContainer(), routers=[R], validate=False))
     resp = client.get("/legacy/ping")
     assert resp.status_code == 200
     assert resp.json() == {"pong": True}
@@ -339,7 +340,7 @@ def test_return_annotation_drives_openapi_schema():
         async def summary(self, n: int = Query(1)) -> SummaryResponse:
             return SummaryResponse(total=n)
 
-    app = create_varco_app(routers=[R], validate=False)
+    app = create_varco_app(DIContainer(), routers=[R], validate=False)
     client = TestClient(app)
 
     # Runtime: response is serialized through the model.

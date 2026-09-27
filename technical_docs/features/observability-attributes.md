@@ -28,7 +28,7 @@ labels every span and metric with **zero code changes**.
 | `varco_core/observability/metrics.py` / `metric.py` | `@counter`/`@histogram`, `Metric`, `register_gauge` — all wrap their instrument via `wrap_instrument()`/`wrap_gauge_callback()` |
 | `varco_core/observability/config.py` | `OtelConfig` — `capture_params`, `param_capture`, `global_attributes*`, `promote_global_attrs_to_resource` |
 | `varco_core/observability/di.py` | `OtelConfiguration.observability_attributes` — seeds the registry + capture defaults at bootstrap |
-| `varco_fastapi/app.py` | `create_varco_app(..., global_attributes=, capture_params=)` — passthrough for FastAPI services |
+| `varco_core/di/module.py` | `ObservabilityModule(global_attributes=, capture_params=)` — passthrough for FastAPI services (Plan 049) |
 | `varco_fastapi/middleware/tracing.py` | `TracingMiddleware` — the HTTP server span also carries global attributes |
 
 The following diagram shows which module depends on which — both new modules
@@ -349,16 +349,22 @@ OtelConfig(
 
 ## FastAPI passthrough
 
-`create_varco_app(..., global_attributes=..., capture_params=...)` calls
-`set_global_attributes()` / `set_capture_enabled()` before the middleware stack is
-built, so `TracingMiddleware` and every `@span`/`@counter`/`@histogram` in the
-process see the final state from the very first request:
+`ObservabilityModule(global_attributes=..., capture_params=...)` (part of
+`default_modules()`, no-op with both left `None`) calls `set_global_attributes()` /
+`set_capture_enabled()` at `register()` time, before the middleware stack is built, so
+`TracingMiddleware` and every `@span`/`@counter`/`@histogram` in the process see the final state
+from the very first request:
 
 ```python
+from varco_fastapi.modules import default_modules
+from varco_core.di.module import ObservabilityModule
+
 app = create_varco_app(
     container,
-    global_attributes={"deployment.colour": "blue"},
-    capture_params=True,
+    modules=[
+        *default_modules(exclude=(ObservabilityModule,)),
+        ObservabilityModule(global_attributes={"deployment.colour": "blue"}, capture_params=True),
+    ],
 )
 ```
 

@@ -19,7 +19,7 @@ from varco_core.tz.settings import TimezoneSettings
 
 def _build_container() -> DIContainer:
     # Plan 045: setup_varco_defaults() is gone and container.scan("varco_fastapi",
-    # recursive=True) already auto-installs VarcoFastAPIModule (its
+    # recursive=True) already auto-installs VarcoFastAPIConfiguration (its
     # @Configuration providers, including TaskSerializer, are all @Fallback
     # and self-registering) — the redundant explicit install() is dropped.
     #

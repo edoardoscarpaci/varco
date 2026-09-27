@@ -211,7 +211,8 @@ target_metadata = get_target_metadata(User, Post, include_framework=True)
 ```
 
 **Auto-on-startup** is opt-in via `VARCO_MIGRATE_MODE` and
-`create_varco_app(migrations=migrator)` — see
+`MigrationsModule(migrator)` in `create_varco_app(modules=[MigrationsModule(migrator),
+*default_modules()])` — see
 [`technical_docs/features/schema-migrations.md`](../technical_docs/features/schema-migrations.md)
 for the three modes, the lock mechanic, and the operations guidance. The recommended
 production posture is `check` on the pods plus a pre-deploy `varco migrate upgrade` job.
@@ -289,7 +290,7 @@ and the next unrelated borrower of that connection silently inherits it. See
 compatibility matrix and why `RedisLock` is not a drop-in substitute in an
 air-gapped/no-Redis deployment.
 
-`AbstractDistributedLock` DI binding: `SAModule` registers `SAAdvisoryLock`
+`AbstractDistributedLock` DI binding: `SAConfiguration` registers `SAAdvisoryLock`
 as the default (upgrade-safe) binding and `SAXactAdvisoryLock` as a
 directly-injectable singleton — see `di.py` for the override recipe if you
 want `SAXactAdvisoryLock` to win the `AbstractDistributedLock` binding.

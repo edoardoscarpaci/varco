@@ -1509,6 +1509,14 @@
     ],
     "varco_fastapi.posture.SecurityPostureSettings": [
       {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_SECURITY_POSTURE_ENABLED",
+        "field": "enabled",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
         "default": "'warn'",
         "description": "",
         "env": "VARCO_SECURITY_ENFORCE",

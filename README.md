@@ -81,6 +81,7 @@ policy engine, field encryption, observability, profiling, …) — see
 ## Table of Contents
 
 - [Quickstart — Example App](#quickstart--example-app)
+- [Wiring an app](#wiring-an-app)
 - [Domain Model](#domain-model)
   - [Soft Delete](#soft-delete)
   - [Multi-tenancy models](#multi-tenancy-models)
@@ -208,6 +209,80 @@ policy engine, field encryption, observability, profiling, …) — see
 - [Durability preset (one-line opt-in)](#durability-preset-one-line-opt-in)
 - [Changelog summary](#changelog-summary)
 - [Health Checks](#health-checks)
+
+---
+
+## Wiring an app
+
+`create_varco_app(container, *, modules=None, ...)` (Plan 049 / DI-1) builds a fully configured
+FastAPI app from a `DIContainer` and a list of `varco_core.di.VarcoModule` instances — one
+`VarcoModule` per subsystem, replacing the eleven keyword objects (`migrations`, `tenancy`,
+`reliability`, `retention`, `jwks_refresh`, `i18n`, `timezone`, `security_headers`,
+`body_limit`, `rate_limit`, `extra_lifespan_components`) a pre-4.0 app used to pass:
+
+```python
+from providify import DIContainer
+from varco_fastapi.app import create_varco_app
+
+container = DIContainer()
+app = create_varco_app(container)  # modules=None -> varco_fastapi.default_modules()
+```
+
+`modules=None` installs `varco_fastapi.default_modules()` — CORS, security headers, the error
+envelope, body limits, logging, tracing, localization, and (since Plan 049 / FLIP-1) the security
+posture preflight, all default-on and all switchable by one env var or an `exclude=`.
+`FastAPIModule` additionally, and **unconditionally**, contributes `RequestContextMiddleware` —
+unlike the others, this one is not itself switchable: with an `AbstractServerAuth` bound it runs
+the app's real auth strategy, and with none bound it still runs, in *anonymous mode* (every
+request gets a populated, unauthenticated `AuthContext`/`correlation_id`/`current_tenant()`
+rather than none at all) — the same "always present" contract `RequestContextMiddleware` had
+before Plan 049. An explicit `modules=[...]` list installs **exactly** those — nothing is inserted
+implicitly (NestJS `imports`/Django `INSTALLED_APPS` semantics) — so start from
+`[*default_modules(), ...]` and add what you need:
+
+```python
+from varco_fastapi.modules import MigrationsModule, default_modules
+from varco_sa.modules import SAModule
+
+app = create_varco_app(
+    container,
+    modules=[
+        MigrationsModule(my_migrator),      # list before the defaults — see the Pitfalls row below
+        *default_modules(),
+        SAModule(config=my_sa_config, entities=(User, Post)),
+    ],
+    routers=[UserRouter, PostRouter],
+)
+```
+
+One env var flips a default module off without touching code — the FLIP-1 example:
+
+```bash
+export VARCO_SECURITY_POSTURE_ENABLED=false   # or default_modules(exclude=(SecurityPostureModule,))
+```
+
+RO-4 (a redactor for request logs) is a constructor argument on the logging module, not a
+`create_varco_app` keyword:
+
+```python
+from varco_core.redaction import PolicyRedactor
+from varco_fastapi.modules import LoggingModule, default_modules
+
+app = create_varco_app(
+    container,
+    modules=[*default_modules(exclude=(LoggingModule,)), LoggingModule(redactor=PolicyRedactor())],
+)
+```
+
+Every package ships exactly one `VarcoModule` (`varco_sa.modules.SAModule`,
+`varco_kafka.modules.KafkaModule`, `varco_casbin.modules.CasbinModule`, …) — its `_register()`
+calls that package's own `bootstrap()` first. `LifecycleModule(component)` and
+`MiddlewareModule(entries)` wrap a hand-built `start()`/`stop()` object or a raw middleware entry
+without requiring a `VarcoModule` subclass, for whatever the shipped modules don't cover. Full
+model (slots, the tri-state `enabled=`, `depends_on`, `EdgeSlot`/`HttpContributor`, writing an
+app's own module, a Pitfalls table): [technical_docs/features/dependency-injection.md](technical_docs/features/dependency-injection.md)'s §Modules.
+Full old-keyword → new-module migration table: `CHANGELOG.md`'s `[Unreleased]` →
+**BREAKING — VarcoModule and create_varco_app(modules=…)** entry.
 
 ---
 
@@ -1101,8 +1176,9 @@ limitations:
 - **Internationalization** — `MessageCatalog` (stdlib `gettext`-backed by
   default, zero new runtime dependency), an `Accept-Language`/`?lang=`
   negotiation chain, and request-scoped locale via `varco_core.context`.
-  `create_varco_app(i18n=I18nSettings(enabled=True, supported_locales=("en",
-  "fr")))`. See
+  `modules=[*default_modules(exclude=(LocalizationModule,)), LocalizationModule(
+  i18n=I18nSettings(enabled=True, supported_locales=("en", "fr")))]` — replaces the default
+  `LocalizationModule` instance (see "Wiring an app" below). See
   [`technical_docs/features/i18n-and-localization.md`](technical_docs/features/i18n-and-localization.md).
 - **Timezones & DST-safe scheduling** — per-request timezone resolution
   (`?tz=`/`X-Timezone`), a documented DST gap/overlap policy for one-shot
@@ -2158,17 +2234,20 @@ pip install "varco-sa[migrations]"
 ```python
 from varco_sa.migration import AlembicMigrator
 from varco_fastapi import create_varco_app
+from varco_fastapi.modules import MigrationsModule, default_modules
 
 migrator = AlembicMigrator(engine, script_location="alembic")
-app = create_varco_app(container, routers=[...], migrations=migrator)
+app = create_varco_app(
+    container, routers=[...], modules=[MigrationsModule(migrator), *default_modules()]
+)
 ```
 
 ```bash
 VARCO_MIGRATE_MODE=check uvicorn myapp:app     # refuse to serve against a stale schema
 ```
 
-`VARCO_MIGRATE_MODE` has three values, and it defaults to `off` — with `migrations=None`
-nothing is registered and nothing changes:
+`VARCO_MIGRATE_MODE` has three values, and it defaults to `off` — with no `MigrationsModule`
+in `modules=` nothing is registered and nothing changes:
 
 | mode | At startup | Use it for |
 |---|---|---|
@@ -2275,7 +2354,7 @@ async with provider.make_uow() as uow:
 ### DI integration (Providify)
 
 ```python
-from varco_beanie import BeanieModule, BeanieSettings, bind_repositories
+from varco_beanie import BeanieConfiguration, BeanieSettings, bind_repositories
 from providify import DIContainer, Provider
 
 container = DIContainer()
@@ -2287,7 +2366,7 @@ def settings() -> BeanieSettings:
 
 
 container.provide(settings)
-container.install(BeanieModule)
+container.install(BeanieConfiguration)  # renamed from BeanieModule by Plan 049 §D-names
 bind_repositories(container, User, Post)
 
 user_repo = await container.aget(AsyncRepository[User])
@@ -2942,14 +3021,15 @@ waiting for a `verify()` call:
 
 ```python
 from varco_core.authority import TrustedIssuerRegistry
-from varco_fastapi import JwksRefreshLifecycle, create_varco_app
+from varco_fastapi import create_varco_app
+from varco_fastapi.modules import JwksRefreshModule, default_modules
 
 registry = TrustedIssuerRegistry.from_env()
 await registry.load_all()  # unchanged — the documented startup step
 
 app = create_varco_app(
-    ...,
-    jwks_refresh=JwksRefreshLifecycle(registry),  # None (default) = off
+    container,
+    modules=[*default_modules(), JwksRefreshModule(registry)],  # absent (default) = off
 )
 ```
 
@@ -3468,7 +3548,7 @@ class ReportRouter(GenericRouter):
 
 
 # Wire exactly like a normal router
-app = create_varco_app(routers=[ReportRouter])
+app = create_varco_app(container, routers=[ReportRouter])
 ```
 
 **Key facts**:
@@ -3502,12 +3582,13 @@ class OrderRouter(CreateMixin, VarcoCRUDRouter[...]):
     _auth = auth  # ClassVar — all routes use this auth strategy
 ```
 
-Or inject via DI (installed automatically by `VarcoFastAPIModule`):
+Or inject via DI (installed automatically by `VarcoFastAPIConfiguration`, renamed from
+`VarcoFastAPIModule` by Plan 049 §D-names):
 
 ```python
-from varco_fastapi.di import VarcoFastAPIModule
+from varco_fastapi.di import VarcoFastAPIConfiguration
 
-container.install(VarcoFastAPIModule)
+container.install(VarcoFastAPIConfiguration)
 # AbstractServerAuth → JwtBearerAuth registered automatically
 ```
 
@@ -3570,7 +3651,13 @@ await runner.recover()
 
 ### Bootstrap helpers
 
-One-liner setup for each backend (also registered by `container.install(VarcoFastAPIModule)`):
+One-liner setup for each backend (also registered by `container.install(VarcoFastAPIConfiguration)`
+— renamed from `VarcoFastAPIModule` by Plan 049 §D-names; `VarcoFastAPIModule` now names the
+`VarcoModule` in `varco_fastapi.modules`). This hand-rolled shape (calling each package's
+`bootstrap()` directly and building `VarcoLifespan` yourself) still works unchanged — it is what
+`FastAPIModule`/`SAModule`/`RedisModule`/`WsModule`'s own `_register()`/`async_init()` do under
+the hood. **"Wiring an app" above is the recommended path** for a new app; reach for this one only
+when you need something `create_varco_app(modules=[...])` cannot express yet.
 
 ```python
 from varco_sa.di import bootstrap as sa_bootstrap
@@ -3970,9 +4057,10 @@ async with profiled("batch_export") as session:
     await write_csv(rows)
 print(session.report.format())  # human-readable table to stderr/logs
 
-# 3. FastAPI: enable via env var or create_varco_app flag
+# 3. FastAPI: enable via env var or a module
 #    VARCO_PROFILING_ENABLED=true VARCO_PROFILING_ATTACH_HEADERS=true
-app = create_varco_app(container, enable_profiling=True)
+from varco_fastapi.modules import ProfilingModule, default_modules
+app = create_varco_app(container, modules=[*default_modules(), ProfilingModule()])
 # → X-Profile-Wall-Ms + X-Profile-Mem-Kb headers on each response
 ```
 
@@ -4623,7 +4711,7 @@ from varco_core.retention.di import bind_retention_registry
 from varco_core.retention.policy import RetentionPolicy, RetentionRegistry
 from varco_core.retention.targets import AuditRetentionTarget, DlqRetentionTarget
 from varco_fastapi.app import create_varco_app
-from varco_fastapi.retention import RetentionLifecycle
+from varco_fastapi.modules import RetentionModule, default_modules
 
 registry = RetentionRegistry()
 registry.register(
@@ -4650,7 +4738,7 @@ registry.register(
 bind_retention_registry(container, registry)
 app = create_varco_app(
     container,
-    retention=RetentionLifecycle(registry, container=container, interval=300.0),
+    modules=[*default_modules(), RetentionModule(registry, interval=300.0)],
 )
 ```
 
@@ -4776,8 +4864,15 @@ Opt into `STRICT` for CSP/COOP/CORP/Permissions-Policy (breaks `/docs`/`/redoc` 
 
 ```python
 from varco_fastapi.middleware.security_headers import SecurityHeadersPreset, SecurityHeadersSettings
+from varco_fastapi.modules import SecurityHeadersModule, default_modules
 
-app = create_varco_app(container, security_headers=SecurityHeadersSettings(preset=SecurityHeadersPreset.STRICT))
+app = create_varco_app(
+    container,
+    modules=[
+        *default_modules(exclude=(SecurityHeadersModule,)),
+        SecurityHeadersModule(settings=SecurityHeadersSettings(preset=SecurityHeadersPreset.STRICT)),
+    ],
+)
 ```
 
 Hand-registered form (position matters — see `technical_docs/features/http-edge-hardening.md`'s
@@ -4810,10 +4905,14 @@ app = create_varco_app(container)
 
 ```python
 from varco_fastapi.middleware.body_limit import BodyLimitSettings
+from varco_fastapi.modules import BodyLimitModule, default_modules
 
 app = create_varco_app(
     container,
-    body_limit=BodyLimitSettings(max_bytes=50 * 1024 * 1024, exempt_paths=("/upload",)),
+    modules=[
+        *default_modules(exclude=(BodyLimitModule,)),
+        BodyLimitModule(settings=BodyLimitSettings(max_bytes=50 * 1024 * 1024, exempt_paths=("/upload",))),
+    ],
 )
 ```
 
@@ -4858,8 +4957,9 @@ bundle = RateLimitBundle(
         ),
     ),
 )
-app = create_varco_app(container, rate_limit=bundle)
-# create_varco_app partitions rules by scope automatically: IP/GLOBAL -> stage=PRE_AUTH
+from varco_fastapi.modules import RateLimitModule, default_modules
+app = create_varco_app(container, modules=[*default_modules(), RateLimitModule(bundle)])
+# RateLimitModule partitions rules by scope automatically: IP/GLOBAL -> stage=PRE_AUTH
 # (before auth), SUBJECT/TENANT -> stage=POST_AUTH (after RequestContextMiddleware).
 ```
 
@@ -4880,9 +4980,9 @@ app.add_middleware(
 An `IP`/`SUBJECT`-scoped rule backed by `InMemoryRateLimiter` raises `ValueError` unless you pass
 `acknowledge_unbounded_keyspace=True` — its key space is attacker-controlled (a new source
 IP/subject permanently costs a `deque` + `asyncio.Lock`). This applies whether the middleware is
-hand-registered or assembled via `create_varco_app(rate_limit=RateLimitBundle(...))`:
+hand-registered or assembled via `RateLimitModule(RateLimitBundle(...))`:
 `RateLimitBundle` carries its own `acknowledge_unbounded_keyspace` field (default `False`),
-forwarded verbatim to both `RateLimitMiddleware` instances `create_varco_app` builds from it — so
+forwarded verbatim to both `RateLimitMiddleware` instances `RateLimitModule` builds from it — so
 `RateLimitBundle(rules=(...), acknowledge_unbounded_keyspace=True)` is required for the bundle form
 too. Use `RedisRateLimiter` (TTL-bounded) for any multi-process deployment, and see
 `technical_docs/features/http-edge-hardening.md`'s §D-S10-keyspace subsection for the full
@@ -4907,7 +5007,7 @@ from varco_fastapi import inspect_http_edge
 
 posture = inspect_http_edge(app)
 posture.security_headers_installed   # True
-posture.rate_limit_installed         # False, unless you passed rate_limit=
+posture.rate_limit_installed         # False, unless you added a RateLimitModule
 [f.check for f in posture.findings]  # e.g. ["http.rate_limit.absent", "http.error.detail_exposed"]
 ```
 
@@ -4918,30 +5018,46 @@ posture.rate_limit_installed         # False, unless you passed rate_limit=
 `SecurityPostureLifecycle` (Plan 036 / S9) is a startup preflight that aggregates the security
 checks the rest of this README documents piecemeal — tenant provenance, auth hardening, HTTP
 edge, RLS, and a handful of admin-mount facts — into one report an operator reads at startup.
-**Opt-in in 3.2** — an app that never wires it gets no report and no log lines:
+**Default-on since Plan 049 (FLIP-1)** — `SecurityPostureModule` is part of
+`varco_fastapi.default_modules()`, so every app gets the preflight and its report with zero
+code:
 
 ```python
-from varco_fastapi import (
-    SecurityPostureLifecycle,
-    SecurityPostureSettings,
-    create_varco_app,
-)
-from varco_fastapi.posture import _collect_http, _collect_local
-from functools import partial
+from varco_fastapi.app import create_varco_app
 
-lifecycle = SecurityPostureLifecycle(
-    collectors=[
-        partial(_collect_http, app=app),
-        partial(_collect_local, container=container, webhook_repository=webhook_repo),
-        # ... _collect_tenant / _collect_auth / _collect_data, each importing its
-        # sibling's inspector inside the function body — see the feature doc
-    ],
-    settings=SecurityPostureSettings(),  # reads VARCO_SECURITY_*
-)
-app = create_varco_app(container, extra_lifespan_components=[lifecycle])
+container = DIContainer()
+app = create_varco_app(container)  # SecurityPostureModule runs the default five collectors
 ```
 
-`lifecycle.report` (a frozen `SecurityPosture`) is available once `start()` has run —
+Turn it off with `VARCO_SECURITY_POSTURE_ENABLED=false`, or drop it from the module list:
+`default_modules(exclude=(SecurityPostureModule,))`. Pass a hand-built collector list to replace
+the default five (the pre-049 `SecurityPostureLifecycle(collectors=[...])` shape still works,
+now as a constructor argument on the module):
+
+```python
+from functools import partial
+
+from varco_fastapi.modules import SecurityPostureModule, default_modules
+from varco_fastapi.posture import SecurityPostureSettings, _collect_http, _collect_local
+
+app = create_varco_app(
+    container,
+    modules=[
+        *default_modules(exclude=(SecurityPostureModule,)),
+        SecurityPostureModule(
+            settings=SecurityPostureSettings(),  # reads VARCO_SECURITY_*
+            collectors=[
+                partial(_collect_http, app=app),
+                partial(_collect_local, container=container, webhook_repository=webhook_repo),
+                # ... _collect_tenant / _collect_auth / _collect_data, each importing its
+                # sibling's inspector inside the function body — see the feature doc
+            ],
+        ),
+    ],
+)
+```
+
+`module.report` (a frozen `SecurityPosture`) is available once `start()` has run —
 `.summary()` renders one line, always separating `NOT_ASSESSED` ("could not check") from the
 other three severities so it is never mistaken for a clean report.
 
@@ -5033,17 +5149,22 @@ Design detail: `technical_docs/features/composite-deployment.md`.
 ```python
 from varco_core.reliability import ReliabilityPreset
 from varco_fastapi import create_varco_app
+from varco_fastapi.modules import ReliabilityModule, default_modules
 from varco_sa.dlq import SADeadLetterQueue
 
 dlq = SADeadLetterQueue(engine)
-app = create_varco_app(container, routers=[...], reliability=ReliabilityPreset.durable(dlq=dlq))
+app = create_varco_app(
+    container,
+    routers=[...],
+    modules=[*default_modules(), ReliabilityModule(ReliabilityPreset.durable(dlq=dlq))],
+)
 ```
 
 Turns on `RetryPolicy.durable_delivery()` + the DLQ for every bare `@listen(...)` handler (via
 `set_default_reliability_preset()`'s resolution at `register_to()` time), starts an
 `OutboxRelay`, wires an `AuditConsumer`, and installs the reliability metrics pack — all from
-one preset object. `reliability=None` (the default) registers nothing — byte-identical to not
-using this feature. See `technical_docs/features/reliability-preset.md`.
+one preset object. No `ReliabilityModule` in `modules=` (the default) registers nothing —
+byte-identical to not using this feature. See `technical_docs/features/reliability-preset.md`.
 
 ---
 

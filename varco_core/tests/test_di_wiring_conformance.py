@@ -16,6 +16,7 @@ from providify import DIContainer, IssueKind
 from varco_conformance.di_wiring import DIWiringConformance
 from varco_core.auth.authorizer import AbstractAuthorizer
 from varco_core.cache.base import CacheBackend
+from varco_core.di.module import CoreModule
 from varco_core.event import AbstractEventBus
 from varco_core.event.base import Event
 from varco_core.event.deduplication import AbstractDeduplicator
@@ -33,6 +34,8 @@ from varco_core.tenancy.membership import AbstractTenantMembership
 
 
 class TestVarcoCoreDIWiringConformance(DIWiringConformance):
+    module_cls = CoreModule
+
     expected_defaults = (
         (CacheBackend, "in_memory"),
         (AbstractEventBus, "in_memory"),

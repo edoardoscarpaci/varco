@@ -81,14 +81,18 @@ def tracer_provider():
 
 
 def _build_app() -> object:
+    from providify import DIContainer
+    from varco_core.di.module import CoreModule
+    from varco_fastapi.modules.edge import FastAPIModule, MetricsModule, TracingModule
+
     app = create_varco_app(
-        enable_tracing=True,
-        enable_metrics=True,
-        enable_logging=False,
-        enable_error_middleware=False,
-        security_headers=False,
-        body_limit=False,
-        configure_jwt=False,
+        DIContainer(),
+        modules=[
+            CoreModule(),
+            FastAPIModule(configure_jwt=False),
+            TracingModule(),
+            MetricsModule(),
+        ],
         validate=False,
     )
 

@@ -1,6 +1,6 @@
 """
 Plan 047 / Step 8 — `SAIdempotencyStore` gains an additive `engine=` kwarg
-(N2: `SAModule.idempotency_store(config)` constructs `SAIdempotencyStore(
+(N2: `SAConfiguration.idempotency_store(config)` constructs `SAIdempotencyStore(
 engine=config.engine)` to reuse the app's own pool). `url` stays
 first-keyword-optional; exactly one of `url=`/`engine=` must be given.
 

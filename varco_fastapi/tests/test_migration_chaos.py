@@ -32,9 +32,12 @@ from typing import Any
 
 import httpx
 import pytest
+from providify import DIContainer
 from varco_chaos.containers import ChaosContainer
+from varco_core.di.module import CoreModule
 from varco_core.migration.settings import MigrationSettings
 from varco_fastapi.app import create_varco_app
+from varco_fastapi.modules.lifecycle import MigrationsModule
 from varco_fastapi.router.endpoint import route
 from varco_fastapi.router.presets import GenericRouter
 
@@ -156,10 +159,14 @@ async def test_crashed_lock_holder_releases_and_next_boot_proceeds(
 
     def _app() -> Any:
         return create_varco_app(
-            None,
+            DIContainer(),
             routers=[_PingRouter],
-            migrations=AlembicMigrator(engine, include_framework_branch=True),
-            migration_settings=settings,
+            modules=[
+                CoreModule(),
+                MigrationsModule(
+                    AlembicMigrator(engine, include_framework_branch=True), settings=settings
+                ),
+            ],
             validate=False,
         )
 

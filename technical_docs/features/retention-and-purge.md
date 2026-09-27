@@ -144,7 +144,7 @@ from datetime import timedelta
 from varco_core.retention.policy import RetentionPolicy, RetentionRegistry
 from varco_core.retention.targets import DlqRetentionTarget, AuditRetentionTarget
 from varco_core.retention.di import bind_retention_registry
-from varco_fastapi.retention import RetentionLifecycle
+from varco_fastapi.modules import RetentionModule, default_modules
 from varco_fastapi.app import create_varco_app
 
 registry = RetentionRegistry()
@@ -176,7 +176,7 @@ bind_retention_registry(container, registry)  # -> DIContainer (Plan 046 §D-bin
 
 app = create_varco_app(
     container,
-    retention=RetentionLifecycle(registry, container=container, interval=300.0),
+    modules=[*default_modules(), RetentionModule(registry, interval=300.0)],
 )
 ```
 

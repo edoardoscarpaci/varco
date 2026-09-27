@@ -64,9 +64,16 @@ async def test_container_shutdown_closes_orphaned_redis_cache_pool(
     A started-but-unregistered ``RedisCache`` has its socket closed at shutdown.
 
     Edge cases covered here on purpose:
-        - The cache is asserted to be an *orphan* first (not in
-          ``_collect_lifecycle_components()``), so the test cannot silently
-          degrade into "a registered component was stopped".
+        - The cache is an *orphan* by construction: the ``VarcoLifespan``
+          built below is given no positional components at all (only the
+          ``shutdown=`` hook), so the test cannot silently degrade into "a
+          registered component was stopped". (Plan 049 / DI-1 deleted
+          ``_collect_lifecycle_components`` — this precondition used to be
+          asserted by checking the cache was absent from its return value;
+          that helper's replacement, ``CoreModule.start()``, only manages
+          ``AbstractEventBus``/``AbstractJobRunner``, never ``CacheBackend``,
+          so the same "never a managed lifecycle component" invariant holds
+          without needing an equivalent check here.)
         - The assertion is on the live ``redis.asyncio`` connection object, not
           on ``RedisCache._redis`` alone: a hook that nulled the attribute but
           leaked the socket would still pass a weaker check.
@@ -75,7 +82,6 @@ async def test_container_shutdown_closes_orphaned_redis_cache_pool(
     pytest.importorskip("varco_fastapi")
 
     from varco_core.cache.base import CacheBackend
-    from varco_fastapi.app import _collect_lifecycle_components
     from varco_fastapi.lifespan import VarcoLifespan
     from varco_redis.di import async_bootstrap
 
@@ -98,9 +104,8 @@ async def test_container_shutdown_closes_orphaned_redis_cache_pool(
     assert connections, "expected the pool to hold a released connection after a round-trip"
     assert any(conn.is_connected for conn in connections)
 
-    # Pre-condition: this cache is exactly the orphan RL-8a is about.
-    assert cache not in _collect_lifecycle_components(container)
-
+    # Pre-condition: this cache is exactly the orphan RL-8a is about — see
+    # the docstring's Edge cases note above.
     async def _shutdown() -> None:
         await container.ashutdown()
 

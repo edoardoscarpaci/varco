@@ -11,7 +11,7 @@ logic** (§Non-goals). This module imports ``RateLimiter``/
 ``RateLimit-Policy`` header) on top.
 
 One class, registered at up to **two** stack positions by
-``create_varco_app(rate_limit=RateLimitBundle(...))`` — §D-order's DESIGN
+``RateLimitModule(RateLimitBundle(...))`` — §D-order's DESIGN
 block ("one RateLimitMiddleware class, two positions") explains why a
 single position cannot satisfy both an early, IP-keyed rejection (before
 auth) and a subject/tenant-keyed one (after auth, where
@@ -82,8 +82,8 @@ DESIGN: raise ``RateLimitExceededError`` through ``ErrorMiddleware`` when
        a self-rendered ``JSONResponse`` never went through
        ``error_message_for()``, so it carried no i18n/``Content-Language``
        handling despite being envelope-shaped. Raising fixes that for the
-       common case (``create_varco_app``'s default
-       ``enable_error_middleware=True``).
+       common case (``ErrorEnvelopeModule`` registered and enabled, the
+       default in ``default_modules()``).
     ✅ ``Retry-After``/``RateLimit-Policy`` still reach the response —
        ``RateLimitExceededError`` carries both as duck-typed attributes
        (``retry_after_seconds``/``rate_limit_policy``) that
@@ -93,10 +93,11 @@ DESIGN: raise ``RateLimitExceededError`` through ``ErrorMiddleware`` when
        ``varco_core.exception.rate_limit``'s DESIGN block for why this was
        chosen over wrapping ``send`` (provably unreachable here — see that
        block) or a new generic ``ServiceException`` headers API.
-    ✅ ``has_error_middleware=False`` (``create_varco_app`` threads its own
-       ``enable_error_middleware`` here) keeps the prior self-render
-       behaviour byte-for-byte — an uncaught raise with no catcher would
-       be an unhandled 500, the opposite of this middleware's purpose.
+    ✅ ``has_error_middleware=False`` (``_has_error_middleware(container)``
+       reads whether ``ErrorEnvelopeModule`` is registered and enabled)
+       keeps the prior self-render behaviour byte-for-byte — an uncaught
+       raise with no catcher would be an unhandled 500, the opposite of
+       this middleware's purpose.
     ❌ Two response-construction code paths inside one middleware, same
        trade-off ``BodyLimitMiddleware`` already accepted. The 503
        fail-closed path (limiter itself unavailable) is unaffected by this
@@ -203,9 +204,9 @@ class RateLimitRule:
 class RateLimitBundle:
     """
     A set of ``RateLimitRule``s plus shared settings, passed to
-    ``create_varco_app(rate_limit=...)``.
+    ``RateLimitModule(bundle)``.
 
-    ``create_varco_app`` partitions ``rules`` by scope — ``IP``/``GLOBAL``
+    ``RateLimitModule`` partitions ``rules`` by scope — ``IP``/``GLOBAL``
     rules go into a ``RateLimitMiddleware(stage=PRE_AUTH)`` at §D-order
     position 9; ``SUBJECT``/``TENANT`` rules go into a second instance at
     position 11 — and registers only the instances a non-empty partition
@@ -296,12 +297,12 @@ class RateLimitMiddleware:
                   out in the stack to catch and render a raised
                   ``RateLimitExceededError`` (Plan 035 drift fix, same
                   contract as ``BodyLimitMiddleware``). Default ``True``.
-                  ``create_varco_app`` passes its own
-                  ``enable_error_middleware`` value here. When ``False``,
-                  the 429 is self-rendered instead of raised — an uncaught
-                  raise with no catcher would be an unhandled 500. The
-                  503 fail-closed path always self-renders regardless of
-                  this flag (see this module's DESIGN block).
+                  ``RateLimitModule`` passes ``_has_error_middleware(container)``
+                  here. When ``False``, the 429 is self-rendered instead of
+                  raised — an uncaught raise with no catcher would be an
+                  unhandled 500. The 503 fail-closed path always
+                  self-renders regardless of this flag (see this module's
+                  DESIGN block).
 
     Raises:
         ValueError: A ``SUBJECT``/``TENANT`` rule is used with

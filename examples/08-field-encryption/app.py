@@ -22,7 +22,7 @@ Bootstrap sequence
    bypassing the DI-auto-register path — so ``factory.build(Patient, encryptor=enc)``
    is called explicitly with the encryptor.
 3. The provider is exposed to the DI container via a ``@Provider`` binding.
-4. ``sa_bootstrap(container)`` scans ``varco_sa`` and discovers ``SAModule`` —
+4. ``sa_bootstrap(container)`` scans ``varco_sa`` and discovers ``SAConfiguration`` —
    but no ``entity_classes`` are passed, so no automatic re-build of the Patient
    mapper without the encryptor occurs.
 5. ``create_tables(container)`` runs on startup — creates the ``patients`` table.
@@ -99,7 +99,7 @@ def _build_container(db_url: str, encryptor: FieldEncryptor) -> DIContainer:
     2. Expose the pre-wired provider to the container via ``@Provider``.
     3. Register ``SAConfig`` for framework tooling (health checks, ``create_tables``).
     4. Install ``VarcoFastAPIModule`` for framework defaults.
-    5. Scan ``varco_sa`` (via ``sa_bootstrap``) to discover ``SAModule`` — but
+    5. Scan ``varco_sa`` (via ``sa_bootstrap``) to discover ``SAConfiguration`` — but
        pass NO ``entity_classes`` so DI does not auto-rebuild the Patient mapper
        without the encryptor.
 
@@ -143,7 +143,7 @@ def _build_container(db_url: str, encryptor: FieldEncryptor) -> DIContainer:
     provider._built[Patient] = built_pair  # type: ignore[attr-defined]
 
     # ── 2. Register the pre-wired provider as IUoWProvider ───────────────────
-    # SAModule.uow_provider (discovered by scan) re-exposes RepositoryProvider
+    # SAConfiguration.uow_provider (discovered by scan) re-exposes RepositoryProvider
     # as IUoWProvider.  By binding IUoWProvider directly with our pre-built
     # provider we bypass that chain and ensure the encrypted mapper is used.
     #
@@ -151,7 +151,7 @@ def _build_container(db_url: str, encryptor: FieldEncryptor) -> DIContainer:
     #   ✅ Simplest path — AsyncService.__init__ injects IUoWProvider directly.
     #   ✅ Avoids any resolution of the scan-discovered SQLAlchemyRepositoryProvider
     #      (which would call factory.build(Patient) WITHOUT the encryptor).
-    #   ❌ Bypasses SAModule.uow_provider — acceptable since it only re-exports
+    #   ❌ Bypasses SAConfiguration.uow_provider — acceptable since it only re-exports
     #      the same singleton and does no additional work.
     @Provider(singleton=True)
     def _uow_provider() -> IUoWProvider:
@@ -183,7 +183,7 @@ def _build_container(db_url: str, encryptor: FieldEncryptor) -> DIContainer:
     container.bind(AbstractAuthorizer, BaseAuthorizer)
 
     # ── 5. Scan varco_sa (no entity_classes) ─────────────────────────────────
-    # Discovers SAModule and SQLAlchemyRepositoryProvider scan targets, but
+    # Discovers SAConfiguration and SQLAlchemyRepositoryProvider scan targets, but
     # entity_classes=() means no automatic Patient mapper build without encryptor.
     sa_bootstrap(container)
 

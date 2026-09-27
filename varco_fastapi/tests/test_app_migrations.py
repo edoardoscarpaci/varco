@@ -1,13 +1,17 @@
 """
-Failing tests for `create_varco_app(migrations=...)` (Plan 006, Phase 4,
-step 41). ASGI-level with ``TestClient`` — ``InMemoryMigrator`` (no DB).
+Failing tests for `MigrationsModule` (Plan 006, Phase 4, step 41 —
+migrated from `create_varco_app(migrations=...)` to a module by Plan 049 /
+DI-1). ASGI-level with ``TestClient`` — ``InMemoryMigrator`` (no DB).
 """
 
 from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from providify import DIContainer
+from varco_core.di.module import CoreModule
 from varco_fastapi.app import create_varco_app
+from varco_fastapi.modules.lifecycle import MigrationsModule
 from varco_fastapi.router.endpoint import route
 from varco_fastapi.router.presets import GenericRouter
 
@@ -35,10 +39,12 @@ async def test_migrations_run_before_first_request_is_served() -> None:
     migrator = _RecordingMigrator(revisions=[Revision(id="0001", label="init")])
 
     app = create_varco_app(
-        None,
+        DIContainer(),
         routers=[_PingRouter],
-        migrations=migrator,
-        migration_settings=MigrationSettings(mode="upgrade"),
+        modules=[
+            CoreModule(),
+            MigrationsModule(migrator, settings=MigrationSettings(mode="upgrade")),
+        ],
         validate=False,
     )
 
@@ -61,10 +67,14 @@ async def test_failing_migrator_with_on_failure_fail_aborts_startup_no_request_s
     )
 
     app = create_varco_app(
-        None,
+        DIContainer(),
         routers=[_PingRouter],
-        migrations=migrator,
-        migration_settings=MigrationSettings(mode="upgrade", on_failure="fail"),
+        modules=[
+            CoreModule(),
+            MigrationsModule(
+                migrator, settings=MigrationSettings(mode="upgrade", on_failure="fail")
+            ),
+        ],
         validate=False,
     )
 
@@ -74,14 +84,19 @@ async def test_failing_migrator_with_on_failure_fail_aborts_startup_no_request_s
 
 
 async def test_migrations_none_leaves_lifespan_components_byte_identical() -> None:
-    app_without_migrations_param = create_varco_app(None, routers=[_PingRouter], validate=False)
-    app_with_explicit_none = create_varco_app(
-        None, routers=[_PingRouter], migrations=None, validate=False
+    app_without_migrations_module = create_varco_app(
+        DIContainer(), routers=[_PingRouter], validate=False
+    )
+    app_with_explicit_disabled_module = create_varco_app(
+        DIContainer(),
+        routers=[_PingRouter],
+        modules=[CoreModule(), MigrationsModule()],  # mode="off" by default — no-op
+        validate=False,
     )
 
-    with TestClient(app_without_migrations_param) as client_a:
+    with TestClient(app_without_migrations_module) as client_a:
         response_a = client_a.get("/ping")
-    with TestClient(app_with_explicit_none) as client_b:
+    with TestClient(app_with_explicit_disabled_module) as client_b:
         response_b = client_b.get("/ping")
 
     assert response_a.status_code == response_b.status_code == 200

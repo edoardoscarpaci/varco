@@ -29,9 +29,12 @@ from varco_core.revocation import AbstractTokenRevocationStore
 from varco_core.service.conversation import AbstractConversationStore
 from varco_core.tenancy.membership import AbstractTenantMembership
 from varco_memcached.cache import MemcachedCacheSettings
+from varco_memcached.modules import MemcachedModule
 
 
 class TestVarcoMemcachedDIWiringConformance(DIWiringConformance):
+    module_cls = MemcachedModule
+
     settings_classes = (MemcachedCacheSettings,)
     expected_defaults = (
         (CacheBackend, "in_memory"),

@@ -318,6 +318,7 @@
 
 | Env var | Field | Type | Default | Secret |
 |---|---|---|---|---|
+| `VARCO_SECURITY_POSTURE_ENABLED` | `enabled` | `<class 'bool'>` | `True` | False |
 | `VARCO_SECURITY_ENFORCE` | `enforce` | `<class 'str'>` | `'warn'` | False |
 | `VARCO_SECURITY_ENV` | `environment` | `<class 'str'>` | `'production'` | False |
 | `VARCO_SECURITY_SUPPRESS` | `suppress` | `<class 'str'>` | `''` | False |

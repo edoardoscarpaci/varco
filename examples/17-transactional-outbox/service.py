@@ -76,7 +76,7 @@ class OrderService(AsyncService[Order, UUID, OrderCreate, OrderRead, OrderUpdate
     ) -> None:
         """
         Args:
-            uow_provider: Injected ``IUoWProvider`` — provided by ``SAModule``.
+            uow_provider: Injected ``IUoWProvider`` — provided by ``SAConfiguration``.
             authorizer:   Injected ``AbstractAuthorizer`` — ``BaseAuthorizer``
                           (permissive) for this example.
             assembler:    Injected ``OrderAssembler`` — DTO ↔ Order mapping.

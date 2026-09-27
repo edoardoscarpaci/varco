@@ -10,7 +10,7 @@ of the whole stack.
 What it guards
 --------------
 A user reported ``TypeError: tracer_provider() missing 1 required positional
-argument: 'config'`` when ``VarcoFastAPIModule`` and ``OtelConfiguration``
+argument: 'config'`` when ``VarcoFastAPIConfiguration`` and ``OtelConfiguration``
 shared one container — ``Inject[OtelConfig]`` was silently not injected.
 
 Root cause (in providify, not varco):
@@ -52,7 +52,7 @@ from providify import DIContainer, Provider
 # from those globals and ``container.provide()`` fails at registration time.
 from varco_core.observability.config import OtelConfig
 from varco_core.observability.di import OtelConfiguration
-from varco_fastapi.di import VarcoFastAPIModule
+from varco_fastapi.di import VarcoFastAPIConfiguration
 
 #: `eval(annotation, fn.__globals__)` also implicitly sees `__builtins__` —
 #: a bare `-> object`/`-> str`/... nested @Provider return annotation is
@@ -171,7 +171,7 @@ class TestContainerLocalnsHealth:
 
     def test_localns_build_never_raises_for_a_full_varco_container(self) -> None:
         # Plan 045: setup_varco_defaults() is gone; scanning "varco_fastapi"
-        # (in VARCO_PACKAGES) already auto-installs VarcoFastAPIModule, so
+        # (in VARCO_PACKAGES) already auto-installs VarcoFastAPIConfiguration, so
         # the redundant explicit install() below is dropped too.
         container = DIContainer()
         for pkg in VARCO_PACKAGES:
@@ -204,9 +204,9 @@ class TestVarcoFastApiModuleWithOtelConfiguration:
         container.provide(otel_config)
         if otel_first:
             container.install(OtelConfiguration)
-            container.install(VarcoFastAPIModule)
+            container.install(VarcoFastAPIConfiguration)
         else:
-            container.install(VarcoFastAPIModule)
+            container.install(VarcoFastAPIConfiguration)
             container.install(OtelConfiguration)
 
         provider = container.get(TracerProvider)

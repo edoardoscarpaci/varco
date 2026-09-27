@@ -368,7 +368,7 @@ LOOSE_ENV_READ_ALLOWLIST: tuple[str, ...] = (
     "varco_core/varco_core/observability/params.py:669",
     "varco_core/varco_core/observability/params.py:676",
     "varco_core/varco_core/profiling/config.py:33",
-    "varco_fastapi/varco_fastapi/app.py:878",
+    "varco_fastapi/varco_fastapi/app.py:406",
     "varco_fastapi/varco_fastapi/auth/server_auth.py:435",
     "varco_core/varco_core/cli/tenant.py:71",
     "varco_core/varco_core/cli/retention.py:66",

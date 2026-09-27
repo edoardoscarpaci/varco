@@ -59,7 +59,12 @@ CORE_DEFAULTS = (
 )
 
 
+from varco_casbin.modules import CasbinModule  # noqa: E402
+
+
 class TestVarcoCasbinDIWiringConformance(DIWiringConformance):
+    module_cls = CasbinModule
+
     settings_classes = (CasbinSettings,)
     expected_defaults = CORE_DEFAULTS + (
         (PolicyEngine, "casbin"),

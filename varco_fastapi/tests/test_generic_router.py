@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from providify import DIContainer
 from pydantic import BaseModel
 from varco_fastapi.app import create_varco_app
 from varco_fastapi.auth import AnonymousAuth
@@ -140,7 +141,7 @@ def test_ping_router_builds():
 
 def test_service_free_router_serves_requests():
     """Service-free router mounted via create_varco_app returns 200."""
-    app = create_varco_app(routers=[EchoRouter], validate=False)
+    app = create_varco_app(DIContainer(), routers=[EchoRouter], validate=False)
     client = TestClient(app, raise_server_exceptions=True)
     resp = client.post("/echo/process", json={"message": "hello"})
     assert resp.status_code == 200
@@ -155,7 +156,7 @@ def test_service_free_router_middleware_stack_runs(caplog: Any) -> None:
     """
     import logging
 
-    app = create_varco_app(routers=[EchoRouter], validate=False)
+    app = create_varco_app(DIContainer(), routers=[EchoRouter], validate=False)
     client = TestClient(app, raise_server_exceptions=True)
     with caplog.at_level(logging.INFO, logger="varco_fastapi.access"):
         resp = client.post("/echo/process", json={})
@@ -176,7 +177,7 @@ def test_service_free_router_with_anonymous_auth():
         async def status(self, ctx: Any) -> dict:
             return {"ok": True}
 
-    app = create_varco_app(routers=[OpenRouter], validate=False)
+    app = create_varco_app(DIContainer(), routers=[OpenRouter], validate=False)
     client = TestClient(app, raise_server_exceptions=True)
     resp = client.get("/open/status")
     assert resp.status_code == 200

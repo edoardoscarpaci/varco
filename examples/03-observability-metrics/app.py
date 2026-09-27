@@ -5,8 +5,9 @@ Application factory for the ``03-observability-metrics`` example.
 
 Demonstrates the full varco observability / metrics stack:
 
-1. ``create_varco_app(..., enable_metrics=True)`` — adds ``MetricsMiddleware``
-   to the ASGI stack AND mounts ``GET /metrics`` (Prometheus scrape endpoint).
+1. ``create_varco_app(container, modules=[*default_modules(), MetricsModule()])``
+   — adds ``MetricsMiddleware`` to the ASGI stack AND mounts ``GET /metrics``
+   (Prometheus scrape endpoint).
 2. ``MetricsMiddleware`` — records three OTel instruments per request:
    ``http.server.request.duration`` (Histogram), ``http.server.active_requests``
    (UpDownCounter), ``http.server.request.body.size`` (Histogram).
@@ -133,7 +134,7 @@ def create_app() -> FastAPI:
     Steps:
     1. Install a ``MeterProvider`` backed by ``PrometheusMetricReader`` so OTel
        metrics flow into ``prometheus_client.REGISTRY``.
-    2. Call ``create_varco_app(enable_metrics=True)`` which:
+    2. Call ``create_varco_app(modules=[*default_modules(), MetricsModule()])`` which:
        a. Adds ``MetricsMiddleware`` to the ASGI stack (records per-request
           duration, active-requests count, and body size instruments).
        b. Mounts ``GET /metrics`` via ``MetricsRouter`` (Prometheus scrape
@@ -165,9 +166,14 @@ def create_app() -> FastAPI:
     _setup_prometheus_meter_provider()
 
     # ── 2. Build app with metrics enabled ────────────────────────────────────
+    from providify import DIContainer
+    from varco_fastapi.modules import MetricsModule
+    from varco_fastapi.modules.defaults import default_modules
+
     from varco_fastapi import create_varco_app
 
     app: FastAPI = create_varco_app(
+        DIContainer(),
         title="Observability Metrics Example",
         version="0.1.0",
         description=(
@@ -180,7 +186,9 @@ def create_app() -> FastAPI:
             "output will include ``http_server_request_duration_seconds`` "
             "and related OTel instruments."
         ),
-        enable_metrics=True,  # Adds MetricsMiddleware + GET /metrics
+        # Plan 049 / DI-1 migration: enable_metrics=True is now MetricsModule
+        # (adds MetricsMiddleware + mounts GET /metrics).
+        modules=[*default_modules(), MetricsModule()],
         validate=False,  # No routers to validate in this example
     )
 

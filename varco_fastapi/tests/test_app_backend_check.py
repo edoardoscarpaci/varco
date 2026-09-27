@@ -29,14 +29,18 @@ def test_unknown_backend_value_raises_at_app_construction(
         create_varco_app(container, validate=False)
 
 
-def test_no_container_skips_the_check(monkeypatch: pytest.MonkeyPatch) -> None:
-    # check_backend_selection(container) is only called "when a container is
-    # passed" — a bare create_varco_app() call must not require it.
+def test_unset_backend_env_does_not_raise(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Plan 049 / DI-1 migration: `container` is now required (§D-signature)
+    # — the old "container=None skips the check" branch no longer exists
+    # (`create_varco_app` always registers `default_modules()`, whose
+    # `CoreModule` always bootstraps the container, so
+    # `check_backend_selection` always has something to check). This test
+    # now proves the check runs cleanly with no backend override set.
     from varco_fastapi.app import create_varco_app
 
-    monkeypatch.setenv("VARCO_CACHE_BACKEND", "nope")
+    monkeypatch.delenv("VARCO_CACHE_BACKEND", raising=False)
 
-    app = create_varco_app(validate=False)
+    app = create_varco_app(DIContainer(), validate=False)
     assert app is not None
 
 

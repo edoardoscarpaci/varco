@@ -22,12 +22,13 @@ which is exactly why §D-order places this middleware **inside**
 ``ErrorMiddleware``.
 
 DESIGN: self-render the 413 when ``ErrorMiddleware`` is absent (§Edge cases)
-    ✅ ``create_varco_app(enable_error_middleware=False)`` leaves nothing to
-       catch a raised ``ServiceException`` — an uncaught raise becomes an
+    ✅ Omitting ``ErrorEnvelopeModule`` from ``modules=[...]`` leaves nothing
+       to catch a raised ``ServiceException`` — an uncaught raise becomes an
        unhandled 500, the opposite of this middleware's purpose. The
-       constructor's ``has_error_middleware`` flag (set by
-       ``create_varco_app`` from its own ``enable_error_middleware``, and
-       ``True`` by default for a hand-registered instance — the common case
+       constructor's ``has_error_middleware`` flag (set from
+       ``_has_error_middleware(container)``, which reads whether
+       ``ErrorEnvelopeModule`` is registered and enabled, and ``True`` by
+       default for a hand-registered instance — the common case
        is registering alongside ``ErrorMiddleware``, per every existing
        test in this suite) picks between the two behaviours.
     ✅ Reuses ``RateLimitMiddleware``'s own self-render helper
@@ -144,9 +145,9 @@ class BodyLimitMiddleware:
                   ``RequestBodyTooLargeError``. Default ``True`` — a
                   hand-registered instance is overwhelmingly paired with
                   one, matching every pre-existing test in this suite.
-                  ``create_varco_app`` passes its own
-                  ``enable_error_middleware`` value here. When ``False``,
-                  the middleware self-renders a plain JSON 413 instead of
+                  ``BodyLimitModule`` passes ``_has_error_middleware(container)``
+                  here. When ``False``, the middleware self-renders a
+                  plain JSON 413 instead of
                   raising (§Edge cases — the raise-through-the-envelope
                   path requires a catcher; with none, an uncaught raise is
                   an unhandled 500, the opposite of this middleware's
@@ -251,7 +252,7 @@ class BodyLimitMiddleware:
         Reject an over-limit request found by the ``Content-Length``
         pre-check: raise (for ``ErrorMiddleware`` to render) when present,
         self-render a plain JSON 413 otherwise (§Edge cases —
-        ``enable_error_middleware=False``).
+        ``has_error_middleware=False``).
         """
         exc = RequestBodyTooLargeError(max_bytes=max_bytes)
         if self._has_error_middleware:

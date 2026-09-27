@@ -154,21 +154,23 @@ def _absent_posture() -> HttpEdgePosture:
                 check="http.security_headers.absent",
                 severity="warn",
                 detail="No SecurityHeadersMiddleware in the stack.",
-                remediation="create_varco_app(security_headers=None) (the default) "
+                remediation="create_varco_app(container, modules=[..., SecurityHeadersModule()]) "
+                "(default-on already in default_modules()) "
                 "or app.add_middleware(SecurityHeadersMiddleware).",
             ),
             HttpEdgeFinding(
                 check="http.body_limit.absent",
                 severity="warn",
                 detail="No BodyLimitMiddleware in the stack.",
-                remediation="create_varco_app(body_limit=None) (the default) "
+                remediation="create_varco_app(container, modules=[..., BodyLimitModule()]) "
+                "(default-on already in default_modules()) "
                 "or app.add_middleware(BodyLimitMiddleware).",
             ),
             HttpEdgeFinding(
                 check="http.rate_limit.absent",
                 severity="warn",
                 detail="No RateLimitMiddleware in the stack.",
-                remediation="create_varco_app(rate_limit=RateLimitBundle(...)).",
+                remediation="create_varco_app(container, modules=[..., RateLimitModule(RateLimitBundle(...))]).",
             ),
         ),
     )
@@ -248,7 +250,8 @@ def _inspect(app: Any) -> HttpEdgePosture:
                 check="http.security_headers.absent",
                 severity="warn",
                 detail="No SecurityHeadersMiddleware in the stack.",
-                remediation="create_varco_app(security_headers=None) (the default) "
+                remediation="create_varco_app(container, modules=[..., SecurityHeadersModule()]) "
+                "(default-on already in default_modules()) "
                 "or app.add_middleware(SecurityHeadersMiddleware).",
             )
         )
@@ -265,7 +268,8 @@ def _inspect(app: Any) -> HttpEdgePosture:
                 check="http.body_limit.absent",
                 severity="warn",
                 detail="No BodyLimitMiddleware in the stack.",
-                remediation="create_varco_app(body_limit=None) (the default) "
+                remediation="create_varco_app(container, modules=[..., BodyLimitModule()]) "
+                "(default-on already in default_modules()) "
                 "or app.add_middleware(BodyLimitMiddleware).",
             )
         )
@@ -335,7 +339,7 @@ def _inspect(app: Any) -> HttpEdgePosture:
                 check="http.rate_limit.absent",
                 severity="warn",
                 detail="No RateLimitMiddleware in the stack.",
-                remediation="create_varco_app(rate_limit=RateLimitBundle(...)).",
+                remediation="create_varco_app(container, modules=[..., RateLimitModule(RateLimitBundle(...))]).",
             )
         )
 

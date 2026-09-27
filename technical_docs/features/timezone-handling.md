@@ -349,9 +349,10 @@ ErrorMiddleware.dispatch()` (via `_service_error_response()`) and
 `add_exception_handlers()`) read `request.state.varco_request_context` and,
 when constructed with `message_catalog=`, pass a `message_resolver=`
 derived from the active locale into `error_message_for()` and set
-`Content-Language` on the response themselves. `create_varco_app()` wires
-both automatically from its resolved `MessageCatalog` (`message_catalog=`)
-and `I18nSettings.set_content_language`. Since `request.state` — unlike the
+`Content-Language` on the response themselves. `ErrorEnvelopeModule`
+(`varco_fastapi.modules`, part of `default_modules()`) wires both automatically from its
+resolved `MessageCatalog` (`message_catalog=`) and `I18nSettings.set_content_language`. Since
+`request.state` — unlike the
 `ContextVar` — is not reset by `LocalizationMiddleware`'s `finally`, it
 survives being several layers further out from `ErrorMiddleware` exactly as
 designed: the ordering hazard this mirror exists to solve. **The net

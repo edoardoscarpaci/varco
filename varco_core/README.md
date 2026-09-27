@@ -228,7 +228,8 @@ cached keyset exceeds that age, even without a miss.
 
 A background refresher can now tick on its own too (Plan 041 / S22) —
 `registry.start_refresh()`/`stop_refresh()`, off by default (`VARCO_JWT_JWKS_TTL_SECONDS=0`),
-wired via `varco_fastapi.JwksRefreshLifecycle` + `create_varco_app(jwks_refresh=...)`. See
+wired via `varco_fastapi.modules.JwksRefreshModule(registry)` in `create_varco_app(modules=...)`.
+See
 `technical_docs/features/jwt-claim-transformer.md`'s "JWKS caching knobs, and the background
 refresher" section for the full design.
 

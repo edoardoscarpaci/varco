@@ -170,6 +170,12 @@ class SecurityPostureSettings(VarcoSettings):
             comma-separated list of `check` ids. A suppressed finding is
             still produced, demoted to ``INFO``, and flagged
             `PostureFinding.suppressed=True`.
+        enabled: ``VARCO_SECURITY_POSTURE_ENABLED``, default ``True``
+            (Plan 049 / FLIP-1, ``BACKLOG.md:81``). Read by
+            ``SecurityPostureModule._enabled_from_settings()`` —
+            ``create_varco_app()`` installs this module by default; this
+            is the one-env-var escape hatch to turn the whole preflight
+            off without touching code.
     """
 
     model_config = SettingsConfigDict(
@@ -190,6 +196,14 @@ class SecurityPostureSettings(VarcoSettings):
     )
     enforce: str = "warn"
     suppress: str = ""
+    # Plan 049 / FLIP-1: same alias shape as `environment` above — the
+    # bare env_prefix + FIELD_NAME.upper() rule would map this to
+    # VARCO_SECURITY_ENABLED, but BACKLOG.md:81/036 §D-S9-flip #1 name
+    # VARCO_SECURITY_POSTURE_ENABLED explicitly.
+    enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("VARCO_SECURITY_POSTURE_ENABLED"),
+    )
 
     def suppressed_ids(self) -> frozenset[str]:
         """Parse `suppress` into a set of `check` ids, ignoring blanks."""
@@ -261,9 +275,10 @@ class SecurityPostureLifecycle:
     every collector, applies environment/suppression demotion, logs the
     report, stores it as `.report`, and (in `enforce="refuse"`) raises if
     warranted. Registered exactly like `TenancyLifecycle`/
-    `ReliabilityLifecycle`: passed to `create_varco_app(...,
-    extra_lifespan_components=[...])`, or constructed and `await`ed
-    directly (e.g. in a test).
+    `ReliabilityLifecycle`: wrapped by `SecurityPostureModule` (in
+    `default_modules()` by default, Plan 049/FLIP-1) and passed to
+    `create_varco_app(container, modules=[...])`, or constructed and
+    `await`ed directly (e.g. in a test).
 
     Args:
         collectors: Zero-argument callables, each returning a list of

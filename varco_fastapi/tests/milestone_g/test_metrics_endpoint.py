@@ -174,9 +174,17 @@ async def test_create_varco_app_enable_metrics_mounts_endpoint():
     ``MetricsRouter`` — ``GET /metrics`` returns 200 (or 503 if exporter
     missing, but the route must be present — not 404).
     """
+    from providify import DIContainer
+    from varco_fastapi.modules import MetricsModule
+    from varco_fastapi.modules.defaults import default_modules
+
     from varco_fastapi import create_varco_app
 
-    app = create_varco_app(enable_metrics=True, validate=False)
+    app = create_varco_app(
+        DIContainer(),
+        modules=[*default_modules(), MetricsModule()],
+        validate=False,
+    )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/metrics")
     # Route is mounted — 200 (prometheus installed) or 503 (not installed)
@@ -189,9 +197,11 @@ async def test_create_varco_app_enable_metrics_false_no_endpoint():
     ``create_varco_app(enable_metrics=False)`` does NOT mount ``MetricsRouter``
     — ``GET /metrics`` returns 404.
     """
+    from providify import DIContainer
+
     from varco_fastapi import create_varco_app
 
-    app = create_varco_app(enable_metrics=False, validate=False)
+    app = create_varco_app(DIContainer(), validate=False)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/metrics")
     assert resp.status_code == 404, "GET /metrics must not exist when enable_metrics=False"
@@ -205,7 +215,10 @@ async def test_create_varco_app_metrics_middleware_added():
     """
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+    from providify import DIContainer
     from varco_fastapi.middleware.metrics import _instruments
+    from varco_fastapi.modules import MetricsModule
+    from varco_fastapi.modules.defaults import default_modules
 
     from varco_fastapi import create_varco_app
 
@@ -219,7 +232,11 @@ async def test_create_varco_app_metrics_middleware_added():
     # namespace (opentelemetry.metrics.get_meter_provider) has no effect on
     # the internal name resolution.
     with mock.patch("opentelemetry.metrics._internal.get_meter_provider", return_value=provider):
-        app = create_varco_app(enable_metrics=True, validate=False)
+        app = create_varco_app(
+            DIContainer(),
+            modules=[*default_modules(), MetricsModule()],
+            validate=False,
+        )
 
         @app.get("/ping")
         async def ping():

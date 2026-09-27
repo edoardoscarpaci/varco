@@ -127,7 +127,7 @@ class SAIdempotencyStore(AbstractIdempotencyStore):
                 ``engine``. When given, ``start()`` builds a private engine
                 this store owns and disposes on ``stop()``.
             engine: An already-constructed ``AsyncEngine`` to reuse (Plan
-                047 N2 — ``SAModule.idempotency_store()`` passes the app's
+                047 N2 — ``SAConfiguration.idempotency_store()`` passes the app's
                 own pool). Mutually exclusive with ``url``. ``stop()``
                 never disposes an engine it did not create.
             **engine_kwargs: Forwarded to ``create_async_engine()`` — only

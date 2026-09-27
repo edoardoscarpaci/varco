@@ -48,12 +48,17 @@ async def test_regression_error_message_is_catalog_localized_via_route_handler()
     # still live here — but add_exception_handlers() never read the
     # catalog/locale AT ALL before this fix, so the message was always the
     # untranslated English default regardless.
+    from varco_fastapi.modules.edge import ErrorEnvelopeModule, LocalizationModule
+
     container = DIContainer()
     container.provide(_fr_catalog)
     app = create_varco_app(
         container,
         routers=[_BoomRouter],
-        i18n=I18nSettings(enabled=True, supported_locales=("en", "fr")),
+        modules=[
+            LocalizationModule(i18n=I18nSettings(enabled=True, supported_locales=("en", "fr"))),
+            ErrorEnvelopeModule(),
+        ],
         validate=False,
     )
     transport = ASGITransport(app=app)
@@ -67,11 +72,16 @@ async def test_regression_error_message_is_catalog_localized_via_route_handler()
 async def test_regression_error_message_is_english_default_without_catalog() -> None:
     # No catalog wired -> byte-identical to pre-fix behaviour: the
     # untranslated default_message, no silent breakage.
+    from varco_fastapi.modules.edge import ErrorEnvelopeModule, LocalizationModule
+
     container = DIContainer()
     app = create_varco_app(
         container,
         routers=[_BoomRouter],
-        i18n=I18nSettings(enabled=True, supported_locales=("en", "fr")),
+        modules=[
+            LocalizationModule(i18n=I18nSettings(enabled=True, supported_locales=("en", "fr"))),
+            ErrorEnvelopeModule(),
+        ],
         validate=False,
     )
     transport = ASGITransport(app=app)

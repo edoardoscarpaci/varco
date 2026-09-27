@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from providify import DIContainer
 from varco_core.auth.base import AuthContext
 from varco_fastapi.app import create_varco_app
 from varco_fastapi.auth import ApiKeyAuth
@@ -50,7 +51,7 @@ def _make_app():
         async def get_data(self, ctx: Any) -> dict:
             return {"ok": True}
 
-    return create_varco_app(routers=[InternalRouter], validate=False)
+    return create_varco_app(DIContainer(), routers=[InternalRouter], validate=False)
 
 
 def test_matching_profile_returns_200():

@@ -3,20 +3,27 @@ milestone_f / test_app_factory.py
 ====================================
 Tests for ``create_varco_app()`` and ``_scan_routers()``.
 
+Plan 049 / DI-1 migration: ``container`` is now required (§D-signature) —
+every ``create_varco_app(...)`` call below passes a fresh ``DIContainer()``.
+``extra_middleware=`` is gone — replaced by
+``MiddlewareModule([...])`` (§D-adapters). The
+``_collect_lifecycle_components``/``_try_resolve_component`` section is
+gone — ``CoreModule``/``WsModule`` absorb that behaviour and are covered
+by ``varco_core/tests/test_di_module.py`` and
+``varco_ws/tests/test_ws_module.py``.
+
 Covers:
 - Basic creation returns a FastAPI instance
 - Explicit ``routers`` list is mounted
 - ``routers=[]`` mounts nothing (explicit empty list ≠ auto-scan)
-- ``container=None, routers=None`` → only HealthRouter mounted
+- ``routers=None`` with no scanned routers → only HealthRouter mounted
 - ``validate=False`` skips validation checks
-- Middleware stack is applied (CORS, Error, Tracing, RequestContext)
 - MCPAdapter is mounted when provided
 - SkillAdapter is mounted when provided
 - HealthRouter is always present
 - ``_scan_routers``: returns empty list when container.get_all raises
 - ``_scan_routers``: calls container.scan() for each package in scan_packages
 - ``_scan_routers``: deduplicates same class from multiple bindings
-- ``_collect_lifecycle_components``: collects WebSocketEventBus and SSEEventBus
 """
 
 from __future__ import annotations
@@ -26,7 +33,9 @@ from unittest.mock import MagicMock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from providify import DIContainer
 from varco_fastapi.app import _scan_routers, create_varco_app
+from varco_fastapi.modules.base import MiddlewareModule
 from varco_fastapi.router.base import VarcoRouter
 from varco_fastapi.router.mixins import CreateMixin, ReadMixin
 
@@ -53,13 +62,13 @@ def _all_route_paths(app: FastAPI) -> set[str]:
 
 
 def test_create_returns_fastapi_instance():
-    """``create_varco_app()`` with no args returns a ``FastAPI`` instance."""
-    app = create_varco_app(validate=False)
+    """``create_varco_app()`` returns a ``FastAPI`` instance."""
+    app = create_varco_app(DIContainer(), validate=False)
     assert isinstance(app, FastAPI)
 
 
 def test_title_and_version_set():
-    app = create_varco_app(title="My API", version="2.0.0", validate=False)
+    app = create_varco_app(DIContainer(), title="My API", version="2.0.0", validate=False)
     assert app.title == "My API"
     assert app.version == "2.0.0"
 
@@ -69,7 +78,7 @@ def test_title_and_version_set():
 
 def test_explicit_routers_are_mounted():
     """Routes from ``ItemRouter`` appear in the app."""
-    app = create_varco_app(routers=[ItemRouter], validate=False)
+    app = create_varco_app(DIContainer(), routers=[ItemRouter], validate=False)
     paths = _all_route_paths(app)
     # ItemRouter has CreateMixin (POST /) and ReadMixin (GET /{id})
     # with prefix /items → /items/ and /items/{id}
@@ -78,7 +87,7 @@ def test_explicit_routers_are_mounted():
 
 def test_explicit_empty_routers_mounts_nothing_extra():
     """``routers=[]`` → no CRUD routes, only HealthRouter."""
-    app = create_varco_app(routers=[], validate=False)
+    app = create_varco_app(DIContainer(), routers=[], validate=False)
     paths = _all_route_paths(app)
     # No /items or /products routes
     assert not any("/items" in str(p) for p in paths if p)
@@ -86,9 +95,10 @@ def test_explicit_empty_routers_mounts_nothing_extra():
     assert any("health" in str(p).lower() for p in paths if p)
 
 
-def test_no_container_no_routers_has_health():
-    """``container=None, routers=None`` → only HealthRouter routes present."""
-    app = create_varco_app(validate=False)
+def test_no_explicit_routers_has_health():
+    """``routers=None`` on a container with no scanned routers → only
+    HealthRouter routes present."""
+    app = create_varco_app(DIContainer(), routers=None, validate=False)
     paths = _all_route_paths(app)
     assert any("health" in str(p).lower() for p in paths if p)
 
@@ -106,7 +116,7 @@ def test_validate_false_skips_container_check():
     mock_container.scan = MagicMock()
 
     # Should not raise even though the container is missing required bindings
-    app = create_varco_app(mock_container, routers=[], validate=False)
+    app = create_varco_app(mock_container, routers=[], modules=[], validate=False)
     assert isinstance(app, FastAPI)
 
 
@@ -122,7 +132,7 @@ def test_validate_true_calls_container_validation(monkeypatch):
     mock_container.get_all = MagicMock(return_value=[])
     mock_container.scan = MagicMock()
 
-    create_varco_app(mock_container, routers=[], validate=True)
+    create_varco_app(mock_container, routers=[], modules=[], validate=True)
 
     assert len(called_with) == 1
     assert called_with[0] is mock_container
@@ -134,7 +144,7 @@ def test_validate_true_calls_container_validation(monkeypatch):
 def test_mcp_adapter_is_mounted_when_provided():
     """If ``mcp_adapter`` is provided, its ``mount()`` method is called."""
     mock_adapter = MagicMock()
-    app = create_varco_app(routers=[], mcp_adapter=mock_adapter, validate=False)
+    app = create_varco_app(DIContainer(), routers=[], mcp_adapter=mock_adapter, validate=False)
     mock_adapter.mount.assert_called_once()
     # First arg to mount() should be the FastAPI app
     assert mock_adapter.mount.call_args[0][0] is app
@@ -143,7 +153,13 @@ def test_mcp_adapter_is_mounted_when_provided():
 def test_mcp_adapter_path_forwarded():
     """``mcp_path`` is forwarded to ``MCPAdapter.mount()``."""
     mock_adapter = MagicMock()
-    create_varco_app(routers=[], mcp_adapter=mock_adapter, mcp_path="/ai/mcp", validate=False)
+    create_varco_app(
+        DIContainer(),
+        routers=[],
+        mcp_adapter=mock_adapter,
+        mcp_path="/ai/mcp",
+        validate=False,
+    )
     mount_kwargs = mock_adapter.mount.call_args[1]
     assert mount_kwargs.get("path") == "/ai/mcp"
 
@@ -151,7 +167,7 @@ def test_mcp_adapter_path_forwarded():
 def test_no_mcp_adapter_does_not_call_mount():
     """When ``mcp_adapter`` is not provided, no MCP mounting happens."""
     mock_adapter = MagicMock()
-    create_varco_app(routers=[], validate=False)  # no mcp_adapter
+    create_varco_app(DIContainer(), routers=[], validate=False)  # no mcp_adapter
     mock_adapter.mount.assert_not_called()
 
 
@@ -161,7 +177,7 @@ def test_no_mcp_adapter_does_not_call_mount():
 def test_skill_adapter_is_mounted_when_provided():
     """If ``skill_adapter`` is provided, its ``mount()`` method is called."""
     mock_adapter = MagicMock()
-    app = create_varco_app(routers=[], skill_adapter=mock_adapter, validate=False)
+    app = create_varco_app(DIContainer(), routers=[], skill_adapter=mock_adapter, validate=False)
     mock_adapter.mount.assert_called_once()
     assert mock_adapter.mount.call_args[0][0] is app
 
@@ -170,6 +186,7 @@ def test_skill_adapter_kwargs_forwarded():
     """``skill_agent_card_path`` and ``skill_tasks_prefix`` are forwarded."""
     mock_adapter = MagicMock()
     create_varco_app(
+        DIContainer(),
         routers=[],
         skill_adapter=mock_adapter,
         skill_agent_card_path="/custom/.well-known/agent.json",
@@ -186,7 +203,7 @@ def test_skill_adapter_kwargs_forwarded():
 
 def test_health_router_always_present():
     """HealthRouter is always mounted regardless of other arguments."""
-    app = create_varco_app(validate=False)
+    app = create_varco_app(DIContainer(), validate=False)
     client = TestClient(app, raise_server_exceptions=False)
     # HealthRouter typically exposes GET /health or GET /health/live
     resp = client.get("/health")
@@ -194,11 +211,11 @@ def test_health_router_always_present():
     assert resp.status_code != 404
 
 
-# ── Extra middleware ──────────────────────────────────────────────────────────
+# ── MiddlewareModule (replaces extra_middleware=) ────────────────────────────
 
 
-def test_extra_middleware_tuple_form_accepted():
-    """Extra middleware passed as ``(MiddlewareClass, kwargs)`` does not raise."""
+def test_middleware_module_tuple_form_accepted():
+    """A ``(MiddlewareClass, kwargs)`` entry does not raise."""
     from starlette.middleware.base import BaseHTTPMiddleware
 
     class NoopMiddleware(BaseHTTPMiddleware):
@@ -206,15 +223,16 @@ def test_extra_middleware_tuple_form_accepted():
             return await call_next(request)
 
     app = create_varco_app(
+        DIContainer(),
         routers=[],
-        extra_middleware=[(NoopMiddleware, {})],
+        modules=[MiddlewareModule([(NoopMiddleware, {})])],
         validate=False,
     )
     assert isinstance(app, FastAPI)
 
 
-def test_extra_middleware_bare_class_form_accepted():
-    """Extra middleware passed as a bare class does not raise."""
+def test_middleware_module_bare_class_form_accepted():
+    """A bare middleware class entry does not raise."""
     from starlette.middleware.base import BaseHTTPMiddleware
 
     class NoopMiddleware(BaseHTTPMiddleware):
@@ -222,8 +240,9 @@ def test_extra_middleware_bare_class_form_accepted():
             return await call_next(request)
 
     app = create_varco_app(
+        DIContainer(),
         routers=[],
-        extra_middleware=[NoopMiddleware],
+        modules=[MiddlewareModule([NoopMiddleware])],
         validate=False,
     )
     assert isinstance(app, FastAPI)
@@ -311,132 +330,3 @@ def test_scan_routers_continues_on_scan_error():
     result = _scan_routers(mock_container, scan_packages=["bad.package", "good.package"])
     assert call_count == 2  # both packages attempted
     assert result == [ItemRouter]  # good package's routers still found
-
-
-# ── _collect_lifecycle_components: varco_ws adapters ─────────────────────────
-
-
-def test_collect_lifecycle_includes_websocket_event_bus(monkeypatch):
-    """
-    When ``WebSocketEventBus`` is resolvable from the container,
-    ``_collect_lifecycle_components`` includes it in the returned list.
-
-    Uses ``monkeypatch`` to stub ``importlib.import_module`` so the test
-    does not require the real ``varco_ws`` package to be importable in all
-    environments.  Only the module/class used by ``_try_resolve_component``
-    needs to be patched.
-    """
-    from varco_fastapi.app import _collect_lifecycle_components
-
-    ws_instance = MagicMock(name="WebSocketEventBus")
-
-    class _FakeWsModule:
-        WebSocketEventBus = type("WebSocketEventBus", (), {})
-
-    class _FakeSseModule:
-        SSEEventBus = type("SSEEventBus", (), {})
-
-    def _fake_import(name):
-        if name == "varco_ws.websocket":
-            return _FakeWsModule
-        if name == "varco_ws.sse":
-            return _FakeSseModule
-        # varco_core modules go through the real import
-        import importlib
-
-        return importlib.__import__(name)
-
-    container = MagicMock()
-    container.scan = MagicMock()
-
-    def _is_resolvable(cls):
-        return cls is _FakeWsModule.WebSocketEventBus
-
-    def _get(cls):
-        if cls is _FakeWsModule.WebSocketEventBus:
-            return ws_instance
-        raise LookupError("not bound")
-
-    container.is_resolvable = MagicMock(side_effect=_is_resolvable)
-    container.get = MagicMock(side_effect=_get)
-
-    import importlib as _importlib
-
-    monkeypatch.setattr(_importlib, "import_module", _fake_import)
-
-    components = _collect_lifecycle_components(container)
-    assert ws_instance in components
-
-
-def test_collect_lifecycle_includes_sse_event_bus(monkeypatch):
-    """
-    When ``SSEEventBus`` is resolvable from the container,
-    ``_collect_lifecycle_components`` includes it in the returned list.
-    """
-    from varco_fastapi.app import _collect_lifecycle_components
-
-    sse_instance = MagicMock(name="SSEEventBus")
-
-    class _FakeWsModule:
-        WebSocketEventBus = type("WebSocketEventBus", (), {})
-
-    class _FakeSseModule:
-        SSEEventBus = type("SSEEventBus", (), {})
-
-    def _fake_import(name):
-        if name == "varco_ws.websocket":
-            return _FakeWsModule
-        if name == "varco_ws.sse":
-            return _FakeSseModule
-        import importlib
-
-        return importlib.__import__(name)
-
-    container = MagicMock()
-    container.scan = MagicMock()
-
-    def _is_resolvable(cls):
-        return cls is _FakeSseModule.SSEEventBus
-
-    def _get(cls):
-        if cls is _FakeSseModule.SSEEventBus:
-            return sse_instance
-        raise LookupError("not bound")
-
-    container.is_resolvable = MagicMock(side_effect=_is_resolvable)
-    container.get = MagicMock(side_effect=_get)
-
-    import importlib as _importlib
-
-    monkeypatch.setattr(_importlib, "import_module", _fake_import)
-
-    components = _collect_lifecycle_components(container)
-    assert sse_instance in components
-
-
-def test_collect_lifecycle_skips_ws_when_varco_ws_not_installed(monkeypatch):
-    """
-    If ``varco_ws`` is not installed (``ModuleNotFoundError``), the lifecycle
-    collection does not raise and simply omits the ws adapters.
-    """
-    from varco_fastapi.app import _collect_lifecycle_components
-
-    def _fake_import(name):
-        if name in ("varco_ws.websocket", "varco_ws.sse"):
-            raise ModuleNotFoundError(f"No module named '{name}'")
-        import importlib
-
-        return importlib.__import__(name)
-
-    container = MagicMock()
-    container.scan = MagicMock(side_effect=lambda *a, **kw: None)
-    container.is_resolvable = MagicMock(return_value=False)
-    container.get = MagicMock(side_effect=LookupError)
-
-    import importlib as _importlib
-
-    monkeypatch.setattr(_importlib, "import_module", _fake_import)
-
-    # Must not raise
-    components = _collect_lifecycle_components(container)
-    assert isinstance(components, list)

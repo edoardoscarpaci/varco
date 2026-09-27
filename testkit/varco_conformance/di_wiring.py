@@ -103,6 +103,21 @@ class DIWiringConformance:
     #: (the default) skips the settings-uniqueness test below.
     settings_classes: ClassVar[tuple[type, ...]] = ()
 
+    #: Plan 049 / Step 17 — this package's one `VarcoModule` subclass (its
+    #: `<pkg>/modules.py::<Pkg>Module`, or `varco_core.di.module.CoreModule`
+    #: for `varco_core` itself). `None` (the default) skips the four
+    #: module-contract tests below via `pytest.skip` (never a silent pass).
+    module_cls: ClassVar[type[Any] | None] = None
+
+    #: Optional override for how `test_package_module_registers_cleanly`
+    #: constructs the module under test — some modules (`SAModule`,
+    #: `BeanieModule`) require a constructor argument (`config=`/
+    #: `settings=`) before `validate()` can be clean at all (their
+    #: `@Provider` methods request `SAConfig`/`BeanieSettings`, which has
+    #: no `@Fallback` default — an app is *expected* to supply one). `None`
+    #: (the default) constructs `module_cls()` with no arguments.
+    module_factory: ClassVar[Callable[[], Any] | None] = None
+
     @pytest.fixture
     def bootstrap(self) -> Callable[[DIContainer], DIContainer]:
         """Abstract — must be overridden by every subclass.
@@ -384,3 +399,86 @@ class DIWiringConformance:
             assert (interface, qualifier) in classified or classified == set(), (
                 "catalogue() must classify every declared default"
             )
+
+    # ── Plan 049 / Step 17 — module contract, extending the 046 suite ──
+
+    async def test_package_module_registers_cleanly(
+        self, bootstrap: Callable[[DIContainer], DIContainer]
+    ) -> None:
+        """A fresh container + this package's VarcoModule() must register
+        without raising, and validate() must be clean under known_warnings
+        (the same predicate test_validate_is_clean already applies).
+        """
+        if self.module_cls is None:
+            pytest.skip("no module_cls declared")
+
+        from varco_core.di.module import CoreModule
+
+        c = DIContainer()
+        if self.module_cls is not CoreModule:
+            CoreModule().register(c)
+        module = self.module_factory() if self.module_factory is not None else self.module_cls()
+        module.register(c)
+
+        report = c.validate(raise_on_error=False)
+        assert report.errors == ()
+        observed_warnings = {(i.kind, getattr(i, "owner", "")) for i in report.warnings}
+        assert observed_warnings - self.known_warnings == set()
+
+    async def test_package_module_register_is_idempotent(self) -> None:
+        """The second register() call must leave the binding count
+        unchanged — the ModuleRegistry template's own idempotency
+        guarantee (§D-registry), verified per package.
+        """
+        if self.module_cls is None:
+            pytest.skip("no module_cls declared")
+
+        from varco_core.di.module import CoreModule
+
+        c = DIContainer()
+        if self.module_cls is not CoreModule:
+            CoreModule().register(c)
+        module = self.module_cls()
+        module.register(c)
+        count_after_first = len(c.describe().bindings)
+
+        module.register(c)
+
+        assert len(c.describe().bindings) == count_after_first
+
+    async def test_package_module_carries_no_providify_marker(self) -> None:
+        """§D-scan (2) — a VarcoModule subclass must never carry a
+        providify @Configuration/@Singleton/@Component marker nor any
+        @Provider-marked callable in its own __dict__, or
+        container.scan(this package) would activate it.
+        """
+        if self.module_cls is None:
+            pytest.skip("no module_cls declared")
+
+        from providify import metadata as providify_metadata
+
+        cls = self.module_cls
+        assert not providify_metadata._has_configuration_module(cls), (
+            f"{cls!r} must not carry a providify @Configuration marker"
+        )
+        for name, value in vars(cls).items():
+            provider_meta = getattr(providify_metadata, "_get_provider_metadata", None)
+            if provider_meta is not None:
+                assert provider_meta(value) is None, f"{cls!r}.{name} must not be @Provider-marked"
+
+    async def test_package_module_name_matches_package(self) -> None:
+        """`module_cls.name` names the package suffix (e.g. "sa", "redis",
+        "core" for CoreModule itself); `depends_on` names CoreModule unless
+        the module IS CoreModule (§D-order — every backend module depends
+        on CoreModule for its bootstrap() to have run first).
+        """
+        if self.module_cls is None:
+            pytest.skip("no module_cls declared")
+
+        from varco_core.di.module import CoreModule
+
+        cls = self.module_cls
+        assert isinstance(cls.name, str) and cls.name
+
+        if cls is not CoreModule:
+            assert CoreModule in cls.depends_on

@@ -15,6 +15,8 @@ from varco_fastapi.middleware.introspect import (  # type: ignore[attr-defined]
     HttpEdgePosture,
     inspect_http_edge,
 )
+from varco_fastapi.modules.defaults import default_modules
+from varco_fastapi.modules.edge import BodyLimitModule, RateLimitModule, SecurityHeadersModule
 
 # §D-seam's exact, literal check-id contract — a rename here must break this
 # test, not silently drift out from under Plan 036.
@@ -34,9 +36,7 @@ _EXPECTED_CHECK_IDS = frozenset(
 
 
 def _default_app():
-    return create_varco_app(
-        container=DIContainer(), routers=[], validate=False, enable_metrics=False
-    )
+    return create_varco_app(container=DIContainer(), routers=[], validate=False)
 
 
 def test_default_app_reports_security_headers_and_body_limit_installed() -> None:
@@ -60,10 +60,11 @@ def test_app_with_everything_disabled_reports_all_three_absent_findings() -> Non
         container=DIContainer(),
         routers=[],
         validate=False,
-        enable_metrics=False,
-        security_headers=False,
-        body_limit=False,
-        rate_limit=None,
+        modules=[
+            *default_modules(exclude=(SecurityHeadersModule, BodyLimitModule)),
+            SecurityHeadersModule(enabled=False),
+            BodyLimitModule(enabled=False),
+        ],
     )
     posture = inspect_http_edge(app)
     checks = {f.check for f in posture.findings}
@@ -89,8 +90,7 @@ def test_app_with_only_post_auth_rules_reports_no_pre_auth_rule_finding() -> Non
         container=DIContainer(),
         routers=[],
         validate=False,
-        enable_metrics=False,
-        rate_limit=bundle,
+        modules=[*default_modules(), RateLimitModule(bundle)],
     )
     posture = inspect_http_edge(app)
     checks = {f.check for f in posture.findings}
@@ -133,10 +133,11 @@ def test_emitted_check_ids_equal_the_d_seam_table_exactly() -> None:
                 container=DIContainer(),
                 routers=[],
                 validate=False,
-                enable_metrics=False,
-                security_headers=False,
-                body_limit=False,
-                rate_limit=None,
+                modules=[
+                    *default_modules(exclude=(SecurityHeadersModule, BodyLimitModule)),
+                    SecurityHeadersModule(enabled=False),
+                    BodyLimitModule(enabled=False),
+                ],
             )
         ).findings
     }

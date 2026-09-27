@@ -65,37 +65,22 @@ Async safety:   ✅ ``create_app()`` is ``async def`` — use with an ASGI serve
 
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI
 from providify import DIContainer
+from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import DeclarativeBase
-from varco_core.di import bootstrap as core_bootstrap
-from varco_core.event import AbstractEventBus
-from varco_core.job.base import AbstractJobRunner
-from varco_fastapi.di import bootstrap as fastapi_bootstrap
-from varco_fastapi.lifespan import VarcoLifespan
-from varco_fastapi.middleware import (
-    ErrorMiddleware,
-    RequestContextMiddleware,
-    install_cors,
-    install_middleware_stack,
-)
-from varco_redis.di import (
-    async_bootstrap as redis_async_bootstrap,
-)
-from varco_redis.di import (
-    bootstrap as redis_bootstrap,
-)
-from varco_sa.bootstrap import make_sa_provider
-from varco_sa.di import bind_repositories, create_tables
-from varco_sa.di import bootstrap as sa_bootstrap
-from varco_ws.di import bootstrap as ws_bootstrap
+from varco_fastapi.app import create_varco_app
+from varco_fastapi.modules.defaults import default_modules
+from varco_redis.modules import RedisModule
+from varco_sa.config import SAConfig
+from varco_sa.modules import SAModule
+from varco_ws.modules import WsModule
 
-from example.auth import AuthRouter, build_jwt_authority
-from example.consumer import PostEventConsumer
+from example.auth import build_jwt_authority
 from example.models import Post
-from example.router import PostRouter
-from example.service import PostService
-from example.streams import StreamsRouter
+from example.module import PostAppModule
 
 
 # ── SQLAlchemy declarative base ───────────────────────────────────────────────
@@ -110,34 +95,32 @@ def create_app() -> FastAPI:
     """
     Build and return the configured FastAPI application.
 
-    This is a **synchronous** factory — uvicorn loads it without ``--factory``.
-    All async initialization (DI async installs, registry key loading, component
-    resolution) is deferred to a ``_bootstrap`` closure that runs inside
-    ``VarcoLifespan`` at startup, before any request is served.
+    Plan 049 / DI-1 (§D-example): this factory now builds one
+    ``DIContainer`` and calls ``create_varco_app(container, modules=[...])``
+    instead of hand-building ``FastAPI`` + ``VarcoLifespan`` — the module
+    list *is* the bootstrap sequence, in order:
 
-    Bootstrap sequence:
-    1.  Build JWT authority + construct ``TrustedIssuerRegistry`` (sync).
-    2.  Build ``JwtBearerAuth`` from the registry (sync).
-    3.  Build ``DIContainer``, provide ``SAConfig``, and scan all packages
-        (``sa_bootstrap`` → ``redis_bootstrap`` → ``fastapi_bootstrap``
-        → ``container.scan("example")``).  All sync.
-    4.  Build ``VarcoLifespan`` with a ``_bootstrap`` async setup hook.
-    5.  Create ``FastAPI`` app with lifespan + middleware stack (sync).
-    6.  At startup (inside ``_bootstrap``):
-        a.  ``await redis_async_bootstrap(container)`` — cache start (always installs now).
-        b.  ``await registry.load_all()`` — populate public keyset.
-        c.  Resolve bus, consumer, job_runner and register with lifespan.
-        d.  Resolve ``PostService`` and include routers on the app.
-
-    Middleware stack (outermost first, via ``install_middleware_stack``)::
-
-        ErrorMiddleware          ← catches all exceptions, formats JSON
-          CORSMiddleware         ← adds CORS headers
-            RequestContextMiddleware ← sets AuthContext ContextVar per request
+    1. Build the JWT authority + ``TrustedIssuerRegistry`` + ``JwtBearerAuth``
+       (sync, outside DI — a pure value object, no lifecycle).
+    2. Build ``SAConfig`` from ``DATABASE_URL`` (sync — the engine itself
+       connects lazily on first use).
+    3. ``create_varco_app(container, modules=[*default_modules(),
+       SAModule(config=..., entities=(Post,)), RedisModule(cache=True),
+       WsModule(), PostAppModule(authority, registry, server_auth)],
+       routers=[])`` — ``default_modules()`` already lists ``CoreModule``/
+       ``ObservabilityModule`` first; every module's ``register()`` runs
+       synchronously here; ``async_init()``/``start()``/``stop()`` run inside
+       the returned app's ASGI lifespan (unchanged ``VarcoLifespan`` timing).
+    4. ``routers=[]`` — ``PostRouter``/``AuthRouter``/``StreamsRouter`` all
+       need a DI-injected or hand-built constructor argument
+       ``create_varco_app``'s ``_mount_router`` cannot supply (a synchronous,
+       no-argument ``router_cls()`` call) — ``PostAppModule.async_init()``
+       mounts all three instead (see its own docstring).
 
     Returns:
-        A configured ``FastAPI`` application ready for an ASGI server.
-        Async initialization runs inside ``VarcoLifespan`` at startup.
+        A configured ``fastapi.FastAPI`` application ready for an ASGI
+        server. Async initialization runs inside the ASGI lifespan at
+        startup, exactly as before this plan.
 
     Raises:
         KeyError: ``DATABASE_URL``, ``VARCO_REDIS_URL``, or
@@ -145,35 +128,21 @@ def create_app() -> FastAPI:
         KeyLoadError: ``VARCO_JWT_PRIVATE_KEY_PEM`` is set but malformed.
 
     Edge cases:
-        - If the database or Redis is unavailable, the app STARTS but
-          the first request that touches them fails.
+        - If the database or Redis is unavailable, the app STARTS but the
+          first request that touches them fails.
         - ``create_app()`` is NOT idempotent when auto-generating RSA keys —
-          each call produces a different authority.  Call once per process.
+          each call produces a different authority. Call once per process.
         - In dev mode (no PEM env var), tokens issued before an app restart
-          will fail verification after restart.  Users must re-login.
-        - Routers are registered on the app inside ``_bootstrap`` (at startup),
-          not at factory time.  This is safe — FastAPI allows ``include_router``
-          before the first request arrives.
+          will fail verification after restart. Users must re-login.
 
     Thread safety:  ✅ Called once at startup; not thread-safe to call twice.
     Async safety:   ✅ Sync — no event loop required at call time.
     """
     # ── 1. JWT authority (auth infrastructure) ────────────────────────────────
-    # Build before the DI container — the authority is passed directly to
-    # AuthRouter and TrustedIssuerRegistry; no DI binding needed.
-    #
-    # DESIGN: authority outside DI over @Provider
-    #   ✅ Avoids chicken-and-egg with async DI setup.
-    #   ✅ Authority is a pure value object (key material) — no lifecycle.
-    #   ✅ Simplifies DI scan (no JwtAuthority binding to accidentally shadow).
-    #   ❌ Authority not injectable — acceptable for a quickstart; add a
-    #      @Provider binding if services need to sign tokens themselves.
+    # Built outside DI — a pure value object (key material), no lifecycle;
+    # passed directly to PostAppModule for AuthRouter/TrustedIssuerRegistry.
     authority = build_jwt_authority()
 
-    # Construct the registry now (sync) but defer load_all() to _bootstrap —
-    # load_all() is async and must run inside the event loop.
-    # JwtBearerAuth holds a reference to the registry and calls verify() per
-    # request; verify() works correctly once load_all() has been awaited.
     from varco_core.authority.registry import TrustedIssuerRegistry  # noqa: PLC0415
 
     registry = TrustedIssuerRegistry()
@@ -182,76 +151,34 @@ def create_app() -> FastAPI:
     # JwtBearerAuth verifies Authorization: Bearer <token> on every request.
     # required=False so anonymous callers can still hit public endpoints
     # (list posts, read posts) without providing a token.
-    # PostAuthorizer enforces access rules — the auth layer only extracts identity.
     from varco_fastapi.auth import JwtBearerAuth  # noqa: PLC0415
 
     server_auth = JwtBearerAuth(registry=registry, required=False)
 
-    # ── 2. DI container (sync installs only) ─────────────────────────────────
-    # The async cache install (RedisCacheConfiguration) happens inside
-    # _bootstrap so it can be awaited in the event loop; the Redis bus is
-    # discovered by scan.
+    # ── 2. SAConfig from DATABASE_URL ──────────────────────────────────────────
+    # Eager here (not the lazy make_sa_provider() shape) — SAModule's own
+    # contract is "bind_instance(container, SAConfig, config)" with an
+    # already-constructed value; DATABASE_URL is already set by the time
+    # create_app() is called (the same constraint the pre-049 lazy provider
+    # carried — its first resolution always happened after env setup too).
+    sa_config = SAConfig(
+        engine=create_async_engine(os.environ["DATABASE_URL"]),
+        base=Base,
+        entity_classes=(Post,),
+    )
+
+    # ── 3. Build the app through create_varco_app(modules=[...]) ──────────────
     container = DIContainer()
-
-    # ── 3. SQLAlchemy ORM ─────────────────────────────────────────────────────
-    # make_sa_provider reads DATABASE_URL from env lazily (at first resolution).
-    # Equivalent to the manual @Provider + create_async_engine + SAConfig block,
-    # collapsed to a single line.
-    container.provide(make_sa_provider(Base, Post))
-
-    # ── 4. Scan all backend + framework packages ──────────────────────────────
-    # Each scan call is idempotent and discovers all @Singleton/@Component classes
-    # and module-level @Provider functions in that package.  No install() calls
-    # are needed — all @Configuration classes are either empty or replaced by
-    # module-level @Provider functions that scan finds automatically.
-    from varco_core.di import bind_instance
-    from varco_redis.config import RedisEventBusSettings
-
-    # §D-streams (Plan 046) — bootstrap(streams=True) is gone; register an
-    # explicit non-fallback settings instance before bootstrap() instead.
-    bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))
-
-    sa_bootstrap(container)  # SA repo provider + UoW
-    redis_bootstrap(container)  # Redis event bus (streams, per the settings above)
-    ws_bootstrap(container)  # WebSocket + SSE adapters
-    # varco_core.di.bootstrap() binds AbstractEventProducer → BusEventProducer
-    # (a varco_core Class-A @Fallback default) so PostService._produce()
-    # publishes events to the Redis bus instead of no-op — setup_event_producer()
-    # is gone (Plan 046 §D-removals).
-    core_bootstrap(container)
-    fastapi_bootstrap(container)  # FastAPI defaults
-
-    # ── 5. Domain module ──────────────────────────────────────────────────────
-    # container.scan() discovers @Singleton-decorated classes in the example
-    # package: PostAssembler, PostService, PostEventConsumer, PostAuthorizer.
-    # PostAuthorizer (@Singleton at priority 0) shadows BaseAuthorizer
-    # (@Singleton at priority -(2**31)) — no explicit bind() needed.
-    container.scan("example", recursive=True)
-
-    # PostRouter's base class (VarcoCRUDRouter) has abstract bases so the
-    # scanner does not self-bind it.  Explicit bind() makes it resolvable.
-    container.bind(PostRouter, PostRouter)
-
-    # PostService extends AsyncService (abstract) and CacheServiceMixin (abstract).
-    # The scanner binds PostService to those ABCs but does NOT self-bind it, so
-    # container.aget(PostService) would raise LookupError without this explicit
-    # self-bind.  Same root cause as PostRouter above.
-    container.bind(PostService, PostService)
-
-    # ── 6. Per-entity repository bindings ─────────────────────────────────────
-    bind_repositories(container, Post)
-
-    # ── 7. Lifespan + async bootstrap ─────────────────────────────────────────
-    # VarcoLifespan.setup runs before any component is started, so _bootstrap
-    # can register components (bus, consumer, job_runner) that are then started
-    # in the normal FIFO order by VarcoLifespan.
-    lifespan = VarcoLifespan()
-
-    # ── 8. Create FastAPI app ─────────────────────────────────────────────────
-    # The app is created here (sync) so the middleware stack can be assembled.
-    # Routers are added inside _bootstrap (after async DI resolution) — FastAPI
-    # allows include_router() at any point before the first request.
-    app = FastAPI(
+    app = create_varco_app(
+        container,
+        modules=[
+            *default_modules(),
+            SAModule(config=sa_config, entities=(Post,)),
+            RedisModule(cache=True),
+            WsModule(),
+            PostAppModule(authority, registry, server_auth),
+        ],
+        routers=[],  # PostAppModule.async_init() mounts the three app routers
         title="Varco Post Example",
         version="1.0.0",
         description=(
@@ -266,123 +193,9 @@ def create_app() -> FastAPI:
             "- WebSocket: ``ws://localhost:8000/ws/posts``\n"
             "- SSE: ``GET /events/posts``"
         ),
-        lifespan=lifespan,
+        # validate defaults to True — AbstractServerAuth (PostAppModule's
+        # bind_instance) and AbstractJobStore/AbstractJobRunner
+        # (FastAPIModule, via default_modules()) are both satisfied.
     )
-
-    # Middleware stack — outermost first (install_middleware_stack handles reversal).
-    # DESIGN: install_middleware_stack over three separate add_middleware calls
-    #   ✅ Outermost-first order matches reading order — no mental reversal needed.
-    #   ✅ Adding a new middleware is a single list entry, not a position hunt.
-    #   ❌ install_cors callable form is slightly less obvious than the direct call.
-    #
-    # Stack (outermost → innermost):
-    #   ErrorMiddleware            — catches all exceptions, returns JSON
-    #   CORSMiddleware (via cors)  — adds CORS headers
-    #   RequestContextMiddleware   — sets AuthContext ContextVar per request
-    install_middleware_stack(
-        app,
-        [
-            ErrorMiddleware,
-            (install_cors, {}),  # reads VARCO_CORS_* from env
-            (RequestContextMiddleware, {"server_auth": server_auth}),
-        ],
-    )
-
-    # ── 9. Async bootstrap (runs at startup inside VarcoLifespan) ─────────────
-    # Captures app, container, registry, authority, lifespan via closure.
-    # All awaitable work lives here — create_app() itself stays sync.
-    async def _bootstrap() -> None:
-        """
-        Async initialization deferred from ``create_app()``.
-
-        Runs inside ``VarcoLifespan.__call__`` before any lifecycle component
-        is started, giving _bootstrap a chance to register components that
-        VarcoLifespan will then start in order.
-
-        Steps:
-        1. ``await create_tables(container)`` — populate ORM metadata + DDL.
-        2. ``await redis_async_bootstrap(container)`` — cache start (always installs now).
-        3. ``await registry.load_all()`` — populate issuer public keyset.
-        4. Resolve and register lifecycle singletons (bus, consumer, ws_bus, sse_bus,
-           job_runner) — startup order matters.
-        5. Resolve ``PostService``, build routers, include on the app.
-
-        Raises:
-            KeyError: ``VARCO_REDIS_CACHE_URL`` missing.
-            Exception: Any error from ``registry.load_all()`` or DI resolution.
-
-        Edge cases:
-            - If Redis is down, ``ainstall`` may raise — app startup fails cleanly.
-            - ``app.include_router()`` called here (not in ``create_app()``) is
-              safe: FastAPI processes the route table before the first request.
-        """
-        # Create DB tables if they don't exist — idempotent (CREATE TABLE IF NOT EXISTS).
-        # create_tables() resolves RepositoryProvider first to populate base.metadata,
-        # then runs DDL via the async engine.  Not for production migrations — use Alembic.
-        await create_tables(container)
-
-        # Install the Redis cache backend (async init — cache.start() must be awaited).
-        # redis_async_bootstrap wraps the sync scan + ainstall in one call so the
-        # _bootstrap closure doesn't need to import RedisCacheConfiguration directly.
-        # Plan 046 removed setup_cache= — async_bootstrap() always installs the
-        # cache now; call plain bootstrap() for a scan-only container.
-        await redis_async_bootstrap(container)
-
-        # Populate the issuer public keyset.  Must happen before any request
-        # arrives — JwtBearerAuth.verify() will fail on an empty keyset.
-        await registry.load_all()
-        # Resolve lifecycle singletons and register with lifespan so they are
-        # started (and stopped) in the correct order by VarcoLifespan.
-        from varco_ws.sse import SSEEventBus  # noqa: PLC0415
-        from varco_ws.websocket import WebSocketEventBus  # noqa: PLC0415
-
-        bus: AbstractEventBus = await container.aget(AbstractEventBus)
-        consumer: PostEventConsumer = await container.aget(PostEventConsumer)
-        ws_bus: WebSocketEventBus = await container.aget(WebSocketEventBus)
-        sse_bus: SSEEventBus = await container.aget(SSEEventBus)
-        job_runner: AbstractJobRunner = await container.aget(AbstractJobRunner)
-
-        # Startup order: bus first (must be running before consumers/adapters subscribe).
-        # ws_bus and sse_bus call bus.subscribe() in their start() — bus must be up.
-        # Shutdown is LIFO: job_runner → sse_bus → ws_bus → consumer → bus.
-        lifespan.register(bus)
-        lifespan.register(consumer)
-        lifespan.register(ws_bus)
-        lifespan.register(sse_bus)
-        lifespan.register(job_runner)
-
-        # PostService is @Singleton — resolve directly by its concrete type.
-        # No need to import 5 generic type parameters and use the abstract base.
-        post_service: PostService = await container.aget(PostService)
-        # Pass auth= in the constructor — no need for the post-construction
-        # attribute patch that required a `type: ignore` comment.
-        post_router_instance = PostRouter(service=post_service, auth=server_auth)
-        api_router = post_router_instance.build_router()
-
-        # Auth router — exposes POST /auth/login and GET /auth/me.
-        # The authority is passed directly (not via DI) so the router can sign
-        # tokens without needing a container reference at handler time.
-        auth_router_instance = AuthRouter(authority=authority)
-        auth_api_router = auth_router_instance.build_router()
-
-        # Streams router — WebSocket + SSE push endpoints for post events.
-        # StreamsRouter is @Singleton and was discovered by container.scan("example"),
-        # so the container injects ws_bus and sse_bus automatically — no manual
-        # argument passing needed.
-        streams_inst: StreamsRouter = await container.aget(StreamsRouter)
-        streams_router = streams_inst.build_router()
-
-        app.include_router(api_router)
-        app.include_router(auth_api_router)
-        app.include_router(streams_router)
-
-    # Wire _bootstrap as the lifespan setup hook — VarcoLifespan awaits it
-    # before starting any registered component.
-    #
-    # NOTE: VarcoLifespan(setup=_bootstrap) would be equivalent, but _bootstrap
-    # captures `lifespan` by reference (to call lifespan.register()) so
-    # lifespan must be created first.  Assigning _setup after construction is
-    # the idiomatic two-step for this mutual-capture pattern.
-    lifespan._setup = _bootstrap
 
     return app

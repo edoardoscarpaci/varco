@@ -3,14 +3,14 @@ varco_fastapi.di
 ==================
 Central DI module for varco_fastapi.
 
-``VarcoFastAPIModule`` is a ``@Configuration`` class that registers the default
+``VarcoFastAPIConfiguration`` is a ``@Configuration`` class that registers the default
 varco_fastapi providers in a ``DIContainer``.  Install it alongside backend
 modules (SA, Redis, etc.) at application bootstrap::
 
     container = DIContainer()
     container.scan("varco_kafka", recursive=True)   # discovers the Kafka bus
     container.install(SAModule)
-    container.install(VarcoFastAPIModule)
+    container.install(VarcoFastAPIConfiguration)
     bind_clients(container, OrderClient, UserClient)  # ⚠️ currently broken — see bind_clients() docstring
 
 Registered defaults (all ``@Fallback`` — any application binding of the same
@@ -28,7 +28,7 @@ interface wins regardless of registration order,
 
 ``setup_varco_defaults()`` / ``bootstrap(setup_defaults=)`` were removed in
 Plan 045 — ``TaskSerializer`` is now registered directly by
-``VarcoFastAPIModule.task_serializer`` (a ``@Fallback @Provider``, the same
+``VarcoFastAPIConfiguration.task_serializer`` (a ``@Fallback @Provider``, the same
 shape as every other default above), scanned automatically by
 ``container.scan("varco_fastapi", recursive=True)`` / ``bootstrap()``.
 
@@ -108,7 +108,7 @@ def bind_clients(container: DIContainer, *client_classes: type) -> DIContainer:
     Usage::
 
         container = DIContainer()
-        container.install(VarcoFastAPIModule)
+        container.install(VarcoFastAPIConfiguration)
         bind_clients(container, OrderClient, UserClient)
 
         # Now injectable:
@@ -246,16 +246,16 @@ def bind_clients_from(container: DIContainer, *router_classes: type) -> DIContai
     return bind_clients(container, *client_classes)
 
 
-# ── VarcoFastAPIModule ────────────────────────────────────────────────────────
+# ── VarcoFastAPIConfiguration ────────────────────────────────────────────────────────
 
 
 @Configuration
-class VarcoFastAPIModule:
+class VarcoFastAPIConfiguration:
     """
     ``@Configuration`` module for varco_fastapi defaults.
 
     Discovered and auto-installed by ``container.scan("varco_fastapi", recursive=True)``.
-    No explicit ``container.install(VarcoFastAPIModule)`` call is required.
+    No explicit ``container.install(VarcoFastAPIConfiguration)`` call is required.
 
     Registers (all overrideable via ``container.bind()`` before scanning):
         - ``TrustStore``               — from ``VARCO_TLS_TRUST_STORE_DIR`` env vars
@@ -417,7 +417,7 @@ class VarcoFastAPIModule:
 
 
 __all__ = [
-    "VarcoFastAPIModule",
+    "VarcoFastAPIConfiguration",
     "bind_clients",
     "bind_clients_from",
     "bootstrap",
@@ -441,11 +441,11 @@ def bootstrap(container: DIContainer) -> DIContainer:
     """
     Bootstrap ``varco_fastapi`` into a ``DIContainer``.
 
-    Installs :data:`VarcoFastAPIModule` and calls
+    Installs :data:`VarcoFastAPIConfiguration` and calls
     ``container.scan("varco_fastapi", recursive=True)``. Every framework
     default — including ``TaskSerializer → DefaultTaskSerializer`` — is
     registered by the scan itself (each is a ``@Fallback``-marked binding on
-    ``VarcoFastAPIModule`` or a scanned ``@Singleton`` class); there is no
+    ``VarcoFastAPIConfiguration`` or a scanned ``@Singleton`` class); there is no
     separate "setup defaults" step to opt into or skip.
 
     Plan 046 §D-removals deletes ``*packages``/``setup_producer=`` and the
@@ -463,7 +463,7 @@ def bootstrap(container: DIContainer) -> DIContainer:
         container = DIContainer()
         core_bootstrap(container)      # AbstractEventProducer → BusEventProducer, etc.
         redis_bootstrap(container)     # AbstractEventBus → RedisEventBus
-        fastapi_bootstrap(container)   # VarcoFastAPIModule defaults
+        fastapi_bootstrap(container)   # VarcoFastAPIConfiguration defaults
         container.scan("myapp", recursive=True)
 
     Args:
@@ -504,8 +504,8 @@ def bootstrap(container: DIContainer) -> DIContainer:
     ):
         bind_settings(container, settings_cls)
 
-    # The scanner discovers VarcoFastAPIModule (@Configuration) and calls
-    # container.install(VarcoFastAPIModule) automatically — no explicit
+    # The scanner discovers VarcoFastAPIConfiguration (@Configuration) and calls
+    # container.install(VarcoFastAPIConfiguration) automatically — no explicit
     # install() call needed.
     container.scan("varco_fastapi", recursive=True)
 

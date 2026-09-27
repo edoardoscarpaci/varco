@@ -56,9 +56,13 @@ async def test_container_shutdown_closes_orphaned_stream_manager_connection(
     A started-but-unregistered ``NatsStreamManager`` has its socket closed.
 
     Edge cases covered here on purpose:
-        - The manager is asserted to be an *orphan* first (absent from
-          ``_collect_lifecycle_components()``), so the test cannot silently
-          degrade into "a registered component was stopped".
+        - The manager is an *orphan* by construction: the ``VarcoLifespan``
+          built below is given no positional components at all (only the
+          ``shutdown=`` hook), so the test cannot silently degrade into "a
+          registered component was stopped". (Plan 049 / DI-1 deleted
+          ``_collect_lifecycle_components`` — see
+          ``test_redis_cache_lifespan_shutdown_integration.py``'s identical
+          note for the full reasoning.)
         - The assertion is on the live ``nats.aio.client.Client``, not on
           ``NatsStreamManager._nc`` alone: a hook that nulled the attribute but
           leaked the connection would still pass the weaker check.
@@ -67,7 +71,6 @@ async def test_container_shutdown_closes_orphaned_stream_manager_connection(
     pytest.importorskip("varco_fastapi")
 
     from varco_core.event.channel import ChannelManager
-    from varco_fastapi.app import _collect_lifecycle_components
     from varco_fastapi.lifespan import VarcoLifespan
 
     run_id = uuid4().hex[:8]
@@ -81,9 +84,8 @@ async def test_container_shutdown_closes_orphaned_stream_manager_connection(
     client = manager._nc
     assert client is not None and client.is_connected
 
-    # Pre-condition: this manager is exactly the orphan RL-8a is about.
-    assert manager not in _collect_lifecycle_components(container)
-
+    # Pre-condition: this manager is exactly the orphan RL-8a is about —
+    # see the docstring's Edge cases note above.
     async def _shutdown() -> None:
         await container.ashutdown()
 

@@ -56,9 +56,12 @@ from varco_redis.backplane import RedisBackplaneSettings
 from varco_redis.bus import RedisEventBus
 from varco_redis.cache import LayeredCacheSettings, RedisCacheSettings
 from varco_redis.config import RedisEventBusSettings
+from varco_redis.modules import RedisModule
 
 
 class TestVarcoRedisDIWiringConformance(DIWiringConformance):
+    module_cls = RedisModule
+
     settings_classes = (
         RedisEventBusSettings,
         RedisCacheSettings,

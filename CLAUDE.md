@@ -377,11 +377,12 @@ Authorization is enforced at the service layer (not HTTP), via the injected `Abs
 Each backend package ships a `di.py` with a `bootstrap()` helper that runs `container.scan(...)` to discover its `@Singleton` classes. Some packages also expose an opt-in `@Configuration` for resources that need imperative async setup (e.g. `RedisCacheConfiguration`). The DI module is the only place that knows concrete types — application code always injects interfaces (`AbstractEventBus`, `AsyncRepository[D]`, `IUoWProvider`).
 
 ```python
-# Typical app bootstrap
+# Typical app bootstrap (Plan 049 / DI-1 — create_varco_app(modules=[...]))
+from providify import DIContainer
+from varco_fastapi.app import create_varco_app
+
 container = DIContainer()
-container.scan("varco_kafka", recursive=True)  # discovers the Kafka bus @Singletons
-container.install(SAModule)
-bind_repositories(container, User, Post)
+app = create_varco_app(container)  # modules=None -> varco_fastapi.default_modules()
 ```
 
 **Rule**: every varco-registered binding of a varco seam is `@Fallback` (in-process defaults
@@ -414,6 +415,21 @@ bind_settings()` — never `@Singleton`, never a scanned `@Provider`, never a ha
 regenerate with `make settings-reference`, or `make lint` fails (`settings-check`). Full model,
 precedence, and a Pitfalls table: `technical_docs/features/dependency-injection.md`'s "Settings"
 section.
+
+**Modules (Plan 049)**: a varco module is a plain `varco_core.di.VarcoModule` — constructed by
+the app, never a providify `@Configuration`, never scanned (mechanically enforced by
+`test_modules_never_scanned.py`, core + fastapi). `*Configuration` = a providify `@Configuration`
+grouping `@Provider` methods, scan-installed, owned by its package's `bootstrap()`
+(`SAConfiguration`, `BeanieConfiguration`, `VarcoFastAPIConfiguration`); `*Module` = a
+`VarcoModule`, one per package, app-constructed (`SAModule`, `BeanieModule`, `KafkaModule`, …).
+`create_varco_app(container, *, modules=None, ...)` takes a list of `VarcoModule` instances in
+place of the eleven pre-4.0 keyword objects; `modules=None` installs
+`varco_fastapi.default_modules()`. Full model (slots, tri-state, `depends_on`, `EdgeSlot`,
+writing an app's own module): `technical_docs/features/dependency-injection.md`'s §Modules.
+
+**Decision tree addition**: *"A subsystem the app should switch on/off, or that needs
+startup/shutdown?"* → a `VarcoModule` in the owning package (`<pkg>/modules.py`), never a
+`create_varco_app` keyword; HTTP position → an `EdgeSlot`, never `add_middleware` in a module.
 
 ### DI wiring verb taxonomy
 
@@ -611,16 +627,19 @@ An `OpenFeatureFlags` adapter is purely additive once it does. Full version evid
 
 Security headers (`varco_fastapi.middleware.security_headers`, on by default), request body limits
 (`varco_fastapi.middleware.body_limit`, on by default at 10 MiB), and HTTP rate limiting
-(`varco_fastapi.middleware.rate_limit`, one opt-in `create_varco_app(rate_limit=RateLimitBundle(...))`
-row) — plus the unmapped-exception `str(exc)` leak fix (S3) and the `inspect_http_edge()` seam Plan
-036 consumes. Full design (the normative middleware-ordering table, every header/limit default
-argued, a Pitfalls table): `technical_docs/features/http-edge-hardening.md`. Usage: README's
-"Security headers"/"Request body limits"/"HTTP rate limiting" sections.
+(`varco_fastapi.middleware.rate_limit`, one opt-in `modules=[*default_modules(),
+RateLimitModule(RateLimitBundle(...))]` entry) — plus the unmapped-exception `str(exc)` leak fix
+(S3) and the `inspect_http_edge()` seam Plan 036 consumes. Full design (the normative
+middleware-ordering table, every header/limit default argued, a Pitfalls table):
+`technical_docs/features/http-edge-hardening.md`. Usage: README's "Security headers"/"Request
+body limits"/"HTTP rate limiting" sections.
 
-**Rule**: never register `SecurityHeadersMiddleware`/`BodyLimitMiddleware`/`RateLimitMiddleware`
-via `create_varco_app(extra_middleware=...)` — verified to land at the wrong stack position
-(outside `ErrorMiddleware`, and outside `RequestContextMiddleware`) for all three. Use the
-dedicated `security_headers=`/`body_limit=`/`rate_limit=` keywords instead.
+**Rule (updated by Plan 049)**: never install `SecurityHeadersMiddleware`/`BodyLimitMiddleware`/
+`RateLimitMiddleware` via `MiddlewareModule` (the replacement for the pre-049
+`extra_middleware=` keyword) — `MiddlewareModule` defaults to `EdgeSlot.EXTRA`, which is
+outside `ErrorMiddleware` and outside `RequestContextMiddleware` for all three. Use the
+dedicated `SecurityHeadersModule`/`BodyLimitModule`/`RateLimitModule` instead — each names its
+own correct `EdgeSlot`.
 
 **Rule**: never add a `remaining()`/quota-reporting method to `RateLimiter` to emit
 `X-RateLimit-*`/`RateLimit` headers — the ABC has no such method by design (adding one breaks
@@ -988,7 +1007,7 @@ proactively reload once the cache is stale, without waiting for a `kid` miss.
 `stop_refresh()` run a background task on the same `ttl_seconds`-derived period, so a registry
 can refresh without ever receiving a `verify()` call. **Off unless** `VARCO_JWT_JWKS_TTL_SECONDS`/
 `interval=` is positive, and it must be started explicitly — via
-`create_varco_app(jwks_refresh=JwksRefreshLifecycle(registry))` or a direct
+`modules=[*default_modules(), JwksRefreshModule(registry)]` or a direct
 `await registry.start_refresh()` call — **never** by a scanned `@Configuration` (the same
 `varco_core.tls`/`cloudevents` rule: `container.scan("varco_core", recursive=True)` must never
 auto-start a background HTTPS-fetching task). `varco_core.authority.inspect_jwks_posture()`
@@ -1130,7 +1149,7 @@ Usage: README's "Multi-tenancy (DB-level)" section.
 **Default is byte-identical to pre-Plan-007 behaviour.** `TenancySettings()` defaults:
 `isolation=SHARED`, `enforce_rls=False`, every model `TenantScope.TENANT`,
 `fanout_framework_tables=False`. No pool, no extra engine/client, no symbolic schema, no
-control-plane surface constructed. `create_varco_app(tenancy=None)` (the default)
+control-plane surface constructed. No `TenancyModule` in `modules=` (the default)
 registers nothing.
 
 **Rule**: `mount_tenant_admin(app, control_service, acknowledge_bundled_admin=True,
@@ -1448,7 +1467,7 @@ Am I adding a new capability?
 ├─ Scheduled cleanup of a framework table (DLQ, audit log, idempotency
 │  store, revocation store, job store)?
 │  └─ → varco_core.retention (Plan 039 / S20) — bind_retention_registry(container,
-│         registry) + create_varco_app(retention=RetentionLifecycle(...)), never a
+│         registry) + `modules=[*default_modules(), RetentionModule(registry)]`, never a
 │         hand-written job and never a second scheduler
 │     ↳ Outbox? → NOT a target — deleting an unpublished event is event
 │       loss by construction (technical_docs/features/retention-and-purge.md)
@@ -1548,8 +1567,8 @@ Am I adding a new capability?
 │         GlobalUoWProvider, AbstractTenantProvisioner, TenantFanoutSupervisor)
 │       + the backend implementation (varco_sa.tenancy.SASchemaRouter/SAEngineRegistry/
 │         SATenantCatalog / varco_beanie.tenancy.BeanieTenantPool/BeanieTenantCatalog)
-│       ↳ Startup wiring? → varco_fastapi.tenancy.TenancyLifecycle +
-│                            create_varco_app(tenancy=...)
+│       ↳ Startup wiring? → varco_fastapi.tenancy.TenancyLifecycle, wrapped by
+│                            varco_fastapi.modules.TenancyModule
 │       ↳ Request-scoped tenant resolution? → varco_fastapi.middleware.
 │                            TenantResolutionMiddleware
 │       ↳ Admin/provisioning surface? → varco_fastapi.tenancy.mount_tenant_admin()
@@ -1590,8 +1609,8 @@ Am I adding a new capability?
 │         (list/delete_where/verify_chain) for the primitives
 │       ↳ Bundling retry+DLQ+outbox+audit+metrics behind one object?
 │                            → varco_core.reliability.ReliabilityPreset
-│       ↳ FastAPI startup wiring? → varco_fastapi.reliability.ReliabilityLifecycle
-│                            + create_varco_app(reliability=...)
+│       ↳ FastAPI startup wiring? → varco_fastapi.reliability.ReliabilityLifecycle, wrapped by
+│                            varco_fastapi.modules.ReliabilityModule
 │       ↳ REST admin/query surface? → varco_fastapi.admin.mount_reliability_admin()
 │                            (never a create_varco_app kwarg — RD-9, same rule
 │                            as mount_tenant_admin())

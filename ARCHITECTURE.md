@@ -150,7 +150,7 @@ varco_sa/                — SQLAlchemy async ORM backend
   │                        0007_schedules_table; task_name column added by migration
   │                        0008_schedule_task_name, Plan 039 / S20)
   ├── health.py          — SAHealthCheck (SELECT 1 probe)
-  ├── di.py              — SAModule (@Configuration)
+  ├── di.py              — SAConfiguration (@Configuration, renamed from SAModule — Plan 049)
   └── (auto-generated)   — ORM models created from DomainModel subclasses at import time
 
 > `SAConfig` doubles as the DI settings object, avoiding a parallel `SASettings` class.
@@ -846,7 +846,7 @@ SAXactAdvisoryLock (varco_sa) — PostgreSQL pg_try_advisory_xact_lock(int8) (Pl
   │       transaction's own commit/rollback is what bounds the lock.
   └── Recommended default whenever the deployment might sit behind a pooler.
 
-varco_sa.di.SAModule — AbstractDistributedLock → SAAdvisoryLock (default, upgrade-safe binding,
+varco_sa.di.SAConfiguration (renamed from SAModule — Plan 049) — AbstractDistributedLock → SAAdvisoryLock (default, upgrade-safe binding,
   @Fallback @Provider at BACKEND_PRIORITY); SAXactAdvisoryLock also registered as a
   directly-injectable singleton (Inject[SAXactAdvisoryLock], also @Fallback so it never
   accidentally wins the AbstractDistributedLock slot — see its own docstring); override recipe:
@@ -1447,7 +1447,8 @@ install_retention_metrics() — varco_core.observability.retention (install_* ve
 
 RetentionLifecycle(registry, *, container, interval=0.0) — varco_fastapi.retention
   .startup()/.shutdown()  +  .start()/.stop() aliases (ReliabilityLifecycle shape)
-  create_varco_app(retention=RetentionLifecycle(...))  — appended, never prepended
+  wrapped by varco_fastapi.modules.RetentionModule(registry, interval=0.0) (Plan 049) —
+  modules=[*default_modules(), RetentionModule(...)], appended, never prepended
 
 ⛔ No module-level @Singleton/@Provider/@Configuration anywhere under varco_core.retention —
    a scanned @Configuration would start a deletion loop in every app scanning varco_core.
@@ -1593,7 +1594,8 @@ container = DIContainer()
 
 # Register backends: scan discovers @Singleton bus classes; cache is opt-in
 container.scan("varco_kafka", recursive=True)  # discovers Kafka bus
-container.install(SAModule)  # sync setup
+container.install(SAConfiguration)  # sync setup — renamed from SAModule (Plan 049 §D-names);
+    # `SAModule` now names the VarcoModule in varco_sa.modules — see "Modules" below
 await container.ainstall(RedisCacheConfiguration)  # async opt-in cache
 
 # Bind repositories (auto-derived from DomainModel fields)
@@ -1636,7 +1638,7 @@ parameter for **every** provider/constructor in that container as empty from
 then on. The failure surfaces nowhere near the real defect: it looks like an
 unrelated provider is missing a required constructor argument
 (`TypeError: some_fn() missing 1 required positional argument: 'x'`). This is
-exactly what happened to `VarcoFastAPIModule.profiling_settings` (fixed by
+exactly what happened to `VarcoFastAPIConfiguration.profiling_settings` (`VarcoFastAPIModule` at the time of the bug, renamed by Plan 049 §D-names — see “Modules” below) — fixed by
 dropping the quotes and importing `ProfilingSettings` at module scope — see
 `CHANGELOG.md`'s `[Unreleased]` → `varco-fastapi` → Fixed entry).
 
@@ -1651,6 +1653,57 @@ print([b for b in container._bindings if isinstance(b.interface, str)])
 Guarded against regressing via `varco_fastapi/tests/test_di_binding_health.py`
 (scans every varco package's `@Provider` callables for a quoted or otherwise
 unresolvable return annotation) and `varco_core/tests/test_observability_di.py`.
+
+### Modules (Plan 049 / DI-1)
+
+`varco_core.di.VarcoModule` (ABC) — `register()`/`_register()` (sync) → `async_init()` (async,
+before any `start()`) → `validate()` (defined, not yet called — Plan 052) → `start()`/`stop()`
+(async, LIFO on shutdown). `ModuleRegistry` is the container-bound record `register()`'s
+idempotency is built on; `resolve_module_order()` is the `depends_on`-ordering DFS walk. Full
+design (why a plain ABC and never a providify `@Configuration`, the tri-state, `EdgeSlot`):
+`technical_docs/features/dependency-injection.md`'s §Modules.
+
+| Module | Package | In `default_modules()`? | `depends_on` |
+|---|---|---|---|
+| `CoreModule` | `varco_core.di.module` | ✅ | — |
+| `ObservabilityModule` | `varco_core.di.module` | ✅ | — |
+| `LifecycleModule` (adapter) | `varco_core.di.module` | — | per-instance |
+| `FastAPIModule` | `varco_fastapi.modules` | ✅ | `CoreModule` |
+| `CorsModule` | `varco_fastapi.modules` | ✅ | — |
+| `SecurityHeadersModule` | `varco_fastapi.modules` | ✅ | — |
+| `ErrorEnvelopeModule` | `varco_fastapi.modules` | ✅ | — |
+| `BodyLimitModule` | `varco_fastapi.modules` | ✅ | — |
+| `LoggingModule` | `varco_fastapi.modules` | ✅ | — |
+| `TracingModule` | `varco_fastapi.modules` | ✅ | — |
+| `LocalizationModule` | `varco_fastapi.modules` | ✅ | — |
+| `SecurityPostureModule` | `varco_fastapi.modules` | ✅ (FLIP-1) | `CoreModule` |
+| `MetricsModule` | `varco_fastapi.modules` | opt-in | — |
+| `ProfilingModule` | `varco_fastapi.modules` | opt-in | — |
+| `RateLimitModule` | `varco_fastapi.modules` | opt-in | — |
+| `MigrationsModule` | `varco_fastapi.modules` | opt-in | `CoreModule` |
+| `TenancyModule` | `varco_fastapi.modules` | opt-in | `CoreModule` |
+| `ReliabilityModule` | `varco_fastapi.modules` | opt-in | `CoreModule` |
+| `RetentionModule` | `varco_fastapi.modules` | opt-in | `CoreModule` |
+| `JwksRefreshModule` | `varco_fastapi.modules` | opt-in | `CoreModule` |
+| `MiddlewareModule` (adapter) | `varco_fastapi.modules.base` | — | per-instance |
+| `SAModule` | `varco_sa.modules` | opt-in | `CoreModule` |
+| `BeanieModule` | `varco_beanie.modules` | opt-in | `CoreModule` |
+| `RedisModule` | `varco_redis.modules` | opt-in | `CoreModule` |
+| `KafkaModule` | `varco_kafka.modules` | opt-in | `CoreModule` |
+| `NatsModule` | `varco_nats.modules` | opt-in | `CoreModule` |
+| `MemcachedModule` | `varco_memcached.modules` | opt-in | `CoreModule` |
+| `CasbinModule` | `varco_casbin.modules` | opt-in | `CoreModule` |
+| `WsModule` | `varco_ws.modules` | opt-in | `CoreModule` |
+
+`HttpContributor` (`varco_fastapi.modules.base`, `runtime_checkable` Protocol —
+`middleware()`/`configure_app()`) is deliberately **not** on the core `VarcoModule` ABC, so
+`varco_core` stays transport-free. `EdgeSlot` (`varco_fastapi.middleware.slots`) is the
+outermost-first middleware order table, as code.
+
+⚠️ **`FastAPIModule`'s `RequestContextMiddleware` contribution is unconditional, unlike every
+other row's own on/off switch.** With `AbstractServerAuth` bound it runs the app's real auth
+strategy; with nothing bound it still runs, in anonymous mode (pre-Plan-049 parity — see
+`technical_docs/features/dependency-injection.md`'s §Modules Pitfalls table).
 
 ---
 
@@ -1802,7 +1855,7 @@ filtered_query = transformer.transform(base_query, params, User)
 - **Query applicator**: `SQLAlchemyFilterVisitor` converts AST → WHERE clause
 - **Pool metrics**: `pool_metrics(engine)` returns `SAPoolMetrics` snapshot; `SAFastrestApp.pool_metrics()` for convenience
 - **Health check**: `SAHealthCheck` — `SELECT 1` probe against the engine
-- **DI**: `SAModule` with engine, declarative base, entity classes
+- **DI**: `SAConfiguration` (renamed from `SAModule` — Plan 049) with engine, declarative base, entity classes
 - **Encryption key store**: `SAEncryptionKeyStore` — stores encryption keys in a dedicated
   `varco_encryption_keys` table using SQLAlchemy Core (no `SAModelFactory` dependency).
   Call `await store.ensure_table()` at startup or add a manual Alembic migration.
@@ -1928,12 +1981,14 @@ filtered_query = transformer.transform(base_query, params, User)
   `CompositeServerAuth`/`WebSocketAuth` wrappers) to report facts — API-key query-fallback state,
   plaintext-vs-hashed key source, `PassthroughAuth` presence. Reports facts only; Plan 036 owns
   any judgement built on top.
-- **Lifecycle auto-discovery**: `create_varco_app` calls `_collect_lifecycle_components()` which
-  discovers `AbstractEventBus`, `AbstractDistributedLock`, `CacheBackend`, and — if `varco_ws`
-  is installed and registered — `WebSocketEventBus` and `SSEEventBus` from the DI container.
-  All discovered components are started/stopped as part of the app lifespan.
+- **Lifecycle, since Plan 049**: no more hidden discovery. `CoreModule.start()`/`stop()` starts
+  the resolved `AbstractEventBus`/`AbstractJobRunner` (if any); `WsModule.start()`/`stop()` does
+  the same for `WebSocketEventBus`/`SSEEventBus`. See "Modules" below —
+  `_collect_lifecycle_components()`/`_try_resolve_component()` and
+  `VARCO_LIFECYCLE_DISCOVERY_WARN` are deleted, not just deprecated.
 - **Typed HTTP clients**: `AsyncVarcoClient` / `SyncVarcoClient` with retry, circuit breaker, and JWT injection.
-- **DI wiring**: `VarcoFastAPIModule` + `bind_clients()`. ⚠️ `bind_clients()` is
+- **DI wiring**: `VarcoFastAPIConfiguration` (renamed from `VarcoFastAPIModule` — Plan 049
+  §D-names) + `bind_clients()`. ⚠️ `bind_clients()` is
   currently known-broken (raises `ClassBindingNotDecoratedError` — the internal
   factory it builds is never `@Provider`-decorated); see the `bind_clients()`
   docstring in `varco_fastapi/varco_fastapi/di.py` for the full failure chain.
@@ -1977,11 +2032,13 @@ don't generate access log noise.
 **Skip paths**: `MetricsMiddleware` skips `/metrics` and `/health` by default to exclude
 Prometheus scrape traffic and Kubernetes health probe noise from latency histograms.
 
-**Wiring via `create_varco_app`**:
+**Wiring via `create_varco_app` (Plan 049 — `MetricsModule`, opt-in)**:
 
 ```python
+from varco_fastapi.modules import MetricsModule, default_modules
+
 # Auto-mounts MetricsMiddleware + MetricsRouter at /metrics
-app = create_varco_app(container, enable_metrics=True, validate=False)
+app = create_varco_app(container, modules=[*default_modules(), MetricsModule()], validate=False)
 
 # Custom skip paths:
 app.add_middleware(MetricsMiddleware, skip_paths=frozenset({"/metrics", "/health", "/readyz"}))
@@ -1994,7 +2051,7 @@ OtelConfig(service_name="myapp", prometheus_enabled=True)
   → PrometheusMetricReader() registered with prometheus_client.REGISTRY
   → MeterProvider(metric_readers=[prometheus_reader])
 
-create_varco_app(enable_metrics=True)
+create_varco_app(container, modules=[*default_modules(), MetricsModule()])
   → add_middleware(MetricsMiddleware)    # records OTel instruments per request
   → include_router(MetricsRouter)       # serves GET /metrics
 
@@ -2095,9 +2152,10 @@ profiles one HTTP request at a time:
 - Threshold gating: only logs when `wall_ms >= slow_threshold_ms`.
 - `attach_headers=True` adds `X-Profile-Wall-Ms` / `X-Profile-Mem-Kb` response headers.
 
-**Wiring**:
+**Wiring** (Plan 049 — `ProfilingModule`, opt-in):
 ```python
-app = create_varco_app(container, enable_profiling=True)
+from varco_fastapi.modules import ProfilingModule, default_modules
+app = create_varco_app(container, modules=[*default_modules(), ProfilingModule()])
 # or:
 app.add_middleware(
     ProfilingMiddleware, settings=ProfilingSettings(enabled=True, attach_headers=True)
@@ -2307,13 +2365,15 @@ re-executes. Full design + Pitfalls: `technical_docs/features/idempotency-key.md
 `varco_fastapi.i18n` — Plan 011): `LocalizationMiddleware` resolves locale (I2) and/or
 timezone (T1) in one ASGI pass, gated by two independent settings
 (`I18nSettings.enabled`/`TimezoneSettings.enabled`); with both off it is not added to the
-stack. `create_varco_app(i18n=, timezone=)` — both typed `Any | None`, resolved via
-`isinstance()` checks against `I18nSettings`/`TimezoneSettings`, **not** type-checked
-keyword parameters; pass anything else and it silently falls back to default settings.
-`I18nLifecycle` (`varco_fastapi.i18n`) starts/stops the DI-resolved `MessageCatalog` around
-`VarcoLifespan`, only when i18n is enabled and a non-`None` catalog is found.
+stack. `LocalizationModule(i18n=, timezone=)` (`varco_fastapi.modules`, part of
+`default_modules()`) — both typed `Any | None`, resolved by a plain `is not None` check
+against the constructor argument, falling back to a fresh `I18nSettings()`/`TimezoneSettings()`;
+**not** type-checked keyword parameters — pass anything else and it silently falls back to
+default settings. `I18nLifecycle` (`varco_fastapi.i18n`, started/stopped by
+`LocalizationModule.start()`/`.stop()`) starts/stops the DI-resolved `MessageCatalog` around the
+lifespan, only when i18n is enabled and a non-`None` catalog is found.
 `LocalizationMiddleware` is the innermost built-in layer (added earliest, dispatches last),
-so any app-supplied `TenantResolutionMiddleware` via `extra_middleware=` always dispatches
+so any app-supplied `TenantResolutionMiddleware` via `MiddlewareModule` always dispatches
 before it — see `technical_docs/features/timezone-handling.md`'s "Wiring" section for the
 full verified request-order diagram and the `request.state` mirror's current (unread)
 status on the error path.

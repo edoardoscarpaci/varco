@@ -222,10 +222,16 @@ CORSMiddleware (outermost)
               → FastAPI route handler (innermost)
 ```
 
-`RequestContextMiddleware` is wired only when a DI container is passed to
-`create_varco_app()`.  Without it, `auth_context_var` is not set and `X-Request-ID`
-is not added to responses — but `ErrorMiddleware`, `TracingMiddleware`, and
-`RequestLoggingMiddleware` all still run.
+⚠️ **Updated for Plan 049 (repair round 2)**: `container` is now a required positional argument
+to `create_varco_app()` — there is no more "without a container" case. `RequestContextMiddleware`
+(installed by `FastAPIModule`, part of `default_modules()`) is now wired **unconditionally** —
+with the container's bound `AbstractServerAuth` when one is resolvable, or in *anonymous mode*
+otherwise (`RequestContextMiddleware`'s own `server_auth or AnonymousAuth()` default), restoring
+the pre-Plan-049 "always present" contract. `auth_context_var` **is** set either way — with a
+real, populated `AuthContext` when auth is bound, with an anonymous one when it is not. An app
+that never binds `AbstractServerAuth` therefore serves every request as anonymous rather than
+failing loudly. ⚠️ Neither `inspect_http_edge()` nor the security posture preflight currently
+reports this — verified absent from both modules' `check=` id sets as of this writing.
 
 `DISessionMiddleware`'s `container` argument is required and keyword-only
 (`DISessionMiddleware(app, *, container: DIContainer)`, Plan 046 §D-locator) — it never falls

@@ -3,7 +3,7 @@ Tests for the providify DI integration module (varco_beanie.di).
 
 Most of the tests below use no real container resolution — instead:
 - BeanieSettings is tested as a plain dataclass.
-- BeanieModule @Provider methods are called directly on an instance.
+- BeanieConfiguration @Provider methods are called directly on an instance.
 - _make_repo_provider is tested as a pure function.
 - bind_repositories is tested against a mock container.
 
@@ -13,13 +13,13 @@ recursive=True); validate_bindings()``. Spot-check finding recorded in Plan
 013's Design section: this recursive-scan pattern already existed
 incidentally via ``test_beanie_tenancy_di.py``/``test_beanie_dlq.py``, but
 neither of those files is named for nor asserts anything about
-``BeanieModule``/``bind_repositories``/``bootstrap`` by name — this class
+``BeanieConfiguration``/``bind_repositories``/``bootstrap`` by name — this class
 makes that coverage explicit, named, and independent of those sub-areas'
 lifetimes.
 
 Coverage:
 - BeanieSettings:          frozen, field defaults, type annotations
-- BeanieModule:            repository_provider() creates + inits the provider,
+- BeanieConfiguration:            repository_provider() creates + inits the provider,
                            query_compiler() returns BeanieQueryCompiler
 - _make_repo_provider:     produces a @Provider function whose ProviderMetadata.returns
                            carries the correct interface (Plan 016 / RL-2)
@@ -29,7 +29,7 @@ Coverage:
                            and bind_repositories() against a real container
 
 Thread safety:  N/A (unit tests)
-Async safety:   ✅ BeanieModule.repository_provider is async — tested with await
+Async safety:   ✅ BeanieConfiguration.repository_provider is async — tested with await
 """
 
 from __future__ import annotations

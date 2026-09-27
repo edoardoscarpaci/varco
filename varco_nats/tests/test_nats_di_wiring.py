@@ -32,9 +32,12 @@ from varco_core.service.conversation import AbstractConversationStore
 from varco_core.tenancy.membership import AbstractTenantMembership
 from varco_nats.channel import NatsChannelManagerSettings
 from varco_nats.config import NatsEventBusSettings
+from varco_nats.modules import NatsModule
 
 
 class TestVarcoNatsDIWiringConformance(DIWiringConformance):
+    module_cls = NatsModule
+
     settings_classes = (NatsEventBusSettings, NatsChannelManagerSettings)
     expected_defaults = (
         (CacheBackend, "in_memory"),

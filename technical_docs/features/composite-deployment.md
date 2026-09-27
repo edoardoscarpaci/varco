@@ -196,8 +196,9 @@ still discriminates correctly per token issuer. See
 `technical_docs/features/jwt-claim-transformer.md` for the full per-issuer precedence
 rules.
 
-`create_varco_app(configure_jwt=False)` lets an individual service opt out of the
-automatic `configure_jwt_from_env()` call at startup if it needs to manage the
+`FastAPIModule(configure_jwt=False)` (part of `default_modules()` — replace the default
+instance via `default_modules(exclude=(FastAPIModule,))`) lets an individual service opt out of
+the automatic `configure_jwt_from_env()` call at startup if it needs to manage the
 registries itself (e.g. build them once, explicitly, before mounting all services) —
 but there is still only one process-global registry underneath; opting out changes
 *when* it gets configured, not whether it is shared.

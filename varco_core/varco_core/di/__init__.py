@@ -33,6 +33,16 @@ from typing import TYPE_CHECKING, Any, Final
 from varco_core.di.errors import BackendSelectionError, CatalogueError
 from varco_core.di.features import FEATURES, Feature, feature_default
 from varco_core.di.introspect import BindingRecord, Catalogue, catalogue, inspect_bindings
+from varco_core.di.module import (
+    CoreModule,
+    LifecycleModule,
+    ModuleCycleError,
+    ModuleDependencyError,
+    ModuleRegistry,
+    ObservabilityModule,
+    VarcoModule,
+    resolve_module_order,
+)
 from varco_core.di.seams import SEAMS, Seam, interface_of, seam_by_name
 from varco_core.di.select import (
     BackendSelectionReport,
@@ -252,12 +262,19 @@ __all__ = [
     "BindingRecord",
     "CatalogueError",
     "Catalogue",
+    "CoreModule",
     "Feature",
     "FEATURES",
+    "LifecycleModule",
+    "ModuleCycleError",
+    "ModuleDependencyError",
+    "ModuleRegistry",
+    "ObservabilityModule",
     "Seam",
     "SEAMS",
     "SeamCheck",
     "SeamSelection",
+    "VarcoModule",
     "bind_env_overrides",
     "bind_instance",
     "bootstrap",
@@ -269,6 +286,7 @@ __all__ = [
     "inspect_bindings",
     "interface_of",
     "is_user_bound",
+    "resolve_module_order",
     "seam_by_name",
     "selected_by",
 ]

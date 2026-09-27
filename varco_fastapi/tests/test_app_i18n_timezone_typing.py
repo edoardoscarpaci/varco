@@ -17,11 +17,19 @@ swallowed. ``None`` (the documented default sentinel) still resolves to
 from __future__ import annotations
 
 import pytest
+from providify import DIContainer
 from varco_core.i18n.settings import I18nSettings
 from varco_core.tz.settings import TimezoneSettings
 from varco_fastapi.app import create_varco_app
+from varco_fastapi.modules import LocalizationModule
 from varco_fastapi.router.endpoint import route
 from varco_fastapi.router.presets import GenericRouter
+
+# Plan 049 / DI-1 migration: `i18n=`/`timezone=` are now
+# `LocalizationModule(i18n=, timezone=)` constructor arguments — the
+# "used as given, fails loudly on first .enabled read" contract this file
+# regression-tests is unchanged, just relocated from a create_varco_app
+# keyword to the module that owns it.
 
 
 class _PingRouter(GenericRouter):
@@ -40,9 +48,9 @@ def test_regression_wrong_type_i18n_no_longer_silently_falls_back() -> None:
     # `.enabled` is read.
     with pytest.raises(AttributeError):
         create_varco_app(
-            None,
+            DIContainer(),
             routers=[_PingRouter],
-            i18n={"enabled": True},  # wrong type — not an I18nSettings
+            modules=[LocalizationModule(i18n={"enabled": True})],  # wrong type
             validate=False,
         )
 
@@ -50,9 +58,9 @@ def test_regression_wrong_type_i18n_no_longer_silently_falls_back() -> None:
 def test_regression_wrong_type_timezone_no_longer_silently_falls_back() -> None:
     with pytest.raises(AttributeError):
         create_varco_app(
-            None,
+            DIContainer(),
             routers=[_PingRouter],
-            timezone=object(),  # wrong type — not a TimezoneSettings
+            modules=[LocalizationModule(timezone=object())],  # wrong type
             validate=False,
         )
 
@@ -60,10 +68,9 @@ def test_regression_wrong_type_timezone_no_longer_silently_falls_back() -> None:
 def test_none_i18n_and_timezone_still_resolve_to_defaults() -> None:
     # RD-1: the documented no-configuration behaviour is unchanged.
     app = create_varco_app(
-        None,
+        DIContainer(),
         routers=[_PingRouter],
-        i18n=None,
-        timezone=None,
+        modules=[LocalizationModule(i18n=None, timezone=None)],
         validate=False,
     )
     assert app is not None
@@ -71,10 +78,14 @@ def test_none_i18n_and_timezone_still_resolve_to_defaults() -> None:
 
 def test_explicit_settings_instances_pass_through() -> None:
     app = create_varco_app(
-        None,
+        DIContainer(),
         routers=[_PingRouter],
-        i18n=I18nSettings(enabled=False),
-        timezone=TimezoneSettings(enabled=False),
+        modules=[
+            LocalizationModule(
+                i18n=I18nSettings(enabled=False),
+                timezone=TimezoneSettings(enabled=False),
+            )
+        ],
         validate=False,
     )
     assert app is not None

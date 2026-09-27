@@ -40,7 +40,7 @@ DESIGN: standalone class (not VarcoRouter subclass)
     ✅ Lightweight — no DI requirements.
     ✅ Independently mountable — callers can add it without ``create_varco_app``.
     ❌ Not auto-scanned by ``container.get_all(VarcoRouter)`` — must be
-       explicitly mounted (``create_varco_app(enable_metrics=True)`` does this).
+       explicitly mounted (``MetricsModule()`` in ``modules=[...]`` does this).
 
 DESIGN: Accept header negotiation for OpenMetrics vs Prometheus text
     ✅ Prometheus ≥ 2.26 sends ``Accept: application/openmetrics-text``

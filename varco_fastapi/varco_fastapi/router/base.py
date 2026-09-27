@@ -579,7 +579,7 @@ class VarcoRouter(Generic[D, PK, C, R, U]):
             job_runner: Optional ``AbstractJobRunner`` for async route offload
                         (``?with_async=true``).  When ``None``, async mode falls
                         through to synchronous execution.  Injected by DI when
-                        ``VarcoFastAPIModule`` is installed; pass directly in
+                        ``VarcoFastAPIConfiguration`` is installed; pass directly in
                         tests or DI-less setups.
 
         Edge cases:

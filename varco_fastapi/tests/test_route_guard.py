@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from providify import DIContainer
 from varco_core.auth.base import Action, AuthContext, ResourceGrant
 from varco_core.exception.service import ServiceAuthorizationError
 from varco_fastapi.app import create_varco_app
@@ -321,7 +322,7 @@ def _make_guarded_app() -> tuple[Any, str]:
         async def secret_data(self, ctx: Any) -> dict:
             return {"secret": True}
 
-    app = create_varco_app(routers=[ReportRouter], validate=False)
+    app = create_varco_app(DIContainer(), routers=[ReportRouter], validate=False)
     return app
 
 

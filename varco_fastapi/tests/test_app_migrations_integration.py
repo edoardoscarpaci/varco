@@ -38,9 +38,12 @@ from typing import Any
 import httpx
 import pytest
 import pytest_asyncio
+from providify import DIContainer
+from varco_core.di.module import CoreModule
 from varco_core.migration.errors import MigrationLockTimeout, PendingMigrationsError
 from varco_core.migration.settings import MigrationSettings
 from varco_fastapi.app import create_varco_app
+from varco_fastapi.modules.lifecycle import MigrationsModule
 from varco_fastapi.router.endpoint import route
 from varco_fastapi.router.presets import GenericRouter
 
@@ -153,10 +156,12 @@ async def test_mode_check_on_behind_schema_fails_closed_no_ddl(
     migrator = AlembicMigrator(engine, include_framework_branch=True)
 
     app = create_varco_app(
-        None,
+        DIContainer(),
         routers=[_PingRouter],
-        migrations=migrator,
-        migration_settings=MigrationSettings(mode="check"),
+        modules=[
+            CoreModule(),
+            MigrationsModule(migrator, settings=MigrationSettings(mode="check")),
+        ],
         validate=False,
     )
 
@@ -183,10 +188,12 @@ async def test_mode_upgrade_applies_before_first_request_and_is_idempotent(
     migrator = AlembicMigrator(engine, include_framework_branch=True)
 
     app = create_varco_app(
-        None,
+        DIContainer(),
         routers=[_PingRouter],
-        migrations=migrator,
-        migration_settings=MigrationSettings(mode="upgrade"),
+        modules=[
+            CoreModule(),
+            MigrationsModule(migrator, settings=MigrationSettings(mode="upgrade")),
+        ],
         validate=False,
     )
 
@@ -200,10 +207,12 @@ async def test_mode_upgrade_applies_before_first_request_and_is_idempotent(
     # pending and is a clean no-op — must not raise, must still serve.
     migrator_2 = AlembicMigrator(engine, include_framework_branch=True)
     app_2 = create_varco_app(
-        None,
+        DIContainer(),
         routers=[_PingRouter],
-        migrations=migrator_2,
-        migration_settings=MigrationSettings(mode="upgrade"),
+        modules=[
+            CoreModule(),
+            MigrationsModule(migrator_2, settings=MigrationSettings(mode="upgrade")),
+        ],
         validate=False,
     )
     response = await _boot_and_get_ping(app_2)
@@ -231,12 +240,17 @@ async def test_on_failure_fail_aborts_startup_no_request_served() -> None:
     migrator, engine = _broken_migrator()
     try:
         app = create_varco_app(
-            None,
+            DIContainer(),
             routers=[_PingRouter],
-            migrations=migrator,
-            migration_settings=MigrationSettings(
-                mode="upgrade", on_failure="fail", lock_timeout=5.0, timeout=15.0
-            ),
+            modules=[
+                CoreModule(),
+                MigrationsModule(
+                    migrator,
+                    settings=MigrationSettings(
+                        mode="upgrade", on_failure="fail", lock_timeout=5.0, timeout=15.0
+                    ),
+                ),
+            ],
             validate=False,
         )
         with pytest.raises(Exception):  # noqa: B017 — startup failure propagates
@@ -251,12 +265,17 @@ async def test_on_failure_warn_keeps_serving_despite_failed_migration() -> None:
     migrator, engine = _broken_migrator()
     try:
         app = create_varco_app(
-            None,
+            DIContainer(),
             routers=[_PingRouter],
-            migrations=migrator,
-            migration_settings=MigrationSettings(
-                mode="upgrade", on_failure="warn", lock_timeout=5.0, timeout=15.0
-            ),
+            modules=[
+                CoreModule(),
+                MigrationsModule(
+                    migrator,
+                    settings=MigrationSettings(
+                        mode="upgrade", on_failure="warn", lock_timeout=5.0, timeout=15.0
+                    ),
+                ),
+            ],
             validate=False,
         )
         response = await _boot_and_get_ping(app)
@@ -279,10 +298,9 @@ async def test_mode_off_default_registers_nothing_touches_nothing(
     migrator = AlembicMigrator(engine, include_framework_branch=True)
 
     app = create_varco_app(
-        None,
+        DIContainer(),
         routers=[_PingRouter],
-        migrations=migrator,
-        migration_settings=MigrationSettings(mode="off"),
+        modules=[CoreModule(), MigrationsModule(migrator, settings=MigrationSettings(mode="off"))],
         validate=False,
     )
 
@@ -309,17 +327,27 @@ async def test_two_concurrent_lifespans_exactly_one_migrates_schema_not_corrupte
     migrator_b = AlembicMigrator(engine, include_framework_branch=True)
 
     app_a = create_varco_app(
-        None,
+        DIContainer(),
         routers=[_PingRouter],
-        migrations=migrator_a,
-        migration_settings=MigrationSettings(mode="upgrade", lock_timeout=30.0, timeout=60.0),
+        modules=[
+            CoreModule(),
+            MigrationsModule(
+                migrator_a,
+                settings=MigrationSettings(mode="upgrade", lock_timeout=30.0, timeout=60.0),
+            ),
+        ],
         validate=False,
     )
     app_b = create_varco_app(
-        None,
+        DIContainer(),
         routers=[_PingRouter],
-        migrations=migrator_b,
-        migration_settings=MigrationSettings(mode="upgrade", lock_timeout=30.0, timeout=60.0),
+        modules=[
+            CoreModule(),
+            MigrationsModule(
+                migrator_b,
+                settings=MigrationSettings(mode="upgrade", lock_timeout=30.0, timeout=60.0),
+            ),
+        ],
         validate=False,
     )
 
@@ -397,10 +425,9 @@ async def test_lifecycle_raises_migration_lock_timeout_when_holder_never_release
 
     settings = MigrationSettings(mode="upgrade", lock_timeout=1.0, timeout=120.0)
     app = create_varco_app(
-        None,
+        DIContainer(),
         routers=[_PingRouter],
-        migrations=migrator,
-        migration_settings=settings,
+        modules=[CoreModule(), MigrationsModule(migrator, settings=settings)],
         validate=False,
     )
 

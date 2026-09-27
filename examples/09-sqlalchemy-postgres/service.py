@@ -52,7 +52,7 @@ class PostService(AsyncService[Post, UUID, PostCreate, PostRead, PostUpdate]):
     Inherits the full ``AsyncService`` contract:
     - Authorization via injected ``AbstractAuthorizer`` (defaults to permissive).
     - DTO ↔ domain translation via injected ``PostAssembler``.
-    - Unit-of-work management via ``IUoWProvider`` (provided by SAModule).
+    - Unit-of-work management via ``IUoWProvider`` (provided by SAConfiguration).
     - No event publishing in this example — keeps it focused on SA patterns.
 
     Thread safety:  ⚠️ Singleton — must be stateless; each request gets its own UoW.
@@ -69,7 +69,7 @@ class PostService(AsyncService[Post, UUID, PostCreate, PostRead, PostUpdate]):
     ) -> None:
         """
         Args:
-            uow_provider: Injected ``IUoWProvider`` — provided by ``SAModule``.
+            uow_provider: Injected ``IUoWProvider`` — provided by ``SAConfiguration``.
             authorizer:   Injected ``AbstractAuthorizer`` — ``BaseAuthorizer``
                           (permissive) is auto-registered by varco_core.
             assembler:    Injected ``PostAssembler`` — handles DTO ↔ Post mapping.

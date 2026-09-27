@@ -5,7 +5,7 @@ Providify DI integration for the Beanie (pymongo / MongoDB) backend.
 
 ``BeanieRepositoryProvider``, ``BeanieQueryCompiler``, and ``BeanieHealthCheck``
 are registered automatically via their ``@Singleton`` decorators when
-``container.scan("varco_beanie")`` is called.  ``BeanieModule`` is a
+``container.scan("varco_beanie")`` is called.  ``BeanieConfiguration`` is a
 scan-marker ``@Configuration`` — it no longer contains ``@Provider`` factories
 for classes that can self-register.
 
@@ -14,7 +14,7 @@ Typical usage::
     from pymongo import AsyncMongoClient
     from providify import DIContainer, Provider
 
-    from varco_beanie.di import BeanieModule, bind_repositories
+    from varco_beanie.di import BeanieConfiguration, bind_repositories
     from varco_beanie.config import BeanieSettings
     from myapp.models import User, Post          # your DomainModel subclasses
 
@@ -32,7 +32,7 @@ Typical usage::
     container.provide(beanie_settings)
 
     # 2. Install the module (scan-marker) and scan varco_beanie
-    container.install(BeanieModule)
+    container.install(BeanieConfiguration)
     container.scan("varco_beanie", recursive=True)
 
     # 3. Bind per-entity AsyncRepository[D] — must come after scan
@@ -72,7 +72,7 @@ if TYPE_CHECKING:
 
 
 @Configuration
-class BeanieModule:
+class BeanieConfiguration:
     """
     Providify ``@Configuration`` module for the Beanie (MongoDB) backend.
 
@@ -90,7 +90,7 @@ class BeanieModule:
     Prerequisites
     -------------
     ``BeanieSettings`` must be registered in the container before calling
-    ``container.install(BeanieModule)`` — it is injected into
+    ``container.install(BeanieConfiguration)`` — it is injected into
     ``BeanieRepositoryProvider`` and ``BeanieHealthCheck`` via
     ``Inject[BeanieSettings]``.
 
@@ -162,7 +162,7 @@ def bind_repositories(
 
     Prerequisites
     -------------
-    ``BeanieModule`` must be installed before calling this function —
+    ``BeanieConfiguration`` must be installed before calling this function —
     the generated providers inject ``RepositoryProvider`` which is
     registered via ``@Singleton`` on ``BeanieRepositoryProvider``.
 
@@ -261,7 +261,7 @@ def bootstrap(container: DIContainer) -> DIContainer:
     """
     Bootstrap ``varco_beanie`` into a ``DIContainer``.
 
-    Installs :class:`BeanieModule` and calls
+    Installs :class:`BeanieConfiguration` and calls
     ``container.scan("varco_beanie", recursive=True)`` to discover
     ``BeanieRepositoryProvider``, ``BeanieQueryCompiler``, and
     ``BeanieHealthCheck``. Call :func:`bind_repositories` separately for
@@ -320,7 +320,7 @@ def bootstrap(container: DIContainer) -> DIContainer:
                        via ``@PostConstruct``.  Always call
                        ``await container.awarm_up()`` afterwards.
     """
-    # BeanieModule is an empty backward-compat @Configuration — install() is a no-op.
+    # BeanieConfiguration is an empty backward-compat @Configuration — install() is a no-op.
     # All @Singleton classes in varco_beanie are discovered by scan automatically.
     container.scan("varco_beanie", recursive=True)
 
@@ -330,7 +330,7 @@ def bootstrap(container: DIContainer) -> DIContainer:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 __all__ = [
-    "BeanieModule",
+    "BeanieConfiguration",
     "BeanieSettings",
     "bind_repositories",
     "bootstrap",

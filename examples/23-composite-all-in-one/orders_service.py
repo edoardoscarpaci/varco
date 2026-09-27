@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 
 from fastapi import FastAPI
+from providify import DIContainer
 from varco_fastapi.router.endpoint import route
 from varco_fastapi.router.presets import GenericRouter
 
@@ -48,6 +49,7 @@ def create_orders_app() -> FastAPI:
             return {"service": "orders", "db": db_url}
 
     return create_varco_app(
+        DIContainer(),
         routers=[OrdersRouter],
         title="Orders Service",
         version="1.0.0",

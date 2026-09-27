@@ -68,14 +68,17 @@ preset = ReliabilityPreset.durable(dlq=dlq)
 
 ```python
 from varco_fastapi import create_varco_app
+from varco_fastapi.modules import ReliabilityModule, default_modules
 
-app = create_varco_app(container, routers=[...], reliability=preset)
+app = create_varco_app(
+    container, routers=[...], modules=[*default_modules(), ReliabilityModule(preset)]
+)
 ```
 
-`create_varco_app(reliability=None)` (the default) registers nothing —
+No `ReliabilityModule` in `modules=` (the default) registers nothing —
 byte-identical to not calling this feature at all. Passing a preset wires a
-`ReliabilityLifecycle` (`varco_fastapi.reliability.ReliabilityLifecycle`)
-into the app's startup/shutdown sequence:
+`ReliabilityLifecycle` (`varco_fastapi.reliability.ReliabilityLifecycle`, built by
+`ReliabilityModule.start()`) into the app's startup/shutdown sequence:
 
 ```python
 class ReliabilityLifecycle:
@@ -169,6 +172,6 @@ behaviour unchanged; `durable()` gives a bare `@listen` handler a retry
 policy and DLQ; explicit `retry_policy=None` wins over a durable default;
 `outbox_max_attempts` without `dlq` raises; a late
 `set_default_reliability_preset()` call still applies.
-`varco_fastapi/tests/test_reliability_wiring.py` — `create_varco_app(container,
-reliability=preset)` starts/stops the relay and consumer, installs metrics,
-and raises on a missing `AuditRepository`.
+`varco_fastapi/tests/test_reliability_wiring.py` — `ReliabilityModule(preset)`
+starts/stops the relay and consumer, installs metrics, and raises on a missing
+`AuditRepository`.

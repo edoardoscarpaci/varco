@@ -68,7 +68,7 @@ Public surface::
     )
 
     # DI
-    from varco_fastapi import VarcoFastAPIModule, bind_clients
+    from varco_fastapi import VarcoFastAPIConfiguration, bind_clients
 
     # Context
     from varco_fastapi import (
@@ -80,6 +80,8 @@ Public surface::
 """
 
 from __future__ import annotations
+
+from varco_core.di.module import VarcoModule
 
 # ── App factory ───────────────────────────────────────────────────────────────
 from varco_fastapi.app import create_varco_app
@@ -159,7 +161,7 @@ from varco_fastapi.context import (
 )
 
 # ── DI ────────────────────────────────────────────────────────────────────────
-from varco_fastapi.di import VarcoFastAPIModule, bind_clients, bind_clients_from
+from varco_fastapi.di import VarcoFastAPIConfiguration, bind_clients, bind_clients_from
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
 from varco_fastapi.exceptions import add_exception_handlers
@@ -186,8 +188,12 @@ from varco_fastapi.middleware.introspect import HttpEdgeFinding, HttpEdgePosture
 from varco_fastapi.middleware.logging import RequestLoggingMiddleware
 from varco_fastapi.middleware.metrics import MetricsMiddleware
 from varco_fastapi.middleware.request_context import RequestContextMiddleware
+
+# Plan 049 / DI-1 — the module system's top-level public names.
+from varco_fastapi.middleware.slots import EdgeSlot, MiddlewareSpec
 from varco_fastapi.middleware.tracing import TracingMiddleware
 from varco_fastapi.migrate import MigrationLifecycle
+from varco_fastapi.modules.defaults import default_modules
 from varco_fastapi.posture import (
     PostureFinding,
     PostureSeverity,
@@ -360,13 +366,18 @@ __all__ = [
     # Exceptions
     "add_exception_handlers",
     # DI
-    "VarcoFastAPIModule",
+    "VarcoFastAPIConfiguration",
     "bind_clients",
     "bind_clients_from",
     "client_for",
     "client_class_for",
     # App factory
     "create_varco_app",
+    # Plan 049 / DI-1 — modules
+    "VarcoModule",
+    "default_modules",
+    "EdgeSlot",
+    "MiddlewareSpec",
     # ── Composite / all-in-one deployment ──
     "CompositeLifespan",
     "ServiceMount",

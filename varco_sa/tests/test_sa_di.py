@@ -6,13 +6,13 @@ Why this file exists
 Audit finding F9 (``audits/001-audit-di-wiring.md``, Plan 013) observed that
 ``varco_sa`` — unlike ``varco_redis``/``varco_kafka``/``varco_nats`` — has no
 named, canonically-located ``test_sa_di.py`` asserting the *core* wiring
-(``SAModule``, ``bind_repositories``, ``bootstrap()``) by name.
+(``SAConfiguration``, ``bind_repositories``, ``bootstrap()``) by name.
 
 Spot-check finding recorded in Plan 013's Design section: raw
 ``container.scan("varco_sa", recursive=True); container.validate_bindings()``
 coverage of this package already exists today, but only *incidentally* — as
 a side effect of ``test_sa_tenancy_di.py`` and ``test_migration_di.py``,
-neither of which is named for nor asserts anything about ``SAModule`` /
+neither of which is named for nor asserts anything about ``SAConfiguration`` /
 ``bind_repositories`` / ``bootstrap``. If either of those sub-area test files
 were deleted or refactored, the package's core DI bootstrap safety net would
 silently disappear with them. This file makes that coverage explicit, named,
@@ -87,7 +87,7 @@ class TestSAContainerValidates:
 
     def test_regression_core_sa_module_implementations_discovered(self) -> None:
         """
-        ``SAModule`` is a scan-marker ``@Configuration`` — its providers
+        ``SAConfiguration`` is a scan-marker ``@Configuration`` — its providers
         (``uow_provider``/``sa_advisory_lock``/``sa_xact_advisory_lock``) and
         the ``@Singleton``-decorated ``SQLAlchemyRepositoryProvider`` must
         all be discovered by ``scan("varco_sa", recursive=True)``. A future
@@ -104,7 +104,7 @@ class TestSAContainerValidates:
             for b in container._bindings
             if getattr(b, "implementation", None) is not None
         }
-        # SAModule's @Provider factories (uow_provider/sa_advisory_lock/
+        # SAConfiguration's @Provider factories (uow_provider/sa_advisory_lock/
         # sa_xact_advisory_lock) bind an *interface* directly rather than an
         # @Singleton class — providify does not populate `.implementation`
         # for those, only `.interface`, so they are asserted separately.

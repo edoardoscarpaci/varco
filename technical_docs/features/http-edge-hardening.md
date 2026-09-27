@@ -15,14 +15,14 @@ middleware enabled, new Plan 035 entries in **bold**:
 
 ```
 CORSMiddleware
-**SecurityHeadersMiddleware**        (opt-out: security_headers=False)
-extra_middleware=[...]               (caller-supplied — OUTSIDE ErrorMiddleware, see below)
+**SecurityHeadersMiddleware**        (opt-out: SecurityHeadersModule(enabled=False))
+MiddlewareModule(slot=EdgeSlot.EXTRA)  (caller-supplied — OUTSIDE ErrorMiddleware, see below)
 ErrorMiddleware
-**BodyLimitMiddleware**              (opt-out: body_limit=False)
+**BodyLimitMiddleware**              (opt-out: BodyLimitModule(enabled=False))
 RequestLoggingMiddleware
 TracingMiddleware
 MetricsMiddleware                    (INSIDE Tracing — Plan 041 / §D-S17-decision)
-**RateLimitMiddleware(stage=PRE_AUTH)**   (opt-in via rate_limit=RateLimitBundle(...))
+**RateLimitMiddleware(stage=PRE_AUTH)**   (opt-in via RateLimitModule(RateLimitBundle(...)))
 RequestContextMiddleware             (populates AuthContext / current_tenant())
 **RateLimitMiddleware(stage=POST_AUTH)**  (opt-in, same bundle)
 LocalizationMiddleware
@@ -31,9 +31,11 @@ ProfilingMiddleware
 route handler
 ```
 
-`varco_fastapi.middleware`'s module docstring is the single normative home for this table —
-`varco_fastapi/app.py`'s comments and docstring point here instead of restating it, which is
-exactly the drift `§D-order-bugs` found and corrected (below).
+`varco_fastapi.middleware`'s module docstring is the single normative home for this table in
+prose; since Plan 049, `varco_fastapi.middleware.slots.EdgeSlot` **is** the same table as code,
+pinned to the prose by `test_middleware_slots.py` so the two can never silently drift apart
+again — the drift `§D-order-bugs` found and corrected below is exactly the failure mode `EdgeSlot`
+now makes structurally impossible.
 
 **Why each new entry sits where it does:**
 
@@ -46,8 +48,9 @@ exactly the drift `§D-order-bugs` found and corrected (below).
 
 **One `RateLimitMiddleware` class, registered at up to two stack positions** — not one position,
 not two classes. A single position cannot satisfy both "reject early, before auth" and "key by
-subject/tenant, which needs auth" (brief 008 §3's own named tension). `create_varco_app` partitions
-a `RateLimitBundle`'s rules by scope automatically; `RateLimitMiddleware.__init__` itself refuses a
+subject/tenant, which needs auth" (brief 008 §3's own named tension). `RateLimitModule` partitions
+a `RateLimitBundle`'s rules by scope automatically, emitting one `MiddlewareSpec` per non-empty
+partition; `RateLimitMiddleware.__init__` itself refuses a
 `SUBJECT`/`TENANT` rule at `stage=PRE_AUTH` with a `ValueError` naming the scope, so a
 misconfiguration fails at startup, not silently at runtime as an unkeyed `"-"` bucket everyone
 shares.
@@ -72,16 +75,19 @@ at record time — describing exactly the order Plan 041 went on to create) was 
 Plan 041 and corrected. See "Metrics inside tracing (Plan 041 / S17)" below for the decision, its
 argument, and the operator-facing consequences. `S18` (`extra_middleware=` position) remains open.
 
-⛔ **Never register a varco edge middleware via `extra_middleware=`.** It is verified to land
-**outside** `ErrorMiddleware` (`app.py:538` runs after `:531`) — a `ServiceException` raised there
-never renders through the error envelope, and it is outside `RequestContextMiddleware` too, so
-`SUBJECT`/`TENANT` keys would always be `"-"`. This is exactly why all three new middlewares get
-dedicated `create_varco_app` keywords instead.
+⛔ **Never register a varco edge middleware via `MiddlewareModule`'s default slot
+(`EdgeSlot.EXTRA`, the pre-049 `extra_middleware=` position).** It is verified to land
+**outside** `ErrorMiddleware` — a `ServiceException` raised there never renders through the error
+envelope, and it is outside `RequestContextMiddleware` too, so `SUBJECT`/`TENANT` keys would
+always be `"-"`. This is exactly why all three new middlewares get their own dedicated
+`VarcoModule` (`SecurityHeadersModule`/`BodyLimitModule`/`RateLimitModule`) with the correct
+`EdgeSlot` baked in, instead.
 
 ## S7 — Security headers (`varco_fastapi.middleware.security_headers`)
 
-**On by default** (`security_headers=None`, the default) at the `BALANCED` preset — four headers,
-safe for a JSON API, citing brief 008 §1 for every value:
+**On by default** (`SecurityHeadersModule` is part of `default_modules()`, `settings=None` the
+constructor default) at the `BALANCED` preset — four headers, safe for a JSON API, citing brief
+008 §1 for every value:
 
 | Header | Value | Note |
 |---|---|---|
@@ -124,7 +130,8 @@ cannot reliably remove them).
 
 ## S8 — Request body size limits (`varco_fastapi.middleware.body_limit`)
 
-**On by default** (`body_limit=None`) at **10 MiB**, deviating from brief 008's "ship opt-in to
+**On by default** (`BodyLimitModule` is part of `default_modules()`, `settings=None` the
+constructor default) at **10 MiB**, deviating from brief 008's "ship opt-in to
 avoid breakage" recommendation. The deviation is argued: brief 008 §2 states plainly that
 *"any Starlette/FastAPI app is vulnerable to memory exhaustion without explicit middleware"* — no
 uvicorn/hypercorn/Starlette/FastAPI layer enforces a body ceiling. Shipping the fix disabled would
@@ -153,8 +160,8 @@ cover the real upload-endpoint case.
 
 ## S10 — HTTP rate limiting (`varco_fastapi.middleware.rate_limit`)
 
-**Off by default** — the one opt-in row (`rate_limit=None`). Pass a `RateLimitBundle` to
-`create_varco_app` to turn it on:
+**Off by default** — no `RateLimitModule` in `modules=`. Pass a `RateLimitBundle` to
+`RateLimitModule` to turn it on:
 
 ```python
 from varco_core.resilience.rate_limit import InMemoryRateLimiter, RateLimitConfig
@@ -166,7 +173,8 @@ bundle = RateLimitBundle(
         RateLimitRule(scope=RateLimitScope.TENANT, limiter=InMemoryRateLimiter(RateLimitConfig(rate=1000, period=60.0)), name="tenant"),
     ),
 )
-app = create_varco_app(container, rate_limit=bundle, ...)
+from varco_fastapi.modules import RateLimitModule, default_modules
+app = create_varco_app(container, modules=[*default_modules(), RateLimitModule(bundle)], ...)
 ```
 
 **No new rate limiter, no new algorithm.** `RateLimiter`/`RateLimitConfig`/`InMemoryRateLimiter`
@@ -209,9 +217,9 @@ are not gated — their key spaces are operator-controlled, not attacker-control
 
 This guard applies uniformly, whether `RateLimitMiddleware` is hand-registered
 (`app.add_middleware(RateLimitMiddleware, ...)`) or assembled via
-`create_varco_app(rate_limit=RateLimitBundle(...))`. `RateLimitBundle` itself carries an
+`RateLimitModule(RateLimitBundle(...))`. `RateLimitBundle` itself carries an
 `acknowledge_unbounded_keyspace: bool = False` field — the caller's own explicit opt-in, forwarded
-verbatim to both `RateLimitMiddleware` instances `create_varco_app` builds from the bundle. An
+verbatim to both `RateLimitMiddleware` instances `RateLimitModule` builds from the bundle. An
 `IP`/`SUBJECT` rule backed by a plain `InMemoryRateLimiter` raises `ValueError` unless
 `RateLimitBundle(..., acknowledge_unbounded_keyspace=True)` is passed — exactly as it would for a
 hand-registered instance.
@@ -219,7 +227,7 @@ hand-registered instance.
 ⚠️ **Not at `create_varco_app()` call time.** Starlette's `add_middleware()` only stores a
 deferred `Middleware(cls, **kwargs)` descriptor — the `RateLimitMiddleware` instance, and
 therefore this guard, is only actually constructed on the first ASGI call
-(`build_middleware_stack()`), for both the hand-registered and the `create_varco_app` form. A
+(`build_middleware_stack()`), for both the hand-registered and the `RateLimitModule` form. A
 misconfigured bundle will not raise from `create_varco_app()` itself; it raises on the first
 request the app receives (including a `TestClient`/`AsyncClient` call in a test, or a load
 balancer's first health-check hit in production — in practice close to, but not literally,
@@ -296,8 +304,9 @@ request time, and varco's `TracingMiddleware` does strictly less than the refere
 instrumentation it was measured against). Nothing about the attribute set changed, so no dashboard
 query needs rewriting. HTTP metrics gaining exemplars is new capability, not a regression.
 
-With `enable_tracing=False`, metrics still record exactly as before — no span, no exemplar, no
-error, no warning. The dependency is one-directional and degrades to pre-3.2 behaviour.
+With `TracingModule` excluded (`default_modules(exclude=(TracingModule,))`, or
+`TracingModule(enabled=False)`), metrics still record exactly as before — no span, no exemplar,
+no error, no warning. The dependency is one-directional and degrades to pre-3.2 behaviour.
 
 **Pitfalls**
 
@@ -326,9 +335,9 @@ or escalate these; it must not redefine them.
 | Forgetting `trusted_proxies` behind an ingress | Every request keys on the ingress IP — the **whole cluster** shares one budget | Set `VARCO_RATE_LIMIT_TRUSTED_PROXIES` before deploying behind an ingress |
 | `fail_open=True` masks a Redis outage | The default trades enforcement for availability | Pair `RedisRateLimiter` with `@circuit_breaker`; flip `fail_open=False` if enforcement must win |
 | A `SUBJECT`-only rule set leaves anonymous traffic unlimited | `inspect_http_edge()` reports `http.rate_limit.no_pre_auth_rule` | Add an `IP`/`GLOBAL` rule at `stage=PRE_AUTH` |
-| Registering any of the three via `extra_middleware=` | Verified wrong position (§D-order-bugs) — outside `ErrorMiddleware`/`RequestContextMiddleware` | Use the dedicated `security_headers=`/`body_limit=`/`rate_limit=` keywords |
-| `enable_error_middleware=False` with `body_limit`/`rate_limit` on | Both middlewares are self-contained for this case — `RateLimitMiddleware` always sends its own 429/503 response directly; `BodyLimitMiddleware` self-renders a plain JSON 413 (via the same shared `send_json_error` helper) when constructed with `has_error_middleware=False`, which `create_varco_app` passes automatically from its own `enable_error_middleware` value | No action needed — both middlewares degrade gracefully with `ErrorMiddleware` absent; the 413/429 still carry `code`/`message`/`correlation_id` |
-| `create_varco_app(rate_limit=RateLimitBundle(...))` raises `ValueError` for an unbounded `InMemoryRateLimiter` keyspace | §D-S10-keyspace's guard fires uniformly for hand-registered and bundle-assembled `RateLimitMiddleware` alike | Pass `RateLimitBundle(..., acknowledge_unbounded_keyspace=True)` to accept it for a single-process deployment, or use `RedisRateLimiter` for `IP`/`SUBJECT` scopes |
+| Registering any of the three via `MiddlewareModule` (the `extra_middleware=` replacement) | Verified wrong position (§D-order-bugs) — outside `ErrorMiddleware`/`RequestContextMiddleware` | Use the dedicated `SecurityHeadersModule`/`BodyLimitModule`/`RateLimitModule` instead |
+| `ErrorEnvelopeModule` excluded, with `BodyLimitModule`/`RateLimitModule` on | Both middlewares are self-contained for this case — `RateLimitMiddleware` always sends its own 429/503 response directly; `BodyLimitMiddleware` self-renders a plain JSON 413 (via the same shared `send_json_error` helper) when constructed with `has_error_middleware=False`, which `BodyLimitModule`/`RateLimitModule` compute automatically by reading the `ModuleRegistry` for an enabled `ErrorEnvelopeModule` | No action needed — both middlewares degrade gracefully with `ErrorMiddleware` absent; the 413/429 still carry `code`/`message`/`correlation_id` |
+| `RateLimitModule(RateLimitBundle(...))` raises `ValueError` for an unbounded `InMemoryRateLimiter` keyspace | §D-S10-keyspace's guard fires uniformly for hand-registered and bundle-assembled `RateLimitMiddleware` alike | Pass `RateLimitBundle(..., acknowledge_unbounded_keyspace=True)` to accept it for a single-process deployment, or use `RedisRateLimiter` for `IP`/`SUBJECT` scopes |
 
 ## See also
 

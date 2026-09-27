@@ -65,14 +65,14 @@ http_server_request_duration_seconds_bucket{...} ...
 
 | File | Purpose |
 |---|---|
-| `app.py` | `create_app()` — wires `MeterProvider`, calls `create_varco_app(enable_metrics=True)` |
+| `app.py` | `create_app()` — wires `MeterProvider`, calls `create_varco_app(modules=[*default_modules(), MetricsModule()])` |
 | `models.py` | `Post(AuditedDomainModel)` — simple domain model for traffic generation |
 | `tests/test_smoke.py` | Verifies `/metrics` is mounted, middleware records instruments, CRUD works |
 
 ## Architecture
 
 ```
-create_varco_app(enable_metrics=True)
+create_varco_app(modules=[*default_modules(), MetricsModule()])
   │
   ├─ MetricsMiddleware (ASGI middleware)
   │    └─ Records OTel instruments per request

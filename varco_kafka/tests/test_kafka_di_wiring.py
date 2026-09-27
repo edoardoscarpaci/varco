@@ -32,9 +32,12 @@ from varco_core.service.conversation import AbstractConversationStore
 from varco_core.tenancy.membership import AbstractTenantMembership
 from varco_kafka.channel import KafkaChannelManagerSettings
 from varco_kafka.config import KafkaEventBusSettings
+from varco_kafka.modules import KafkaModule
 
 
 class TestVarcoKafkaDIWiringConformance(DIWiringConformance):
+    module_cls = KafkaModule
+
     settings_classes = (KafkaEventBusSettings, KafkaChannelManagerSettings)
     expected_defaults = (
         (CacheBackend, "in_memory"),

@@ -81,7 +81,24 @@ def _make_beanie_settings_provider() -> Provider:
     return _beanie_settings
 
 
+from varco_beanie.modules import BeanieModule  # noqa: E402
+
+
+def _beanie_module_factory() -> BeanieModule:
+    return BeanieModule(
+        settings=BeanieSettings(
+            mongo_client=AsyncMongoClient(
+                "mongodb://127.0.0.1:1/?connectTimeoutMS=1&serverSelectionTimeoutMS=1"
+            ),
+            db_name="x",
+        )
+    )
+
+
 class TestVarcoBeanieDIWiringConformance(DIWiringConformance):
+    module_cls = BeanieModule
+    module_factory = staticmethod(_beanie_module_factory)
+
     expected_defaults = CORE_DEFAULTS + (
         (AbstractDeadLetterQueue, "beanie"),
         (RepositoryProvider, "beanie"),

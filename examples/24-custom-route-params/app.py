@@ -31,6 +31,7 @@ Async safety:   ✅ Synchronous factory; no event loop required at call time.
 from __future__ import annotations
 
 from fastapi import FastAPI
+from providify import DIContainer
 from router import CatalogRouter
 from varco_core.auth.base import AuthContext
 from varco_fastapi.app import create_varco_app
@@ -68,6 +69,7 @@ def create_app() -> FastAPI:
     CatalogRouter._auth = server_auth  # type: ignore[attr-defined]
 
     return create_varco_app(
+        DIContainer(),
         routers=[CatalogRouter],
         title="Custom Route Params Example",
         version="0.1.0",

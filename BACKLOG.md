@@ -73,7 +73,7 @@ A row moves to `## ✅ Shipped` only when its plan is built and merged.
 - `DI-2`, `DI-8`, `DI-13` — plans/046-wiring-verb-collapse-and-explicit-container.md — `done (Plan 046)`
 - `DI-12`, `DI-4`, `DI-17` — plans/047-config-driven-backend-selection-and-catalogue.md — `done (Plan 047)`
 - `DI-6`, `DI-16` — plans/048-settings-standardization.md — `done (Plan 048)`
-- `DI-1`, `FLIP-1` — plans/049-varco-module-and-composable-app.md
+- `DI-1`, `FLIP-1` — plans/049-varco-module-and-composable-app.md — `done (Plan 049)`
 - `DI-9`, `DI-10` — plans/050-phased-lifecycle-and-di-wired-infrastructure.md
 - `DI-5` — plans/051-multi-binding-registries.md
 - `DI-7`, `DI-11` — plans/052-diagnose-report-and-test-profile.md
@@ -93,7 +93,7 @@ Roll-forward rows that lost their un-IDed status here; none is DI-shaped and non
 | `RO-1` | `MetricsMiddleware` records `status_code="500"` for exceptions `ErrorMiddleware` renders as 4xx | 🟡 should | S | todo | Every error-rate dashboard over `http.server.request.duration` is wrong for mapped exceptions; out of Plan 041's scope | `varco_fastapi/varco_fastapi/middleware/metrics.py:368,375-388`; `app.py:636-642` |
 | `RO-2` | Wire `inspect_jwks_posture()` and `inspect_retention_posture()` into `SecurityPosture` | 🟡 should | S | ✅ planned → plans/052-diagnose-report-and-test-profile.md | Plans 041/039 export the inspectors; the harness (`posture.py:258`, collectors `:400+`) does not call them. Natural to land inside `DI-7` | `plans/039` §D-S20-posture |
 | `RO-3` | Confirm Stripe's inbound HMAC secret encoding against a real delivery | 🟡 should | S | todo | `StripeWebhookVerifier` pins `RAW_UTF8` against brief 013 §2's conflicting description; if wrong, one enum value on one class | `plans/038` Risks table |
-| `RO-4` | `create_varco_app` gains a `log_redactor=` keyword | 🟡 should | S | ✅ planned → plans/049-varco-module-and-composable-app.md | Deliberately not added by Plan 040; folds into `DI-1`'s module shape | `plans/040` §D-S21-logging |
+| `RO-4` | `create_varco_app` gains a `log_redactor=` keyword | 🟡 should | S | `done (Plan 049)` — landed as `LoggingModule(redactor=...)`, not a `create_varco_app` keyword | Deliberately not added by Plan 040; folds into `DI-1`'s module shape | `plans/040` §D-S21-logging |
 | `RO-5` | `inspect_redaction_posture()` becomes a `SecurityPosture` collector | 🟡 should | S | ✅ planned → plans/057-redaction-flips.md | Un-parked by `FLIP-040-2` — the finding then means "opted out" | `plans/040` §D-S21-posture |
 | `RO-6` | `varco_core.schedule` general driver (a materialization loop for non-retention schedules) | 🟡 should | S | todo | Plan 032 shipped `ScheduleMaterializer` with no general caller; 039 closed it for retention only | `plans/039` §D-S20-driver |
 | `RO-7` | `0007_schedules_table.py` vs. `materializer.py:29`'s claimed `UNIQUE(schedule_id, run_at)` index — fix the DESIGN block (the index cannot exist; `uuid5` `job_id` is the real backstop) | 🟡 should | S | todo | Verified absent by Plan 039 / Step 12 | `varco_sa/varco_sa/schedule.py:11-19` |
@@ -246,7 +246,8 @@ trigger fires. Grouped by theme; each line is `item — why · ⏵ trigger`.
 - **T3 — where the reload task starts** (Plan 026) → the store owns `start()`/`stop()`; no
   `@Configuration` in `varco_core` because `container.scan("varco_core", recursive=True)`
   auto-activates every scanned one. ⚠️ `DI-1` must preserve this: a varco module in `varco_core`
-  is *registered*, never *scanned into activation*.
+  is *registered*, never *scanned into activation* (enforced by `test_modules_never_scanned.py`
+  since Plan 049).
 - **C2 — providify 2.0.1 gate** (Plan 024) → removed, not rescheduled; varco adopted `@Disposes`.
 - **RT7 — chaos test placement** (Plan 018) → own job in `integration.yml`, nightly +
   `workflow_dispatch`, never a required check.

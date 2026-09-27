@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from providify import DIContainer
+from varco_core.di.module import CoreModule
 from varco_fastapi.app import create_varco_app
 from varco_fastapi.composite import ServiceMount, create_composite_app
+from varco_fastapi.modules.lifecycle import MigrationsModule
 from varco_fastapi.router.endpoint import route
 from varco_fastapi.router.presets import GenericRouter
 
@@ -27,10 +30,12 @@ def _build_service(events: list[str], name: str, migrator) -> FastAPI:  # noqa: 
     from varco_core.migration.settings import MigrationSettings
 
     return create_varco_app(
-        None,
+        DIContainer(),
         routers=[_PingRouter],
-        migrations=migrator,
-        migration_settings=MigrationSettings(mode="upgrade"),
+        modules=[
+            CoreModule(),
+            MigrationsModule(migrator, settings=MigrationSettings(mode="upgrade")),
+        ],
         validate=False,
     )
 

@@ -336,19 +336,21 @@ The effective period is derived from the two knobs above — **no third env var*
   re-reads the cache without a network call (`JwksUrlSource.refresh()`'s own
   rate limit), so it would silently do nothing.
 
-**FastAPI wiring** — `varco_fastapi.JwksRefreshLifecycle` + `create_varco_app`:
+**FastAPI wiring** — `varco_fastapi.modules.JwksRefreshModule` (wraps `JwksRefreshLifecycle`):
 
 ```python
-from varco_fastapi import JwksRefreshLifecycle, create_varco_app
+from varco_fastapi.app import create_varco_app
+from varco_fastapi.modules import JwksRefreshModule, default_modules
 
 registry = TrustedIssuerRegistry.from_env()
 app = create_varco_app(
-    ...,
-    jwks_refresh=JwksRefreshLifecycle(registry),  # None (default) = off
+    container,
+    modules=[*default_modules(), JwksRefreshModule(registry)],  # absent (default) = off
 )
 ```
 
-`JwksRefreshLifecycle.start()`/`.stop()` call only `start_refresh()`/`stop_refresh()`
+`JwksRefreshModule.start()`/`.stop()` build a `JwksRefreshLifecycle` and call only
+`start_refresh()`/`stop_refresh()`
 — it never calls `load_all()`, so a JWKS endpoint that is down at boot cannot fail
 startup. The initial load stays the app's own explicit `await registry.load_all()`.
 
@@ -365,7 +367,7 @@ consumer (BACKLOG row filed, not yet wired).
 | Pitfall | Why it happens | Fix |
 |---|---|---|
 | `ttl_seconds=0` (the default) and nothing ever refreshes proactively | `start_refresh()`'s effective period resolves to `0.0` and creates no task — this is the documented "off" state, not a bug | Pass `ttl_seconds=` (or `interval=` explicitly) to `TrustedIssuerRegistry`/`start_refresh()`/`JwksRefreshLifecycle` |
-| Binding a `TrustedIssuerRegistry` in DI does not start the refresher | `start_refresh()` is only ever reached by an explicit call — there is deliberately no scanned `@Configuration` in `varco_core.authority` (a background HTTPS-fetching task must never start just because an app scans `varco_core`) | Wire `JwksRefreshLifecycle(registry)` into `create_varco_app(jwks_refresh=...)`, or call `await registry.start_refresh()` yourself |
+| Binding a `TrustedIssuerRegistry` in DI does not start the refresher | `start_refresh()` is only ever reached by an explicit call — there is deliberately no scanned `@Configuration` in `varco_core.authority` (a background HTTPS-fetching task must never start just because an app scans `varco_core`) | Add `JwksRefreshModule(registry)` to `modules=`, or call `await registry.start_refresh()` yourself |
 | A period below `min_refresh_interval` is silently clamped | `JwksUrlSource.refresh()` returns the cache with no network call inside its own `min_refresh_interval` — a faster tick would provably do nothing | Check the one WARNING logged at `start_refresh()` naming both values, or raise `min_refresh_interval` if the faster cadence is genuinely needed |
 | `JwksRefreshLifecycle.start()` does not fail even when the JWKS endpoint is permanently down | Deliberate — it never calls `load_all()`; only individual ticks fail (logged, not raised) | Call `await registry.load_all()` yourself at startup if you need a down endpoint to fail fast |
 

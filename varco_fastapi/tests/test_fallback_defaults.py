@@ -16,7 +16,7 @@ removes. Under `@Fallback`:
 - `varco_fastapi.di.bootstrap()` no longer accepts `setup_defaults=` at all
   (the kwarg — and `setup_varco_defaults()` itself — are removed, §D-fastapi).
 
-These are passing contract pins, proven against `VarcoFastAPIModule`'s
+These are passing contract pins, proven against `VarcoFastAPIConfiguration`'s
 providers (declared `@Fallback` by Step 8) and `bootstrap()`'s removed
 `setup_defaults=` kwarg.
 """

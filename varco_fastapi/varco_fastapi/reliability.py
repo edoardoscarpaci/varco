@@ -114,8 +114,8 @@ class ReliabilityLifecycle:
     # ``start``/``stop`` aliases — the plan's documented public API is
     # ``startup``/``shutdown``, but ``VarcoLifespan`` drives every lifecycle
     # component through ``AbstractLifecycle``'s ``start``/``stop`` names
-    # (see ``varco_fastapi.lifespan``); this lets create_varco_app(reliability=)
-    # wire a ReliabilityLifecycle in alongside MigrationLifecycle/TenancyLifecycle.
+    # (see ``varco_fastapi.lifespan``); this lets ReliabilityModule wire a
+    # ReliabilityLifecycle in alongside MigrationsModule/TenancyModule.
     async def start(self) -> None:
         await self.startup()
 
@@ -135,7 +135,7 @@ class ReliabilityLifecycle:
                 f"ReliabilityPreset requires a binding for {interface.__name__} "
                 f"(outbox={self._preset.outbox}, audit={self._preset.audit}) — "
                 f"bind it in the container before passing this preset to "
-                f"create_varco_app(reliability=...). Original error: {exc}"
+                f"ReliabilityModule(preset). Original error: {exc}"
             ) from exc
 
 

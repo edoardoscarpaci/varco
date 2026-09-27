@@ -15,8 +15,8 @@ DESIGN: a frozen config object, not a `@Configuration`
        authorizer silently active" pitfall is the same class of mistake for
        a different feature) — durability silently turning on is as bad as
        it silently staying off.
-    ✅ `create_varco_app(reliability=preset)` (Phase 9's fastapi wiring) is
-       one explicit line.
+    ✅ `ReliabilityModule(preset)` (Plan 049's fastapi wiring, passed to
+       `create_varco_app(container, modules=[...])`) is one explicit line.
     ❌ Not injectable-by-scan — that is the point.
 
 DESIGN: the preset does not construct the DLQ

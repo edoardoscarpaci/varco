@@ -45,7 +45,7 @@ from varco_sa.audit import audit_metadata
 from varco_sa.bootstrap import SAConfig, SAFastrestApp
 from varco_sa.conversation import SAConversationStore, conversation_metadata
 from varco_sa.deduplication import SADedupConfig, SADeduplicator, dedup_metadata
-from varco_sa.di import SAModule, bind_repositories
+from varco_sa.di import SAConfiguration, bind_repositories
 from varco_sa.dlq import dead_letters_metadata
 from varco_sa.encryption_store import encryption_metadata
 from varco_sa.factory import SAModelFactory, SAModelRegistry
@@ -96,7 +96,7 @@ from varco_sa.uow import SQLAlchemyUnitOfWork
 
 __all__ = [
     # ── DI integration ────────────────────────────────────────────────────────
-    "SAModule",
+    "SAConfiguration",
     "bind_repositories",
     # ── Factory + registry ─────────────────────────────────────────────────────
     "SAModelFactory",

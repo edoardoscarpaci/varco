@@ -99,14 +99,16 @@ class TestReliabilityLifecycleAuditRequiresRepo:
 class TestCreateVarcoAppReliabilityKwarg:
     def test_create_varco_app_accepts_reliability_kwarg(self) -> None:
         from providify import DIContainer
+        from varco_core.di.module import CoreModule
         from varco_core.reliability import ReliabilityPreset
         from varco_fastapi.app import create_varco_app
+        from varco_fastapi.modules.lifecycle import ReliabilityModule
 
         container = DIContainer()
         app = create_varco_app(
             container,
             routers=[],
-            reliability=ReliabilityPreset.off(),
+            modules=[CoreModule(), ReliabilityModule(ReliabilityPreset.off())],
             validate=False,
         )
         assert app is not None

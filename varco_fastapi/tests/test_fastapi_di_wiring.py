@@ -3,7 +3,7 @@ Plan 046 / Step 9 — `varco_fastapi`'s `DIWiringConformance` subclass
 (§D-suite), the `create_varco_container`/`setup_event_producer`/
 `get_container` removals, `DISessionMiddleware`'s container-required
 contract, `bind_mcp_adapter`/`bind_skill_adapter` `qualifier=`, and the
-redundant-`install(VarcoFastAPIModule)`-after-`bootstrap()` pitfall.
+redundant-`install(VarcoFastAPIConfiguration)`-after-`bootstrap()` pitfall.
 
 `expected_defaults` measured directly against a bare
 `container.scan("varco_core") + scan("varco_fastapi")` (Step 0(d) preflight)
@@ -195,7 +195,12 @@ def _fastapi_settings_classes() -> tuple[type, ...]:
     )
 
 
+from varco_fastapi.modules import FastAPIModule  # noqa: E402
+
+
 class TestVarcoFastapiDIWiringConformance(DIWiringConformance):
+    module_cls = FastAPIModule
+
     expected_defaults = _fastapi_expected_defaults()
     settings_classes = _fastapi_settings_classes()
 
@@ -224,16 +229,16 @@ class TestVarcoFastapiDIWiringConformance(DIWiringConformance):
         # own table: "@Configuration idempotency — container-owned dedup: a
         # second install()/scan of the same module is a no-op",
         # scanner.py:255-..., container.py:1019/7158/7194) — measured live: a
-        # second container.install(VarcoFastAPIModule) after bootstrap()'s own
+        # second container.install(VarcoFastAPIConfiguration) after bootstrap()'s own
         # scan already installed it adds NO binding and raises nothing. The
         # original draft of this test asserted AMBIGUOUS_BINDING, which
         # contradicts that documented, container-owned dedup; corrected here
         # rather than left red against correct production behaviour.
-        from varco_fastapi.di import VarcoFastAPIModule
+        from varco_fastapi.di import VarcoFastAPIConfiguration
 
         before = len(container.describe().bindings)
 
-        container.install(VarcoFastAPIModule)
+        container.install(VarcoFastAPIConfiguration)
 
         assert len(container.describe().bindings) == before
         report = container.validate(raise_on_error=False)

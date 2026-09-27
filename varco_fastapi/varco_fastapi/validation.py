@@ -250,8 +250,8 @@ def validate_container_bindings(container: Any) -> None:
         - If ``varco_core`` is not installed (unusual) the check imports are
           skipped gracefully.
         - ``AbstractJobStore`` and ``AbstractJobRunner`` are provided by
-          ``VarcoFastAPIModule`` with ``InMemoryJobStore`` defaults — they should
-          always be present if ``container.install(VarcoFastAPIModule)`` was called.
+          ``VarcoFastAPIConfiguration`` with ``InMemoryJobStore`` defaults — they should
+          always be present if ``container.install(VarcoFastAPIConfiguration)`` was called.
 
     Thread safety:  ✅ Pure function — no shared state.
     Async safety:   ✅ No I/O.
@@ -275,8 +275,8 @@ def validate_container_bindings(container: Any) -> None:
         container,
         AbstractServerAuth,
         fix=(
-            "Install VarcoFastAPIModule and override the AbstractServerAuth binding:\n"
-            "  container.install(VarcoFastAPIModule)\n"
+            "Install VarcoFastAPIConfiguration and override the AbstractServerAuth binding:\n"
+            "  container.install(VarcoFastAPIConfiguration)\n"
             "  container.bind(AbstractServerAuth, JwtBearerAuth)\n"
             "  # or: container.bind(AbstractServerAuth, ApiKeyAuth(...))"
         ),
@@ -285,16 +285,16 @@ def validate_container_bindings(container: Any) -> None:
         container,
         AbstractJobStore,
         fix=(
-            "Install VarcoFastAPIModule which registers InMemoryJobStore by default:\n"
-            "  container.install(VarcoFastAPIModule)"
+            "Install VarcoFastAPIConfiguration which registers InMemoryJobStore by default:\n"
+            "  container.install(VarcoFastAPIConfiguration)"
         ),
     )
     _assert_binding(
         container,
         AbstractJobRunner,
         fix=(
-            "Install VarcoFastAPIModule which registers JobRunner by default:\n"
-            "  container.install(VarcoFastAPIModule)"
+            "Install VarcoFastAPIConfiguration which registers JobRunner by default:\n"
+            "  container.install(VarcoFastAPIConfiguration)"
         ),
     )
 

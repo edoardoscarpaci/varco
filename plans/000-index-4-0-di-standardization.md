@@ -137,6 +137,17 @@ where two plans disagree):
 - **OQ1 answered (049)**: `VarcoModule` is a plain varco ABC, never a providify `@Configuration`
   — the scanner auto-installs every public `@Configuration`, `depends_on` orders install only,
   and `install()` constructs the class itself.
+- **049 → 050/051/052 handoff, concretely** (recorded at 049's Step 22, no separate note needed
+  in the neighbour files — the seams are named in-source): `_ModuleComponent`/`_async_init_all`
+  in `varco_fastapi/varco_fastapi/app.py` are the seams 050 replaces with phases; the §D-order
+  list-position WARNING (`_warn_migration_tenancy_listed_after_core`) is the placeholder for
+  "migrations phase before core phase"; `CoreModule.start()` starting a resolved backend's bus is
+  the re-homing candidate. `_default_collectors()` in
+  `varco_fastapi/varco_fastapi/modules/lifecycle.py` (docstring-flagged) is the function 051
+  replaces with a `Multibound` collector set. `VarcoModule.validate()` (defined, returns
+  `Sequence[str]`, called by nothing) and `ModuleRegistry.modules` (name · enabled · class) are
+  052's "Modules" section of `varco diagnose`; `_warn_unowned_settings()` in `app.py` is a
+  candidate to fold into it. 054 reads `enforce` off `SecurityPostureModule`.
 - **OQ2 superseded (047)**: providify 2.1.0's `@Requires(env=, value=)` replaces Plan 043's
   `activate_profile()` translation outright. Precedence code > env-dotted > env-named > default is
   carried by the `@Fallback` post-step, not by priority — 045's `BACKEND_PRIORITY` stands.

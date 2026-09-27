@@ -44,7 +44,7 @@ from varco_core.service.conversation import AbstractConversationStore
 from varco_core.tenancy.membership import AbstractTenantMembership
 from varco_sa.advisory_lock import SAXactAdvisoryLock
 from varco_sa.bootstrap import SAConfig
-from varco_sa.di import SAModule
+from varco_sa.di import SAConfiguration
 
 CORE_DEFAULTS = (
     (CacheBackend, "in_memory"),
@@ -84,7 +84,25 @@ def _make_sqlite_sa_config() -> Provider:
     return _sa_config
 
 
+from varco_sa.modules import SAModule  # noqa: E402
+
+
+def _sa_module_factory() -> SAModule:
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    return SAModule(
+        config=SAConfig(
+            engine=create_async_engine("sqlite+aiosqlite:///:memory:"),
+            base=_Base,
+            entity_classes=(),
+        )
+    )
+
+
 class TestVarcoSaDIWiringConformance(DIWiringConformance):
+    module_cls = SAModule
+    module_factory = staticmethod(_sa_module_factory)
+
     expected_defaults = CORE_DEFAULTS + (
         (IUoWProvider, None),
         (AbstractDistributedLock, None),
@@ -209,13 +227,13 @@ async def test_sa_advisory_lock_outranks_in_memory_default_by_backend_priority()
 
     container = DIContainer()
     container.scan("varco_core", recursive=True)
-    await container.ainstall(SAModule)
+    await container.ainstall(SAConfiguration)
 
     binding = container.get_binding(AbstractDistributedLock)
 
     assert binding.fallback is True
     assert binding.priority == BACKEND_PRIORITY
-    # ProviderBinding (the @Provider shape SAModule uses) has no
+    # ProviderBinding (the @Provider shape SAConfiguration uses) has no
     # `.implementation` attribute — that's a ClassBinding-only field.
     # `.fn.__name__` is the provider-shape equivalent identity check.
     assert binding.fn.__name__ == "sa_advisory_lock"

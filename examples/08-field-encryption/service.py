@@ -55,7 +55,7 @@ class PatientService(AsyncService[Patient, UUID, PatientCreate, PatientRead, Pat
     Inherits the full ``AsyncService`` contract:
     - Authorization via injected ``AbstractAuthorizer`` (defaults to permissive).
     - DTO ↔ domain translation via injected ``PatientAssembler``.
-    - Unit-of-work management via ``IUoWProvider`` (provided by SAModule).
+    - Unit-of-work management via ``IUoWProvider`` (provided by SAConfiguration).
     - No event publishing in this example — keeps it focused on encryption.
 
     Thread safety:  ⚠️ Singleton — must be stateless; each request gets its own UoW.
@@ -73,7 +73,7 @@ class PatientService(AsyncService[Patient, UUID, PatientCreate, PatientRead, Pat
     ) -> None:
         """
         Args:
-            uow_provider: Injected ``IUoWProvider`` — provided by ``SAModule``.
+            uow_provider: Injected ``IUoWProvider`` — provided by ``SAConfiguration``.
             authorizer:   Injected ``AbstractAuthorizer`` — ``BaseAuthorizer``
                           (permissive) is auto-registered by varco_core.
             assembler:    Injected ``PatientAssembler`` — handles DTO ↔ Patient mapping.

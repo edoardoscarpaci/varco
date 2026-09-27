@@ -529,12 +529,13 @@ async def test_no_rules_is_a_pass_through_byte_identical() -> None:
 def _build_bundle_app(bundle: RateLimitBundle) -> FastAPI:
     from providify import DIContainer
     from varco_fastapi.app import create_varco_app
+    from varco_fastapi.modules.edge import RateLimitModule
 
     return create_varco_app(
-        container=DIContainer(),
+        DIContainer(),
         routers=[],
         validate=False,
-        rate_limit=bundle,
+        modules=[RateLimitModule(bundle)],
     )
 
 

@@ -200,16 +200,17 @@ and its ordering hazard" section for the full request-order diagram and the
 `request.state` mirror caveat (they are symmetric for I2/T1, documented
 once there to avoid duplication).
 
-`create_varco_app(i18n=I18nSettings(enabled=True, ...), ...)` resolves the
+`LocalizationModule(i18n=I18nSettings(enabled=True, ...))` (part of `default_modules()` —
+replace the default instance via `default_modules(exclude=(LocalizationModule,))`) resolves the
 DI-bound `MessageCatalog` (default: `NullMessageCatalog`, lowest DI
 priority so any app-provided catalog wins) and, only when both `enabled`
-and a non-`None` catalog are found, adds an `I18nLifecycle` component that
-calls `catalog.start()`/`catalog.stop()` around `VarcoLifespan`.
+and a non-`None` catalog are found, its `start()` calls
+`catalog.start()`/`catalog.stop()` around the ASGI lifespan (`I18nLifecycle`, unchanged).
 
-⚠️ **`i18n=`/`timezone=` are typed `Any | None` on `create_varco_app`, not
+⚠️ **`i18n=`/`timezone=` are typed `Any | None` on `LocalizationModule`, not
 `I18nSettings | None`/`TimezoneSettings | None`.** The implementation
 accepts anything and falls back to a fresh default settings object with
-`isinstance()` checks (`i18n if isinstance(i18n, I18nSettings) else
+`isinstance()`-shaped resolution (`self._i18n if self._i18n is not None else
 I18nSettings()`) rather than a type-checked keyword. Pass an actual
 `I18nSettings`/`TimezoneSettings` instance — passing anything else silently
 behaves as if you passed nothing.

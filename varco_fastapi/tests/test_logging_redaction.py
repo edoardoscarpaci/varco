@@ -113,3 +113,79 @@ def test_skip_paths_still_skips_logging_with_redactor_configured(caplog: Any) ->
 
     records = [r for r in caplog.records if r.name == "varco_fastapi.access"]
     assert records == []
+
+
+# ── Plan 049 / Step 15 — extended through create_varco_app(modules=...) ──
+
+
+def test_logging_module_yields_a_logging_spec_with_the_constructed_redactor() -> None:
+    from providify import DIContainer
+    from varco_core.redaction import PolicyRedactor
+    from varco_fastapi.middleware.slots import EdgeSlot
+    from varco_fastapi.modules import LoggingModule
+
+    redactor = PolicyRedactor()
+    container = DIContainer()
+    module = LoggingModule(redactor=redactor)
+    module.register(container)
+
+    specs = module.middleware(container)
+    logging_spec = next(s for s in specs if s.slot == EdgeSlot.LOGGING)
+
+    assert logging_spec.target is RequestLoggingMiddleware
+    assert logging_spec.kwargs.get("redactor") is redactor
+
+
+def test_app_built_with_logging_module_redacts_secret_named_field(
+    caplog: Any, monkeypatch: Any
+) -> None:
+    """040's existing middleware-level assertion, driven end-to-end through
+    create_varco_app(modules=[..., LoggingModule(redactor=...)])."""
+    from providify import DIContainer
+    from varco_core.redaction import PolicyRedactor, RedactionPolicy
+    from varco_fastapi.app import create_varco_app
+    from varco_fastapi.modules import LoggingModule
+    from varco_fastapi.modules.defaults import default_modules
+
+    monkeypatch.setattr(
+        "varco_fastapi.middleware.logging._extract_tenant_id",
+        lambda request: "tenant-secret",
+        raising=False,
+    )
+
+    redactor = PolicyRedactor(policy=RedactionPolicy(patterns=("tenant_id",)))
+    container = DIContainer()
+    app = create_varco_app(
+        container,
+        modules=[*default_modules(exclude=(LoggingModule,)), LoggingModule(redactor=redactor)],
+        # BUGFIX (test, not plan): no AbstractServerAuth is bound here —
+        # same validate=False convention as every other from-scratch
+        # create_varco_app(...) test (see test_create_varco_app_modules.py).
+        validate=False,
+    )
+
+    client = TestClient(app, raise_server_exceptions=True)
+    with caplog.at_level(logging.INFO, logger="varco_fastapi.access"):
+        client.get("/health")
+
+    records = [r for r in caplog.records if r.name == "varco_fastapi.access"]
+    assert records, "expected at least one access log entry"
+    entry = records[0].args[0] if records[0].args else records[0].msg
+    assert "tenant-secret" not in str(entry)
+
+
+def test_logging_module_default_passes_redactor_none_no_fallback() -> None:
+    """040's rule stands: redactor=None means no redaction, never a
+    default_redactor() fallback (§D-logging)."""
+    from providify import DIContainer
+    from varco_fastapi.middleware.slots import EdgeSlot
+    from varco_fastapi.modules import LoggingModule
+
+    container = DIContainer()
+    module = LoggingModule()
+    module.register(container)
+
+    specs = module.middleware(container)
+    logging_spec = next(s for s in specs if s.slot == EdgeSlot.LOGGING)
+
+    assert logging_spec.kwargs.get("redactor") is None

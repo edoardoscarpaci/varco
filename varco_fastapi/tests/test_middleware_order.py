@@ -56,22 +56,88 @@ def _build_baseline_app(**extra_kwargs: Any) -> Any:
     # exactly the one feature it exercises via **extra_kwargs, and the
     # "shift by exactly one" / "restores the Phase-2 list" comparisons stay
     # meaningful against the unchanged _PHASE_2_BASELINE_ORDER.
+    #
+    # Plan 049 / DI-1 migration: ONLY this helper's construction call
+    # changes — every call site below (`_build_baseline_app(security_headers=
+    # None)`, etc.) is untouched; the old `security_headers=`/`body_limit=`/
+    # `rate_limit=` keyword *names* are kept as this helper's own kwargs and
+    # translated into modules here. Position is now determined entirely by
+    # `EdgeSlot` (varco_fastapi.middleware.slots) — module *list* order is
+    # irrelevant to the resulting `app.user_middleware` order, which is the
+    # byte-identical-order proof this file exists to pin.
     defaults: dict[str, Any] = {
         "security_headers": False,
         "body_limit": False,
         "rate_limit": None,
     }
     defaults.update(extra_kwargs)
+    security_headers = defaults["security_headers"]
+    body_limit = defaults["body_limit"]
+    rate_limit = defaults["rate_limit"]
+
+    from varco_core.di.module import CoreModule, ObservabilityModule
+    from varco_fastapi.modules import (
+        BodyLimitModule,
+        CorsModule,
+        ErrorEnvelopeModule,
+        FastAPIModule,
+        LocalizationModule,
+        LoggingModule,
+        MetricsModule,
+        ProfilingModule,
+        RateLimitModule,
+        SecurityHeadersModule,
+        TracingModule,
+    )
+    from varco_fastapi.modules.base import MiddlewareModule
+
+    if security_headers is False:
+        security_headers_module = SecurityHeadersModule(enabled=False)
+    elif security_headers is None:
+        security_headers_module = SecurityHeadersModule()
+    else:
+        security_headers_module = SecurityHeadersModule(settings=security_headers)
+
+    if body_limit is False:
+        body_limit_module = BodyLimitModule(enabled=False)
+    elif body_limit is None:
+        body_limit_module = BodyLimitModule()
+    else:
+        body_limit_module = BodyLimitModule(settings=body_limit)
+
+    modules: list[Any] = [
+        CoreModule(),
+        ObservabilityModule(),
+        FastAPIModule(),
+        CorsModule(),
+        security_headers_module,
+        MiddlewareModule([_Marker]),
+        ErrorEnvelopeModule(),
+        body_limit_module,
+        LoggingModule(),
+        TracingModule(),
+        MetricsModule(),
+        LocalizationModule(i18n=I18nSettings(enabled=True)),
+        ProfilingModule(),
+    ]
+    if rate_limit is not None:
+        modules.append(RateLimitModule(rate_limit))
+
+    # FastAPIModule always yields a RequestContextMiddleware spec — with the
+    # bound AbstractServerAuth when one is resolvable, or in anonymous mode
+    # (no server_auth kwarg, RequestContextMiddleware's own
+    # `server_auth or AnonymousAuth()` default) otherwise. This restores
+    # pre-049 parity (`_try_add_request_context_middleware`'s anonymous-mode
+    # except branch) — see FastAPIModule's class docstring in
+    # varco_fastapi/modules/edge.py — so no AbstractServerAuth binding is
+    # needed here to keep RequestContextMiddleware present in the baseline.
+    container = DIContainer()
+
     return create_varco_app(
-        container=DIContainer(),
+        container,
         routers=[],
-        enable_tracing=True,
-        enable_metrics=True,
-        enable_profiling=True,
-        i18n=I18nSettings(enabled=True),
-        extra_middleware=[_Marker],
+        modules=modules,
         validate=False,
-        **defaults,
     )
 
 

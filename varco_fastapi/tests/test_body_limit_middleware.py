@@ -172,14 +172,13 @@ async def test_enable_error_middleware_false_over_limit_body_gets_plain_413_not_
     """
     from providify import DIContainer
     from varco_fastapi.app import create_varco_app
+    from varco_fastapi.modules.edge import BodyLimitModule
 
     app = create_varco_app(
-        container=DIContainer(),
+        DIContainer(),
         routers=[],
         validate=False,
-        enable_error_middleware=False,
-        body_limit=BodyLimitSettings(max_bytes=100),
-        rate_limit=None,
+        modules=[BodyLimitModule(settings=BodyLimitSettings(max_bytes=100))],
     )
 
     @app.post("/upload")
@@ -201,14 +200,16 @@ async def test_enable_error_middleware_true_over_limit_body_still_renders_throug
     """The ErrorMiddleware-present path must stay unchanged (regression guard)."""
     from providify import DIContainer
     from varco_fastapi.app import create_varco_app
+    from varco_fastapi.modules.edge import BodyLimitModule, ErrorEnvelopeModule
 
     app = create_varco_app(
-        container=DIContainer(),
+        DIContainer(),
         routers=[],
         validate=False,
-        enable_error_middleware=True,
-        body_limit=BodyLimitSettings(max_bytes=100),
-        rate_limit=None,
+        modules=[
+            ErrorEnvelopeModule(),
+            BodyLimitModule(settings=BodyLimitSettings(max_bytes=100)),
+        ],
     )
 
     @app.post("/upload")

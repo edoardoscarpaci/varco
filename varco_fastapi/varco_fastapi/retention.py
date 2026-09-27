@@ -164,5 +164,5 @@ class RetentionLifecycle:
             raise LookupError(
                 f"RetentionLifecycle requires a binding for {interface.__name__} — "
                 "bind it in the container before passing this lifecycle to "
-                f"create_varco_app(retention=...). Original error: {exc}"
+                f"RetentionModule(registry, ...). Original error: {exc}"
             ) from exc
