@@ -355,6 +355,13 @@ if TYPE_CHECKING:
         register_gauge,
         span,
     )
+
+    # ── Posture (Plan 051 / DI-5, §D-posture) ────────────────────────────────────────
+    from varco_core.posture import (
+        PostureCollector,
+        PostureFinding,
+        PostureSeverity,
+    )
     from varco_core.providers import RepositoryProvider
 
     # ── Query system ───────────────────────────────────────────────────────────────
@@ -492,6 +499,12 @@ if TYPE_CHECKING:
         ValidationError,
         ValidationResult,
         Validator,
+    )
+
+    # ── Inbound webhook verifier registry (Plan 051 / DI-5, §D-verifier) ────────────
+    from varco_core.webhook.inbound import (
+        register_webhook_verifier,
+        registered_webhook_verifiers,
     )
 
     # NOTE (Plan 025 / T1, T2): varco_core.watch and varco_core.reload are deliberately NOT
@@ -662,6 +675,9 @@ _LAZY: Final[dict[str, str]] = {
     "PagedReadDTO": "varco_core.dto.pagination",
     "PendingMigrationsError": "varco_core.migration",
     "PolicyRedactor": "varco_core.redaction",
+    "PostureCollector": "varco_core.posture",
+    "PostureFinding": "varco_core.posture",
+    "PostureSeverity": "varco_core.posture",
     "QueryBuilder": "varco_core.query.builder",
     "QueryParams": "varco_core.query.params",
     "QueryParser": "varco_core.query.parser",
@@ -792,6 +808,8 @@ _LAZY: Final[dict[str, str]] = {
     "register": "varco_core.registry",
     "register_error_code": "varco_core.exception.http",
     "register_gauge": "varco_core.observability",
+    "register_webhook_verifier": "varco_core.webhook.inbound",
+    "registered_webhook_verifiers": "varco_core.webhook.inbound",
     "request_context": "varco_core.context",
     "reset_claim_transforms": "varco_core.jwt",
     "reset_redaction_state": "varco_core.redaction",
@@ -1094,6 +1112,13 @@ __all__ = [
     "HealthResult",
     "HealthStatus",
     "CompositeHealthCheck",
+    # ── Posture (Plan 051 / DI-5, §D-posture) ─────────────────────────────────────
+    "PostureCollector",
+    "PostureFinding",
+    "PostureSeverity",
+    # ── Inbound webhook verifier registry (Plan 051 / DI-5, §D-verifier) ────────
+    "register_webhook_verifier",
+    "registered_webhook_verifiers",
     # ── Auth helpers ─────────────────────────────────────────────────────────────
     "GrantBasedAuthorizer",
     "OwnershipAuthorizer",

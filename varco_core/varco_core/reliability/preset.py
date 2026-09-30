@@ -34,8 +34,10 @@ from typing import TYPE_CHECKING
 from varco_core.resilience.retry import RetryPolicy
 
 if TYPE_CHECKING:
+    from varco_core.event.base import Event
     from varco_core.event.dlq import AbstractDeadLetterQueue
     from varco_core.observability.reliability import ReliabilityMetricsConfig
+    from varco_core.serialization import Serializer
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,13 @@ class ReliabilityPreset:
         metrics:      Optional ``ReliabilityMetricsConfig`` — installed via
             ``install_reliability_metrics()`` at startup.
         outbox_max_attempts: Passed through to ``OutboxRelay`` verbatim.
+        serializer:   Explicit override for ``OutboxRelay``'s wire format
+            (Plan 050 / §D-wire row 1, additive). ``None`` (default) makes
+            ``ReliabilityModule`` inject whatever ``Serializer[Event]`` the
+            container resolves (the 045 fallback is ``JsonEventSerializer``,
+            so this always resolves) — a ``bind_cloudevents_serializer()``
+            swap then reaches the outbox with no code change here. An
+            explicit value always wins over the injected one.
 
     Raises:
         ValueError: ``outbox_max_attempts`` is set without a ``dlq`` —
@@ -70,6 +79,7 @@ class ReliabilityPreset:
     audit: bool = False
     metrics: ReliabilityMetricsConfig | None = None
     outbox_max_attempts: int | None = None
+    serializer: Serializer[Event] | None = None
 
     def __post_init__(self) -> None:
         if self.outbox_max_attempts is not None and self.dlq is None:

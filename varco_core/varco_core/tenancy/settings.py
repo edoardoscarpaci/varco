@@ -71,11 +71,18 @@ from varco_core.settings.types import CommaSeparated
 from varco_core.tenancy.source import CrossCheckMode, TenantTrust
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from varco_core.auth.delegation import DelegationPolicy
-    from varco_core.tenancy.source import TenantSourceChain
+    from varco_core.tenancy.source import TenantSource, TenantSourceChain
 
 _DEFAULT_RESERVED_LABELS = ("www", "api", "app", "admin", "static", "cdn")
-_LEGAL_TENANT_SOURCES = ("jwt", "subdomain", "legacy", "act_as")
+
+#: Plan 051 / DI-5, §D-tenant: the four names ``build_tenant_source_chain``
+#: constructs itself from ``TenantProvenanceSettings`` fields. A contributed
+#: ``TenantSource`` (the collection-seam pool) may never reuse one of these
+#: names — see ``build_tenant_source_chain``'s collision check.
+_BUILTIN_SOURCE_NAMES = ("jwt", "subdomain", "legacy", "act_as")
 
 
 class TenantIsolation(StrEnum):
@@ -261,17 +268,11 @@ class TenantProvenanceSettings(VarcoSettings):
                 ) from exc
         return value
 
-    @field_validator("sources")
-    @classmethod
-    def _check_sources_are_legal(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        """Mirror the old ``from_env()``'s unknown-source-name guard."""
-        unknown = [s for s in value if s not in _LEGAL_TENANT_SOURCES]
-        if unknown:
-            raise ValueError(
-                f"Invalid VARCO_TENANT_SOURCES entry(ies): {', '.join(unknown)}. "
-                f"Legal values are: {', '.join(_LEGAL_TENANT_SOURCES)}."
-            )
-        return value
+    # Plan 051 / DI-5, §D-tenant: the unknown-source-name guard moved to
+    # build_tenant_source_chain() — only the builder can see the contributed
+    # TenantSource pool, so only it can say whether an unrecognised name is
+    # truly unknown or is a legitimately bound pool source. Constructing
+    # TenantProvenanceSettings(sources=("partner",)) no longer raises here.
 
     @model_validator(mode="after")
     def _check_subdomain_requires_base_domains(self) -> TenantProvenanceSettings:
@@ -289,10 +290,22 @@ def build_tenant_source_chain(
     settings: TenantProvenanceSettings | None = None,
     *,
     delegation_policy: DelegationPolicy | None = None,
+    sources: Iterable[TenantSource] = (),
 ) -> TenantSourceChain | None:
     """
     Build a ``TenantSourceChain`` from ``TenantProvenanceSettings``, or
     ``None`` when nothing is configured.
+
+    Plan 051 / DI-5, §D-tenant: ``sources=`` is the contributed
+    ``TenantSource`` pool (typically ``collect(container, TenantSource)``,
+    see ``resolve_tenant_source_chain``) — a plugin's out-of-tree source
+    joins the chain by being *named* in ``settings.sources``
+    (``VARCO_TENANT_SOURCES``); being bound in the pool alone is inert. The
+    allowlist and the order both stay the operator's: chain membership and
+    order = ``settings.sources``, name by name — a built-in name
+    (``jwt``/``subdomain``/``legacy``/``act_as``) always constructs the
+    built-in exactly as before; any other name must match exactly one pool
+    source's ``name``.
 
     Args:
         settings: The settings to build from. ``None`` reads the real
@@ -300,13 +313,21 @@ def build_tenant_source_chain(
         delegation_policy: Phase 6 only — a ``DelegationPolicy`` to bind to
             an ``act_as`` source. Required if ``"act_as"`` is in
             ``settings.sources``.
+        sources: The contributed ``TenantSource`` pool. A pool source not
+            named in ``settings.sources`` is inert (never an error) — bound
+            ≠ active.
 
     Returns:
         A ``TenantSourceChain``, or ``None`` when ``VARCO_TENANT_SOURCES``
-        (or ``settings.sources``) is empty — nothing changes.
+        (or ``settings.sources``) is empty — nothing changes, regardless of
+        the pool.
 
     Raises:
-        ValueError: ``"act_as"`` is requested without a ``delegation_policy``.
+        ValueError: ``"act_as"`` is requested without a ``delegation_policy``;
+            a pool source's ``name`` collides with a built-in name (checked
+            even if that built-in is not itself active); two pool sources
+            share one ``name``; or a name in ``settings.sources`` matches
+            neither a built-in nor a pool source.
     """
     from varco_core.tenancy.source import TenantSourceChain
     from varco_core.tenancy.sources import (
@@ -316,6 +337,25 @@ def build_tenant_source_chain(
     )
 
     resolved = settings if settings is not None else TenantProvenanceSettings.from_env()
+
+    pool_by_name: dict[str, TenantSource] = {}
+    for source in sources:
+        if source.name in pool_by_name:
+            raise ValueError(
+                f"Two contributed TenantSource instances share the name {source.name!r} — "
+                "pool source names must be unique."
+            )
+        pool_by_name[source.name] = source
+
+    colliding = pool_by_name.keys() & set(_BUILTIN_SOURCE_NAMES)
+    if colliding:
+        name = sorted(colliding)[0]
+        raise ValueError(
+            f"A contributed TenantSource is named {name!r}, which collides with a "
+            f"built-in source name ({', '.join(_BUILTIN_SOURCE_NAMES)}) — shadowing a "
+            "built-in source name is not allowed; pick another name and omit the "
+            "built-in from VARCO_TENANT_SOURCES."
+        )
 
     if not resolved.sources:
         return None
@@ -345,10 +385,13 @@ def build_tenant_source_chain(
             from varco_core.tenancy.sources import ActAsTenantSource
 
             built.append(ActAsTenantSource(delegation_policy))
+        elif name in pool_by_name:
+            built.append(pool_by_name[name])
         else:
+            bound = ", ".join(sorted(pool_by_name)) or "(none)"
             raise ValueError(
-                f"Invalid tenant source {name!r} in VARCO_TENANT_SOURCES. Legal values are: "
-                "jwt, subdomain, legacy, act_as."
+                f"unknown tenant source {name!r}; built-ins: "
+                f"{', '.join(_BUILTIN_SOURCE_NAMES)}; bound: {bound}"
             )
 
     return TenantSourceChain(

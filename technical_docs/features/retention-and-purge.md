@@ -13,12 +13,15 @@ with the same DST-safe cron semantics, deterministic-`uuid5` cross-process conve
 ```
 varco_core/retention/
 ├── __init__.py     # re-exports nothing — no @Singleton/@Provider/@Configuration, ever
-├── policy.py        # RetentionPolicy, RetentionRegistry, RetentionOutcome, RetentionResult
+├── policy.py        # RetentionPolicy (@Multibound, Plan 051 / DI-5), RetentionRegistry,
+│                    # RetentionOutcome, RetentionResult
 ├── base.py           # RetentionTarget (ABC), CallableRetentionTarget
 ├── targets.py        # Dlq/Audit/Idempotency/Revocation/Job adapters
 ├── scheduler.py      # RetentionScheduler + execute_policy() + RetentionPolicyNotFoundError
-├── posture.py         # inspect_retention_posture()
-└── di.py               # bind_retention_registry(container, registry)
+└── posture.py         # inspect_retention_posture()
+
+# di.py / bind_retention_registry() are GONE (Plan 051 / DI-5) — contribute(container,
+# RetentionPolicy, policy) replaces them; RetentionModule builds the registry itself.
 
 varco_core/observability/retention.py   # install_retention_metrics() (opt-in)
 varco_core/cli/retention.py             # varco retention prune/list (extended)
@@ -138,17 +141,22 @@ would be indistinguishable from a real job to every caller of `list_by_status()`
 
 ## Usage
 
+`RetentionPolicy` is a `@Multibound` collection seam (Plan 051 / DI-5, §D-retention) — contribute
+one with `contribute()` (or a scanned `@Singleton`/`@Provider`); `RetentionModule` builds the
+registry itself, in its own `async_init()`, from every contribution:
+
 ```python
 from datetime import timedelta
 
-from varco_core.retention.policy import RetentionPolicy, RetentionRegistry
+from varco_core.di.collect import contribute
+from varco_core.retention.policy import RetentionPolicy
 from varco_core.retention.targets import DlqRetentionTarget, AuditRetentionTarget
-from varco_core.retention.di import bind_retention_registry
 from varco_fastapi.modules import RetentionModule, default_modules
 from varco_fastapi.app import create_varco_app
 
-registry = RetentionRegistry()
-registry.register(
+contribute(
+    container,
+    RetentionPolicy,
     RetentionPolicy(
         name="nightly-dlq",
         target=DlqRetentionTarget(dlq=my_dlq, acknowledge_dead_letter_deletion=True),
@@ -156,9 +164,11 @@ registry.register(
         timezone="Europe/Rome",
         dry_run=True,               # flip to False only after reviewing would_delete
         older_than=timedelta(days=30),
-    )
+    ),
 )
-registry.register(
+contribute(
+    container,
+    RetentionPolicy,
     RetentionPolicy(
         name="audit-1y",
         target=AuditRetentionTarget(repo=my_audit_repo),
@@ -166,17 +176,12 @@ registry.register(
         timezone="UTC",
         dry_run=False,
         older_than=timedelta(days=365),
-    )
+    ),
 )
-
-bind_retention_registry(container, registry)  # -> DIContainer (Plan 046 §D-bind); raises
-                                               # AlreadyBoundError on a second call — use
-                                               # providify's di_overrides/ContainerOverrides
-                                               # in a test to replace the registry instead
 
 app = create_varco_app(
     container,
-    modules=[*default_modules(), RetentionModule(registry, interval=300.0)],
+    modules=[*default_modules(), RetentionModule(interval=300.0)],
 )
 ```
 

@@ -35,6 +35,8 @@ from varco_core.webhook.inbound.verifiers import (
     StripeWebhookVerifier,
     SvixWebhookVerifier,
     get_verifier,
+    register_webhook_verifier,
+    registered_webhook_verifiers,
 )
 
 __all__ = [
@@ -50,4 +52,6 @@ __all__ = [
     "GitHubWebhookVerifier",
     "SlackWebhookVerifier",
     "get_verifier",
+    "register_webhook_verifier",
+    "registered_webhook_verifiers",
 ]

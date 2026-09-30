@@ -3,8 +3,10 @@ varco_fastapi.lifespan
 ======================
 FastAPI lifespan handler for startup/shutdown of varco services.
 
-``VarcoLifespan`` collects all registered lifecycle objects and starts/stops
-them in the correct order during the FastAPI application lifespan.
+``VarcoLifespan`` collects registered lifecycle objects and delegates the
+actual start/stop orchestration to ``varco_core.di.lifecycle.LifecycleRunner``
+(Plan 050 / §D-runner) — this class is now a thin ASGI adapter over that
+Docker-free, FastAPI-free engine.
 
 Managed components (each optional):
 - ``AbstractEventBus``   — start publishing/consuming events
@@ -32,9 +34,19 @@ DESIGN: explicit registration over DI container scanning
     ✅ Works as a FastAPI ``lifespan`` context manager
     ❌ Must be configured manually at app startup — no auto-discovery
 
-Recommended startup order
--------------------------
-Register components in dependency order.  Each component starts after the
+Phased ordering (Plan 050)
+---------------------------
+A modules-built app (``create_varco_app``) does not construct
+``VarcoLifespan`` with a hand-picked registration order at all — its
+components come from ``varco_core.di.lifecycle.phased_components()``,
+sequenced by each ``VarcoModule``'s declared ``phase`` (and, within a
+phase, ``depends_on``). The hand-wired form below (bare
+``lifespan.register(component)`` calls) keeps its pre-050 contract exactly:
+registration order in, exact reverse order out.
+
+Recommended startup order (hand-wired form only)
+--------------------------------------------------
+Register components in dependency order. Each component starts after the
 things it depends on, and stops before them (LIFO shutdown is automatic)::
 
     lifespan.register(bus)           # 1. Bus first — no other component can
@@ -56,39 +68,11 @@ Async safety:   ✅ ``__call__`` is an async context manager (FastAPI lifespan).
 
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
-from providify.exceptions import ShutdownError
-
-_logger = logging.getLogger(__name__)
-
-
-# ── Lifecycle protocol ─────────────────────────────────────────────────────────
-
-
-@runtime_checkable
-class AbstractLifecycle(Protocol):
-    """
-    Protocol for components with an async start/stop lifecycle.
-
-    Any object with ``start()`` and ``stop()`` async methods satisfies this
-    protocol via structural subtyping — no explicit inheritance needed.
-
-    Thread safety:  ✅ Protocol check is read-only.
-    Async safety:   ✅ Both methods are ``async def``.
-    """
-
-    async def start(self) -> None:
-        """Start the component.  Idempotent."""
-        ...
-
-    async def stop(self) -> None:
-        """Stop the component cleanly.  Idempotent."""
-        ...
-
+from varco_core.di.lifecycle import AbstractLifecycle, LifecycleRunner
 
 # ── VarcoLifespan ─────────────────────────────────────────────────────────────
 
@@ -120,6 +104,11 @@ class VarcoLifespan:
                      stopped.  ``create_varco_app()`` fills it with
                      ``lambda: container.ashutdown()`` (Plan 022 / RL-8a).
 
+    Attributes:
+        last_runner: The most recently entered ``LifecycleRunner`` — set at
+            the start of every ``__call__`` cycle (Plan 050). Exposes
+            ``.plan``/``.last_failures`` for 052's ``varco diagnose``.
+
     Thread safety:  ⚠️ ``register()`` must be called before the app starts.
     Async safety:   ✅ ``__call__`` is an async context manager.
     """
@@ -140,13 +129,11 @@ class VarcoLifespan:
         #   ✅ Closure captures all outer-scope state naturally
         #   ❌ Caller must not forget to register components inside setup
         self._setup: Callable[[], Awaitable[None]] | None = setup
-        # Optional async teardown hook, awaited once after _stop_all().
-        # Plan 022 / §D-8a2(a) — the mirror image of setup=, and the seam
-        # through which create_varco_app() reaches container.ashutdown()
-        # so that @PreDestroy-bearing singletons which are NOT registered
-        # lifecycle components are torn down at all.  Six such orphans were
-        # measured out of ten (predestroy-vs-lifespan.md), two of them
-        # (RedisCache, MemcachedCache) holding an already-started pool.
+        # Optional async teardown hook, awaited once after the runner's
+        # stop pass. Plan 022 / §D-8a2(a) — the mirror image of setup=, and
+        # the seam through which create_varco_app() reaches
+        # container.ashutdown() so that @PreDestroy-bearing singletons which
+        # are NOT registered lifecycle components are torn down at all.
         # DESIGN: a callable hook over a `container=` kwarg
         #   ✅ A callable is not DI knowledge — a container would be, and the
         #      setup= DESIGN block above explicitly refuses that.
@@ -155,9 +142,10 @@ class VarcoLifespan:
         #   ✅ Testable with a bare coroutine factory — no providify needed.
         #   ❌ A second optional kwarg on a class that already had one.  Accepted:
         #      the symmetry with setup= is precisely the point.
-        #   Rejected: a process-global-container lookup inside _stop_all() — implicit
+        #   Rejected: a process-global-container lookup inside the runner — implicit
         #      global state, untestable, and silently wrong in multi-container tests.
         self._shutdown: Callable[[], Awaitable[None]] | None = shutdown
+        self.last_runner: LifecycleRunner | None = None
 
     def register(self, component: Any) -> None:
         """
@@ -187,9 +175,11 @@ class VarcoLifespan:
         """
         FastAPI lifespan context manager.
 
-        Called by FastAPI on app startup and shutdown.  Starts all components
-        in registration order, yields control to FastAPI for request handling,
-        then stops all components in reverse order.
+        Called by FastAPI on app startup and shutdown. Delegates to a fresh
+        ``LifecycleRunner`` built over this instance's registered
+        components, in registration order (Plan 050 / §D-runner) — the
+        runner owns start order, exact-reverse stop, rollback-on-partial-
+        start, and the ``shutdown=`` hook.
 
         Args:
             app: The FastAPI application (passed by FastAPI; typically unused).
@@ -199,14 +189,16 @@ class VarcoLifespan:
 
         Edge cases:
             - If a component's ``start()`` raises, subsequent components are NOT
-              started and the app startup fails (FastAPI raises ``RuntimeError``).
+              started, already-started ones are rolled back in exact reverse
+              order, and the app startup fails (FastAPI raises the original
+              exception).
             - If a component's ``stop()`` raises during shutdown, the error is
               logged and subsequent stops still run — a failing stop must not
               block other components from cleaning up.
             - ``VarcoLifespan`` calls the ``shutdown=`` hook, when one was
-              supplied, **after** ``_stop_all()`` — never instead of it.
-              Registered components therefore still stop in documented LIFO
-              dependency order, and only then does the hook (in practice
+              supplied, **after** every stop — never instead of it. Registered
+              components therefore still stop in documented reverse dependency
+              order, and only then does the hook (in practice
               ``container.ashutdown()``) sweep whatever the DI container still
               holds. A component reachable by both paths has ``stop()`` called
               twice; all ten shipped ``@PreDestroy`` components were measured
@@ -224,104 +216,13 @@ class VarcoLifespan:
               raised — a half-built app is exactly the case where eagerly
               constructed singletons would otherwise leak.
             - The hook never raises out of the lifespan. Failures are logged at
-              ERROR, one line per ``ShutdownFailure``, consistent with
-              ``_stop_all()``'s own "logs errors but does not raise" contract.
+              ERROR, one line per ``ShutdownFailure``, consistent with the
+              runner's own "logs errors but does not raise" contract.
         """
-        started: list[Any] = []
-        try:
-            # Run async setup first so it can register additional components
-            # (e.g. DI resolution of bus/consumer/job_runner) before the start loop.
-            # It lives INSIDE the shutdown-guarded region because an ainstall()
-            # that fails halfway can still have constructed eager singletons.
-            if self._setup is not None:
-                await self._setup()
-
-            # Start in registration order
-            for component in self._components:
-                try:
-                    await component.start()
-                    started.append(component)
-                    _logger.info("VarcoLifespan: started %s", type(component).__name__)
-                except Exception as exc:
-                    _logger.error(
-                        "VarcoLifespan: failed to start %s: %s",
-                        type(component).__name__,
-                        exc,
-                        exc_info=True,
-                    )
-                    # Stop already-started components before re-raising
-                    await self._stop_all(started)
-                    raise
-
-            try:
-                yield  # FastAPI handles requests here
-            finally:
-                # Stop in reverse order (LIFO)
-                await self._stop_all(list(reversed(started)))
-        finally:
-            # Container sweep LAST — §D-8a2(b).  _stop_all() owns the documented
-            # dependency ordering; ashutdown() only mops up what it did not reach.
-            await self._run_shutdown_hook()
-
-    async def _run_shutdown_hook(self) -> None:
-        """
-        Await the optional ``shutdown=`` hook, containing every failure.
-
-        Returns:
-            None.
-
-        Raises:
-            Nothing — this is the whole point.  Raising out of an
-            ``asynccontextmanager``'s ``finally`` during ASGI shutdown produces
-            an unactionable traceback that can mask the real cause, and would
-            leave this class with two teardown paths having opposite failure
-            semantics (``_stop_all()`` already logs and continues).
-
-        Edge cases:
-            - No hook supplied → no-op, and nothing is logged.
-            - providify's aggregated ``ShutdownError`` → one ERROR line per
-              ``ShutdownFailure``, naming the owner and its exception, never a
-              single opaque line (§D-8a2(c)'s mitigation for "a genuine teardown
-              bug is now only visible in logs").
-            - Any other exception (the container itself blew up) → one ERROR
-              line, also contained.
-
-        Async safety:  ✅ awaited exactly once per lifespan cycle.
-        """
-        if self._shutdown is None:
-            return
-        try:
-            await self._shutdown()
-        except ShutdownError as exc:
-            # Enumerate, never aggregate: exc.failures is the only place the
-            # per-component owner survives, and str(exc) is not machine-parsable.
-            for failure in exc.failures:
-                _logger.error(
-                    "VarcoLifespan: container teardown failed for %s: %s",
-                    failure.owner,
-                    failure.exception,
-                    exc_info=failure.exception,
-                )
-        except Exception as exc:  # noqa: BLE001
-            _logger.error(
-                "VarcoLifespan: container shutdown hook failed: %s",
-                exc,
-                exc_info=True,
-            )
-
-    async def _stop_all(self, components: list[Any]) -> None:
-        """Stop all components, logging errors but not raising."""
-        for component in components:
-            try:
-                await component.stop()
-                _logger.info("VarcoLifespan: stopped %s", type(component).__name__)
-            except Exception as exc:  # noqa: BLE001
-                _logger.error(
-                    "VarcoLifespan: error stopping %s: %s",
-                    type(component).__name__,
-                    exc,
-                    exc_info=True,
-                )
+        runner = LifecycleRunner(self._components, setup=self._setup, shutdown=self._shutdown)
+        self.last_runner = runner
+        async with runner:
+            yield
 
 
 __all__ = [

@@ -70,12 +70,18 @@ class TestFullParseRoundTrip:
 
 class TestUnknownSourceName:
     def test_unknown_source_raises_listing_legal_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from pydantic import ValidationError
-
+        # Plan 051 / DI-5, §D-tenant: the unknown-name guard moved from
+        # TenantProvenanceSettings construction (a field_validator) to
+        # build_tenant_source_chain() — only the builder can see the
+        # contributed TenantSource pool, so only it can say whether an
+        # unrecognised name is truly unknown. Settings construction itself
+        # no longer raises for an unrecognised name.
         mod = _mod()
         monkeypatch.setenv("VARCO_TENANT_SOURCES", "jwt,bogus")
-        with pytest.raises(ValidationError) as exc:
-            mod.TenantProvenanceSettings.from_env()
+        settings_obj = mod.TenantProvenanceSettings.from_env()  # no longer raises
+
+        with pytest.raises(ValueError) as exc:
+            mod.build_tenant_source_chain(settings_obj)
         message = str(exc.value)
         assert "bogus" in message
         for legal in ("jwt", "subdomain", "legacy", "act_as"):

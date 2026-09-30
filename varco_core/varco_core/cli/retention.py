@@ -79,6 +79,23 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     )
 
 
+def _resolve_registry(target: str) -> Any:
+    """
+    Resolve ``target`` and, per Plan 051 / DI-5, accept either a
+    ``RetentionRegistry`` (unchanged) or a bare iterable of
+    ``RetentionPolicy`` — wrapped into a ``RetentionRegistry`` here so
+    ``list``/``--policy`` keep working against a plugin's ``@Configuration``
+    that returns ``collect(container, RetentionPolicy)`` directly, with no
+    registry object of its own.
+    """
+    from varco_core.retention.policy import RetentionRegistry  # noqa: PLC0415
+
+    resolved = _resolve(target)
+    if resolved is None or isinstance(resolved, RetentionRegistry):
+        return resolved
+    return RetentionRegistry(resolved)
+
+
 def _resolve(target: str) -> Any:
     """Resolve ``module:callable`` → an instance, calling zero-arg callables."""
     if ":" not in target:
@@ -215,7 +232,7 @@ def _run(args: argparse.Namespace) -> int:
 def _resolve_and_dispatch(args: argparse.Namespace) -> int:
     """Runs on a thread with no event loop yet — safe to resolve the target."""
     if args.verb == "list":
-        registry = _resolve(args.target)
+        registry = _resolve_registry(args.target)
         if registry is None:
             print(f"Could not resolve retention target {args.target!r}.", file=sys.stderr)
             return 2
@@ -227,7 +244,7 @@ def _resolve_and_dispatch(args: argparse.Namespace) -> int:
         return usage_error
 
     if args.policy is not None:
-        registry = _resolve(args.target)
+        registry = _resolve_registry(args.target)
         if registry is None:
             print(f"Could not resolve retention target {args.target!r}.", file=sys.stderr)
             return 2

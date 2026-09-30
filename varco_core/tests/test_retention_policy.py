@@ -132,9 +132,8 @@ class TestRetentionRegistryOlderThanCapability:
             dry_run=True,
             older_than=timedelta(days=30),
         )
-        registry = RetentionRegistry()
         with pytest.raises(ValueError):
-            registry.register(policy)
+            RetentionRegistry([policy])
 
     def test_missing_older_than_on_supporting_target_raises_at_register(self) -> None:
         """Guard 4 — older_than absent on a supports_older_than=True target
@@ -149,9 +148,8 @@ class TestRetentionRegistryOlderThanCapability:
             dry_run=True,
             older_than=None,
         )
-        registry = RetentionRegistry()
         with pytest.raises(ValueError):
-            registry.register(policy)
+            RetentionRegistry([policy])
 
 
 class TestRetentionPolicyTenantIds:
@@ -190,10 +188,8 @@ class TestRetentionRegistryDuplicateName:
             dry_run=True,
             older_than=timedelta(days=60),
         )
-        registry = RetentionRegistry()
-        registry.register(policy1)
         with pytest.raises(ValueError):
-            registry.register(policy2)
+            RetentionRegistry([policy1, policy2])
 
 
 class TestRetentionPolicyFrozen:

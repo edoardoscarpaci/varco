@@ -86,29 +86,54 @@ class SAWebhookSubscriptionRepository(WebhookSubscriptionRepository):
     ``webhook_subscriptions``.
 
     Args:
-        url:           Async SQLAlchemy connection URL.
+        url:           Async SQLAlchemy connection URL. Mutually exclusive
+                       with ``engine``. When given, ``start()`` builds a
+                       private engine this repository owns and disposes on
+                       ``stop()``.
+        engine:        An already-constructed ``AsyncEngine`` to reuse (Plan
+                       050 / §D-wire row 4-5 — ``SAConfiguration.webhook_repository()``
+                       passes the app's own pool). Mutually exclusive with
+                       ``url``. ``stop()`` never disposes an engine it did
+                       not create — same ``_owns_engine`` convention as
+                       ``SAIdempotencyStore``.
         encryptor:     Optional ``FieldEncryptor`` applied to each entry of
                        ``active_secrets`` before it is persisted, and to
                        decrypt on read. ``None`` stores plaintext — see the
                        module docstring's warning.
-        engine_kwargs: Extra kwargs forwarded to ``create_async_engine()``.
+        engine_kwargs: Extra kwargs forwarded to ``create_async_engine()`` —
+                       only meaningful with ``url=``.
+
+    Raises:
+        ValueError: Neither or both of ``url``/``engine`` were given.
 
     Edge cases:
         - Call ``await repo.start()`` before any other method.
-        - Call ``await repo.stop()`` to dispose the engine's pool.
+        - Call ``await repo.stop()`` to dispose the engine's pool (only if
+          this repository created it).
     """
 
     def __init__(
         self,
         *,
-        url: str,
+        url: str | None = None,
+        engine: AsyncEngine | None = None,
         encryptor: FieldEncryptor | None = None,
         **engine_kwargs: Any,
     ) -> None:
+        if (url is None) == (engine is None):
+            raise ValueError(
+                "SAWebhookSubscriptionRepository requires exactly one of url= "
+                f"or engine= — got url={url!r}, engine={engine!r}."
+            )
         self._url = url
         self._encryptor = encryptor
         self._engine_kwargs = engine_kwargs
-        self._engine: AsyncEngine | None = None
+        self._engine: AsyncEngine | None = engine
+        # Tracks whether THIS repository created the engine (and must
+        # therefore dispose it in stop()) — an app-supplied engine
+        # (engine=) is never disposed here, even though self._engine is
+        # already populated (mirrors SAIdempotencyStore._owns_engine).
+        self._owns_engine = engine is None
 
     def _require_engine(self) -> AsyncEngine:
         if self._engine is None:
@@ -119,15 +144,16 @@ class SAWebhookSubscriptionRepository(WebhookSubscriptionRepository):
         return self._engine
 
     async def start(self) -> None:
-        """Create the engine and ensure ``webhook_subscriptions`` exists."""
+        """Create the engine (unless one was given) and ensure ``webhook_subscriptions`` exists."""
         if self._engine is None:
+            assert self._url is not None  # noqa: S101 - invariant, not user input
             self._engine = create_async_engine(self._url, **self._engine_kwargs)
         async with self._engine.begin() as conn:
             await conn.run_sync(webhook_metadata.create_all, checkfirst=True)
 
     async def stop(self) -> None:
-        """Dispose the engine's connection pool. Safe to call if never started."""
-        if self._engine is not None:
+        """Dispose the engine's connection pool — only if this repository created it."""
+        if self._engine is not None and self._owns_engine:
             await self._engine.dispose()
             self._engine = None
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from varco_core.di.lifecycle import Phase
 from varco_core.di.module import CoreModule, VarcoModule
 
 if TYPE_CHECKING:
@@ -25,6 +26,7 @@ class WsModule(VarcoModule):
     two push adapters (``WebSocketEventBus``/``SSEEventBus``) if resolvable."""
 
     name = "ws"
+    phase = Phase.CONSUMERS
     depends_on = (CoreModule,)
 
     def _register(self, container: DIContainer) -> None:

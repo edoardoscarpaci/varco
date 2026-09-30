@@ -405,6 +405,24 @@
     },
     {
       "category": "production-safe",
+      "implementation": "BeanieConfiguration.webhook_repository",
+      "interface": "varco_core.webhook.base:WebhookSubscriptionRepository",
+      "package": "varco_core",
+      "priority": 100,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
+      "implementation": "SAConfiguration.webhook_repository",
+      "interface": "varco_core.webhook.base:WebhookSubscriptionRepository",
+      "package": "varco_core",
+      "priority": 100,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
       "implementation": "varco.settings:WebhookSettings[None]",
       "interface": "varco_core.webhook.settings:WebhookSettings",
       "package": "varco_core",

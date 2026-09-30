@@ -33,6 +33,7 @@ class ReliabilityPreset:
     audit: bool = False
     metrics: ReliabilityMetricsConfig | None = None
     outbox_max_attempts: int | None = None
+    serializer: Serializer[Event] | None = None  # Plan 050 / DI-10, additive
 
     @classmethod
     def off(cls) -> ReliabilityPreset: ...  # the default — byte-identical to pre-Plan-009
@@ -94,6 +95,15 @@ from the container **only when the preset asks for them**
 first event, or never. This is deliberate: the entire point of the feature
 is "opt into durability once" without needing to double-check every
 deployment wired it correctly.
+
+**`preset.serializer` (Plan 050 / DI-10)** — when `outbox=True`, `ReliabilityModule.start()`
+builds the `OutboxRelay` with `preset.serializer` if given, else the container's bound
+`Serializer[Event]` when resolvable (the 045 `@Fallback` default always resolves to
+`JsonEventSerializer`), so `bind_cloudevents_serializer()` reaches the outbox with no
+`serializer=` to remember. An explicit `ReliabilityPreset(serializer=...)` always wins over the
+bound one — the same "explicit argument beats DI" rule as everywhere else. `ReliabilityLifecycle.
+shutdown()` also now stops the `AuditConsumer` (when `preset.audit=True`), before the relay, the
+exact reverse of `startup()` — pre-050 it was never stopped at all, leaking its bus subscription.
 
 ## `@listen`'s global default — the `_UNSET` sentinel (RD-7)
 

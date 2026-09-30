@@ -16,14 +16,18 @@ list installs **exactly** those (NestJS/Django ``INSTALLED_APPS`` semantics
 Steps (in order):
 
 1. ``container`` is required (§D-signature) — modules register into it.
-2. Resolve the module list (``modules`` or ``default_modules()``),
-   topologically order it by ``depends_on`` (``resolve_module_order``),
-   and ``register()`` every one, in order — synchronous, at this call.
+2. Resolve the module list (``modules`` or ``default_modules()``), order it
+   by ``(phase, depends_on)`` (``resolve_lifecycle_order`` — Plan 050
+   §D-phase: phase is the coarse, anonymous order; ``depends_on`` the fine,
+   named one within/across phases), and ``register()`` every one, in that
+   order — synchronous, at this call.
 3. Validate DI container bindings (if ``validate=True``).
 4. Resolve + validate the router list.
-5. Build ``VarcoLifespan`` — one ``_ModuleComponent`` per *active*
-   (enabled) module, ``setup=`` awaits every module's ``async_init()``
-   before any ``start()``, ``shutdown=container.ashutdown``.
+5. Build ``VarcoLifespan`` over ``phased_components(active, container)`` —
+   every active module's contributed ``LifecycleComponent``s, stable-sorted
+   by phase (a module may span several — ``CoreModule`` is the example).
+   ``setup=`` awaits every module's ``async_init()`` before any ``start()``,
+   ``shutdown=container.ashutdown``.
 6. Create the ``FastAPI`` instance with that lifespan.
 7. Call ``configure_app(app, container)`` on every active
    ``HttpContributor`` module (exception handlers, router mounts, the
@@ -88,7 +92,8 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, TypeGuard
 
-from varco_core.di.module import ModuleRegistry, VarcoModule, resolve_module_order
+from varco_core.di.lifecycle import phased_components, resolve_lifecycle_order
+from varco_core.di.module import ModuleRegistry, VarcoModule
 
 from varco_fastapi.middleware.slots import sort_specs
 from varco_fastapi.validation import validate_container_bindings, validate_router_class
@@ -158,10 +163,12 @@ def create_varco_app(
     Raises:
         TypeError: ``container`` was not passed.
         ValueError: Two distinct instances of the same ``VarcoModule``
-            subclass were listed (``resolve_module_order``).
+            subclass were listed (``resolve_lifecycle_order``).
         varco_core.di.module.ModuleDependencyError: A module's
             ``depends_on`` names a class absent from the resolved list.
         varco_core.di.module.ModuleCycleError: A ``depends_on`` cycle.
+        varco_core.di.lifecycle.ModulePhaseError: A module's ``depends_on``
+            names a module scheduled for a later phase.
         ConfigurationError: ``validate=True`` and a check failed.
 
     Edge cases:
@@ -169,11 +176,14 @@ def create_varco_app(
           a bare ``FastAPI`` with only ``HealthRouter``. Allowed.
         - A module's ``_register()`` raising propagates before any
           ``FastAPI`` object exists; nothing is recorded for it.
-        - A ``MigrationsModule``/``TenancyModule`` listed, in the raw
-          *input* list, after ``CoreModule`` (or after
-          ``*default_modules()``, which lists ``CoreModule`` first) logs a
-          WARNING — nothing else touches the database schema until it has
-          run, and Plan 050 replaces this list-order caveat with phases.
+        - A ``MigrationsModule``/``TenancyModule`` may be listed anywhere in
+          the raw *input* list — Plan 050's phases (``INFRA`` for both)
+          start them before ``CoreModule``'s bus regardless of list
+          position; the pre-050 "list it first or get a WARNING" caveat no
+          longer applies and the WARNING it described is gone. A separate,
+          unrelated warning (``_warn_unowned_settings``) still fires when
+          ``VARCO_MIGRATE_MODE``/``VARCO_TENANCY_ISOLATION`` is set in the
+          environment but no matching module was passed at all.
 
     Thread safety:  ✅ Called once at startup.
     Async safety:   ✅ No async operations at construction time.
@@ -185,9 +195,8 @@ def create_varco_app(
 
     # ── Step 1: resolve + register modules ────────────────────────────────
     raw_modules = list(modules) if modules is not None else _default_modules_list()
-    _warn_migration_tenancy_listed_after_core(raw_modules)
 
-    order = resolve_module_order(raw_modules)
+    order = resolve_lifecycle_order(raw_modules)
     for m in order:
         m.register(container)
 
@@ -234,7 +243,7 @@ def create_varco_app(
     async def _container_shutdown() -> None:
         await container.ashutdown()
 
-    lifespan_components = [_ModuleComponent(m, container) for m in active]
+    lifespan_components = phased_components(active, container)
     varco_lifespan = VarcoLifespan(
         *lifespan_components, setup=_async_init_all, shutdown=_container_shutdown
     )
@@ -315,70 +324,6 @@ def _is_http_contributor(module: VarcoModule) -> TypeGuard[HttpContributor]:
     from varco_fastapi.modules.base import HttpContributor  # noqa: PLC0415
 
     return isinstance(module, HttpContributor)
-
-
-class _ModuleComponent:
-    """
-    Adapts a ``VarcoModule`` to ``varco_fastapi.lifespan.AbstractLifecycle``
-    (``start()``/``stop()`` with no arguments) so ``VarcoLifespan`` can
-    drive it — binding the ``container`` a ``VarcoModule``'s ``start``/
-    ``stop`` slots require.
-
-    Args:
-        module: The module to adapt.
-        container: The container this module was registered on.
-    """
-
-    def __init__(self, module: VarcoModule, container: DIContainer) -> None:
-        self._module = module
-        self._container = container
-
-    async def start(self) -> None:
-        await self._module.start(self._container)
-
-    async def stop(self) -> None:
-        await self._module.stop(self._container)
-
-    def __repr__(self) -> str:
-        return f"_ModuleComponent({type(self._module).__name__})"
-
-
-def _warn_migration_tenancy_listed_after_core(raw_modules: Sequence[VarcoModule]) -> None:
-    """
-    §D-order's WARNING: a ``MigrationsModule``/``TenancyModule`` present in
-    the raw input list, **positioned after** ``CoreModule`` in that same
-    raw list, means the bus/job runner may start before migrations ran —
-    list it first. Checked against the caller's literal list order (not
-    the ``depends_on``-resolved order, which always places ``CoreModule``
-    first for any module that names it as a dependency) — this is
-    precisely the "list order sensitivity" §D-order documents as
-    deliberately temporary; Plan 050 replaces it with phases.
-
-    Args:
-        raw_modules: The exact list passed to (or defaulted by)
-            ``create_varco_app``, before ``resolve_module_order``.
-    """
-    from varco_core.di.module import CoreModule  # noqa: PLC0415
-
-    from varco_fastapi.modules.lifecycle import MigrationsModule, TenancyModule  # noqa: PLC0415
-
-    core_index: int | None = None
-    for i, m in enumerate(raw_modules):
-        if isinstance(m, CoreModule):
-            core_index = i
-            break
-    if core_index is None:
-        return
-
-    for i, m in enumerate(raw_modules):
-        if isinstance(m, (MigrationsModule, TenancyModule)) and i > core_index:
-            _logger.warning(
-                "%s is listed after CoreModule — the bus/job runner will start "
-                "before it runs. List it first: modules=[%s(...), *default_modules()]. "
-                "Plan 050 replaces this list-order caveat with phases.",
-                type(m).__name__,
-                type(m).__name__,
-            )
 
 
 def _warn_unowned_settings(container: DIContainer, active: Sequence[VarcoModule]) -> None:

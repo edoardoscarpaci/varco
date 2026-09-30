@@ -563,10 +563,179 @@ app = create_varco_app(container, modules=[*default_modules(), MyAppModule()])
 | Pitfall | Fix |
 |---|---|
 | Decorated a `VarcoModule` subclass with `@Configuration`/`@Singleton`/`@Provider` | Activated by every `container.scan()` of its package — a `VarcoModule` is constructed by the app, never scanned (`test_modules_never_scanned.py` enforces this mechanically). |
-| Listed `MigrationsModule`/`TenancyModule` *after* `CoreModule` (or after `*default_modules()`) | The bus/job runner may start before the migration/tenancy lifecycle has run — `create_varco_app` logs a WARNING naming the module; list it **first**: `modules=[MigrationsModule(...), *default_modules()]`. Plan 050 replaces this list-order caveat with phases. |
+| Listed `MigrationsModule`/`TenancyModule` *after* `CoreModule` (or after `*default_modules()`) | No longer a problem (Plan 050) — both declare `phase = Phase.INFRA`, so they start before `core.bus`/`core.consumers` regardless of list position; the pre-050 "list it first or get a WARNING" caveat and its WARNING are both gone. §Lifecycle phases below. |
 | Two instances of one `VarcoModule` subclass in one `modules=` list | `ValueError` — almost always a copy-paste error. Use `default_modules(exclude=(X,))` to drop the default and add your own. |
 | `enabled=False` on a backend module (e.g. `KafkaModule(enabled=False)`) expecting it to deselect the backend | It only skips that module's lifecycle slots — backend *selection* is still Plan 047's `VARCO_<SEAM>_BACKEND`. |
 | A module that `container.get()`s a settings class in `_register()`, then the app tries to override it afterward | Same not-evicted caveat as everywhere else in this doc — a fallback already resolved and cached does not un-resolve. Pass the override as a constructor argument to the module instead (e.g. `SecurityHeadersModule(settings=...)`), which binds it via `bind_instance` before anything else can resolve the fallback. |
 | "Fixed" a settings-shaped module (`SecurityHeadersModule`/`BodyLimitModule`/`SecurityPostureModule`) to call `bind_settings(container, Cls, instance=...)` instead of `bind_instance`, because that is the Settings section's documented recipe | `SettingsAlreadyBoundError` — `FastAPIModule` (or `CoreModule`) always registers a plain `@Fallback` `bind_settings(container, Cls)` binding first (`depends_on=` guarantees the order), and `bind_settings(..., instance=...)` raises against **any** prior binding of that class, fallback or not. `bind_instance` (Plan 046's "already-constructed object" verb) uses separate bookkeeping and only raises against a non-fallback binding — exactly what "a code decision beats the module's own default" needs here. This is a **resolved deviation from the plan's original recipe** (`plans/049-varco-module-and-composable-app.md` §D-enabled), not an oversight — do not revert it. |
 | Assumed `RateLimitModule` always installs two `RateLimitMiddleware` instances (PRE_AUTH + POST_AUTH) | It installs **up to** two — one `MiddlewareSpec` per rule-scope partition that is non-empty. A bundle with only a `TENANT` rule yields exactly one `RateLimitMiddleware` at `POST_AUTH`, not one real instance plus a `rules=()` pass-through at `PRE_AUTH` — an existing byte-identical-order characterization test pins this. Also a **resolved deviation** from the plan's literal "two specs" text (`plans/049` §D-http), not a bug. |
 | Bound no `AbstractServerAuth` and expected the app to refuse to start, or expected no `RequestContextMiddleware` at all | `FastAPIModule` contributes `RequestContextMiddleware` **unconditionally** (pre-049 parity) — with nothing bound it runs in anonymous mode, so every request still gets a populated (but unauthenticated) `AuthContext`/`current_tenant()`. The app boots and serves traffic; it is not fail-closed. ⚠️ Neither `inspect_http_edge()` nor the security posture preflight currently reports this as a finding — verified absent from both `check=` id sets; nothing today surfaces a forgotten `AbstractServerAuth` binding except reading the response yourself. |
+
+## Multi-binding for "all implementations of X" (Plan 051 / DI-5)
+
+**The one convention every collection seam follows**: a collection seam is an ABC (or a frozen
+value type) stamped `@Multibound` (`providify.Multibound`). A contribution is any ordinary
+non-`@Fallback` binding of that type — a scanned `@Singleton` subclass, a `@Provider` returning
+it, or `varco_core.di.collect.contribute(container, Seam, obj)`. A consumer reads it as a bare
+`list[Seam]` constructor hint or via `varco_core.di.collect.collect()`/`acollect()`, which return
+an immutable `tuple`. Zero contributions is a legal, empty tuple — never a `LookupError`.
+providify orders a collection **ascending** by priority, ties in registration order — **no varco
+contribution ever sets `priority=`**, and no consumer reads the order as meaning (the tenant chain
+is the one exception: it sorts by its own `TenantTrust` domain key, never by providify priority).
+
+| Seam | Module | varco's own contributors | How an app/plugin contributes | Reader | Empty means |
+|---|---|---|---|---|---|
+| `EventConsumer` | `varco_core.event.consumer` | none by default | `@Singleton` subclass | `CoreModule.start()` auto-registers every contribution to the started bus | no consumers — legal, silent |
+| `RetentionPolicy` | `varco_core.retention.policy` | none by default | `@Singleton`/`@Provider`, or `contribute()` | `RetentionModule.async_init()` builds a `RetentionRegistry` from `acollect()` | nothing is ever purged — `RetentionModule.validate()` reports it |
+| `TenantSource` | `varco_core.tenancy.source` | the four built-ins, constructed from settings, not the pool | `@Singleton` subclass, named in `VARCO_TENANT_SOURCES` to become active | `resolve_tenant_source_chain(container)` | `VARCO_TENANT_SOURCES` empty → no chain (unchanged) |
+| `PostureCollector` | `varco_core.posture` | the five default collectors, contributed by `SecurityPostureModule.configure_app()` | `@Singleton` subclass, or `collectors=` replaces the default set | `SecurityPostureModule.start()` → `acollect()` | `SecurityPostureModule.validate()` reports it (cannot happen with the default set) |
+| `HealthCheck` | `varco_core.health` | seven backend probes | `@Singleton(qualifier=...)` | `HealthRouter`'s `Instance[HealthCheck].aget_all()` (unchanged — lazy, zero-tolerant) — `collect(container, HealthCheck)` is an equally valid eager read | no probes — legal |
+
+`WebhookVerifier` is **not** a collection seam (§D-verifier) — a `WebhookVerifier` instance is
+constructed *per route*, with that route's secrets; there is no shared instance to multi-bind.
+It uses the same explicit-registration verb `varco_core.profiling`'s CPU/memory backends use:
+`register_webhook_verifier(name, cls, *, replace=False)`.
+
+### `priority=` means opposite things for `get()` vs. a collection
+
+providify's `priority` picks the **highest**-priority winner for `get(T)`, but sorts a
+`list[T]`/`collect()` result **ascending** — the same number means "the `get()` winner" and "last
+in the list" simultaneously. This is why no varco contribution ever sets `priority=`, and why
+every consumer treats the tuple as a set with a stable, documented-as-incidental order.
+
+### The tuple is made once, at the consumer
+
+`collect()`/`acollect()` convert providify's fresh `list` per resolution into a `tuple` — every
+consumer stores that tuple. providify itself has no de-dup mechanism; `contribute()` refuses the
+exact **same object** twice (identity) — a seam whose contributions have their own notion of
+uniqueness (a policy `name`, a chain source `name`, a posture collector `name`) enforces it at its
+own consumption point.
+
+### `contribute()` vs. `bind_instance()`
+
+| | `bind_instance()` (Plan 046) | `contribute()` (Plan 051) |
+|---|---|---|
+| Says | "the one implementation of *interface*" | "one of many contributions to *seam*" |
+| Second call, same object | `AlreadyBoundError` | `AlreadyBoundError` (identity) |
+| Second call, a distinct object | `AlreadyBoundError` | Registers a second, distinct contribution |
+
+### An empty *required* collection is varco's own finding, never providify's
+
+providify's `validate()` never reports a missing collection — `()` is always a legal answer. A
+module that *requires* at least one contribution says so itself, from its own `validate(container)`
+slot (a pure read over `container.get_all_bindings(Seam)`) — see `RetentionModule`/
+`SecurityPostureModule` above.
+
+### Contributing from your own package
+
+```python
+from providify import Singleton
+from varco_core.posture import PostureCollector, PostureFinding, PostureSeverity
+from varco_core.tenancy.source import TenantSource, TenantTrust
+
+
+@Singleton
+class PartnerHeaderTenantSource(TenantSource):
+    name = "partner"
+    trust = TenantTrust.MEDIUM
+
+    def resolve(self, request):
+        ...
+
+
+@Singleton
+class MyPostureCollector(PostureCollector):
+    name = "my_check"
+
+    def collect(self) -> list[PostureFinding]:
+        return [PostureFinding(check="my.check", severity=PostureSeverity.INFO, ...)]
+```
+
+`container.scan("my_package")` is all it takes — no `bind_*` call, no framework edit. See
+`testkit/varco_plugin_example` for the full four-seam worked example (never packaged).
+
+### Pitfalls (Multi-binding)
+
+| Pitfall | Fix |
+|---|---|
+| A contribution sets `priority=` "to run first" | It sorts **last** among ascending-priority ties, and simultaneously becomes what `get(Seam)` returns as "the winner" — never set `priority=` on a collection contribution. |
+| Used `InjectInstances[T]` instead of a bare `list[T]`/`collect()` | Raises `LookupError` on zero contributions — every consumer would need a try/except. `@Multibound` + `list[T]`/`collect()` resolves to `()` instead. |
+| A contribution marked `@Fallback` | Disappears the moment any non-fallback sibling exists (045's structural rule) — a *default set* is contributed as ordinary bindings and replaced by *construction* (`collectors=`), never by shadowing. |
+| A literal `list[Seam]` binding registered alongside the collection point | The literal binding wins outright and the collection is silently ignored — never register a literal `list[T]` binding for a `@Multibound` seam. |
+| A `@Component`-scoped `EventConsumer` | `CoreModule.validate()` lists it; `start()` raises naming the class — make it `@Singleton` or set `auto_register = False`. |
+| Kept a `@PostConstruct def _setup(self): self.register_to(self._bus)` on a DI-bound consumer | Harmless (the auto path's `is_registered_to()` guard skips an already-registered consumer, silently) but no longer the documented way — delete it; `CoreModule.start()` registers it after the bus has started. |
+| A `TenantSource` bound (scanned) but not named in `VARCO_TENANT_SOURCES` | Inert — bound ≠ active. `resolve_tenant_source_chain()` logs every such name at INFO. |
+| `register_webhook_verifier(name, cls, replace=True)` on a built-in name | Silently shadows the built-in — documented, greppable; never done by varco itself. |
+
+## Lifecycle phases (Plan 050 / DI-9, DI-10)
+
+`varco_core.di.Phase` (an `IntEnum`, room left between values) names five coarse, anonymous
+start-order buckets every `VarcoModule` declares itself into via `phase: int` (default
+`CONSUMERS`):
+
+| Phase | Owns |
+|---|---|
+| `INFRA` (100) | Migrations, tenancy pools, trust stores, catalogs, stores (DLQ/idempotency/job/revocation), repositories, caches |
+| `BUS` (200) | The event bus |
+| `CONSUMERS` (300) | `EventConsumer`s, `OutboxRelay`, `WebhookDispatcher`, WS/SSE adapters, `AuditConsumer` — the default for app modules |
+| `SCHEDULERS` (400) | `AbstractJobRunner`, `RetentionScheduler`, JWKS background refresh |
+| `EDGE` (500) | `SecurityPosture` preflight — observes the fully-started world |
+
+`phase` is the coarse, anonymous order across packages that do not know each other (why
+`MigrationsModule` starts before `CoreModule`'s bus no matter which one is listed first);
+`depends_on` (049) remains the fine, *named* order within or across phases — Spring's
+`SmartLifecycle` split (an integer phase + `depends-on`), for the same reason: phase alone
+cannot express "a relay starts after whichever package provides the store", and `depends_on`
+alone cannot order two modules that do not name each other.
+
+A module contributes phased lifecycle units via `components(container) ->
+Sequence[LifecycleComponent]` — the default wraps the module's own `start`/`stop` into one
+component named/phased like the module; `CoreModule` overrides it to contribute four
+(`core.stores`/INFRA, `core.bus`/BUS, `core.consumers`/CONSUMERS, `core.job_runner`/SCHEDULERS)
+and `WebhookModule` two (`webhook.repository`/INFRA, `webhook.dispatcher`/CONSUMERS).
+
+`create_varco_app` orders modules via `resolve_lifecycle_order()` (049's `depends_on` DFS, then
+a **stable** sort by phase) and flattens every active module's `components()` via
+`phased_components()` (same stable sort, over components). `varco_core.di.lifecycle.
+LifecycleRunner` — the engine `VarcoLispan` now delegates to — is the six-invariant primitive:
+
+1. Start in the given (phase, dependency) order.
+2. Stop in the **exact reverse of what actually started** — the normal-shutdown path.
+3. A partial-start failure rolls back already-started components in exact reverse too (the
+   pre-050 bug: `VarcoLifespan`'s rollback used to stop in **forward** order).
+4. A rollback `stop()` failure never replaces the original `start()` exception — it is attached
+   via `BaseException.add_note()` and rollback continues.
+5. Normal-shutdown `stop()` failures are collected (`runner.last_failures`), never raised — an
+   `asynccontextmanager`'s `finally` is the wrong place to raise during ASGI shutdown.
+6. The `shutdown=` hook (`container.ashutdown()`) always runs last, even after a `setup()`/
+   `start()` failure, and never raises.
+
+`ModulePhaseError` is raised by `resolve_lifecycle_order()` the moment a `depends_on` edge would
+require a module to start after something scheduled for a **later** phase — a wiring mistake
+named at `create_varco_app()` time, never silently rescheduled.
+
+**The `@Disposes`-or-owner rule**: every provider-produced singleton with a `stop()`/`aclose()`/
+`close()`/`shutdown()` method needs either a `@Disposes` in the `@Configuration` that declares
+its provider (one per produced type, idempotent teardown — disposal is the *backstop* for a
+half-built app or a container used without a lifespan, never the primary ordering mechanism), or
+— when a `VarcoModule`'s own `start()`/`stop()` owns that object's lifecycle directly (the two
+`varco_ws` push adapters, `ReloadingTrustStore`) — a `module_owned: ClassVar[frozenset[type]]`
+entry on that package's `di_wiring` conformance subclass. Both are enforced by
+`testkit/varco_conformance/di_wiring.py`'s
+`test_every_lifecycle_bearing_provider_has_a_disposer_or_owner`.
+
+`bind_instance(container, Interface, obj, *, disposer=...)` is the P-DISP shim
+(`design/upstream-gaps/providify-provide-disposer.md`) for a caller-constructed object that
+needs a teardown hook and has no `@Configuration` of its own (`enable_redis_token_revocation`'s
+`RedisTokenRevocationStore` is the motivating case) — delete it once providify ships
+`provide(disposer=)` natively.
+
+### Pitfalls (Lifecycle phases)
+
+| Pitfall | Fix |
+|---|---|
+| A `depends_on` pointing at a module scheduled for a later phase | `ModulePhaseError` at `create_varco_app()` time — move the dependency to an earlier/equal phase, or drop the edge. |
+| A user module left at the default `CONSUMERS` phase that opens a store other modules depend on | Works (the bus is up by then) but is fragile — declare `INFRA` explicitly if anything depends on it. |
+| `enable_*` constructing a connection-holding object without `disposer=` | Leaks at every `container.ashutdown()` — pass `bind_instance(..., disposer=obj.aclose)`. |
+| A Kafka/NATS bus resolved by hand and never started | `publish()` raises `RuntimeError` mentioning `start()` — no more silent hang or first-resolution auto-start (`@PostConstruct` removed in 4.0). |
+| `SAModule(ensure_tables=True)` under an Alembic-managed schema | Harmless (`checkfirst`) but redundant — set `ensure_tables=False` when Alembic owns every framework table this deployment uses. |

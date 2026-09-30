@@ -146,6 +146,16 @@ def inspect_tenant_provenance(
         if any(s.trust_forwarded_host for s in subdomain_sources):
             findings.append("tenant.subdomain_trusts_forwarded_host")
 
+        # Plan 051 / DI-5, §D-tenant: the one way a plugin can *elevate*
+        # itself (by declaring a high trust) — surfaced to the operator,
+        # never blocked (it may be legitimate, e.g. an mTLS-derived source).
+        _builtin_names = ("jwt", "subdomain", "legacy", "act_as")
+        if any(
+            getattr(s, "name", None) not in _builtin_names and s.trust >= TenantTrust.HIGH
+            for s in chain.sources
+        ):
+            findings.append("tenant.third_party_source_high_trust")
+
         highest_trust = max((s.trust for s in chain.sources), default=None)
         base_domains: tuple[str, ...] = ()
         trusts_forwarded = False

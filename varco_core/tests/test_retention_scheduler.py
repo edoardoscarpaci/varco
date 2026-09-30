@@ -124,8 +124,7 @@ class TestRetentionSchedulerSweep:
 
         target = _FakeSupportingTarget()
         policy = _make_policy(target=target)
-        registry = RetentionRegistry()
-        registry.register(policy)
+        registry = RetentionRegistry([policy])
 
         schedule_repo = InMemoryScheduleRepository()
         job_store = FakeJobStore()
@@ -206,8 +205,7 @@ class TestRetentionSchedulerDispatch:
 
         target = _FakeSupportingTarget()
         policy = _make_policy(name="nightly", target=target, dry_run=False)
-        registry = RetentionRegistry()
-        registry.register(policy)
+        registry = RetentionRegistry([policy])
 
         task_registry = TaskRegistry()
         scheduler = RetentionScheduler(
@@ -245,8 +243,7 @@ class TestRetentionSchedulerDispatch:
 
         target = _FakeSupportingTarget()
         policy = _make_policy(name="dry", target=target, dry_run=True)
-        registry = RetentionRegistry()
-        registry.register(policy)
+        registry = RetentionRegistry([policy])
 
         scheduler = RetentionScheduler(
             registry,
@@ -284,8 +281,7 @@ class TestRetentionSchedulerDispatch:
             batch_size=10,
             max_batches=3,
         )
-        registry = RetentionRegistry()
-        registry.register(policy)
+        registry = RetentionRegistry([policy])
 
         scheduler = RetentionScheduler(
             registry,
@@ -311,8 +307,7 @@ class TestRetentionSchedulerDispatch:
             older_than=timedelta(days=30),
             tenant_ids=("a", "b"),
         )
-        registry = RetentionRegistry()
-        registry.register(policy)
+        registry = RetentionRegistry([policy])
 
         scheduler = RetentionScheduler(
             registry,
@@ -331,8 +326,7 @@ class TestRetentionSchedulerDispatch:
         policy = _make_policy(
             name="platform", target=target, dry_run=False, older_than=timedelta(days=30)
         )
-        registry = RetentionRegistry()
-        registry.register(policy)
+        registry = RetentionRegistry([policy])
 
         scheduler = RetentionScheduler(
             registry,

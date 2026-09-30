@@ -207,5 +207,11 @@ def test_all_list_is_unchanged_in_length() -> None:
     # Plan 048 / DI-6, DI-16 added 7 more (CommaSeparated,
     # SettingsAlreadyBoundError, SettingsError, SettingsProvenance,
     # SettingsValidationError, bind_settings, provenance_of), taking it to 284.
-    assert len(varco_core.__all__) == 284
+    # Plan 051 / DI-5 added 3 more (PostureCollector, PostureFinding,
+    # PostureSeverity — moved from varco_fastapi.posture, §D-posture), taking
+    # it to 287. Plan 051 / DI-5 Step 9 added 2 more (register_webhook_verifier,
+    # registered_webhook_verifiers — already exported from
+    # varco_core.webhook.inbound, now also at the varco_core top level), taking
+    # it to 289.
+    assert len(varco_core.__all__) == 289
     assert len(set(varco_core.__all__)) == len(varco_core.__all__)

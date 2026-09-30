@@ -14,16 +14,22 @@ serves (048 §D-connection keeps ``RedisConnectionSettings`` un-bound; a
 caller needing a different URL per store uses the code tier —
 ``bind_instance()``).
 
-⚠️ **Lifecycle is Plan 050's** — none of these providers call
+Lifecycle (Plan 050 / §D-disposes rows 13-15): none of these providers call
 ``await store.start()``/hold a background task; ``RedisJobStore`` needs no
 start, ``RedisIdempotencyStore``/``RedisTokenRevocationStore`` connect
-lazily on first use (matching their own hand-construction contract
-today). No ``@Disposes`` is registered here — 050 wires it.
+lazily/eagerly on their own construction contract. Each provider's client is
+now reachable at shutdown: ``idempotency_store``/``revocation_store``
+close through the store's own ``aclose()``; ``job_store`` keeps the
+``aioredis`` client it creates on ``self`` (the provider instance, cached
+by providify) so ``close_job_store`` can close it without changing
+``RedisJobStore``'s constructor signature.
 """
 
 from __future__ import annotations
 
-from providify import Configuration, Fallback, Inject, Provider
+from typing import Any
+
+from providify import Configuration, Disposes, Fallback, Inject, Provider
 from varco_core.di import BACKEND_PRIORITY
 from varco_core.di.select import selected_by
 from varco_core.idempotency.base import AbstractIdempotencyStore
@@ -73,6 +79,21 @@ class RedisStoresConfiguration:
         """
         return RedisIdempotencyStore(url=settings.url)
 
+    @Disposes(AbstractIdempotencyStore)
+    async def close_idempotency_store(self, store: RedisIdempotencyStore) -> None:
+        """
+        Close ``idempotency_store``'s client on ``container.ashutdown()``
+        (Plan 050 / §D-disposes row 13) — before this, a client created by
+        the provider above leaked at shutdown.
+
+        Args:
+            store: The ``RedisIdempotencyStore`` this configuration
+                produced. Typed concretely, not ``AbstractIdempotencyStore``
+                — ``aclose()`` is not part of the ABC (same dispatch-key
+                note as ``varco_redis/dlq.py``'s ``close_dlq``).
+        """
+        await store.aclose()
+
     @Fallback
     @selected_by("job_store", "redis")
     @Provider(singleton=True, priority=BACKEND_PRIORITY)
@@ -87,10 +108,34 @@ class RedisStoresConfiguration:
         Returns:
             A ``RedisJobStore`` over a fresh ``aioredis.Redis`` client
             connected to ``settings.url``.
+
+        Edge cases:
+            The created client is kept on ``self._job_store_client`` (the
+            provider *instance* is cached as a providify singleton) so
+            ``close_job_store`` can close it without ``RedisJobStore``
+            itself growing a close method (Plan 050 / §D-disposes row 14).
         """
         import redis.asyncio as aioredis  # noqa: PLC0415 — import-budget rule
 
-        return RedisJobStore(aioredis.from_url(settings.url))
+        client = aioredis.from_url(settings.url)
+        self._job_store_client: Any = client
+        return RedisJobStore(client)
+
+    @Disposes(AbstractJobStore)
+    async def close_job_store(self, store: AbstractJobStore) -> None:
+        """
+        Close the ``aioredis`` client ``job_store`` created, held on
+        ``self._job_store_client`` (Plan 050 / §D-disposes row 14).
+
+        Args:
+            store: Unused — the dispatch key is ``AbstractJobStore``; the
+                client to close lives on this configuration instance, not
+                on the store (``RedisJobStore`` never owned it directly).
+        """
+        client = getattr(self, "_job_store_client", None)
+        if client is not None:
+            await client.aclose()
+            self._job_store_client = None
 
     @Fallback
     @selected_by("revocation", "redis")
@@ -114,3 +159,16 @@ class RedisStoresConfiguration:
             A ``RedisTokenRevocationStore`` sharing ``settings.url``.
         """
         return RedisTokenRevocationStore(url=settings.url)
+
+    @Disposes(AbstractTokenRevocationStore)
+    async def close_revocation_store(self, store: RedisTokenRevocationStore) -> None:
+        """
+        Close ``revocation_store``'s client on ``container.ashutdown()``
+        (Plan 050 / §D-disposes row 15) — before this, the eagerly-created
+        client leaked at shutdown.
+
+        Args:
+            store: The ``RedisTokenRevocationStore`` this configuration
+                produced.
+        """
+        await store.aclose()

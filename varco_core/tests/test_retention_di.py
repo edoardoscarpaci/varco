@@ -1,76 +1,86 @@
 """
 tests.test_retention_di
 ==========================
-Plan 039 (S20) / Step 16 — ``bind_retention_registry(container, registry)``
-(``varco_core.retention.di``), following the ``bind_trust_store`` precedent
-(§D-S20-verb) — an already-constructed, already-owned object, no lifecycle
-side effect.
-
-RED until ``varco_core/varco_core/retention/di.py`` (Step 17) lands.
+Plan 051 (DI-5) / §D-retention — rewritten. ``varco_core.retention.di`` and
+``bind_retention_registry`` are gone; ``RetentionPolicy`` is a
+``@Multibound`` seam contributed via ``varco_core.di.collect.contribute()``
+(or a scanned ``@Singleton``/``@Provider``) and read via ``collect()``/
+``acollect()``.
 """
 
 from __future__ import annotations
 
+from datetime import timedelta
+
+import pytest
 from providify import DIContainer
 
 
-def _registry():
-    from varco_core.retention.policy import RetentionRegistry  # noqa: PLC0415
+def _policy(name: str = "p1"):
+    from varco_core.retention.policy import RetentionPolicy  # noqa: PLC0415
+    from varco_core.retention.targets import DlqRetentionTarget  # noqa: PLC0415
 
-    return RetentionRegistry()
+    class _FakeDlq:
+        supports_delete_where = True
+
+        async def delete_where(self, **kwargs):  # pragma: no cover - not exercised
+            return 0
+
+    return RetentionPolicy(
+        name=name,
+        target=DlqRetentionTarget(dlq=_FakeDlq(), acknowledge_dead_letter_deletion=True),
+        cron_expr="0 3 * * *",
+        timezone="UTC",
+        dry_run=True,
+        older_than=timedelta(days=30),
+    )
 
 
-class TestBindRetentionRegistry:
-    def test_makes_registry_resolvable(self) -> None:
-        from varco_core.retention.di import bind_retention_registry  # noqa: PLC0415
-        from varco_core.retention.policy import RetentionRegistry  # noqa: PLC0415
+class TestRetentionPolicyContribution:
+    def test_bind_retention_registry_module_removed(self) -> None:
+        with pytest.raises(ImportError):
+            from varco_core.retention.di import bind_retention_registry  # noqa: F401,PLC0415
+
+    def test_contribute_makes_policy_collectable(self) -> None:
+        from varco_core.di.collect import collect, contribute  # noqa: PLC0415
+        from varco_core.retention.policy import RetentionPolicy  # noqa: PLC0415
 
         container = DIContainer()
-        registry = _registry()
-        bind_retention_registry(container, registry)
+        policy = _policy()
+        contribute(container, RetentionPolicy, policy)
 
-        resolved = container.get(RetentionRegistry)
-        assert resolved is registry
+        result = collect(container, RetentionPolicy)
+        assert result == (policy,)
 
-    async def test_starts_nothing(self) -> None:
+    def test_contributing_same_policy_object_twice_raises(self) -> None:
+        from varco_core.di import AlreadyBoundError  # noqa: PLC0415
+        from varco_core.di.collect import contribute  # noqa: PLC0415
+        from varco_core.retention.policy import RetentionPolicy  # noqa: PLC0415
+
+        container = DIContainer()
+        policy = _policy()
+        contribute(container, RetentionPolicy, policy)
+
+        with pytest.raises(AlreadyBoundError):
+            contribute(container, RetentionPolicy, policy)
+
+    async def test_contributing_nothing_starts_no_task(self) -> None:
         """Binding must have no lifecycle side effect — no background task
-        spawned just by binding a registry."""
+        spawned just by contributing a policy."""
         import asyncio
-
-        from varco_core.retention.di import bind_retention_registry  # noqa: PLC0415
 
         tasks_before = {t for t in asyncio.all_tasks() if not t.done()}
         container = DIContainer()
-        bind_retention_registry(container, _registry())
+        from varco_core.di.collect import contribute  # noqa: PLC0415
+        from varco_core.retention.policy import RetentionPolicy  # noqa: PLC0415
+
+        contribute(container, RetentionPolicy, _policy())
         tasks_after = {t for t in asyncio.all_tasks() if not t.done()}
         assert tasks_after == tasks_before
 
-    def test_calling_twice_raises(self) -> None:
-        # Plan 046 §D-bind — the old "priority escalation replaces the
-        # binding" hack is gone; a second call now raises AlreadyBoundError.
-        # Use providify's di_overrides/ContainerOverrides in a test instead.
-        import pytest
-        from varco_core.di import AlreadyBoundError  # noqa: PLC0415
-        from varco_core.retention.di import bind_retention_registry  # noqa: PLC0415
-
-        container = DIContainer()
-        first = _registry()
-        second = _registry()
-        bind_retention_registry(container, first)
-
-        with pytest.raises(AlreadyBoundError):
-            bind_retention_registry(container, second)
-
-    def test_bind_retention_registry_returns_the_container(self) -> None:
-        from varco_core.retention.di import bind_retention_registry  # noqa: PLC0415
-
-        container = DIContainer()
-        result = bind_retention_registry(container, _registry())
-
-        assert result is container
-
     def test_never_touches_di_container_current(self) -> None:
-        from varco_core.retention.di import bind_retention_registry  # noqa: PLC0415
+        from varco_core.di.collect import contribute  # noqa: PLC0415
+        from varco_core.retention.policy import RetentionPolicy  # noqa: PLC0415
 
         before = None
         try:
@@ -79,7 +89,7 @@ class TestBindRetentionRegistry:
             before = None
 
         container = DIContainer()
-        bind_retention_registry(container, _registry())
+        contribute(container, RetentionPolicy, _policy())
 
         after = None
         try:

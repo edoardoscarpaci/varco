@@ -19,8 +19,6 @@ lifecycle sequencing, and middleware slot placement.
 
 from __future__ import annotations
 
-import logging
-
 import pytest
 from providify import DIContainer
 from varco_core.di.module import CoreModule, LifecycleModule, ModuleRegistry, VarcoModule
@@ -30,7 +28,6 @@ from varco_fastapi.middleware.slots import EdgeSlot, MiddlewareSpec
 from varco_fastapi.modules import FastAPIModule, SecurityPostureModule
 from varco_fastapi.modules.base import MiddlewareModule
 from varco_fastapi.modules.defaults import default_modules
-from varco_fastapi.modules.lifecycle import MigrationsModule
 
 
 def _SpyModule(
@@ -130,31 +127,14 @@ class TestDuplicateModuleClassRaises:
             create_varco_app(container, modules=[*default_modules(), CoreModule()])
 
 
-class TestMigrationsListOrderWarning:
-    async def test_warning_logged_when_migrations_listed_after_core_module(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        container = DIContainer()
-        with caplog.at_level(logging.WARNING):
-            create_varco_app(
-                container, modules=[*default_modules(), MigrationsModule()], validate=False
-            )
-
-        assert any(
-            "MigrationsModule" in record.message or "Plan 050" in record.message
-            for record in caplog.records
-        )
-
-    async def test_no_warning_when_migrations_listed_before_defaults(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        container = DIContainer()
-        with caplog.at_level(logging.WARNING):
-            create_varco_app(
-                container, modules=[MigrationsModule(), *default_modules()], validate=False
-            )
-
-        assert not any("MigrationsModule" in record.message for record in caplog.records)
+# NOTE (Plan 050): `TestMigrationsListOrderWarning` (the pre-050
+# `_warn_migration_tenancy_listed_after_core` list-order WARNING and its
+# two tests) is deleted here — phases make the warning's premise false:
+# `MigrationsModule` is `Phase.INFRA` and starts before `CoreModule`'s bus
+# component wherever it is listed in `modules=`. See
+# `test_create_varco_app_phased_lifecycle.py` for the replacement coverage
+# ("a module listed after another still starts first if its phase is
+# earlier").
 
 
 class TestModuleLifecycleSequence:

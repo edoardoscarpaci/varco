@@ -359,7 +359,7 @@ System". Usage: README's "Consumer — EventConsumer + @listen".
 
 **Rule**: services must never hold or call `AbstractEventBus` directly. They inject `AbstractEventProducer` and call `_produce()` / `_produce_many()`. The only accepted exceptions are `OutboxRelay` (infrastructure), `EventConsumer.register_to()` (wiring-time only), and `DlqRedriver` (`varco_core.event.redrive`, Plan 009 — publishes a dead letter back onto the bus on operator command; it is infrastructure, not application logic, same reasoning as `OutboxRelay`).
 
-**`@listen` is declarative / `register_to` is imperative.** The decorator stores metadata on the function object at class-definition time. No subscription is created until `consumer.register_to(bus)` is called (typically in a `@PostConstruct` method). This separation makes the consumer bus-agnostic and testable.
+**`@listen` is declarative / `register_to` is imperative.** The decorator stores metadata on the function object at class-definition time. No subscription is created until `consumer.register_to(bus)` is called. As of Plan 051 / DI-5, a `@Singleton` `EventConsumer` bound in the container is auto-registered by `CoreModule.start()` (after the bus has started) — do not call `register_to()` from `@PostConstruct` any more; the auto path skips an already-registered consumer, so old code still works, but it is no longer the documented way. Hand `register_to()` calls are for non-DI consumers (tests, scripts), `auto_register = False` consumers, and fan-out to a second bus. Full model: `technical_docs/features/dependency-injection.md`'s §Multi-binding.
 
 **`ChannelManager` implementations must satisfy `declare_channel(c)` ⟹ `channel_exists(c)` is `True` until `delete_channel(c)`** — declared-or-present, not "carries data". Enforced by `testkit/varco_conformance/channel_manager.py`, one of **nine** conformance modules (Plan 019 / RT2-C — see §Test Conventions' conformance paragraph).
 
@@ -429,7 +429,28 @@ writing an app's own module): `technical_docs/features/dependency-injection.md`'
 
 **Decision tree addition**: *"A subsystem the app should switch on/off, or that needs
 startup/shutdown?"* → a `VarcoModule` in the owning package (`<pkg>/modules.py`), never a
-`create_varco_app` keyword; HTTP position → an `EdgeSlot`, never `add_middleware` in a module.
+`create_varco_app` keyword — declare its `phase`; spans phases? override `components()`
+(`CoreModule` is the example); HTTP position → an `EdgeSlot`, never `add_middleware` in a module.
+
+**Lifecycle phases (Plan 050 / DI-9)**: every `VarcoModule` declares `phase: int`
+(`varco_core.di.Phase` names five: `INFRA`/`BUS`/`CONSUMERS`/`SCHEDULERS`/`EDGE`, default
+`CONSUMERS`) — the coarse, anonymous start order across packages that do not know each other;
+`depends_on` stays the fine, named order within/across phases (both, as Spring's
+`SmartLifecycle`). `varco_core.di.LifecycleRunner` (`create_varco_app`'s engine, via
+`resolve_lifecycle_order`/`phased_components`) starts `(phase, depends_on)` ascending and stops
+**the exact reverse of what actually started** — including on a partial-start rollback (the
+pre-050 `VarcoLifespan` bug: a failed `start()` used to roll back in forward order).
+`container.ashutdown()` runs last, always. A `depends_on` edge pointing at a module in a later
+phase is a `ModulePhaseError`, raised before anything registers — never silently rescheduled.
+Kafka/NATS buses no longer start themselves at first DI resolution (`@PostConstruct` removed) —
+only the `BUS` phase (or an explicit `await bus.start()`) starts them, so nothing publishes
+before migrations/tenancy/stores have run. Every provider-produced singleton with a
+`stop()`/`aclose()`/`close()`/`shutdown()` method needs a `@Disposes` in its own declaring
+`@Configuration` — or, if a `VarcoModule` owns its lifecycle directly (never via providify
+disposal), a `module_owned` entry in that package's `di_wiring` conformance subclass; both are
+enforced by `testkit/varco_conformance/di_wiring.py`'s
+`test_every_lifecycle_bearing_provider_has_a_disposer_or_owner`. Full model + a Pitfalls table:
+`technical_docs/features/dependency-injection.md`'s §Lifecycle phases.
 
 ### DI wiring verb taxonomy
 
@@ -442,7 +463,7 @@ function's own docstring for the "why".
 |---|---|---|---|
 | `bootstrap` | `(container: DIContainer) -> DIContainer` | one per package (ten, incl. `varco_core.di`); `container.scan(pkg, recursive=True)` (+ the package's own hand `provide()`s, idempotently); container **required**; never creates one, never reads the process-global container, never touches `os.environ`; returns the same object; safe to call twice | `varco_kafka.di.bootstrap(container)` |
 | `async_bootstrap` | `async (container) -> DIContainer` | `bootstrap()` + `await container.ainstall(<the package's connection-opening @Configuration>)`; no kwargs | `varco_redis.di.async_bootstrap`, `varco_memcached.di.async_bootstrap` |
-| `bind_*` | `(container, …, *, qualifier=None) -> DIContainer` | registers **non-fallback** bindings the app decides at wiring time; the primitive is `varco_core.di.bind_instance(container, Interface, obj, *, qualifier=None)`; a second registration of the same `(interface, qualifier)` raises `AlreadyBoundError` — qualify to have two, use `di_overrides` to replace in a test | `bind_instance`, `bind_repositories`, `bind_clients`/`bind_clients_from`/`bind_peers`, `bind_trust_store`, `bind_retention_registry`, `bind_cloudevents_serializer`, `bind_websocket_adapter`/`bind_sse_adapter`/`bind_mcp_adapter`/`bind_skill_adapter` |
+| `bind_*` | `(container, …, *, qualifier=None) -> DIContainer` | registers **non-fallback** bindings the app decides at wiring time; the primitive is `varco_core.di.bind_instance(container, Interface, obj, *, qualifier=None)`; a second registration of the same `(interface, qualifier)` raises `AlreadyBoundError` — qualify to have two, use `di_overrides` to replace in a test | `bind_instance`, `bind_repositories`, `bind_clients`/`bind_clients_from`/`bind_peers`, `bind_trust_store`, `bind_cloudevents_serializer`, `bind_websocket_adapter`/`bind_sse_adapter`/`bind_mcp_adapter`/`bind_skill_adapter` |
 | `enable_*` | `(container, …) -> DIContainer` | flips on an opt-in binding that shadows a `@Fallback` default; raises `AlreadyBoundError` if a non-fallback binding of that seam already exists (yours or a previous `enable_*`) | `enable_policy_authorizer`, `enable_token_revocation`, `enable_redis_token_revocation`, `enable_feature_flags`, `enable_tenant_membership`, `enable_authorization_audit` (wraps the current binding — call it last) |
 | `mount_*(app, ...)` | sync, mutates the ASGI app | flips on an opt-in privileged **HTTP surface**, always behind an explicit acknowledgement kwarg | `varco_fastapi.tenancy.mount_tenant_admin`, `varco_fastapi.admin.mount_reliability_admin` |
 | `install_*(...)` | sync, **container-free**; **three shapes** | ⚠️ one verb, three shapes (Plan 022 / AB-3, extended Plan 037 / §D-S12-hook). **(a)** a process-global side effect (OTel instrument registration), taking no argument at all; **(b)** an ASGI-app mutation, taking and modifying an `app`; **(c)** a mutation of a caller-supplied SQLAlchemy object (a `Session`/`sessionmaker`/`async_sessionmaker`), container-free, returning an uninstall callable. Neither (a) nor (b) nor (c) takes a container — all are unrelated to `container.install(SomeConfiguration)` | (a) `install_cache_metrics`, `install_reliability_metrics` · (b) `install_middleware_stack`, `install_cors` · (c) `varco_sa.tenancy.rls_session.install_rls_tenant_hook` |
@@ -539,9 +560,14 @@ five DLQ backends; `RedisEventBusSelectorConfiguration.bus()` is the worked exam
 `varco_redis/tests/test_redis_cloudevents_di.py`. Never "fix" a missing binding by decorating
 `cloudevents.py`.
 
-⚠️ `SADeadLetterQueue` and `OutboxRelay` are hand-constructed, not DI-wired — pass `serializer=`
-explicitly or they keep the `JsonEventSerializer` default. A DLQ backlog stored before a serializer
-swap is never converted; drain it first.
+`OutboxRelay` (via `ReliabilityModule`) also declares `Serializer[Event]` on its factory (Plan 050
+/ DI-10) — a `bind_cloudevents_serializer()` swap reaches it, not just the DLQ backends
+(`test_reliability_module_wiring.py`). The hand-constructed form still takes `serializer=` and
+still defaults to `JsonEventSerializer`; a DLQ backlog stored before a serializer swap is never
+converted — drain it first. ⚠️ `WebhookDispatcher` (via `WebhookModule`) is **not** part of this —
+it never held a `Serializer[Event]`; delivery is HTTP with its own signing scheme, not the event
+bus's wire format. (Corrected — an earlier version of this paragraph claimed otherwise; see Plan
+050's sync-docs drift report.)
 
 Usage: README's "CloudEvents envelope" section. Full design (attribute mapping, the named Redis
 Streams `ce`-field convention, the Kafka `content-type` limitation, the three-phase dual-emit
@@ -666,6 +692,11 @@ Usage: README's "Security posture preflight"/"Authorization-decision audit" sect
 **not**, because it *is* the tenant control plane (every route addresses a tenant that is by
 definition not the caller's own); see `admin-surface-tenancy.md`'s §D-S4-control for the full
 argument. Do not add a tenant guard to `mount_tenant_admin` without revisiting that decision.
+
+**Rule (Plan 051 / DI-5)**: a posture collector is a `varco_core.posture.PostureCollector`
+contribution (`@Singleton` subclass or `contribute()`), never an edit to
+`varco_fastapi/posture.py`. See `technical_docs/features/dependency-injection.md`'s
+§Multi-binding.
 
 ### Recurring schedules (varco_core.schedule, Plan 032 / D6)
 
@@ -940,8 +971,9 @@ and `technical_docs/features/timezone-handling.md`'s T2 section.
 
 An append-only audit trail for `create`/`update`/`delete` mutations, event-driven like the
 outbox pattern but persisted by a dedicated consumer rather than a relay. **`AuditLogMixin`
-composes to the LEFT of `AsyncService`**, and the consumer must be wired from `@PostConstruct`
-(same rule as any other `EventConsumer`).
+composes to the LEFT of `AsyncService`**, and its consumer (`AuditConsumer`) is hand-constructed
+and `register_to()`-ed by `varco_sa`/`varco_beanie`'s audit wiring — not DI-bound, so not
+auto-registered by `CoreModule` (Plan 051 / DI-5, §D-consumer).
 
 Usage: README's "Database Auditing" section. Full detail (idempotency per backend, retention,
 tenancy, REST admin, tamper evidence via `hash_chain=True`):
@@ -1175,6 +1207,10 @@ behaviour (one `DeprecationWarning` at construction) — nothing flips by defaul
 (trust ranking, cross-check modes, the subdomain algorithm, membership binding, act-as
 delegation, the 4.0 flip list, a Pitfalls table): `technical_docs/features/tenant-provenance.md`.
 Usage: README's "Tenant identity provenance" section.
+
+**Rule (Plan 051 / DI-5)**: `TenantSource` is `@Multibound` — an out-of-tree source is a scanned
+`@Singleton` named in `VARCO_TENANT_SOURCES`; bound ≠ active. See
+`technical_docs/features/dependency-injection.md`'s §Multi-binding.
 
 ---
 
@@ -1429,6 +1465,16 @@ Two neighbours, so you file a new pitfall in the right place:
 
 ```
 Am I adding a new capability?
+├─ All implementations of X (a plugin/app must be able to add one)?
+│  └─ → a `@Multibound` seam (`varco_core.di`) + `contribute()`/`collect()`/`acollect()`
+│       (`varco_core.di.collect`) or a scanned `@Singleton`/`@Provider` — never a hand
+│       list, never `InjectInstances[T]` (raises on zero contributions). See
+│       `technical_docs/features/dependency-injection.md`'s §Multi-binding for the
+│       five shipped seams (`EventConsumer`, `RetentionPolicy`, `TenantSource`,
+│       `PostureCollector`, `HealthCheck`) and the one deliberate exception
+│       (`WebhookVerifier` — an explicit `register_webhook_verifier()` verb, not
+│       multi-binding, since it is constructed per-route with per-route secrets).
+│
 ├─ Event system feature (new event type, new consumer pattern)?
 │  └─ → varco_core.event (protocol) + varco_kafka/redis (backend)
 │
@@ -1466,8 +1512,9 @@ Am I adding a new capability?
 │
 ├─ Scheduled cleanup of a framework table (DLQ, audit log, idempotency
 │  store, revocation store, job store)?
-│  └─ → varco_core.retention (Plan 039 / S20) — bind_retention_registry(container,
-│         registry) + `modules=[*default_modules(), RetentionModule(registry)]`, never a
+│  └─ → varco_core.retention (Plan 039 / S20, multi-bound Plan 051 / DI-5) —
+│         `contribute(container, RetentionPolicy, policy)` (or a scanned `@Singleton`/
+│         `@Provider`) + `modules=[*default_modules(), RetentionModule()]`, never a
 │         hand-written job and never a second scheduler
 │     ↳ Outbox? → NOT a target — deleting an unpublished event is event
 │       loss by construction (technical_docs/features/retention-and-purge.md)
@@ -1707,7 +1754,7 @@ Before writing code, ask yourself:
 - [ ] **Does this belong in varco_core or a backend?** → Use decision tree above
 - [ ] **Am I respecting layer boundaries?** → Services inject protocols, not concrete implementations; only DI knows concrete types
 - [ ] **Will this compose via MRO if it's a mixin?** → Does it call `super()` on every hook?
-- [ ] **Is my event consumer testable?** → Decorated with `@listen`, wired in `@PostConstruct`, no bus reference in `__init__`?
+- [ ] **Is my event consumer testable?** → Decorated with `@listen`, a plain `@Singleton` (auto-registered by `CoreModule.start()`, Plan 051 / DI-5), no bus reference required in `__init__`?
 - [ ] **If I'm publishing events, am I using the outbox pattern?** → Events saved in same DB transaction, relayed asynchronously?
 - [ ] **If I'm caching, is my key namespaced?** → Includes tenant_id, user_id, or other scope identifier?
 - [ ] **If I'm using external APIs, do I have resilience?** → Timeout + retry + circuit breaker + bulkhead (shared instances), with optional rate limiting?

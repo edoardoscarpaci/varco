@@ -1009,14 +1009,15 @@ def bind_mcp_adapter(
         — the decoration-time ``returns=`` override means this closure's
         placeholder return annotation never needs patching.
         """
+        from varco_fastapi.router._di import _resolve_optional  # noqa: PLC0415
+
         client: Any = None
         if _client_cls is not None:
-            # Try to resolve from container first (preferred — gets auth, etc.)
-            try:
-                client = container.get(_client_cls)
-            except Exception:  # noqa: BLE001
-                # Fall back to bare construction if not registered
-                client = _client_cls(base_url=_base_url)
+            # Try to resolve from container first (preferred — gets auth,
+            # etc.); fall back to bare construction if not registered
+            # (Plan 050 / §D-asks P-INJ shim — see _di.py's module docstring
+            # for why this cannot be a declared Inject[...] parameter).
+            client = _resolve_optional(container, _client_cls) or _client_cls(base_url=_base_url)
         return MCPAdapter(
             _router_cls,
             client=client,

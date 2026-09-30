@@ -74,8 +74,8 @@ A row moves to `## ✅ Shipped` only when its plan is built and merged.
 - `DI-12`, `DI-4`, `DI-17` — plans/047-config-driven-backend-selection-and-catalogue.md — `done (Plan 047)`
 - `DI-6`, `DI-16` — plans/048-settings-standardization.md — `done (Plan 048)`
 - `DI-1`, `FLIP-1` — plans/049-varco-module-and-composable-app.md — `done (Plan 049)`
-- `DI-9`, `DI-10` — plans/050-phased-lifecycle-and-di-wired-infrastructure.md
-- `DI-5` — plans/051-multi-binding-registries.md
+- `DI-9`, `DI-10` — plans/050-phased-lifecycle-and-di-wired-infrastructure.md — `done (Plan 050)`
+- `DI-5` — plans/051-multi-binding-registries.md — `done (Plan 051)`
 - `DI-7`, `DI-11` — plans/052-diagnose-report-and-test-profile.md
 - `FLIP-5`, `FLIP-034-4`, `FLIP-034-1`, `FLIP-034-2`, `FLIP-034-3` — plans/053-credential-and-auth-flips.md
 - `FLIP-2`, `FLIP-10`, `FLIP-3`, `FLIP-4` — plans/054-http-edge-and-admin-surface-flips.md
@@ -91,7 +91,7 @@ Roll-forward rows that lost their un-IDed status here; none is DI-shaped and non
 | ID | Feature | Severity | Complexity | Status | Rationale | Evidence |
 |----|---------|----------|------------|--------|-----------|----------|
 | `RO-1` | `MetricsMiddleware` records `status_code="500"` for exceptions `ErrorMiddleware` renders as 4xx | 🟡 should | S | todo | Every error-rate dashboard over `http.server.request.duration` is wrong for mapped exceptions; out of Plan 041's scope | `varco_fastapi/varco_fastapi/middleware/metrics.py:368,375-388`; `app.py:636-642` |
-| `RO-2` | Wire `inspect_jwks_posture()` and `inspect_retention_posture()` into `SecurityPosture` | 🟡 should | S | ✅ planned → plans/052-diagnose-report-and-test-profile.md | Plans 041/039 export the inspectors; the harness (`posture.py:258`, collectors `:400+`) does not call them. Natural to land inside `DI-7` | `plans/039` §D-S20-posture |
+| `RO-2` | Wire `inspect_jwks_posture()` and `inspect_retention_posture()` into `SecurityPosture` | 🟡 should | S | ✅ planned → plans/052-diagnose-report-and-test-profile.md | Plans 041/039 export the inspectors; the harness (`posture.py:258`, collectors `:400+`) does not call them. Natural to land inside `DI-7`. Post-Plan-051: each is now a ~15-line `PostureCollector` subclass contributed by `JwksRefreshModule`/`RetentionModule` — `PostureCollector` is `@Multibound`, so no `varco_fastapi/posture.py` edit is needed | `plans/039` §D-S20-posture |
 | `RO-3` | Confirm Stripe's inbound HMAC secret encoding against a real delivery | 🟡 should | S | todo | `StripeWebhookVerifier` pins `RAW_UTF8` against brief 013 §2's conflicting description; if wrong, one enum value on one class | `plans/038` Risks table |
 | `RO-4` | `create_varco_app` gains a `log_redactor=` keyword | 🟡 should | S | `done (Plan 049)` — landed as `LoggingModule(redactor=...)`, not a `create_varco_app` keyword | Deliberately not added by Plan 040; folds into `DI-1`'s module shape | `plans/040` §D-S21-logging |
 | `RO-5` | `inspect_redaction_posture()` becomes a `SecurityPosture` collector | 🟡 should | S | ✅ planned → plans/057-redaction-flips.md | Un-parked by `FLIP-040-2` — the finding then means "opted out" | `plans/040` §D-S21-posture |
@@ -103,6 +103,7 @@ Roll-forward rows that lost their un-IDed status here; none is DI-shaped and non
 | `RO-11` | Verify `opentelemetry-exporter-prometheus` emits exemplars end-to-end | 🟢 nice | S | todo | Plan 041 proves the SDK layer only; `router/metrics.py:45-51`'s promise is half-verified | brief 012 Evidence Gaps 2/3 |
 | `RO-12` | `CONF-COUNT` — strengthen `DeadLetterQueueConformance.test_count_reflects_pushed_entries` (trivially true at `KafkaDLQ.count()`'s `-1`) | 🟢 nice | S | todo | May surface a Kind-A `KafkaDLQ` finding needing its own xfail + register row | `varco_kafka/tests/test_kafka_conformance.py:80-88` |
 | `RO-13` | `CONF-RG` — automate the register↔marker cross-check in `make lint`'s no-`PKG` path | 🟢 nice | S | todo | Plan 042 Q2 left it manual | `COVERAGE.md` findings register |
+| `RO-14` | `CoreModule.start()`'s 051 auto-`register_to()` loop passes no `dlq=` to any auto-registered `EventConsumer` — the app's own DLQ never reaches a consumer unless it hand-calls `register_to(bus, dlq=...)` | 🟡 should | S | todo | Deliberately out of Plan 050's scope (§Non-goals) — a behaviour change for every consumer; `WebhookDispatcher` got its own injected `dlq` instead, precisely to avoid needing this | `plans/050` §Non-goals |
 
 ## Open questions (this cycle)
 

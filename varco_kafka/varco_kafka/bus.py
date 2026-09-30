@@ -72,7 +72,7 @@ from typing import Annotated, Any
 # to reach into the aiokafka namespace directly.
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
 from aiokafka.structs import OffsetAndMetadata
-from providify import Fallback, Inject, InjectMeta, Instance, PostConstruct, PreDestroy, Singleton
+from providify import Fallback, Inject, InjectMeta, Instance, PreDestroy, Singleton
 from varco_core.di import BACKEND_PRIORITY
 from varco_core.di.select import selected_by
 from varco_core.event.base import (
@@ -224,13 +224,18 @@ class KafkaEventBus(AbstractEventBus):
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
-    @PostConstruct
     async def start(self) -> None:
         """
         Connect the Kafka producer and start the background consumer task.
 
         Must be called before ``publish()``.  Idempotent — calling ``start()``
         twice on an already-started bus is a no-op.
+
+        Started by the ``BUS`` phase — ``CoreModule`` — or by an explicit
+        ``await bus.start()`` in a hand-wired app (Plan 050 / §D-bus): no
+        ``@PostConstruct`` marker any more, so this bus is never started
+        implicitly at first DI resolution (which could happen before
+        migrations/tenancy have run, at a moment no phase controls).
 
         Raises:
             NoBrokersAvailable: If the configured ``bootstrap_servers`` is

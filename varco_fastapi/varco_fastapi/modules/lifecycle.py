@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from varco_core.di.lifecycle import Phase
 from varco_core.di.module import CoreModule, VarcoModule
 
 from varco_fastapi.middleware.slots import MiddlewareSpec
@@ -32,11 +33,11 @@ if TYPE_CHECKING:
     from providify import DIContainer
     from varco_core.migration.base import AbstractMigrator
     from varco_core.migration.settings import MigrationSettings
+    from varco_core.posture import PostureCollector, PostureFinding
     from varco_core.reliability import ReliabilityPreset
     from varco_core.retention.policy import RetentionRegistry
 
     from varco_fastapi.posture import (
-        PostureFinding,
         SecurityPosture,
         SecurityPostureSettings,
     )
@@ -56,6 +57,7 @@ class MigrationsModule(VarcoModule):
     """
 
     name = "migrations"
+    phase = Phase.INFRA
     depends_on = (CoreModule,)
 
     def __init__(
@@ -97,6 +99,7 @@ class TenancyModule(VarcoModule):
     """
 
     name = "tenancy"
+    phase = Phase.INFRA
     depends_on = (CoreModule,)
 
     def __init__(
@@ -137,6 +140,7 @@ class ReliabilityModule(VarcoModule):
     """
 
     name = "reliability"
+    phase = Phase.CONSUMERS
     depends_on = (CoreModule,)
 
     def __init__(self, preset: ReliabilityPreset, *, enabled: bool | None = None) -> None:
@@ -146,6 +150,15 @@ class ReliabilityModule(VarcoModule):
 
     def _register(self, container: DIContainer) -> None:
         pass
+
+    @property
+    def relay(self) -> Any | None:
+        """The ``OutboxRelay`` started by ``start()``, or ``None`` before
+        ``start()``/when ``preset.outbox`` is ``False`` (Plan 050 / Step 10
+        — a public read for tests and 052's ``varco diagnose``)."""
+        if self._lifecycle is None:
+            return None
+        return self._lifecycle._relay  # noqa: SLF001 — same-package read
 
     async def start(self, container: DIContainer) -> None:
         from varco_fastapi.reliability import ReliabilityLifecycle  # noqa: PLC0415
@@ -164,29 +177,58 @@ class RetentionModule(VarcoModule):
     prepended) after ``*default_modules()``, since it resolves bindings
     other lifecycle components create.
 
+    Plan 051 / DI-5, §D-retention: no ``registry`` constructor argument any
+    more — ``RetentionPolicy`` is a ``@Multibound`` collection seam.
+    ``async_init()`` builds the ``RetentionRegistry`` from every
+    ``RetentionPolicy`` contributed to the container (a scanned
+    ``@Singleton``/``@Provider``, or ``contribute(container,
+    RetentionPolicy, policy)``) — the three guards
+    (``older_than``↔``supports_older_than``, duplicate ``name``) run there,
+    so a misconfigured policy set aborts the lifespan at startup rather than
+    at the first sweep.
+
     Args:
-        registry: The app's ``RetentionRegistry``.
         interval: Seconds between sweeps. ``0.0`` (default) — no
             background task at all.
     """
 
     name = "retention"
+    phase = Phase.SCHEDULERS
     depends_on = (CoreModule,)
 
-    def __init__(
-        self, registry: RetentionRegistry, *, interval: float = 0.0, enabled: bool | None = None
-    ) -> None:
+    def __init__(self, *, interval: float = 0.0, enabled: bool | None = None) -> None:
         super().__init__(enabled=enabled)
-        self._registry = registry
         self._interval = interval
+        self._registry: RetentionRegistry | None = None
         self._lifecycle: Any | None = None
 
     def _register(self, container: DIContainer) -> None:
         pass
 
+    async def async_init(self, container: DIContainer) -> None:
+        from varco_core.di.collect import acollect  # noqa: PLC0415
+        from varco_core.retention.policy import RetentionPolicy, RetentionRegistry  # noqa: PLC0415
+
+        policies = await acollect(container, RetentionPolicy)
+        self._registry = RetentionRegistry(policies)
+
+    def validate(self, container: DIContainer) -> Sequence[str]:
+        from varco_core.retention.policy import RetentionPolicy  # noqa: PLC0415
+
+        if not container.get_all_bindings(RetentionPolicy):
+            return (
+                "RetentionModule is enabled but no RetentionPolicy is contributed — "
+                "contribute(container, RetentionPolicy, …) or remove the module",
+            )
+        return ()
+
     async def start(self, container: DIContainer) -> None:
         from varco_fastapi.retention import RetentionLifecycle  # noqa: PLC0415
 
+        assert self._registry is not None, (  # noqa: S101 — async_init() always runs first
+            "RetentionModule.start() called before async_init() — the composition root's "
+            "own contract (async_init() before any module's start())."
+        )
         self._lifecycle = RetentionLifecycle(
             self._registry, container=container, interval=self._interval
         )
@@ -211,6 +253,7 @@ class JwksRefreshModule(VarcoModule):
     """
 
     name = "jwks_refresh"
+    phase = Phase.SCHEDULERS
     depends_on = (CoreModule,)
 
     def __init__(
@@ -248,12 +291,22 @@ class SecurityPostureModule(VarcoModule):
             constructs a default. A passed instance is bound
             (non-fallback) so ``container.get(SecurityPostureSettings)``
             returns it afterward.
-        collectors: ``None`` (default) uses the five shipped default
-            collectors (§D-posture's ``_default_collectors``). A passed
-            sequence replaces the default set entirely.
+        collectors: ``None`` (default) contributes the five shipped default
+            collectors (§D-posture) via ``contribute(container,
+            PostureCollector, …)`` in ``configure_app()``. A passed sequence
+            replaces the default set entirely — nothing is contributed for
+            you, though a plugin's own scanned ``PostureCollector``
+            contribution still joins the report either way.
+
+    Note:
+        057's ``audited_services=``/``RedactionPostureCollector`` handoff is
+        not implemented here — this repo has not yet landed Plan 057's
+        redaction posture collector (§D-posture's migration note applies
+        only once 057 exists).
     """
 
     name = "security_posture"
+    phase = Phase.EDGE
     depends_on = (CoreModule,)
 
     def __init__(
@@ -261,7 +314,7 @@ class SecurityPostureModule(VarcoModule):
         settings: SecurityPostureSettings | None = None,
         *,
         enabled: bool | None = None,
-        collectors: Sequence[Callable[[], list[PostureFinding]]] | None = None,
+        collectors: Sequence[PostureCollector | Callable[[], list[PostureFinding]]] | None = None,
     ) -> None:
         super().__init__(enabled=enabled)
         self._settings_arg = settings
@@ -300,7 +353,26 @@ class SecurityPostureModule(VarcoModule):
         return self._resolved_settings(container).enabled
 
     def configure_app(self, app: Any, container: DIContainer) -> None:
+        """
+        Contribute the five built-in ``PostureCollector``s to *container*
+        (§D-posture) — or, when ``collectors=`` was passed to the
+        constructor, contribute exactly those instead. Runs only for a
+        module that is both enabled and reaches ``configure_app()`` (a
+        disabled module leaves no collector bindings behind).
+        """
         self._app = app
+        from varco_core.di.collect import contribute  # noqa: PLC0415
+        from varco_core.posture import PostureCollector  # noqa: PLC0415
+
+        collectors: Sequence[PostureCollector | Callable[[], list[PostureFinding]]]
+        collectors = (
+            self._collectors
+            if self._collectors is not None
+            else _build_default_posture_collectors(app, container)
+        )
+        for collector in collectors:
+            if isinstance(collector, PostureCollector):
+                contribute(container, PostureCollector, collector)  # type: ignore[type-abstract]
 
     def middleware(self, container: DIContainer) -> list[MiddlewareSpec]:
         return []
@@ -316,12 +388,24 @@ class SecurityPostureModule(VarcoModule):
             raise RuntimeError("SecurityPostureModule has not started — call start() first.")
         return self._lifecycle.report
 
+    def validate(self, container: DIContainer) -> Sequence[str]:
+        from varco_core.posture import PostureCollector  # noqa: PLC0415
+
+        if self._collectors is None and not container.get_all_bindings(PostureCollector):
+            return ("SecurityPostureModule is enabled but no PostureCollector is contributed",)
+        return ()
+
     async def start(self, container: DIContainer) -> None:
+        from varco_core.di.collect import acollect  # noqa: PLC0415
+        from varco_core.posture import PostureCollector  # noqa: PLC0415
+
         from varco_fastapi.posture import SecurityPostureLifecycle  # noqa: PLC0415
 
-        collectors = self._collectors
-        if collectors is None:
-            collectors = _default_collectors(self._app, container)
+        collectors: Sequence[PostureCollector | Callable[[], list[PostureFinding]]]
+        if self._collectors is not None:
+            collectors = self._collectors
+        else:
+            collectors = await acollect(container, PostureCollector)
         self._lifecycle = SecurityPostureLifecycle(
             collectors=collectors, settings=self._resolved_settings(container)
         )
@@ -332,41 +416,35 @@ class SecurityPostureModule(VarcoModule):
             await self._lifecycle.stop()
 
 
-def _default_collectors(
+def _build_default_posture_collectors(
     app: Any | None, container: DIContainer
-) -> list[Callable[[], list[PostureFinding]]]:
+) -> list[PostureCollector]:
     """
     Build the five shipped default posture collectors, wired from what the
     composition root has on hand (§D-posture).
 
-    ⚠️ **051 replaces this function with a ``Multibound`` collector set** —
-    named and documented as the seam that plan removes (Plan 049 / handoff
-    to 051).
-
     Args:
         app: The ``FastAPI`` app (or ``None`` — the http collector then
-            degrades to ``[]``, same as ``_collect_http(app=None)``).
+            degrades to ``[]``, same as ``HttpEdgeCollector(app=None)``).
         container: The ``DIContainer`` this module was registered on.
 
     Returns:
-        A list of zero-argument collector callables, each resolved only if
-        its dependency is resolvable — otherwise the collector is omitted
+        A list of ``PostureCollector`` instances, each resolved only if its
+        dependency is resolvable — otherwise the collector is omitted
         entirely (§D-S9-degrade already covers the "sibling absent" case
         for the ones that are included).
     """
-    from functools import partial  # noqa: PLC0415
-
     from varco_fastapi.posture import (  # noqa: PLC0415
-        _collect_auth,
-        _collect_data,
-        _collect_http,
-        _collect_local,
-        _collect_tenant,
+        AuthPostureCollector,
+        DataPostureCollector,
+        HttpEdgeCollector,
+        LocalPostureCollector,
+        TenantPostureCollector,
     )
 
-    collectors: list[Callable[[], list[PostureFinding]]] = [
-        partial(_collect_http, app=app),
-        partial(_collect_local, container=container),
+    collectors: list[PostureCollector] = [
+        HttpEdgeCollector(app=app),
+        LocalPostureCollector(container=container),
     ]
 
     try:
@@ -390,7 +468,7 @@ def _default_collectors(
             if container.is_resolvable(AbstractTokenRevocationStore)
             else None
         )
-        collectors.append(partial(_collect_auth, auth=auth, registry=registry, store=store))
+        collectors.append(AuthPostureCollector(auth=auth, registry=registry, store=store))
     except Exception:  # noqa: BLE001 — sibling module absent; skip this collector entirely
         pass
 
@@ -407,12 +485,12 @@ def _default_collectors(
             else None
         )
         collectors.append(
-            partial(_collect_tenant, chain=chain, membership=membership, delegation=None)
+            TenantPostureCollector(chain=chain, membership=membership, delegation=None)
         )
     except Exception:  # noqa: BLE001
         pass
 
-    collectors.append(partial(_collect_data, rls_posture=None))
+    collectors.append(DataPostureCollector(rls_posture=None))
 
     return collectors
 

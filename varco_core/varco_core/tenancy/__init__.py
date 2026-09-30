@@ -22,7 +22,7 @@ from varco_core.tenancy.catalog import (
     TenantIsolationError,
     TenantNotFoundError,
 )
-from varco_core.tenancy.di import enable_tenant_membership
+from varco_core.tenancy.di import enable_tenant_membership, resolve_tenant_source_chain
 from varco_core.tenancy.global_scope import (
     GlobalScopeReadOnlyError,
     GlobalUoWProvider,
@@ -121,6 +121,7 @@ __all__ = [
     "TenantMembershipError",
     "TenantMembershipSettings",
     "enable_tenant_membership",
+    "resolve_tenant_source_chain",
     # ── Plan 033 / Plan 036 seams ────────────────────────────────────────
     "TenantProvenancePosture",
     "inspect_tenant_provenance",

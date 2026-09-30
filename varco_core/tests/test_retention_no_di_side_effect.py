@@ -48,10 +48,16 @@ async def test_scanning_varco_core_gains_no_retention_binding() -> None:
     container = DIContainer()
     container.scan("varco_core", recursive=True)
 
-    from varco_core.retention.policy import RetentionRegistry
+    from varco_core.di.collect import collect
+    from varco_core.retention.policy import RetentionPolicy, RetentionRegistry
 
     with pytest.raises(Exception):
         container.get(RetentionRegistry)
+
+    # Plan 051 / DI-5: `@Multibound`'s setattr on RetentionPolicy is not a
+    # registration either — scanning varco_core still contributes zero
+    # RetentionPolicy instances.
+    assert collect(container, RetentionPolicy) == ()
 
 
 async def test_scanning_varco_core_starts_no_retention_task() -> None:

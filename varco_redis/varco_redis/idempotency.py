@@ -85,6 +85,11 @@ class RedisIdempotencyStore(AbstractIdempotencyStore):
         self._redis_kwargs = redis_kwargs
         # Lazily created — see module docstring's Async safety note.
         self._redis: aioredis.Redis | None = None
+        #: Flipped True by aclose() — the disposer-idempotency flag
+        #: (Plan 050 / §D-disposes) tests read when no client was ever
+        #: created (so `_redis is None` alone can't distinguish "never
+        #: opened" from "closed").
+        self._closed = False
 
     def _get_client(self) -> aioredis.Redis:
         if self._redis is None:
@@ -168,6 +173,24 @@ class RedisIdempotencyStore(AbstractIdempotencyStore):
         """See ``AbstractIdempotencyStore.delete_expired()`` — Redis's own
         ``PX`` handles expiry natively, so this is a no-op."""
         return 0
+
+    async def aclose(self) -> None:
+        """
+        Close the lazily-created ``redis.asyncio.Redis`` client, if one was
+        ever created (Plan 050 / §D-disposes row 13 — before this, a client
+        created by ``RedisStoresConfiguration.idempotency_store`` leaked at
+        every ``container.ashutdown()``).
+
+        Idempotent — a second call, or a call before any client was ever
+        created, is a no-op.
+
+        Async safety: awaited by ``RedisStoresConfiguration``'s
+            ``@Disposes(AbstractIdempotencyStore)``.
+        """
+        if self._redis is not None:
+            await self._redis.aclose()
+            self._redis = None
+        self._closed = True
 
 
 __all__ = ["RedisIdempotencyStore"]

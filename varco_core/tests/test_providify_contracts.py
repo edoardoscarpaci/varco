@@ -24,6 +24,16 @@ Plan 045):
 **P24-DISPOSES-FIRSTMATCH is NOT re-guarded here** — its guard lives in
 `varco_redis/tests/test_redis_cache_disposes.py`.
 
+**Plan 051 (DI-5) update**: `TestP051Multibinding` pins the multi-binding primitives
+`varco_core.di.collect` builds on — `list[T]` on a `@Multibound` seam returns `[]` on zero
+contributions (never `LookupError`); `InjectInstances[T]` raises on zero (the reason varco never
+uses it); collection order is ascending priority, ties in registration order; the returned list
+is a fresh object per call; a shadowed `@Fallback` contribution is absent (a lone one is
+present); `get(list[T], qualifier=...)` narrows; a scanned `@Singleton` subclass is collected
+under its ABC; a `bind(ABC, Impl)` self-binding does not duplicate; scanning a module holding
+only a `@Multibound` class registers nothing. If any of these move, §D-shape/§D-order in
+`technical_docs/features/dependency-injection.md` are wrong.
+
 No Docker, no backend — pure providify, runs in `make test PKG=varco_core`.
 
 ⚠️ RED-MODE NOTE (Plan 045, written before the pin bump): this repo still
@@ -493,3 +503,271 @@ class TestP29DescriptorFallbackField:
         descriptor = container.describe().bindings[0]
 
         assert getattr(descriptor, "fallback", None) is True
+
+
+# ── Plan 051: multi-binding ──────────────────────────────────────────────────
+#
+# Contract pins for providify 2.1.0's multi-binding primitives
+# (`@Multibound`, `list[T]` resolution, `_collect_sync`/`_collect_async`,
+# `InjectInstances[T]`) — the foundation `varco_core.di.collect` builds on
+# (§D-shape, §D-order). If any pin here moves, §D-shape/§D-order in
+# `technical_docs/features/dependency-injection.md` are wrong and need a
+# fresh look at the providify source before touching varco code.
+
+
+class TestP051Multibinding:
+    def test_list_hint_on_multibound_seam_with_zero_contributions_is_empty(self) -> None:
+        from providify import DIContainer, Multibound
+
+        @Multibound
+        class Seam:
+            pass
+
+        container = DIContainer()
+        assert container.get(list[Seam]) == []
+
+    def test_inject_instances_raises_on_zero_contributions(self) -> None:
+        from providify import DIContainer, InjectInstances
+
+        class Seam:
+            pass
+
+        container = DIContainer()
+        with pytest.raises(LookupError):
+            container.get(InjectInstances[Seam])
+
+    def test_collection_order_is_ascending_priority_then_registration(self) -> None:
+        from providify import DIContainer, Multibound, Provider
+
+        @Multibound
+        class Seam:
+            pass
+
+        class A(Seam):
+            pass
+
+        class B(Seam):
+            pass
+
+        class C(Seam):
+            pass
+
+        b, a, c = B(), A(), C()
+
+        @Provider(singleton=True, returns=Seam, priority=0)
+        def _b():
+            return b
+
+        @Provider(singleton=True, returns=Seam, priority=0)
+        def _a():
+            return a
+
+        @Provider(singleton=True, returns=Seam, priority=5)
+        def _c():
+            return c
+
+        container = DIContainer()
+        container.provide(_b)
+        container.provide(_a)
+        container.provide(_c)
+
+        assert container.get(list[Seam]) == [b, a, c]
+
+    def test_collection_result_is_a_fresh_list_per_call(self) -> None:
+        from providify import DIContainer, Multibound, Singleton
+
+        @Multibound
+        class Seam:
+            pass
+
+        @Singleton
+        class Impl(Seam):
+            pass
+
+        container = DIContainer()
+        container.register(Impl)
+
+        first = container.get(list[Seam])
+        second = container.get(list[Seam])
+        assert first == second
+        assert first is not second
+
+    def test_shadowed_fallback_contribution_is_absent_lone_fallback_present(self) -> None:
+        from providify import DIContainer, Fallback, Multibound, Singleton
+
+        @Multibound
+        class Seam:
+            pass
+
+        @Fallback
+        @Singleton
+        class Default(Seam):
+            pass
+
+        @Singleton
+        class Real(Seam):
+            pass
+
+        # A lone @Fallback contribution is present.
+        container = DIContainer()
+        container.register(Default)
+        assert len(container.get(list[Seam])) == 1
+
+        # Once a non-fallback sibling exists, the fallback contribution vanishes.
+        container2 = DIContainer()
+        container2.register(Default)
+        container2.register(Real)
+        result = container2.get(list[Seam])
+        assert len(result) == 1
+        assert isinstance(result[0], Real)
+
+    def test_qualified_get_narrows_collection(self) -> None:
+        from providify import DIContainer, Multibound, Provider
+
+        @Multibound
+        class Seam:
+            pass
+
+        class A(Seam):
+            pass
+
+        class B(Seam):
+            pass
+
+        a, b = A(), B()
+
+        @Provider(singleton=True, returns=Seam, qualifier="x")
+        def _a():
+            return a
+
+        @Provider(singleton=True, returns=Seam)
+        def _b():
+            return b
+
+        container = DIContainer()
+        container.provide(_a)
+        container.provide(_b)
+
+        qualified = container.get(list[Seam], qualifier="x")
+        assert qualified == [a]
+
+    def test_scanned_singleton_subclass_is_collected_under_the_abc(self) -> None:
+        from providify import DIContainer, Multibound, Singleton
+
+        @Multibound
+        class Seam:
+            pass
+
+        @Singleton
+        class Impl(Seam):
+            pass
+
+        container = DIContainer()
+        container.register(Impl)
+
+        result = container.get(list[Seam])
+        assert len(result) == 1
+        assert isinstance(result[0], Impl)
+
+    def test_bind_self_binding_does_not_duplicate_in_collection(self) -> None:
+        from providify import DIContainer, Multibound, Singleton
+
+        @Multibound
+        class Seam:
+            pass
+
+        @Singleton
+        class Impl(Seam):
+            pass
+
+        container = DIContainer()
+        container.bind(Seam, Impl)
+
+        result = container.get(list[Seam])
+        assert len(result) == 1
+
+    def test_scanning_a_module_with_only_a_multibound_class_registers_nothing(self) -> None:
+        import sys
+        import types
+
+        from providify import DIContainer, Multibound
+
+        module = types.ModuleType("_p051_scan_probe")
+
+        @Multibound
+        class Seam:
+            pass
+
+        Seam.__module__ = module.__name__
+        module.Seam = Seam
+        sys.modules[module.__name__] = module
+        try:
+            container = DIContainer()
+            before = len(container.describe().bindings)
+            container.scan(module.__name__)
+            after = len(container.describe().bindings)
+            assert after == before
+        finally:
+            del sys.modules[module.__name__]
+
+
+class TestP050UpstreamAsks:
+    """
+    Plan 050 / §D-asks — two upstream gaps filed against providify 2.1.0,
+    guarded here so a future providify version silently fixing either is
+    noticed (XPASS on a strict xfail) rather than assumed.
+
+    - **P-DISP** — `provide(fn, *, returns=, disposer=)`. Today `provide()`
+      takes no `disposer=` kwarg (`container.py:1250`); `ProviderBinding.disposer`
+      is a plain attribute providify's own install loop assigns
+      (`container.py:7379`, `binding.py:749`), with no public setter API.
+    - **P-INJ** — `provide(fn, inject={...})` / a parameter-injection
+      override for a type only known at call time. Today annotations are
+      evaluated against `fn.__globals__` + a `localns` of registered
+      interfaces (`_annotations.py:180-235`); a closure-local runtime type
+      cannot be named this way, and `provide()`/`@Provider` have no
+      parameter-injection-override kwarg to route around it.
+
+    Report files (per CLAUDE.md's "When you hit a providify limitation"):
+    `design/upstream-gaps/providify-provide-disposer.md` (P-DISP),
+    `design/upstream-gaps/providify-provider-inject-override.md` (P-INJ).
+    """
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=TypeError,
+        reason="GAP: P-DISP — provide() accepts no disposer= kwarg on providify 2.1.0 "
+        "(container.py:1250); see design/upstream-gaps/providify-provide-disposer.md",
+    )
+    def test_provide_accepts_disposer_kwarg(self) -> None:
+        from providify import DIContainer
+
+        container = DIContainer()
+        calls: list[str] = []
+
+        def factory() -> str:
+            return "value"
+
+        # Not yet a real parameter on provide() — expected TypeError.
+        container.provide(factory, returns=str, disposer=lambda v: calls.append(v))  # type: ignore[call-arg]
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=TypeError,
+        reason="GAP: P-INJ — provide()/@Provider accept no inject= parameter-override "
+        "kwarg on providify 2.1.0 (decorator/scope.py has no parameter twin to returns=); "
+        "see design/upstream-gaps/providify-provider-inject-override.md",
+    )
+    def test_provider_accepts_inject_override(self) -> None:
+        from providify import DIContainer
+
+        container = DIContainer()
+
+        class _RuntimeOnlyType:
+            pass
+
+        def factory(client: object) -> str:
+            return "value"
+
+        # `inject=` is not a real provide() kwarg today — expected TypeError.
+        container.provide(factory, returns=str, inject={"client": _RuntimeOnlyType})  # type: ignore[call-arg]

@@ -59,6 +59,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import ClassVar
 
+from providify import Multibound
+
 # ── HealthStatus ──────────────────────────────────────────────────────────────
 
 # Module-level severity map.  Defined OUTSIDE the Enum class because Python's
@@ -149,6 +151,7 @@ class HealthResult:
 # ── HealthCheck ABC ───────────────────────────────────────────────────────────
 
 
+@Multibound
 class HealthCheck(abc.ABC):
     """
     Abstract base class for liveness and readiness probes.
@@ -156,6 +159,16 @@ class HealthCheck(abc.ABC):
     Each backend package (varco_kafka, varco_redis, varco_sa, varco_beanie)
     provides a concrete subclass that issues a lightweight probe against its
     respective broker/database.
+
+    Plan 051 / DI-5, §D-health: stamped ``@Multibound`` for convention
+    uniformity with the other four collection seams (`collection_seams()`/
+    the `di_wiring` suite now cover it too) — this was already, by
+    convention (045 Class C), a collection of plain non-``@Fallback``
+    ``@Singleton(qualifier=...)`` bindings. ``HealthRouter``'s
+    ``Instance[HealthCheck].aget_all()`` reader is **unchanged** — it is
+    lazy on purpose (built before the container may be complete) and
+    already zero-tolerant; ``collect(container, HealthCheck)`` is an
+    equally valid, eager alternative read of the same set.
 
     Contract
     --------

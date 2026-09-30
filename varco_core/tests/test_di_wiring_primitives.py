@@ -195,6 +195,51 @@ def test_bootstrap_twice_adds_no_new_bindings() -> None:
     assert len(container.describe().bindings) == before
 
 
+async def test_bind_instance_disposer_kwarg_is_called_on_ashutdown() -> None:
+    # Plan 050 / §D-asks P-DISP shim — bind_instance(disposer=) attaches a
+    # teardown callable providify's own provide()/@Provider have no kwarg
+    # for yet (container.py:1250 takes no disposer=).
+    from varco_core.di import bind_instance
+
+    class _Thing:
+        pass
+
+    container = DIContainer()
+    thing = _Thing()
+    calls: list[object] = []
+
+    def _dispose(instance: object) -> None:
+        calls.append(instance)
+
+    bind_instance(container, _Thing, thing, disposer=_dispose)
+    container.get(_Thing)  # force resolution so the singleton cache holds it
+
+    await container.ashutdown()
+
+    assert calls == [thing]
+
+
+async def test_bind_instance_async_disposer_is_awaited() -> None:
+    from varco_core.di import bind_instance
+
+    class _Thing:
+        pass
+
+    container = DIContainer()
+    thing = _Thing()
+    calls: list[object] = []
+
+    async def _dispose(instance: object) -> None:
+        calls.append(instance)
+
+    bind_instance(container, _Thing, thing, disposer=_dispose)
+    container.get(_Thing)
+
+    await container.ashutdown()
+
+    assert calls == [thing]
+
+
 def test_importing_varco_core_di_does_not_import_providify() -> None:
     # varco_core.di must import providify inside function bodies only
     # (import-budget reason, §D-contract) — extends 045's

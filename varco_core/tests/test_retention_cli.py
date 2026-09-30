@@ -143,16 +143,17 @@ def _policy_registry_factory():
 
     dlq = InMemoryDeadLetterQueue()
     target = DlqRetentionTarget(dlq=dlq, acknowledge_dead_letter_deletion=True)
-    registry = RetentionRegistry()
-    registry.register(
-        RetentionPolicy(
-            name="nightly-dlq",
-            target=target,
-            cron_expr="0 3 * * *",
-            timezone="UTC",
-            dry_run=True,
-            older_than=timedelta(days=30),
-        )
+    registry = RetentionRegistry(
+        [
+            RetentionPolicy(
+                name="nightly-dlq",
+                target=target,
+                cron_expr="0 3 * * *",
+                timezone="UTC",
+                dry_run=True,
+                older_than=timedelta(days=30),
+            )
+        ]
     )
     return registry
 

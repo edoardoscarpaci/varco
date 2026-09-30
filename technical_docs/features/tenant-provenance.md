@@ -8,6 +8,24 @@ that existed before this plan — keeps reading `X-Tenant-Id` and behaves byte-i
 routed through an internally-built `LegacyTenantSource`. Adopting a chain is a configuration
 change, entirely opt-in.
 
+## Multi-binding the pool (Plan 051 / DI-5)
+
+`TenantSource` is `@Multibound` — an out-of-tree source is a scanned `@Singleton` (or a
+`varco_core.di.collect.contribute()` call), never a framework edit. **Bound ≠ active**: a
+contributed source only joins the chain when its `name` is also listed in
+`VARCO_TENANT_SOURCES`/`TenantProvenanceSettings.sources` — the allowlist (which origins may
+speak at all) stays the operator's, never the scanner's. `build_tenant_source_chain(settings, *,
+delegation_policy=None, sources=())` gained the `sources=` pool argument; a name in
+`settings.sources` matching neither a built-in nor a pool source raises `ValueError` naming both
+sets; a pool source whose `name` collides with a built-in (`jwt`/`subdomain`/`legacy`/`act_as`)
+is refused even if that built-in is not itself active; two pool sources sharing one `name` is
+refused. `resolve_tenant_source_chain(container)` (`varco_core.tenancy`) does the container
+reading for you — settings, the contributed pool, and an optional bound `DelegationPolicy` — and
+logs every inert (bound but unnamed) pool source at `INFO`. A non-built-in source in the active
+chain declaring `TenantTrust.HIGH` or higher emits the posture token
+`tenant.third_party_source_high_trust` at `INFO` — the one way a plugin can *elevate* itself into
+the identity chain, surfaced to the operator, never blocked.
+
 ## The trust-ranking table (brief 006 §1)
 
 | Source | `TenantTrust` | Why |

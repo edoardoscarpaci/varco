@@ -56,9 +56,12 @@ class TestInspectRetentionPostureWithRegistry:
         from varco_core.retention.policy import RetentionRegistry  # noqa: PLC0415
         from varco_core.retention.posture import inspect_retention_posture  # noqa: PLC0415
 
-        registry = RetentionRegistry()
-        registry.register(_policy("destructive", target=_FakeTarget(), dry_run=False))
-        registry.register(_policy("preview", target=_FakeTarget(), dry_run=True))
+        registry = RetentionRegistry(
+            [
+                _policy("destructive", target=_FakeTarget(), dry_run=False),
+                _policy("preview", target=_FakeTarget(), dry_run=True),
+            ]
+        )
 
         report = inspect_retention_posture(registry=registry)
         assert report.configured is True
@@ -70,9 +73,12 @@ class TestInspectRetentionPostureWithRegistry:
         from varco_core.retention.policy import RetentionRegistry  # noqa: PLC0415
         from varco_core.retention.posture import inspect_retention_posture  # noqa: PLC0415
 
-        registry = RetentionRegistry()
-        registry.register(_policy("global", target=_FakeTarget(), dry_run=True, tenant_ids=None))
-        registry.register(_policy("scoped", target=_FakeTarget(), dry_run=True, tenant_ids=("t1",)))
+        registry = RetentionRegistry(
+            [
+                _policy("global", target=_FakeTarget(), dry_run=True, tenant_ids=None),
+                _policy("scoped", target=_FakeTarget(), dry_run=True, tenant_ids=("t1",)),
+            ]
+        )
 
         report = inspect_retention_posture(registry=registry)
         assert "global" in report.platform_wide_policies
@@ -97,9 +103,9 @@ class TestInspectRetentionPostureWithRegistry:
             older_than=timedelta(hours=2),
             acknowledge_short_retention=True,
         )
-        registry2 = RetentionRegistry()
-        registry2.register(_policy("dlq-nightly", target=_DlqTarget(), dry_run=True))
-        registry2.register(short_policy)
+        registry2 = RetentionRegistry(
+            [_policy("dlq-nightly", target=_DlqTarget(), dry_run=True), short_policy]
+        )
 
         report = inspect_retention_posture(registry=registry2)
         assert "dlq-nightly" in report.dlq_policies
@@ -112,7 +118,6 @@ class TestInspectRetentionPostureWithRegistry:
         class _DlqTarget(_FakeTarget):
             kind = "dlq"
 
-        registry = RetentionRegistry()
-        registry.register(_policy("p1", target=_DlqTarget(), dry_run=True))
+        registry = RetentionRegistry([_policy("p1", target=_DlqTarget(), dry_run=True)])
         report = inspect_retention_posture(registry=registry)
         assert "dlq" in report.kinds

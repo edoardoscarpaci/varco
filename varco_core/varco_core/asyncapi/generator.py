@@ -261,9 +261,10 @@ def _is_registered(consumer: EventConsumer) -> bool:
     """
     Report whether *consumer* has been wired to at least one bus.
 
-    ``EventConsumer.register_to()`` lazily creates ``_registered_buses`` (it has
-    no ``__init__`` of its own), so its presence *and* non-emptiness is the
-    authoritative "this consumer is live" signal.
+    Plan 051 / DI-5, §D-consumer: reads the public
+    ``EventConsumer.registered_bus_count`` property instead of the private
+    ``_registered_buses`` guard set — same "at least one bus" signal, now
+    through a supported accessor.
 
     Args:
         consumer: The instance to test.
@@ -271,7 +272,7 @@ def _is_registered(consumer: EventConsumer) -> bool:
     Returns:
         ``True`` when ``register_to()`` has been called at least once.
     """
-    return bool(getattr(consumer, "_registered_buses", None))
+    return consumer.registered_bus_count > 0
 
 
 def _listen_entries(consumer: EventConsumer) -> list[tuple[str, _ListenEntry]]:

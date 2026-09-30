@@ -244,6 +244,23 @@ class TestVarcoFastapiDIWiringConformance(DIWiringConformance):
         report = container.validate(raise_on_error=False)
         assert report.errors == ()
 
+    async def test_collection_seams_have_no_fallback_contributors_after_posture_configure(
+        self, container: DIContainer
+    ) -> None:
+        """
+        Plan 051 / DI-5: run the shared collection-seam suite test again,
+        but AFTER SecurityPostureModule().configure_app(app, c) has
+        contributed the six default PostureCollectors — a varco-owned
+        contribution must be non-fallback exactly like a plugin's.
+        """
+        from varco_fastapi.modules.lifecycle import SecurityPostureModule
+
+        module = SecurityPostureModule()
+        module.register(container)
+        module.configure_app(None, container)
+
+        await self.test_collection_seams_have_no_fallback_contributors(container)
+
 
 class TestRemovedFunctionsAreGone:
     """§D-removals — `create_varco_container`, `setup_event_producer`,

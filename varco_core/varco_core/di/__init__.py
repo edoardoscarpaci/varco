@@ -30,9 +30,20 @@ from __future__ import annotations
 import weakref
 from typing import TYPE_CHECKING, Any, Final
 
+from varco_core.di.collect import acollect, collect, collection_seams, contribute
 from varco_core.di.errors import BackendSelectionError, CatalogueError
 from varco_core.di.features import FEATURES, Feature, feature_default
 from varco_core.di.introspect import BindingRecord, Catalogue, catalogue, inspect_bindings
+from varco_core.di.lifecycle import (
+    AbstractLifecycle,
+    LifecycleComponent,
+    LifecycleFailure,
+    LifecycleRunner,
+    ModulePhaseError,
+    Phase,
+    phased_components,
+    resolve_lifecycle_order,
+)
 from varco_core.di.module import (
     CoreModule,
     LifecycleModule,
@@ -56,6 +67,8 @@ from varco_core.di.select import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from providify import DIContainer
     from providify.binding import ProviderBinding
 
@@ -131,6 +144,7 @@ def bind_instance(
     instance: Any,
     *,
     qualifier: str | None = None,
+    disposer: Callable[[Any], Any] | None = None,
 ) -> ProviderBinding:
     """
     Register an already-constructed object as a non-fallback singleton
@@ -141,6 +155,18 @@ def bind_instance(
         interface: The interface/type the instance is resolved as.
         instance: The already-constructed object to register.
         qualifier: Optional qualifier distinguishing this binding.
+        disposer: Optional teardown callable, invoked with *instance* by
+            `container.ashutdown()`/`shutdown()`. May be sync or async
+            (providify's own `_adispose` dispatches on
+            `inspect.iscoroutinefunction`). SHIM for **P-DISP**
+            (`design/upstream-gaps/providify-provide-disposer.md`) — delete
+            this parameter and `_attach_disposer` once providify ships
+            `provide(fn, *, returns=, disposer=)` natively; until then this
+            is the only way to attach a disposer to a caller-constructed,
+            `bind_instance`-registered object (`container.provide()`/
+            `@Provider` themselves have no `disposer=` kwarg either —
+            providify's own install loop is the only code that assigns
+              `binding.disposer`, at `container.py:7379`).
 
     Returns:
         The `ProviderBinding` providify created (`.fallback is False`).
@@ -152,6 +178,10 @@ def bind_instance(
     Example::
 
         bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))
+
+        # With a disposer (Plan 050 / P-DISP shim):
+        store = RedisTokenRevocationStore(url=...)
+        bind_instance(container, AbstractTokenRevocationStore, store, disposer=store.aclose)
     """
     if is_user_bound(container, interface, qualifier=qualifier):
         qualifier_suffix = f" qualifier={qualifier!r}" if qualifier else ""
@@ -171,9 +201,28 @@ def bind_instance(
 
     from providify import Provider  # noqa: PLC0415 — see module docstring: import-budget reason
 
-    return container.provide(
+    binding = container.provide(
         Provider(singleton=True, qualifier=qualifier)(_factory), returns=interface
     )
+    if disposer is not None:
+        _attach_disposer(binding, disposer)
+    return binding
+
+
+def _attach_disposer(binding: ProviderBinding, disposer: Callable[[Any], Any]) -> None:
+    """
+    SHIM for **P-DISP**: assign the public `ProviderBinding.disposer`
+    attribute exactly as `providify/container.py:7379` does
+    (`binding.disposer = getattr(instance, name)`) — delete this function
+    when `provide(disposer=)` ships and route `bind_instance` through it
+    instead.
+
+    Args:
+        binding: The `ProviderBinding` `container.provide()` returned.
+        disposer: The callable to invoke with the produced instance at
+            shutdown.
+    """
+    binding.disposer = disposer
 
 
 #: Containers that have already had Plan 047's extra bootstrap-time
@@ -256,6 +305,7 @@ def _interface_name(interface: Any) -> str:
 __all__ = [
     "BACKEND_PRIORITY",
     "ENV_OVERRIDE_PRIORITY",
+    "AbstractLifecycle",
     "AlreadyBoundError",
     "BackendSelectionError",
     "BackendSelectionReport",
@@ -265,27 +315,38 @@ __all__ = [
     "CoreModule",
     "Feature",
     "FEATURES",
+    "LifecycleComponent",
+    "LifecycleFailure",
     "LifecycleModule",
+    "LifecycleRunner",
     "ModuleCycleError",
     "ModuleDependencyError",
+    "ModulePhaseError",
     "ModuleRegistry",
     "ObservabilityModule",
+    "Phase",
     "Seam",
     "SEAMS",
     "SeamCheck",
     "SeamSelection",
     "VarcoModule",
+    "acollect",
     "bind_env_overrides",
     "bind_instance",
     "bootstrap",
     "catalogue",
     "check_backend_selection",
+    "collect",
+    "collection_seams",
+    "contribute",
     "env_truthy",
     "feature_default",
     "inspect_backend_selection",
     "inspect_bindings",
     "interface_of",
     "is_user_bound",
+    "phased_components",
+    "resolve_lifecycle_order",
     "resolve_module_order",
     "seam_by_name",
     "selected_by",

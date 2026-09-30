@@ -540,6 +540,59 @@ _PROVIDERS: dict[str, type[WebhookVerifier]] = {
     "slack": SlackWebhookVerifier,
 }
 
+# DESIGN — register_webhook_verifier(): an explicit registration verb,
+# never multi-binding (Plan 051 / DI-5, §D-verifier)
+#     ✅ Mirrors varco_core.profiling's register_cpu_backend()/
+#        register_memory_backend() precedent exactly: a process-global
+#        CLASS registry (stateless classes keyed by name, no instances, no
+#        secrets, no lifecycle) — the same shape CLAUDE.md's Decision Tree
+#        already documents ("add pyinstrument by implementing
+#        CpuProfilerBackend + register_cpu_backend()").
+#     ✅ A WebhookVerifier instance is constructed PER ROUTE, with that
+#        route's secrets (get_verifier(provider, *, secrets, …)) — there is
+#        no shared instance to multi-bind, unlike RetentionPolicy/
+#        TenantSource/PostureCollector/EventConsumer.
+#     ❌ A module-global mutable dict — the same pattern
+#        varco_core.retention.policy rejects for *policies*. Accepted here
+#        for the same reason profiling accepts it: the registry holds
+#        classes, is written at import time, and is read per request.
+#     ❌ replace=True can shadow a built-in — documented, greppable.
+
+
+def register_webhook_verifier(
+    name: str, cls: type[WebhookVerifier], *, replace: bool = False
+) -> None:
+    """
+    Register *cls* as the ``WebhookVerifier`` implementation for *name*.
+
+    Args:
+        name: The provider name a route's ``provider="..."`` argument names.
+        cls: A ``WebhookVerifier`` subclass — constructed by ``get_verifier()``
+            with that call's ``secrets``/``**kwargs``.
+        replace: ``True`` to overwrite an already-registered name (including
+            one of the five built-ins) — off by default.
+
+    Raises:
+        ValueError: *name* is already registered and ``replace`` is ``False``.
+
+    Example::
+
+        register_webhook_verifier("shopify", ShopifyWebhookVerifier)
+        verifier = get_verifier("shopify", secrets=[shop_secret])
+    """
+    if name in _PROVIDERS and not replace:
+        raise ValueError(
+            f"A WebhookVerifier is already registered for provider {name!r} — "
+            "pass replace=True to overwrite it (this also lets you shadow a "
+            "built-in provider name)."
+        )
+    _PROVIDERS[name] = cls
+
+
+def registered_webhook_verifiers() -> frozenset[str]:
+    """Return every currently-registered provider name (built-in + custom)."""
+    return frozenset(_PROVIDERS)
+
 
 def get_verifier(
     provider: str,
@@ -578,7 +631,10 @@ def get_verifier(
     try:
         verifier_cls = _PROVIDERS[provider]
     except KeyError:
-        raise ValueError(f"Unknown inbound webhook provider: {provider!r}") from None
+        known = ", ".join(sorted(_PROVIDERS))
+        raise ValueError(
+            f"Unknown inbound webhook provider: {provider!r}. Registered providers: {known}."
+        ) from None
 
     if "tolerance_seconds" not in kwargs:
         # Import locally to avoid a module-level import cycle risk between

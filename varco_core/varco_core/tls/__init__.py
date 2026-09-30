@@ -34,6 +34,8 @@ Usage::
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from varco_core.tls.clients import (
     MissingClientDependencyError,
     to_aiohttp_connector,
@@ -48,6 +50,9 @@ from varco_core.tls.pkcs12 import Pkcs12LoadError
 from varco_core.tls.reload import ReloadingTrustStore, ReloadStrategy
 from varco_core.tls.store import TrustStore
 
+if TYPE_CHECKING:
+    from varco_core.tls.module import TrustStoreModule
+
 __all__ = [
     "CERT_FILE_PATTERNS",
     "MissingClientDependencyError",
@@ -56,6 +61,7 @@ __all__ = [
     "ReloadingTrustStore",
     "RestoreHandle",
     "TrustStore",
+    "TrustStoreModule",
     "bind_trust_store",
     "install_process_trust",
     "iter_cert_files",
@@ -64,3 +70,34 @@ __all__ = [
     "to_requests_adapter",
     "to_urllib3_poolmanager",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve ``TrustStoreModule`` lazily (PEP 562).
+
+    Every other name in ``__all__`` is bound eagerly above (this package has
+    never been import-cheap the way ``varco_core.webhook`` is — ``TrustStore``
+    et al. carry no providify dependency of their own). ``TrustStoreModule``
+    (Plan 050 / §D-trust) is the one exception: ``tls/module.py`` imports
+    ``providify`` and ``varco_core.di.module`` eagerly for its ``@Provider``
+    closures (same reason as ``varco_core.webhook.module.WebhookModule``), so
+    it is carved out into its own lazy path rather than pulling providify into
+    every ``import varco_core.tls`` — including the DI-free `TrustStore`/
+    `ReloadingTrustStore` usage this package's own docstring shows.
+
+    Args:
+        name: The attribute being looked up on ``varco_core.tls``.
+
+    Returns:
+        ``varco_core.tls.module.TrustStoreModule`` on first access; cached as
+        a normal module global thereafter.
+
+    Raises:
+        AttributeError: If ``name`` is not ``"TrustStoreModule"``.
+    """
+    if name == "TrustStoreModule":
+        from varco_core.tls.module import TrustStoreModule
+
+        globals()["TrustStoreModule"] = TrustStoreModule
+        return TrustStoreModule
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

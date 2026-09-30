@@ -65,6 +65,13 @@ from varco_ws.modules import WsModule  # noqa: E402
 class TestVarcoWsDIWiringConformance(DIWiringConformance):
     module_cls = WsModule
 
+    # Plan 050 / §D-suite: WsModule.start()/stop() owns the two push
+    # adapters' lifecycle directly (never via @Disposes/@PreDestroy) — see
+    # WsModule's own docstring. Declared here so a future
+    # bind_websocket_adapter()/bind_sse_adapter() call in this suite's
+    # bootstrap fixture is never mistaken for an orphaned disposer.
+    module_owned = frozenset({WebSocketEventBus, SSEEventBus})
+
     expected_defaults = CORE_DEFAULTS + (
         (WebSocketEventBus, None),
         (SSEEventBus, None),

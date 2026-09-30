@@ -9,6 +9,105 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### BREAKING — multi-binding for collection seams (Plan 051, DI-5)
+
+Five hand-rolled "all implementations of X" registries are gone, replaced by one convention:
+a `@Multibound` seam (`EventConsumer`, `RetentionPolicy`, `TenantSource`, `PostureCollector`,
+`HealthCheck`) + a plain non-`@Fallback` contribution (a scanned `@Singleton`/`@Provider`, or
+`varco_core.di.collect.contribute()`) + `collect()`/`acollect()` at the consumer.
+
+- `RetentionRegistry.register()` **removed** — construct `RetentionRegistry(policies)` from an
+  iterable instead; `varco_core.retention.di`/`bind_retention_registry()` are **gone**
+  (`ImportError`) — use `contribute(container, RetentionPolicy, policy)`.
+  `RetentionModule(registry, *, interval=0.0)` → `RetentionModule(*, interval=0.0)` (no more
+  `registry` constructor argument — it builds one itself, in `async_init()`, from every
+  contributed `RetentionPolicy`).
+- `SecurityPostureModule`'s five default collectors (`_collect_http`/`_collect_local`/
+  `_collect_auth`/`_collect_tenant`/`_collect_data`) are now classes (`HttpEdgeCollector`/
+  `LocalPostureCollector`/`AuthPostureCollector`/`TenantPostureCollector`/`DataPostureCollector`,
+  `varco_fastapi.posture`) implementing the new `varco_core.posture.PostureCollector` ABC;
+  `_default_collectors()` is gone. `PostureFinding`/`PostureSeverity` moved to
+  `varco_core.posture` — `varco_fastapi.posture` still re-exports them, identity-preserving.
+- `VARCO_TENANT_SOURCES` is no longer limited to the four built-ins — any bound `TenantSource`
+  (a scanned `@Singleton`, named in the env var) is legal; `_LEGAL_TENANT_SOURCES` is gone.
+  `build_tenant_source_chain(settings, *, delegation_policy=None, sources=())` gained the
+  `sources=` pool argument; `TenantProvenanceSettings` no longer validates source names at
+  construction (moved to build time, where the pool is visible). `resolve_tenant_source_chain
+  (container)` reads settings + the DI pool for you.
+- A DI-bound `EventConsumer` (`@Singleton`) is now **auto-registered** by `CoreModule.start()`,
+  after the bus has started — the `@PostConstruct`-wired convention is no longer the documented
+  way (it still works, silently skipped by the new idempotent path). `EventConsumer` gained
+  `auto_register: ClassVar[bool] = True` (opt-out), `is_registered_to(bus)`,
+  `registered_bus_count`; `start()` is now idempotent per bus.
+- A custom inbound webhook provider no longer requires editing a private `_PROVIDERS` dict —
+  `register_webhook_verifier(name, cls, *, replace=False)` (`varco_core.webhook.inbound`).
+
+### Added
+
+`varco_core.di.collect` (`contribute`, `collect`, `acollect`, `collection_seams`);
+`varco_core.posture` (`PostureCollector`, plus the moved `PostureFinding`/`PostureSeverity`);
+`varco_core.tenancy.resolve_tenant_source_chain`; `varco_core.webhook.inbound.
+register_webhook_verifier`/`registered_webhook_verifiers`; `EventConsumer.auto_register`/
+`is_registered_to`/`registered_bus_count`; a new posture token
+`tenant.third_party_source_high_trust`; the in-tree third-party contribution example,
+`testkit/varco_plugin_example` (never packaged).
+
+Full design, the seam table, the Pitfalls table: `technical_docs/features/dependency-injection.md`'s
+§Multi-binding. Migration table: `plans/051-multi-binding-registries.md`'s §Migration.
+
+### BREAKING — Phased lifecycle, `@Disposes` reachability, DI-wired infrastructure (Plan 050, DI-9 / DI-10)
+
+Every `VarcoModule` now declares `phase: int` (`varco_core.di.Phase` — `INFRA`/`BUS`/
+`CONSUMERS`/`SCHEDULERS`/`EDGE`, default `CONSUMERS`); `create_varco_app` sequences lifecycle by
+`(phase, depends_on)` via the new `varco_core.di.LifecycleRunner` (`resolve_lifecycle_order`/
+`phased_components`), which starts ascending and stops **the exact reverse of what actually
+started** — including on a partial-start rollback (`VarcoLifespan`'s pre-050 rollback bug, which
+stopped already-started components in forward order, is fixed). `KafkaEventBus`/`NatsEventBus`
+no longer start themselves at first DI resolution (`@PostConstruct` removed) — only the `BUS`
+phase (`CoreModule`), or an explicit `await bus.start()`, starts them; `publish()` before
+`start()` now raises `RuntimeError`. `VarcoLifespan` is now a thin adapter over
+`LifecycleRunner` (`AbstractLifecycle` moved to `varco_core.di.lifecycle`, re-exported
+identically from `varco_fastapi.lifespan`); 049's "list `MigrationsModule` first" WARNING and
+its list-order sensitivity are gone — phases make it structurally unnecessary.
+
+`OutboxRelay` (via `ReliabilityModule`), `WebhookDispatcher` (via the new `WebhookModule`), and
+the two `varco_ws` push adapters now receive their dependencies by DI declaration instead of
+being remembered by hand: `OutboxRelay` gets `Serializer[Event]` (a `bind_cloudevents_serializer()`
+swap now reaches it, same as every DLQ backend); `WebhookDispatcher` gets
+`WebhookSubscriptionRepository`/`WebhookSettings`/`AbstractDeadLetterQueue` (it holds no
+`Serializer[Event]` — delivery is HTTP, not the event bus's wire format); the ws/sse adapters get
+`AbstractEventBus`. The new `TrustStoreModule` (`varco_core.tls.module`) owns a
+`ReloadingTrustStore`'s `start()`/`stop()` at the `INFRA` phase — `bind_trust_store` is unchanged
+(bind-only). `SAModule(ensure_tables: bool = True)` (additive) owns SA framework-table readiness
+generically. 14 new/completed `@Disposes` sites close every remaining reachable-disposer gap
+(`OtelConfiguration`'s `TracerProvider`/`MeterProvider` — the last OTel batch used to be dropped
+at shutdown — plus the SA/Redis idempotency/job-store/revocation-store providers);
+`RedisIdempotencyStore.aclose()`/`RedisTokenRevocationStore.aclose()` are additive, idempotent
+methods. `bind_instance(container, Interface, obj, *, disposer=...)` is additive — a P-DISP shim
+(`design/upstream-gaps/providify-provide-disposer.md`) closing `enable_redis_token_revocation`'s
+client leak until providify ships `provide(disposer=)` natively.
+
+New public names: `varco_core.di.{Phase, LifecycleComponent, LifecycleFailure, LifecycleRunner,
+AbstractLifecycle, resolve_lifecycle_order, phased_components, ModulePhaseError}`;
+`VarcoModule.phase`/`.components()`; `varco_core.webhook.module.WebhookModule`;
+`varco_core.tls.module.TrustStoreModule`; `WebhookDispatcher(dlq=)`;
+`ReliabilityPreset.serializer`; `SAModule(ensure_tables=)`; `VarcoLifespan.last_runner`.
+
+Full design, the phase table, the `@Disposes`-or-owner rule, a Pitfalls table:
+`technical_docs/features/dependency-injection.md`'s §Lifecycle phases. Migration table:
+`plans/050-phased-lifecycle-and-di-wired-infrastructure.md`'s §Migration.
+
+### Fixed
+
+- `VarcoLifespan`'s partial-start rollback stopped already-started components in **forward**
+  order instead of reverse (Plan 050).
+- `ReliabilityLifecycle.shutdown()` never stopped the `AuditConsumer`, leaking its bus
+  subscription on every app shutdown (Plan 050).
+- `OtelConfiguration`'s `TracerProvider`/`MeterProvider` were never flushed at
+  `container.ashutdown()` — the last batch of spans/metrics was silently dropped (Plan 050).
+- `RedisIdempotencyStore`/`RedisTokenRevocationStore`/`RedisJobStore`'s DI-provided clients
+  leaked at shutdown — no disposer existed for any of the three (Plan 050).
+
 ### BREAKING — `VarcoModule` and `create_varco_app(modules=…)` (Plan 049, DI-1 / FLIP-1 / RO-4)
 
 `create_varco_app(container, *, modules=None, ...)` replaces the eleven hand-passed keyword

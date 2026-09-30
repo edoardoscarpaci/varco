@@ -47,9 +47,12 @@ never at 03:00
     ✅ ``older_than`` capability mismatch (present on a
        ``supports_older_than=False`` target, or absent on a
        ``supports_older_than=True`` one) → ``ValueError`` at
-       ``RetentionRegistry.register()`` — wiring time, not run time.
+       ``RetentionRegistry`` construction — wiring time, not run time (Plan
+       051 / DI-5: the guard moved from the pre-051 public ``register()``
+       into the private ``_add()`` every ``__init__`` call runs once per
+       policy).
     ✅ Duplicate policy ``name`` in one registry → ``ValueError`` at
-       ``register()`` — a policy name doubles as the ``uuid5`` seed for a
+       construction — a policy name doubles as the ``uuid5`` seed for a
        ``Schedule``; two policies with the same name would silently
        materialize onto the same schedule row.
     ❌ Eight guards (four more live in ``RetentionScheduler``/the six
@@ -57,19 +60,23 @@ never at 03:00
        is the only feature in the 3.2 extension set whose failure mode is
        irreversible data loss.
 
-Thread safety:  ⚠️ ``RetentionRegistry.register()`` mutates a plain dict —
-                   expected to run once, at startup, single-threaded (same
-                   convention as ``TaskRegistry.register()``).
+Thread safety:  ⚠️ ``RetentionRegistry.__init__`` (via the private
+                   ``_add()``) mutates a plain dict while running the
+                   guards over every contributed policy — expected to run
+                   once, at startup, single-threaded (same convention as
+                   ``TaskRegistry.register()``).
 Async safety:   ✅ Everything here is synchronous — no I/O.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
 from uuid import NAMESPACE_URL, UUID, uuid5
+
+from providify import Multibound
 
 if TYPE_CHECKING:
     from varco_core.retention.base import RetentionTarget
@@ -79,10 +86,20 @@ __all__ = ["RetentionOutcome", "RetentionPolicy", "RetentionRegistry", "Retentio
 _SHORT_RETENTION_FLOOR = timedelta(hours=24)
 
 
+@Multibound
 @dataclass(frozen=True)
 class RetentionPolicy:
     """
     A declared "prune X older than Y, on this schedule" intent.
+
+    Plan 051 / DI-5, §D-retention: ``@Multibound`` — a collection seam. Any
+    ordinary non-``@Fallback`` binding of this type (a scanned
+    ``@Singleton``/``@Provider``, or ``varco_core.di.collect.contribute()``)
+    is a contribution; ``RetentionModule`` builds a ``RetentionRegistry``
+    from ``await acollect(container, RetentionPolicy)`` in its own
+    ``async_init()``. ``@Multibound`` is a class ``setattr`` with no
+    registration side effect — it does not, by itself, make ``scan()``
+    contribute anything (``test_retention_no_di_side_effect.py``).
 
     Attributes:
         name: Stable policy name — the ``uuid5`` seed for the materialized
@@ -103,9 +120,9 @@ class RetentionPolicy:
         older_than: The age cutoff, or ``None`` for a target whose verb has
             no cutoff concept (``delete_expired()``-backed targets). Its
             presence/absence is validated against the target's
-            ``supports_older_than`` at ``RetentionRegistry.register()``, not
-            here — this dataclass alone cannot see the target's class
-            attribute values until construction is complete.
+            ``supports_older_than`` when ``RetentionRegistry`` is
+            constructed, not here — this dataclass alone cannot see the
+            target's class attribute values until construction is complete.
         enabled: A disabled policy is never materialized as a ``Schedule``.
         batch_size: Rows requested per ``RetentionTarget.purge()`` call —
             forwarded as ``limit=``.
@@ -243,36 +260,48 @@ class RetentionResult:
 
 class RetentionRegistry:
     """
-    An app-owned collection of named ``RetentionPolicy`` objects.
+    An immutable, app-owned collection of named ``RetentionPolicy`` objects.
 
-    Not a process-global singleton — construct one per application (same
-    shape as ``TaskRegistry``), and pass it to ``bind_retention_registry``
-    and/or ``RetentionScheduler`` explicitly.
+    Plan 051 / DI-5, §D-retention: constructed from an iterable of policies
+    — never a process-global singleton, and no public ``register()`` any
+    more. ``RetentionModule`` builds one in its own ``async_init()`` from
+    every ``RetentionPolicy`` contributed to the container
+    (``await acollect(container, RetentionPolicy)``); construct one by hand
+    only for the CLI or a test.
 
-    Thread safety:  ⚠️ ``register()`` mutates a plain dict — expected to run
-                       once, at startup, single-threaded.
+    Args:
+        policies: An iterable of ``RetentionPolicy`` objects. Each is
+            validated (target-capability fit, name uniqueness) at
+            construction — the same guards the pre-051 ``register()``
+            method ran per-call, now run once, over the whole set.
+
+    Raises:
+        ValueError: Any policy's ``older_than`` disagrees with its target's
+            ``supports_older_than``; or two policies share one ``name``.
+
+    Thread safety:  ✅ Immutable after construction — no further mutation
+                       method exists.
     Async safety:   ✅ Synchronous, no I/O.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, policies: Iterable[RetentionPolicy] = ()) -> None:
         self._policies: dict[str, RetentionPolicy] = {}
+        for policy in policies:
+            self._add(policy)
 
-    def register(self, policy: RetentionPolicy) -> None:
+    def _add(self, policy: RetentionPolicy) -> None:
         """
-        Add ``policy`` to the registry, validating its target-capability
-        fit and name uniqueness (guards 4 and the duplicate-name guard —
-        both wiring-time, not construction-time, because only the registry
-        can see whether a name already exists).
-
-        Args:
-            policy: The ``RetentionPolicy`` to register.
+        Validate ``policy``'s target-capability fit and name uniqueness,
+        then add it — the private worker every ``__init__`` call runs once
+        per policy (guards 4 and the duplicate-name guard, moved verbatim
+        from the pre-051 public ``register()``).
 
         Raises:
             ValueError: ``policy.older_than`` is set but
                 ``policy.target.supports_older_than`` is ``False``;
                 ``policy.older_than`` is ``None`` but
                 ``policy.target.supports_older_than`` is ``True``; or
-                ``policy.name`` is already registered.
+                ``policy.name`` is already present.
         """
         target = policy.target
         if policy.older_than is not None and not target.supports_older_than:
@@ -280,7 +309,7 @@ class RetentionRegistry:
                 f"RetentionPolicy {policy.name!r}: older_than is set but "
                 f"{type(target).__name__} (kind={target.kind!r}) does not support "
                 "it — supports_older_than=False. This would be a silently "
-                "ignored field; refusing at registration instead."
+                "ignored field; refusing at construction instead."
             )
         if policy.older_than is None and target.supports_older_than:
             raise ValueError(

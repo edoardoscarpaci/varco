@@ -39,8 +39,9 @@ resolve them from.
 Two consequences, both correct and both asserted by unit tests:
 
 - **A consumer that was never `register_to()`-ed is absent from the document.** It describes a
-  subscription that does not exist. `_is_registered()` reads the `_registered_buses` set
-  `register_to()` lazily creates.
+  subscription that does not exist. `_is_registered()` reads the public
+  `EventConsumer.registered_bus_count` property (Plan 051 / DI-5 — was a private
+  `_registered_buses` read before this plan).
 - **Two instances of one class produce two channels.** That is the case a static scan gets silently
   wrong, and the reason for the whole approach.
 

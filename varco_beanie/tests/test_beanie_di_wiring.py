@@ -22,6 +22,8 @@ regressions fail because the production signature does not yet return
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 from providify import DIContainer, IssueKind, Provider
 from pymongo import AsyncMongoClient
@@ -81,6 +83,13 @@ def _make_beanie_settings_provider() -> Provider:
     return _beanie_settings
 
 
+def _test_fernet_key() -> bytes:
+    """A throwaway Fernet key for the conformance suite's FieldEncryptor bind."""
+    from cryptography.fernet import Fernet
+
+    return Fernet.generate_key()
+
+
 from varco_beanie.modules import BeanieModule  # noqa: E402
 
 
@@ -128,8 +137,9 @@ class TestVarcoBeanieDIWiringConformance(DIWiringConformance):
     def bootstrap(self):
         def _bootstrap(container: DIContainer) -> DIContainer:
             from varco_beanie.di import bootstrap as beanie_bootstrap
+            from varco_core.di import bind_instance, is_user_bound
             from varco_core.di import bootstrap as core_bootstrap
-            from varco_core.di import is_user_bound
+            from varco_core.encryption import FernetFieldEncryptor, FieldEncryptor
 
             # Guard against a second BeanieSettings provider on a repeated
             # bootstrap() call — the fixture itself must be idempotent for
@@ -137,11 +147,64 @@ class TestVarcoBeanieDIWiringConformance(DIWiringConformance):
             # same container.
             if not is_user_bound(container, BeanieSettings):
                 container.provide(_make_beanie_settings_provider())
+            # Plan 050 / §D-wire rows 4-5 — webhook_repository's
+            # `encryptor` parameter is required, no default. providify's
+            # validate() checks every registered provider's parameters
+            # structurally, regardless of whether its own @Requires
+            # condition is currently satisfied — same reasoning as
+            # varco_sa's twin fixture.
+            if not is_user_bound(container, FieldEncryptor):
+                bind_instance(container, FieldEncryptor, FernetFieldEncryptor(_test_fernet_key()))
             core_bootstrap(container)
             beanie_bootstrap(container)
             return container
 
         return _bootstrap
+
+    async def test_package_module_registers_cleanly(
+        self, bootstrap: Callable[[DIContainer], DIContainer]
+    ) -> None:
+        """
+        Override (Plan 050 repair): ``BeanieConfiguration.webhook_repository()``
+        requires a ``FieldEncryptor`` structurally, same reasoning as
+        ``varco_sa``'s twin override — see that docstring.
+        """
+        if self.module_cls is None:
+            pytest.skip("no module_cls declared")
+
+        from varco_core.di import bind_instance
+        from varco_core.di.module import CoreModule
+        from varco_core.encryption import FernetFieldEncryptor, FieldEncryptor
+
+        c = DIContainer()
+        if self.module_cls is not CoreModule:
+            CoreModule().register(c)
+        bind_instance(c, FieldEncryptor, FernetFieldEncryptor(_test_fernet_key()))
+        module = self.module_factory() if self.module_factory is not None else self.module_cls()
+        module.register(c)
+
+        report = c.validate(raise_on_error=False)
+        assert report.errors == ()
+        observed_warnings = {(i.kind, getattr(i, "owner", "")) for i in report.warnings}
+        assert observed_warnings - self.known_warnings == set()
+
+    async def test_declared_defaults_are_complete(self, container: DIContainer) -> None:
+        """
+        Override (Plan 050 repair): ``webhook_repository`` is a
+        ``@Fallback`` binding gated on ``VARCO_WEBHOOK_BACKEND=beanie``
+        with no unconditional in-process default in this package's own
+        ``bootstrap()`` — see ``varco_sa``'s twin override for the full
+        reasoning.
+        """
+        from varco_conformance.di_wiring import fallback_bindings
+        from varco_core.webhook.base import WebhookSubscriptionRepository
+
+        observed = {
+            (b.interface, b.qualifier)
+            for b in fallback_bindings(container)
+            if not getattr(b, "exact_only", False)
+        }
+        assert observed == set(self.expected_defaults) | {(WebhookSubscriptionRepository, None)}
 
 
 class TestBindRepositoriesContract:

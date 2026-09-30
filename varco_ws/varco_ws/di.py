@@ -75,7 +75,21 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from providify import DIContainer
+# Module-level imports (Plan 050 / §D-asks P31, not inside the factory
+# functions below) — required so bind_websocket_adapter/bind_sse_adapter's
+# closures can declare `bus: Inject[AbstractEventBus]` as a parameter.
+# Under PEP 563 (`from __future__ import annotations`), a parameter
+# annotation is a lazy string providify evaluates against the *defining
+# function's* module globals (`providify/_annotations.py:180-235`) — a name
+# imported only inside the function body is invisible to that lookup. The
+# previous DESIGN note here claimed this dependency was "closure-local" and
+# therefore unreachable; that was simply wrong — AbstractEventBus is an
+# ordinary, stable, module-importable type, so moving the import here (not
+# a runtime-only class, which genuinely cannot be done this way — see
+# design/upstream-gaps/providify-provider-inject-override.md) fixes it with
+# no upstream change.
+from providify import DIContainer, Inject, Provider
+from varco_core.event.base import AbstractEventBus
 
 if TYPE_CHECKING:
     pass
@@ -211,9 +225,8 @@ def bind_websocket_adapter(
     Thread safety:  ✅ Registration is intended at bootstrap (single-threaded).
     Async safety:   ✅ No I/O during registration.
     """
-    from providify import Provider  # noqa: PLC0415
     from varco_core.di import is_user_bound  # noqa: PLC0415
-    from varco_core.event.base import AbstractEventBus, Event  # noqa: PLC0415
+    from varco_core.event.base import Event  # noqa: PLC0415
 
     from varco_ws.websocket import (  # noqa: PLC0415
         BackpressurePolicy,
@@ -239,21 +252,22 @@ def bind_websocket_adapter(
         backpressure_policy if backpressure_policy is not None else BackpressurePolicy.DROP_OLDEST
     )
 
-    def _ws_factory() -> WebSocketEventBus:
+    def _ws_factory(bus: Inject[AbstractEventBus]) -> WebSocketEventBus:
         """Singleton WebSocketEventBus factory — built once at first injection.
 
-        DESIGN: closes over ``container`` to resolve AbstractEventBus directly,
-        rather than declaring ``Inject[AbstractEventBus]`` as a parameter.
-        This avoids the ``from __future__ import annotations`` problem: deferred
-        evaluation turns the ``Inject[...]`` hint into a string, so providify
-        cannot recognise it as an injection point.  The closure approach is the
-        same pattern used by ``bind_mcp_adapter`` in ``varco_fastapi``.
+        ``bus`` is a **declared** injection (Plan 050 / §D-asks P31) —
+        resolvable because ``AbstractEventBus`` is imported at this
+        module's top level (see the module docstring's DESIGN note), so
+        the PEP-563 annotation string resolves against ``varco_ws.di``'s
+        own globals. A missing ``AbstractEventBus`` binding is now a
+        ``validate()`` ``MISSING_BINDING``, not a ``LookupError`` at first
+        ``get(WebSocketEventBus)`` — the old closure-over-``container``
+        shape could only fail at first resolution.
 
         Registered via ``container.provide(Provider(...)(...), returns=...)`` —
         the decoration-time ``returns=`` override on ``@Provider`` means the
         placeholder return annotation on this closure never needs patching.
         """
-        bus: AbstractEventBus = container.get(AbstractEventBus)
         return WebSocketEventBus(
             bus,
             event_type=_event_type,
@@ -336,9 +350,8 @@ def bind_sse_adapter(
     Thread safety:  ✅ Registration is intended at bootstrap (single-threaded).
     Async safety:   ✅ No I/O during registration.
     """
-    from providify import Provider  # noqa: PLC0415
     from varco_core.di import is_user_bound  # noqa: PLC0415
-    from varco_core.event.base import AbstractEventBus, Event  # noqa: PLC0415
+    from varco_core.event.base import Event  # noqa: PLC0415
 
     from varco_ws.sse import SSEEventBus  # noqa: PLC0415
 
@@ -357,19 +370,17 @@ def bind_sse_adapter(
     _channel = channel
     _max_queue_size = max_queue_size
 
-    def _sse_factory() -> SSEEventBus:
+    def _sse_factory(bus: Inject[AbstractEventBus]) -> SSEEventBus:
         """Singleton SSEEventBus factory — built once at first injection.
 
-        DESIGN: closes over ``container`` to resolve AbstractEventBus directly
-        rather than declaring ``Inject[AbstractEventBus]`` as a parameter.
-        Avoids the ``from __future__ import annotations`` string-annotation
-        problem — same pattern as ``bind_mcp_adapter`` in ``varco_fastapi``.
+        ``bus`` is a **declared** injection (Plan 050 / §D-asks P31) — see
+        ``_ws_factory``'s matching docstring above and the module
+        docstring's DESIGN note.
 
         Registered via ``container.provide(Provider(...)(...), returns=...)``
         — the decoration-time ``returns=`` override means this closure's
         placeholder return annotation never needs patching.
         """
-        bus: AbstractEventBus = container.get(AbstractEventBus)
         return SSEEventBus(
             bus,
             event_type=_event_type,

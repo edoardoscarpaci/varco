@@ -64,7 +64,7 @@ class TestRetentionLifecycleWiring:
         container = DIContainer()
         app = create_varco_app(
             container,
-            modules=[CoreModule(), RetentionModule(_registry(), interval=0.0)],
+            modules=[CoreModule(), RetentionModule(interval=0.0)],
             validate=False,
         )
         assert app is not None
@@ -136,11 +136,16 @@ class TestRetentionLifecycleWiring:
         ``retention=`` are now ``LifecycleModule(marker)``/
         ``RetentionModule(registry)`` — module list order (not lifespan
         ``*components`` order directly) is what ``create_varco_app``
-        resolves via ``resolve_module_order`` before building the
-        ``_ModuleComponent`` list, so this test now lists
+        resolves via ``resolve_lifecycle_order`` before building the
+        ``LifecycleComponent`` list (Plan 050), so this test now lists
         ``LifecycleModule`` before ``RetentionModule`` and asserts the same
         relative order survives into ``VarcoLifespan``'s captured
-        components.
+        components — identified by ``LifecycleComponent.name`` (the
+        module's own ``name``: ``LifecycleModule``'s defaults to
+        ``type(component).__name__``, i.e. ``"_Marker"``; ``RetentionModule``'s
+        is ``"retention"``) since the captured components are now plain
+        ``LifecycleComponent``s, not ``_ModuleComponent`` wrappers around a
+        ``VarcoModule`` reference.
         """
         import unittest.mock as mock
 
@@ -162,7 +167,7 @@ class TestRetentionLifecycleWiring:
         marker = _Marker()
 
         container = DIContainer()
-        retention_module = RetentionModule(_registry(), interval=0.0)
+        retention_module = RetentionModule(interval=0.0)
 
         with mock.patch.object(lifespan_module.VarcoLifespan, "__init__", _spy_init):
             create_varco_app(
@@ -172,12 +177,6 @@ class TestRetentionLifecycleWiring:
             )
 
         components = captured[-1]
-        marker_index = next(
-            i
-            for i, c in enumerate(components)
-            if getattr(getattr(c, "_module", None), "_component", None) is marker
-        )
-        retention_index = next(
-            i for i, c in enumerate(components) if getattr(c, "_module", None) is retention_module
-        )
+        marker_index = next(i for i, c in enumerate(components) if c.name == "_Marker")
+        retention_index = next(i for i, c in enumerate(components) if c.name == "retention")
         assert marker_index < retention_index

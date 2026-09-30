@@ -98,7 +98,9 @@ import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
+
+from providify import Multibound
 
 from varco_core.event.base import CHANNEL_ALL, AbstractEventBus, Event, Subscription
 
@@ -668,6 +670,7 @@ def _make_retry_wrapper(
 # ── EventConsumer ─────────────────────────────────────────────────────────────
 
 
+@Multibound
 class EventConsumer:
     """
     Base class for event consumers.
@@ -683,32 +686,49 @@ class EventConsumer:
     ``register_to`` returns a list of ``Subscription`` handles — retain them
     if you need to deregister later (e.g. during teardown or in tests).
 
-    REQUIRED PATTERN — ``_bus`` attribute for ``VarcoLifespan`` integration
-    -----------------------------------------------------------------------
-    When using ``EventConsumer`` with ``VarcoLifespan.register()``, the
-    subclass **must** declare and assign ``self._bus`` in its ``__init__``.
-    ``start()`` reads ``self._bus`` and calls ``self.register_to(self._bus)``.
-    Missing this assignment causes ``AttributeError`` at startup.
+    Plan 051 / DI-5, §D-consumer: a ``@Multibound`` collection seam. A
+    ``@Singleton`` ``EventConsumer`` bound in the container is registered to
+    the app's ``AbstractEventBus`` by ``CoreModule.start()``, once the bus
+    has started — you do **not** need to call ``register_to()`` from
+    ``@PostConstruct`` any more::
 
-    ::
-
+        @Singleton
         class PostEventConsumer(EventConsumer):
-            # ↓ DI injects the bus at construction time
             def __init__(self, bus: Inject[AbstractEventBus]) -> None:
-                self._bus = bus   # ← REQUIRED for VarcoLifespan.register()
-
-            @PostConstruct
-            def _setup(self) -> None:
-                # Alternative: wire via @PostConstruct instead of start().
-                # Use ONE approach per consumer — not both.
-                self.register_to(self._bus)
+                self._bus = bus  # optional — only needed by hand-passed
+                                 # lifecycle wiring (see below), not by
+                                 # CoreModule's own discovery.
 
             @listen(OrderPlacedEvent, channel="orders")
             async def on_order(self, event: OrderPlacedEvent) -> None:
                 ...
 
-    If you are NOT using ``VarcoLifespan`` (e.g. tests or scripts),
-    call ``register_to(bus)`` directly and skip ``_bus`` entirely.
+    ``auto_register: ClassVar[bool] = True`` is the opt-out — set it
+    ``False`` on a consumer that must not be auto-registered (e.g. one
+    wanting a specific *qualified* bus, or fan-out to a second bus by
+    hand). ``is_registered_to(bus)``/``registered_bus_count`` are public
+    reads of the registration state ``CoreModule`` (and the asyncapi
+    generator) use to avoid double-registering an already-``@PostConstruct``
+    -wired consumer.
+
+    ``register_to()`` by hand is still the right tool for: non-DI consumers
+    (tests, scripts), ``auto_register = False`` consumers, and fan-out to a
+    second bus. The ``_bus`` attribute convention below remains optional —
+    needed only by a consumer that is *also* passed to
+    ``LifecycleModule``/``VarcoLifespan.register()`` directly rather than
+    discovered by ``CoreModule``.
+
+    REQUIRED PATTERN — ``_bus`` attribute for hand-passed lifecycle wiring
+    -----------------------------------------------------------------------
+    When passing an ``EventConsumer`` directly to
+    ``LifecycleModule``/``VarcoLifespan.register()`` (rather than relying on
+    ``CoreModule``'s auto-discovery above), the subclass **must** declare
+    and assign ``self._bus`` in its ``__init__``. ``start()`` reads
+    ``self._bus`` and calls ``self.register_to(self._bus)``. Missing this
+    assignment causes ``AttributeError`` at startup.
+
+    If you are NOT using ``VarcoLifespan``/``CoreModule`` (e.g. tests or
+    scripts), call ``register_to(bus)`` directly and skip ``_bus`` entirely.
 
     DESIGN: explicit ``register_to`` over auto-registration in ``__init__``
         ✅ MRO-safe for multiple inheritance — no cooperative ``__init__``
@@ -741,6 +761,36 @@ class EventConsumer:
     # via TYPE_CHECKING to avoid a runtime import cycle.
     if TYPE_CHECKING:
         _bus: AbstractEventBus
+
+    #: Opt-out for ``CoreModule``'s auto-registration (§D-consumer). A
+    #: consumer that must not be registered to the container's unqualified
+    #: default bus (e.g. one wanting a specific qualified bus, or wiring
+    #: itself by hand) sets this ``False``.
+    auto_register: ClassVar[bool] = True
+
+    def is_registered_to(self, bus: AbstractEventBus) -> bool:
+        """
+        Report whether this consumer has already called ``register_to(bus)``
+        for this exact ``bus`` instance.
+
+        Args:
+            bus: The bus to check.
+
+        Returns:
+            ``True`` iff ``register_to(bus)`` has been called (and
+            ``stop()`` has not since cleared it) for this exact instance.
+
+        Edge cases:
+            ``False`` before any ``register_to()`` call — ``
+            _registered_buses`` is lazily created (§D-consumer).
+        """
+        registered = getattr(self, "_registered_buses", None)
+        return registered is not None and id(bus) in registered
+
+    @property
+    def registered_bus_count(self) -> int:
+        """The number of distinct bus instances this consumer is registered to."""
+        return len(getattr(self, "_registered_buses", ()))
 
     def register_to(
         self,
@@ -1029,9 +1079,14 @@ class EventConsumer:
             - Calling ``start()`` after ``stop()`` re-registers all handlers
               (``register_to`` appends to ``_subscriptions`` again) — correct
               for restart scenarios.
-            - If ``start()`` is called AND ``register_to()`` is also called
-              manually (e.g. via ``@PostConstruct``), handlers will be
-              subscribed twice.  Use one path only per consumer.
+            - Plan 051 / DI-5, §D-consumer: ``start()`` is now **idempotent
+              per bus** — if this instance is already registered to
+              ``self._bus`` (via a prior ``start()`` or a manual
+              ``register_to()``, e.g. from ``@PostConstruct``), it returns
+              immediately and does **not** re-subscribe or emit
+              ``register_to()``'s double-registration ``RuntimeWarning``.
+              Calling ``register_to()`` a second time directly (bypassing
+              ``start()``) still warns and no-ops, as documented there.
         """
         bus = getattr(self, "_bus", None)
         if bus is None:
@@ -1040,6 +1095,12 @@ class EventConsumer:
                 "Assign it in __init__: self._bus = bus. "
                 "This is required for VarcoLifespan lifecycle management."
             )
+        # Plan 051 / DI-5, §D-consumer: idempotent per bus — a consumer
+        # already registered to this exact bus (e.g. via @PostConstruct, or
+        # a prior start()) is skipped silently rather than emitting
+        # register_to()'s double-registration RuntimeWarning.
+        if self.is_registered_to(bus):
+            return
         self.register_to(bus)
 
     async def stop(self) -> None:

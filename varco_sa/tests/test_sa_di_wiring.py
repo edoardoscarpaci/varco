@@ -20,6 +20,8 @@ yet return `DIContainer` / raise `AlreadyBoundError` / drop `*entity_classes`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 from providify import DIContainer, IssueKind, Provider
 from sqlalchemy.orm import DeclarativeBase
@@ -42,6 +44,7 @@ from varco_core.revocation import AbstractTokenRevocationStore
 from varco_core.service.base import IUoWProvider
 from varco_core.service.conversation import AbstractConversationStore
 from varco_core.tenancy.membership import AbstractTenantMembership
+from varco_core.webhook.base import WebhookSubscriptionRepository
 from varco_sa.advisory_lock import SAXactAdvisoryLock
 from varco_sa.bootstrap import SAConfig
 from varco_sa.di import SAConfiguration
@@ -84,6 +87,13 @@ def _make_sqlite_sa_config() -> Provider:
     return _sa_config
 
 
+def _test_fernet_key() -> bytes:
+    """A throwaway Fernet key for the conformance suite's FieldEncryptor bind."""
+    from cryptography.fernet import Fernet
+
+    return Fernet.generate_key()
+
+
 from varco_sa.modules import SAModule  # noqa: E402
 
 
@@ -113,6 +123,10 @@ class TestVarcoSaDIWiringConformance(DIWiringConformance):
         (AbstractDeadLetterQueue, None),
         (AbstractIdempotencyStore, None),
         (AbstractJobStore, None),
+        # NOTE: WebhookSubscriptionRepository is deliberately NOT listed
+        # here — see test_declared_defaults_are_complete's override below
+        # for why it does not fit the expected_defaults/
+        # test_declared_defaults_are_fallbacks shape.
     )
 
     # Plan 047 §D-suite — N1-N3 (dlq/idempotency/job_store, sa-backed).
@@ -131,8 +145,9 @@ class TestVarcoSaDIWiringConformance(DIWiringConformance):
     @pytest.fixture
     def bootstrap(self):
         def _bootstrap(container: DIContainer) -> DIContainer:
+            from varco_core.di import bind_instance, is_user_bound
             from varco_core.di import bootstrap as core_bootstrap
-            from varco_core.di import is_user_bound
+            from varco_core.encryption import FernetFieldEncryptor, FieldEncryptor
             from varco_sa.di import bootstrap as sa_bootstrap
 
             # Guard against a second SAConfig provider on a repeated
@@ -141,11 +156,83 @@ class TestVarcoSaDIWiringConformance(DIWiringConformance):
             # container.
             if not is_user_bound(container, SAConfig):
                 container.provide(_make_sqlite_sa_config())
+            # Plan 050 / §D-wire rows 4-5 — webhook_repository's `encryptor`
+            # parameter is required, no default. providify's validate()
+            # checks every registered provider's parameters structurally,
+            # regardless of whether its own @Requires condition is
+            # currently satisfied (the same reason SAConfig is bound here
+            # unconditionally for dead_letter_queue/idempotency_store/
+            # job_store) — so a FieldEncryptor is bound unconditionally too,
+            # to keep test_validate_is_clean/test_declared_defaults_are_complete
+            # green independent of VARCO_WEBHOOK_BACKEND.
+            if not is_user_bound(container, FieldEncryptor):
+                bind_instance(container, FieldEncryptor, FernetFieldEncryptor(_test_fernet_key()))
             core_bootstrap(container)
             sa_bootstrap(container)
             return container
 
         return _bootstrap
+
+    async def test_package_module_registers_cleanly(
+        self, bootstrap: Callable[[DIContainer], DIContainer]
+    ) -> None:
+        """
+        Override (Plan 050 repair): ``SAConfiguration.webhook_repository()``
+        requires a ``FieldEncryptor`` structurally — regardless of
+        ``VARCO_WEBHOOK_BACKEND`` selection (validate() checks every
+        registered provider's parameters, not just the currently-selected
+        one; see the ``bootstrap`` fixture's comment above for the same
+        reasoning applied to ``SAConfig``). The base suite's
+        ``module_factory`` path (``SAModule(config).register(c)``) has no
+        hook to bind one, so this override binds a throwaway
+        ``FieldEncryptor`` on the container before ``module.register(c)``
+        and otherwise runs the base test verbatim.
+        """
+        if self.module_cls is None:
+            pytest.skip("no module_cls declared")
+
+        from varco_core.di import bind_instance
+        from varco_core.di.module import CoreModule
+        from varco_core.encryption import FernetFieldEncryptor, FieldEncryptor
+
+        c = DIContainer()
+        if self.module_cls is not CoreModule:
+            CoreModule().register(c)
+        bind_instance(c, FieldEncryptor, FernetFieldEncryptor(_test_fernet_key()))
+        module = self.module_factory() if self.module_factory is not None else self.module_cls()
+        module.register(c)
+
+        report = c.validate(raise_on_error=False)
+        assert report.errors == ()
+        observed_warnings = {(i.kind, getattr(i, "owner", "")) for i in report.warnings}
+        assert observed_warnings - self.known_warnings == set()
+
+    async def test_declared_defaults_are_complete(self, container: DIContainer) -> None:
+        """
+        Override (Plan 050 repair): ``webhook_repository`` is a
+        ``@Fallback`` binding gated on ``VARCO_WEBHOOK_BACKEND=sa`` with
+        **no** unconditional in-process default registered anywhere in
+        ``varco_sa.di.bootstrap()`` — unlike ``dlq``/``idempotency``/
+        ``job_store``, whose ``"memory"`` default lives in
+        ``varco_core.di.bootstrap()`` itself (a registered ``SEAMS``
+        entry), the in-memory webhook-repository default is
+        ``WebhookModule``'s job, an entirely different layer this
+        package's own ``bootstrap()`` never touches. So the binding shows
+        up in ``fallback_bindings()`` (structural presence — it is
+        registered, just ``CONDITION_INACTIVE``) but is **not** resolvable
+        via ``get_binding()`` the way every other ``expected_defaults``
+        entry is (``test_declared_defaults_are_fallbacks`` would raise
+        ``LookupError`` for it) — so it is verified once here, alongside
+        the base set, instead of being added to ``expected_defaults``.
+        """
+        from varco_conformance.di_wiring import fallback_bindings
+
+        observed = {
+            (b.interface, b.qualifier)
+            for b in fallback_bindings(container)
+            if not getattr(b, "exact_only", False)
+        }
+        assert observed == set(self.expected_defaults) | {(WebhookSubscriptionRepository, None)}
 
 
 class TestBindRepositoriesContract:

@@ -191,6 +191,7 @@ class WebhookDispatcher(EventConsumer):
         retry_policy: RetryPolicy | None = None,
         request_timeout_seconds: float | None = None,
         disable_after_failures: int | None = None,
+        dlq: AbstractDeadLetterQueue | None = None,
     ) -> None:
         self._repository = repository
         # WebhookSettings() reads VARCO_WEBHOOK_* — constructing it here is
@@ -209,11 +210,15 @@ class WebhookDispatcher(EventConsumer):
             if disable_after_failures is not None
             else self._settings.disable_after_failures
         )
-        # Captured by the overridden register_to() below — the generic
-        # @listen(retry_policy=..., dlq=...) wrapper mechanism is
-        # deliberately NOT used here (see module docstring); this
+        # Captured here (constructor, Plan 050's `dlq=` kwarg — an
+        # injected AbstractDeadLetterQueue reaches the dispatcher without
+        # the app remembering to pass it to register_to()) OR by the
+        # overridden register_to() below, which still wins (an explicit
+        # register_to(bus, dlq=...) call overrides a DI-injected one) —
+        # the generic @listen(retry_policy=..., dlq=...) wrapper mechanism
+        # is deliberately NOT used here (see module docstring); this
         # dispatcher drives its own per-subscription retry loop instead.
-        self._dlq: AbstractDeadLetterQueue | None = None
+        self._dlq: AbstractDeadLetterQueue | None = dlq
 
     def register_to(
         self,

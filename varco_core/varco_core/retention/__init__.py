@@ -24,7 +24,7 @@ Import from the submodules directly — never from ``varco_core`` top level
     from varco_core.retention.targets import DlqRetentionTarget
     from varco_core.retention.scheduler import RetentionScheduler
     from varco_core.retention.posture import inspect_retention_posture
-    from varco_core.retention.di import bind_retention_registry
+    from varco_core.di import contribute  # Plan 051 / DI-5 — RetentionPolicy is @Multibound
 
 Full design: ``technical_docs/features/retention-and-purge.md``.
 """

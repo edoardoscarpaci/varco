@@ -736,6 +736,18 @@
         "kind": "class",
         "module": "varco_core.redaction.redactor"
       },
+      "PostureCollector": {
+        "kind": "class",
+        "module": "varco_core.posture"
+      },
+      "PostureFinding": {
+        "kind": "class",
+        "module": "varco_core.posture"
+      },
+      "PostureSeverity": {
+        "kind": "class",
+        "module": "varco_core.posture"
+      },
       "QueryBuilder": {
         "kind": "class",
         "module": "varco_core.query.builder"
@@ -1103,7 +1115,7 @@
       "build_tenant_source_chain": {
         "kind": "function",
         "module": "varco_core.tenancy.settings",
-        "signature": "(settings: 'TenantProvenanceSettings | None' = None, *, delegation_policy: 'DelegationPolicy | None' = None) -> 'TenantSourceChain | None'"
+        "signature": "(settings: 'TenantProvenanceSettings | None' = None, *, delegation_policy: 'DelegationPolicy | None' = None, sources: 'Iterable[TenantSource]' = ()) -> 'TenantSourceChain | None'"
       },
       "cached": {
         "kind": "function",
@@ -1299,6 +1311,16 @@
         "kind": "function",
         "module": "varco_core.observability.metric",
         "signature": "(name: 'str', callback: 'Any', *, meter_name: 'str' = 'varco', description: 'str' = '', unit: 'str' = '1', static_attributes: 'dict[str, str] | None' = None) -> 'None'"
+      },
+      "register_webhook_verifier": {
+        "kind": "function",
+        "module": "varco_core.webhook.inbound.verifiers",
+        "signature": "(name: 'str', cls: 'type[WebhookVerifier]', *, replace: 'bool' = False) -> 'None'"
+      },
+      "registered_webhook_verifiers": {
+        "kind": "function",
+        "module": "varco_core.webhook.inbound.verifiers",
+        "signature": "() -> 'frozenset[str]'"
       },
       "request_context": {
         "kind": "function",
@@ -1584,11 +1606,11 @@
       },
       "PostureFinding": {
         "kind": "class",
-        "module": "varco_fastapi.posture"
+        "module": "varco_core.posture"
       },
       "PostureSeverity": {
         "kind": "class",
-        "module": "varco_fastapi.posture"
+        "module": "varco_core.posture"
       },
       "PreparedRequest": {
         "kind": "class",

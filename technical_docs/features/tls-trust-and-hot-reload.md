@@ -208,6 +208,28 @@ bind_trust_store(container, store)
 await store.start()  # the caller's responsibility, not bind_trust_store's
 ```
 
+**`varco_core.tls.TrustStoreModule` (Plan 050 / DI-10, re-exported from `varco_core.tls.module`
+as of the Plan 050/051 follow-up — both paths resolve to the identical class)** is the lifecycle
+*owner* built on top of `bind_trust_store` — it still calls `bind_trust_store` under the hood
+(unchanged, no lifecycle side effect of its own), but also runs the store's `start()`/`stop()` at
+the `INFRA` phase, so a hand-rolled `lifespan.register(store)` call is no longer needed in a
+`create_varco_app`-built app:
+
+```python
+from varco_core.tls import TrustStore, TrustStoreModule
+from varco_fastapi.modules import default_modules
+
+app = create_varco_app(
+    container,
+    modules=[*default_modules(), TrustStoreModule(spec=TrustStore(ca_folders=Path("/etc/ssl/private-ca")))],
+)
+```
+
+`TrustStoreModule(store=already_built_store)` is the other shape — mutually exclusive with
+`spec=`. It is `module_owned` in `varco_core`'s `di_wiring` conformance subclass (the disposer
+check reads `module_owned`, never expecting a `@Disposes(ReloadingTrustStore)`). Same "never a
+scanned `@Configuration`" rule as `bind_trust_store` itself — see its own module docstring.
+
 ## `SSL_CERT_FILE` / `SSL_CERT_DIR` — additive, not OpenSSL-compatible (§D-T3-env)
 
 `TrustStore.from_env()` reads the existing `VARCO_*` names **and** the two OpenSSL-standard

@@ -56,9 +56,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated, Any
 
-from providify import Configuration, Fallback, Inject, InjectMeta, PostConstruct, Provider
+from providify import (
+    Configuration,
+    Disposes,
+    Fallback,
+    Inject,
+    InjectMeta,
+    PostConstruct,
+    Provider,
+    Requires,
+)
 from varco_core.di import BACKEND_PRIORITY
 from varco_core.di.select import selected_by
+from varco_core.encryption import FieldEncryptor
 from varco_core.event.base import Event
 from varco_core.event.dlq import AbstractDeadLetterQueue
 from varco_core.idempotency.base import AbstractIdempotencyStore
@@ -70,12 +80,14 @@ from varco_core.repository import AsyncRepository
 from varco_core.serialization import Serializer
 from varco_core.service.base import IUoWProvider
 from varco_core.tenancy.settings import TenancySettings
+from varco_core.webhook.base import WebhookSubscriptionRepository
 
 from varco_sa.advisory_lock import SAAdvisoryLock, SAXactAdvisoryLock
 from varco_sa.config import SAConfig
 from varco_sa.dlq import SADeadLetterQueue
 from varco_sa.idempotency import SAIdempotencyStore
 from varco_sa.job_store import SAJobStore
+from varco_sa.webhook import SAWebhookSubscriptionRepository
 
 if TYPE_CHECKING:
     # Avoid a hard circular import — DIContainer is only needed for the
@@ -350,10 +362,14 @@ class SAConfiguration:
         the app's own pool (``config.engine``) rather than opening a
         second, private engine.
 
-        ⚠️ Lifecycle is Plan 050's — nothing here calls
-        ``await store.start()`` (which also ensures the
-        ``varco_idempotency`` table exists); call it yourself until 050
-        wires it.
+        Lifecycle: ``SAModule(ensure_tables=True)``/``CoreModule``'s
+        ``core.stores`` component call ``start()`` (which ensures the
+        ``varco_idempotency`` table exists) at the ``INFRA`` phase
+        (Plan 050 / §D-stores); ``close_idempotency_store`` below disposes
+        the store on ``container.ashutdown()`` without touching
+        ``config.engine`` — ``SAIdempotencyStore(engine=...)`` never owns a
+        borrowed engine (``_owns_engine=False``), so its own ``stop()``
+        is already a no-op on the engine.
 
         Args:
             config: The scanned ``SAConfig`` singleton.
@@ -362,6 +378,20 @@ class SAConfiguration:
             A ``SAIdempotencyStore(engine=config.engine)``.
         """
         return SAIdempotencyStore(engine=config.engine)
+
+    @Disposes(AbstractIdempotencyStore)
+    async def close_idempotency_store(self, store: SAIdempotencyStore) -> None:
+        """
+        Stop the ``SAIdempotencyStore`` produced by ``idempotency_store`` on
+        ``container.ashutdown()`` (Plan 050 / §D-disposes row 12).
+
+        Args:
+            store: The ``SAIdempotencyStore`` this configuration produced.
+                Its ``stop()`` disposes only an engine it created itself
+                (``_owns_engine``) — the injected ``config.engine`` is
+                never touched, so the app's pool survives this shutdown.
+        """
+        await store.stop()
 
     @Fallback
     @selected_by("job_store", "sa")
@@ -377,6 +407,54 @@ class SAConfiguration:
             A ``SAJobStore(config.engine)``.
         """
         return SAJobStore(config.engine)
+
+    @Fallback
+    @Requires(env="VARCO_WEBHOOK_BACKEND", value="sa")
+    @Provider(singleton=True, priority=BACKEND_PRIORITY)
+    def webhook_repository(
+        self,
+        config: Inject[SAConfig],
+        encryptor: Inject[FieldEncryptor],
+    ) -> WebhookSubscriptionRepository:
+        """
+        Plan 050 / §D-wire row 4-5 — live only when ``VARCO_WEBHOOK_BACKEND=sa``.
+
+        ``encryptor`` is **required, no default** (unlike ``dead_letter_queue``'s
+        optional ``serializer``) — a durable webhook backend selected without a
+        bound ``FieldEncryptor`` must fail loudly (``validate()``'s
+        ``MISSING_BINDING``, or a ``LookupError`` at first resolution without
+        052's preflight) rather than silently persist plaintext secrets. This
+        is the DI-path half of Plan 056/FLIP-13's constructor-level refusal —
+        that plan makes the *hand* path (``encryptor=None``) refuse too; this
+        provider makes the refusal structurally unreachable through DI.
+
+        DESIGN: gate via ``@Requires(env=...)`` directly, not ``selected_by()``
+            ✅ ``webhook_repository`` is not one of Plan 047's six registered
+               seams (``varco_core.di.seams.SEAMS`` — cache/dlq/idempotency/
+               job_store/event_bus/revocation), and
+               ``test_seams_has_exactly_the_six_named_seams`` pins that count;
+               adding a seventh seam would need to revisit that Plan 047
+               invariant, which is out of this plan's scope.
+            ✅ ``providify.Requires(env=, value=)`` is exactly what
+               ``selected_by()`` applies under the hood
+               (``varco_core/di/select.py:110-112``) — same runtime
+               behaviour (``VARCO_WEBHOOK_BACKEND=sa`` gates this binding),
+               just without registering a new seam name.
+            ❌ ``webhook_repository`` does not appear in
+               ``check_backend_selection()``'s "bootstrapped but unselected"
+               diagnostics or the DI catalogue's seam table the way the six
+               registered seams do. Accepted for now — parked as a future
+               seam-registry extension if that diagnostic is wanted.
+
+        Args:
+            config: The scanned ``SAConfig`` singleton — ``.engine`` is
+                reused (no second, private engine).
+            encryptor: The app's bound ``FieldEncryptor`` — required.
+
+        Returns:
+            A ``SAWebhookSubscriptionRepository(engine=config.engine, encryptor=encryptor)``.
+        """
+        return SAWebhookSubscriptionRepository(engine=config.engine, encryptor=encryptor)
 
 
 # ── Per-entity repository binding helper ──────────────────────────────────────

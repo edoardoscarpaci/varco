@@ -94,6 +94,9 @@ class RedisTokenRevocationStore(AbstractTokenRevocationStore):
     ) -> None:
         self._namespace = namespace
         self._client: aioredis.Redis = aioredis.from_url(url, decode_responses=True, **redis_kwargs)
+        #: Flipped True by aclose() — Plan 050 / §D-disposes idempotency
+        #: flag, the same shape as ``RedisIdempotencyStore``'s.
+        self._closed = False
 
     def _key(self, scope: RevocationScope, key: str) -> str:
         return f"{self._namespace}:{scope.value}:{key}"
@@ -248,3 +251,18 @@ class RedisTokenRevocationStore(AbstractTokenRevocationStore):
                     deleted: int = await self._client.delete(redis_key)
                     removed += deleted
         return removed
+
+    async def aclose(self) -> None:
+        """
+        Close the eagerly-created ``redis.asyncio.Redis`` client (Plan 050 /
+        §D-disposes row 15 — before this, the client created at
+        construction time leaked at every ``container.ashutdown()``).
+
+        Idempotent — a second call is a no-op.
+
+        Async safety: awaited by ``RedisStoresConfiguration``'s
+            ``@Disposes(AbstractTokenRevocationStore)``.
+        """
+        if not self._closed:
+            await self._client.aclose()
+            self._closed = True

@@ -120,6 +120,29 @@ github_verifier = get_verifier("github", secrets=["..."], replay_guard=guard)
 github_dependency = verify_webhook(github_verifier, replay_guard=guard)
 ```
 
+### Adding a custom provider (Plan 051 / DI-5, §D-verifier)
+
+`register_webhook_verifier(name, cls, *, replace=False)` — the exact shape of
+`varco_core.profiling`'s `register_cpu_backend()`/`register_memory_backend()`, **not**
+multi-binding: a `WebhookVerifier` is constructed per route, with that route's own secrets, so
+there is no shared instance for `@Multibound`/`contribute()` to collect. Raises `ValueError` on a
+taken name unless `replace=True` (which can shadow a built-in — documented, greppable).
+`get_verifier()`'s unknown-name error lists every currently-registered name;
+`registered_webhook_verifiers()` returns the full `frozenset`.
+
+```python
+from varco_core.webhook.inbound import WebhookVerifier, get_verifier, register_webhook_verifier
+
+
+class ShopifyWebhookVerifier(WebhookVerifier):
+    provider = "shopify"
+    ...
+
+
+register_webhook_verifier("shopify", ShopifyWebhookVerifier)
+verifier = get_verifier("shopify", secrets=[shop_secret])
+```
+
 ### The raw-body / body-limit story
 
 `await request.body()` caches into Starlette's `Request._body`, and `Request.stream()` re-yields

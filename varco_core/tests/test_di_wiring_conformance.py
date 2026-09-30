@@ -31,10 +31,16 @@ from varco_core.observability import OtelConfig
 from varco_core.revocation import AbstractTokenRevocationStore
 from varco_core.service.conversation import AbstractConversationStore
 from varco_core.tenancy.membership import AbstractTenantMembership
+from varco_core.tls.reload import ReloadingTrustStore
 
 
 class TestVarcoCoreDIWiringConformance(DIWiringConformance):
     module_cls = CoreModule
+
+    # Plan 050 / §D-suite: TrustStoreModule.start()/stop() owns a
+    # ReloadingTrustStore's lifecycle directly (never via
+    # @Disposes/@PreDestroy) — see TrustStoreModule's own docstring.
+    module_owned = frozenset({ReloadingTrustStore})
 
     expected_defaults = (
         (CacheBackend, "in_memory"),

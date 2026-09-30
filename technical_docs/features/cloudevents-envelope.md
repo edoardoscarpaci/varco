@@ -217,9 +217,16 @@ container binding automatically; `BeanieDeadLetterQueue` injects it as a scanned
 format, and nothing converts it. Drain the existing backlog before binding the new serializer —
 this is the same reason the migration below is three-phase rather than a flip.
 
-⚠️ **Two constructed by hand, not by DI:** `SADeadLetterQueue(engine, serializer=...)` and
-`OutboxRelay(..., serializer=...)` have no `@Configuration` to forward the binding for them. Pass
-`serializer=` explicitly at the call site, or they keep the `JsonEventSerializer` default.
+✅ **`SADeadLetterQueue` and `OutboxRelay` are DI-wired as of Plan 050 / DI-10** —
+`SADeadLetterQueue` was already provider-produced (047 N1) with `serializer` declared;
+`OutboxRelay` (via `ReliabilityModule`) now declares `Serializer[Event]` on its own factory, so a
+`bind_cloudevents_serializer()` swap reaches it with no `serializer=` to remember
+(`test_reliability_module_wiring.py`). The hand-constructed forms (`SADeadLetterQueue(engine,
+serializer=...)`, `OutboxRelay(..., serializer=...)`) still take `serializer=` explicitly and
+still default to `JsonEventSerializer` when omitted. (`WebhookDispatcher` is unaffected by any
+of this — it never held a `Serializer[Event]` at all; it delivers via HTTP with its own signing
+scheme, not the event bus's wire format. Plan 050's own CLAUDE.md rewrite states otherwise —
+flagged as drift, see the sync report.)
 
 ## Migration: three phases, never a flip
 

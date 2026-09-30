@@ -481,7 +481,7 @@ Step 5 and Step 12 — Steps 4-12 land as one commit.
 
 ### Preflight and the primitives
 
-1. [ ] **Preflight — measure every ⚠️ ASSUMPTION before writing code.** Record in
+1. [x] **Preflight — measure every ⚠️ ASSUMPTION before writing code.** Record in
        `/tmp/claude-1000/…/scratchpad/051-preflight.txt`:
        (a) `uv run python -c "import importlib.metadata as m; print(m.version('providify'))"` → `2.1.0`;
        re-read every `file:line` in §Context on `.venv/lib/python3.12/site-packages/providify/`
@@ -509,7 +509,7 @@ Step 5 and Step 12 — Steps 4-12 land as one commit.
        green baseline.
        **Verify**: the preflight file lists ≥ 25 confirmed citations and the six measurements.
 
-2. [ ] `varco_core/varco_core/di/collect.py` (**new**; re-exported from `varco_core/di/__init__.py`)
+2. [x] `varco_core/varco_core/di/collect.py` (**new**; re-exported from `varco_core/di/__init__.py`)
        — `contribute()`, `collect()`, `acollect()`, `collection_seams()` per §D-verbs, with a module
        docstring that *is* the convention (§D-shape rule verbatim, the §D-order warning, the
        §D-immutable rule, the `bind_instance`-vs-`contribute` double-call table). `contribute()`
@@ -519,7 +519,7 @@ Step 5 and Step 12 — Steps 4-12 land as one commit.
        **Verify**: `uv run pytest varco_core/tests/test_di_collect.py -q`; `import_budget --check
        --warn-only` unchanged from 1(h).
 
-3. [ ] `varco_core/tests/test_providify_contracts.py` — add the multibinding pins (§D-tests row 1)
+3. [x] `varco_core/tests/test_providify_contracts.py` — add the multibinding pins (§D-tests row 1)
        under a `# ── Plan 051: multi-binding ──` header; extend the module docstring's checklist
        ("`list[T]` on a `@Multibound` seam returns `[]`; ascending priority, stable; shadowed
        fallback absent; `InjectInstances` raises on zero — if any of these move, §D-shape/§D-order
@@ -528,7 +528,7 @@ Step 5 and Step 12 — Steps 4-12 land as one commit.
 
 ### The seams (independent of each other)
 
-4. [ ] **Posture types + ABC** — `varco_core/varco_core/posture.py` (**new**): `PostureSeverity`,
+4. [x] **Posture types + ABC** — `varco_core/varco_core/posture.py` (**new**): `PostureSeverity`,
        `PostureFinding` (moved verbatim from `varco_fastapi/posture.py:51-88`, docstrings kept),
        `@Multibound class PostureCollector(ABC)` (`name: ClassVar[str]`, `collect()`; docstring:
        "sync, must not raise — the lifecycle wraps it; a raising collector yields one
@@ -542,7 +542,7 @@ Step 5 and Step 12 — Steps 4-12 land as one commit.
        name. Test first: `varco_core/tests/test_posture_core_types.py` + the identity assertion in
        `varco_fastapi/tests/test_posture_core.py`.
 
-5. [ ] **Posture collectors as classes + the module contributes them** — `varco_fastapi/varco_fastapi/posture.py`:
+5. [x] **Posture collectors as classes + the module contributes them** — `varco_fastapi/varco_fastapi/posture.py`:
        `HttpEdgeCollector`, `LocalPostureCollector`, `AuthPostureCollector`, `TenantPostureCollector`,
        `DataPostureCollector`, `RedactionPostureCollector` — each `__init__` takes exactly the old
        function's kwargs and stores them; `collect()` is the old body (**diff must show the body
@@ -556,7 +556,7 @@ Step 5 and Step 12 — Steps 4-12 land as one commit.
        extended (§D-tests row 6). **Verify**: `uv run pytest varco_fastapi/tests/test_posture*.py
        varco_fastapi/tests/test_lifecycle_modules.py -q`; `rg -n '_default_collectors|_collect_[a-z]+\(' varco_fastapi/varco_fastapi` → 0.
 
-6. [ ] **Retention** — `varco_core/varco_core/retention/policy.py`: `@Multibound` on `RetentionPolicy`
+6. [x] **Retention** — `varco_core/varco_core/retention/policy.py`: `@Multibound` on `RetentionPolicy`
        (marker only; the dataclass is otherwise untouched — `dry_run` stays required);
        `RetentionRegistry.__init__(self, policies: Iterable[RetentionPolicy] = ())` runs the three
        guards (`register()`'s body becomes private `_add()`, called only from `__init__`); public
@@ -573,7 +573,7 @@ Step 5 and Step 12 — Steps 4-12 land as one commit.
        `contribute`+`collect` for policies). **Verify**: `uv run pytest varco_core/tests/test_retention*.py
        varco_fastapi/tests/test_retention_lifecycle.py -q`; `rg -n 'bind_retention_registry|registry\.register\(' varco_* examples README.md CLAUDE.md ARCHITECTURE.md technical_docs` → 0.
 
-7. [ ] **Tenant sources** — `varco_core/varco_core/tenancy/source.py`: `@Multibound` on `TenantSource`;
+7. [x] **Tenant sources** — `varco_core/varco_core/tenancy/source.py`: `@Multibound` on `TenantSource`;
        class docstring gains the contribution paragraph (§D-tenant: bound ≠ active; name uniqueness;
        built-in names reserved). `tenancy/settings.py`: `build_tenant_source_chain(settings=None, *,
        delegation_policy=None, sources: Iterable[TenantSource] = ())` — `_BUILTIN_SOURCE_NAMES =
@@ -588,7 +588,7 @@ Step 5 and Step 12 — Steps 4-12 land as one commit.
        `varco_fastapi/posture.py` gains its mapping. Tests per §D-tests row 5. **Verify**:
        `uv run pytest varco_core/tests/test_tenant* -q`; `rg -n '_LEGAL_TENANT_SOURCES' varco_*` → 0.
 
-8. [ ] **EventConsumer** — `varco_core/varco_core/event/consumer.py`: `@Multibound` on `EventConsumer`;
+8. [x] **EventConsumer** — `varco_core/varco_core/event/consumer.py`: `@Multibound` on `EventConsumer`;
        `auto_register: ClassVar[bool] = True`; `is_registered_to(bus)`; `registered_bus_count`
        property; `start()` idempotence guard; class docstring: the "REQUIRED PATTERN — `_bus`"
        section (`:686-711`) rewritten to "DI-bound consumers are auto-registered by `CoreModule`;
@@ -605,7 +605,7 @@ Step 5 and Step 12 — Steps 4-12 land as one commit.
        `make asyncapi-check` green (snapshot unchanged — the consumer class and its channels did not
        move).
 
-9. [ ] **WebhookVerifier registry verb** — `varco_core/varco_core/webhook/inbound/verifiers.py`:
+9. [x] **WebhookVerifier registry verb** — `varco_core/varco_core/webhook/inbound/verifiers.py`:
        `register_webhook_verifier(name, cls, *, replace=False)`; `get_verifier()` error message
        lists `sorted(_PROVIDERS)`; a module DESIGN block recording §D-verifier's ✅/❌ and the
        profiling precedent; exported from `varco_core.webhook.inbound` and the `varco_core` lazy
@@ -613,27 +613,33 @@ Step 5 and Step 12 — Steps 4-12 land as one commit.
        `@Multibound` on `HealthCheck` (marker only) + the `collect(HealthCheck)` test in
        `varco_kafka/tests/test_kafka_di_wiring.py`'s package subclass (via the suite, Step 10).
 
+       **Follow-up note**: the "exported from ... the `varco_core` lazy map" half of this step
+       had not actually landed in the working tree — closed by a small follow-up commit adding
+       `register_webhook_verifier`/`registered_webhook_verifiers` to `varco_core/__init__.py`'s
+       `_LAZY` map, `__all__` (287 → 289), and `TYPE_CHECKING` block, plus
+       `varco_core/tests/test_plan050_051_public_reexports.py`'s identity assertions.
+
 ### Suite, plugin proof, wiring-level tests
 
-10. [ ] `testkit/varco_conformance/di_wiring.py` — the three tests of §D-tests' last row;
+10. [x] `testkit/varco_conformance/di_wiring.py` — the three tests of §D-tests' last row;
         `testkit/varco_conformance/COVERAGE.md` `di_wiring` row lists them. **Verify**: `for p in
         varco_core varco_kafka varco_nats varco_redis varco_memcached varco_ws varco_casbin varco_sa
         varco_beanie varco_fastapi; do uv run pytest $p/tests/test_*di_wiring*.py -q; done` — all
         green with no subclass edit.
 
-11. [ ] `testkit/varco_plugin_example/__init__.py` (**new**, §D-plugin) + `varco_core/tests/test_plugin_contributions.py`
+11. [x] `testkit/varco_plugin_example/__init__.py` (**new**, §D-plugin) + `varco_core/tests/test_plugin_contributions.py`
         + `varco_fastapi/tests/test_plugin_posture_contribution.py`. **Verify**: both pass;
         `git diff --stat varco_*/varco_*` for this step is empty (the proof that no framework edit
         was needed — paste the empty diff into the preflight file).
 
-12. [ ] `varco_fastapi/tests/test_fastapi_di_wiring.py` (046's subclass) — add the `varco_fastapi`
+12. [x] `varco_fastapi/tests/test_fastapi_di_wiring.py` (046's subclass) — add the `varco_fastapi`
         leg of `test_collection_seams_have_no_fallback_contributors` running **after**
         `SecurityPostureModule().configure_app(app, c)` so the six contributed collectors are
         checked too. `make test` green from here.
 
 ### Docs, changelog, gates
 
-13. [ ] `technical_docs/features/dependency-injection.md` (045's document) — new **§Multi-binding**:
+13. [x] `technical_docs/features/dependency-injection.md` (045's document) — new **§Multi-binding**:
         the §D-shape rule verbatim; the seam table (seam · module · who contributes varco's defaults ·
         how an app/plugin contributes · reader · ordering semantics · empty-means) for the five seams
         + `HealthCheck`'s reader exception + `WebhookVerifier`'s ❌ row; the §D-order warning with the
@@ -644,7 +650,7 @@ Step 5 and Step 12 — Steps 4-12 land as one commit.
         `@Component`-scoped consumer; `@PostConstruct` `register_to` before the bus started; a
         `TenantSource` bound but not named in `VARCO_TENANT_SOURCES`; `replace=True` shadowing a
         built-in verifier).
-14. [ ] `CLAUDE.md` — (a) §Event system: the `@listen`/`register_to` paragraph's "(typically in a
+14. [x] `CLAUDE.md` — (a) §Event system: the `@listen`/`register_to` paragraph's "(typically in a
         `@PostConstruct` method)" → the §D-consumer rule (three lines + pointer); (b) §Database
         auditing: the `@PostConstruct` sentence rewritten per §D-consumer; (c) §Retention rules:
         "`bind_retention_registry`" → "`contribute(container, RetentionPolicy, …)` +
@@ -658,33 +664,33 @@ Step 5 and Step 12 — Steps 4-12 land as one commit.
         `@PostConstruct`" bullet updated; the `install_*`/`bind_*` taxonomy row for
         `bind_retention_registry` (046 already reshaped the table — remove the name). Pointer to the
         guide's §Multi-binding. Nothing else — CLAUDE.md is a routing table.
-15. [ ] `README.md` — "Consumer — EventConsumer + @listen": drop the `@PostConstruct` block, add the
+15. [x] `README.md` — "Consumer — EventConsumer + @listen": drop the `@PostConstruct` block, add the
         two-line "bound = registered" note; "Retention & purge automation": `registry.register()` +
         `bind_retention_registry` → `contribute()` + `RetentionModule()`; "Security posture
         preflight": a `PostureCollector` subclass snippet; "Tenant identity provenance": the
         `VARCO_TENANT_SOURCES=jwt,partner` example; a new short "Contributing from your own package"
         subsection under "DI wiring" showing `varco_plugin_example`'s shape; "Receiving a signed
         webhook": `register_webhook_verifier`.
-16. [ ] `ARCHITECTURE.md` (the retention/posture/tenancy module listings — `retention/di.py` gone,
+16. [x] `ARCHITECTURE.md` (the retention/posture/tenancy module listings — `retention/di.py` gone,
         `varco_core/posture.py` new), `technical_docs/features/retention-and-purge.md`,
         `security-posture.md` (the "Wiring a collector" snippet → subclass + contribute; the six
         class names), `tenant-provenance.md` (§D-tenant's rules + the new token),
         `inbound-webhooks.md` (the verb), `asyncapi-export.md` (discovery now reads the public
         accessor), `common-pitfalls.md` (two rows: `priority=` on a contribution; `InjectInstances`
         raising on zero).
-17. [ ] `CHANGELOG.md` `[Unreleased]`: `### BREAKING — multi-binding for collection seams (Plan 051,
+17. [x] `CHANGELOG.md` `[Unreleased]`: `### BREAKING — multi-binding for collection seams (Plan 051,
         DI-5)` = §Migration's rows; `### Added` (`contribute`/`collect`/`acollect`/`collection_seams`,
         `PostureCollector`, `resolve_tenant_source_chain`, `register_webhook_verifier`,
         `EventConsumer.auto_register`/`is_registered_to`, the plugin example). `BACKLOG.md:95` →
         `done (Plan 051)`; RO-2's rationale gains "one `PostureCollector` subclass each after 051".
-18. [ ] `uv run python scripts/api_surface.py` — regenerate; the diff must be exactly: removals
+18. [x] `uv run python scripts/api_surface.py` — regenerate; the diff must be exactly: removals
         (`bind_retention_registry`, `RetentionRegistry.register` is a method — not tracked),
         additions (the names in Step 17), and the `PostureFinding`/`PostureSeverity` module-move
         notes. Anything else is another branch's dirt — stop and look.
-19. [ ] `make lint` (incl. `api-check`, `asyncapi-check`, `import-budget --warn-only`), `make type-check`,
+19. [x] `make lint` (incl. `api-check`, `asyncapi-check`, `import-budget --warn-only`), `make type-check`,
         `make test`, `make docs`. Record `import_budget` delta vs 1(h) in the CHANGELOG entry if
         non-zero.
-20. [ ] **Handoffs** (in this plan's Done section and the index): **050** — `WebhookDispatcher`
+20. [x] **Handoffs** (in this plan's Done section and the index): **050** — `WebhookDispatcher`
         once `@Singleton`-bound is auto-registered; set `auto_register = False` if it must not be;
         cross-module phases must keep `CoreModule.start()`'s internal order (bus → consumers) and
         `stop()`'s reverse. **052** — `collection_seams()` + `collect()` are the read; the
@@ -692,7 +698,7 @@ Step 5 and Step 12 — Steps 4-12 land as one commit.
         subclasses contributed by `JwksRefreshModule`/`RetentionModule`. **055** — the middleware's
         chain default is `resolve_tenant_source_chain(container)`. **056** — a live RLS collector is
         a `PostureCollector` in `varco_sa`, contributed by `SAModule`. **058** — §Migration below.
-21. [ ] Final measurements pasted into the preflight file: `import_budget --check --warn-only`
+21. [x] Final measurements pasted into the preflight file: `import_budget --check --warn-only`
         (no breach), `rg -c '@Multibound' varco_*/varco_*` → 5, `rg -n 'priority=' varco_*/varco_* |
         rg -v 'BACKEND_PRIORITY|@listen|subscribe|tests/'` → only 045-sanctioned sites.
 
@@ -817,24 +823,24 @@ signature; `register_to()`'s double-call `RuntimeWarning` (only `start()` and th
 
 ## Done criteria
 
-- [ ] `rg -c '@Multibound' varco_*/varco_*` → exactly `event/consumer.py`, `retention/policy.py`,
+- [x] `rg -c '@Multibound' varco_*/varco_*` → exactly `event/consumer.py`, `retention/policy.py`,
       `tenancy/source.py`, `posture.py`, `health.py`; `collection_seams()` returns those five.
-- [ ] `bind_retention_registry`, `retention/di.py`, `RetentionRegistry.register()`,
+- [x] `bind_retention_registry`, `retention/di.py`, `RetentionRegistry.register()`,
       `_LEGAL_TENANT_SOURCES`, `_default_collectors`, the six `_collect_*` functions, the asyncapi
       generator's private `_registered_buses` read, and the `@PostConstruct` consumer rule in
       CLAUDE.md/README are gone.
-- [ ] `contribute`/`collect`/`acollect`/`collection_seams`, `PostureCollector`,
+- [x] `contribute`/`collect`/`acollect`/`collection_seams`, `PostureCollector`,
       `resolve_tenant_source_chain`, `register_webhook_verifier`, `EventConsumer.auto_register`/
       `is_registered_to`/`registered_bus_count` exist, are exported, and are in the regenerated
       `api-surface` snapshot.
-- [ ] The providify pins (Step 3) pass; the `di_wiring` suite's three new tests pass in all ten
+- [x] The providify pins (Step 3) pass; the `di_wiring` suite's three new tests pass in all ten
       packages with no subclass edit.
-- [ ] `varco_plugin_example` contributes to four seams with an empty `git diff varco_*/varco_*`
+- [x] `varco_plugin_example` contributes to four seams with an empty `git diff varco_*/varco_*`
       for Step 11.
-- [ ] `RetentionModule`/`SecurityPostureModule` report an empty collection through `validate()`;
+- [x] `RetentionModule`/`SecurityPostureModule` report an empty collection through `validate()`;
       the tenant builder raises on unknown/colliding/duplicate names; `CoreModule` refuses a
       non-singleton consumer and never double-registers.
-- [ ] `make lint`, `make type-check`, `make test`, `make docs` green; `make asyncapi-check` unchanged;
+- [x] `make lint`, `make type-check`, `make test`, `make docs` green; `make asyncapi-check` unchanged;
       `import_budget --check --warn-only` reports no breach; no file under
       `/home/edoardo/projects/providify` modified.
-- [ ] CHANGELOG BREAKING block = §Migration; `BACKLOG.md:95` reads `done (Plan 051)`.
+- [x] CHANGELOG BREAKING block = §Migration; `BACKLOG.md:95` reads `done (Plan 051)`.

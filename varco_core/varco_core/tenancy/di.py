@@ -56,7 +56,67 @@ from varco_core.tenancy.membership import (
 if TYPE_CHECKING:
     from providify import DIContainer
 
-__all__ = ["enable_tenant_membership"]
+    from varco_core.tenancy.source import TenantSourceChain
+
+__all__ = ["enable_tenant_membership", "resolve_tenant_source_chain"]
+
+
+def resolve_tenant_source_chain(container: DIContainer) -> TenantSourceChain | None:
+    """
+    Build a ``TenantSourceChain`` from *container* — the 048-bound
+    ``TenantProvenanceSettings``, the contributed ``TenantSource`` pool
+    (``collect(container, TenantSource)``), and an optional bound
+    ``DelegationPolicy`` (Plan 051 / DI-5, §D-tenant).
+
+    Args:
+        container: The ``DIContainer`` to read settings and the
+            ``TenantSource`` pool from.
+
+    Returns:
+        A ``TenantSourceChain``, or ``None`` when
+        ``VARCO_TENANT_SOURCES``/``TenantProvenanceSettings.sources`` is
+        empty.
+
+    Raises:
+        ValueError: See ``build_tenant_source_chain``'s fail-closed rules —
+            an unknown name, a built-in-colliding pool name, or a duplicate
+            pool name.
+
+    Edge cases:
+        Logs every pool source whose ``name`` is not in
+        ``settings.sources`` (bound but inert) at ``INFO``.
+    """
+    from varco_core.auth.delegation import DelegationPolicy  # noqa: PLC0415
+    from varco_core.di.collect import collect  # noqa: PLC0415
+    from varco_core.tenancy.settings import (  # noqa: PLC0415
+        TenantProvenanceSettings,
+        build_tenant_source_chain,
+    )
+    from varco_core.tenancy.source import TenantSource  # noqa: PLC0415
+
+    settings = (
+        container.get(TenantProvenanceSettings)
+        if container.is_resolvable(TenantProvenanceSettings)
+        else TenantProvenanceSettings.from_env()
+    )
+    pool = collect(container, TenantSource)  # type: ignore[type-abstract]
+    delegation_policy = (
+        container.get(DelegationPolicy) if container.is_resolvable(DelegationPolicy) else None
+    )
+
+    chain = build_tenant_source_chain(settings, delegation_policy=delegation_policy, sources=pool)
+
+    inert = [s.name for s in pool if s.name not in settings.sources]
+    if inert:
+        import logging  # noqa: PLC0415
+
+        logging.getLogger(__name__).info(
+            "TenantSource pool contains name(s) not listed in VARCO_TENANT_SOURCES "
+            "(inert, bound ≠ active): %s",
+            ", ".join(inert),
+        )
+
+    return chain
 
 
 @Fallback

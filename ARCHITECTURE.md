@@ -56,10 +56,12 @@ varco_core/              — Domain model, service layer, event system, resilien
   ├── schedule/           — Schedule, CatchUpPolicy, parse_cron()/CronSchedule,
   │                         ScheduleMaterializer, AbstractScheduleRepository (Plan 032 / D6 — no
   │                         execution path; the existing AbstractJobRunner runs materialized jobs)
-  ├── retention/          — RetentionPolicy, RetentionRegistry, RetentionTarget + six adapters,
-  │                         RetentionScheduler, inspect_retention_posture(),
-  │                         bind_retention_registry() (Plan 039 / S20 — no @Singleton/@Provider/
+  ├── retention/          — RetentionPolicy (@Multibound, Plan 051 / DI-5), RetentionRegistry,
+  │                         RetentionTarget + six adapters, RetentionScheduler,
+  │                         inspect_retention_posture() (Plan 039 / S20 — no @Singleton/@Provider/
   │                         @Configuration anywhere in this package, ever; see its own docstring)
+  ├── posture.py          — PostureSeverity, PostureFinding, PostureCollector (@Multibound,
+  │                         Plan 051 / DI-5 — moved from varco_fastapi.posture, re-exported there)
   ├── authority/         — JwtAuthority, TrustedIssuerRegistry, key rotation
   ├── auth/              — AbstractAuthorizer, user/role/permission models
   ├── repository.py      — AsyncRepository[D, PK] protocol
@@ -1406,8 +1408,14 @@ RetentionPolicy (frozen dataclass) — varco_core.retention.policy
   batch_size: int = 1000   max_batches: int = 100
   acknowledge_short_retention: bool = False   tenant_ids: tuple[str, ...] | None = None
 
-RetentionRegistry — varco_core.retention.policy
-  .register(policy)   .get(name)   .__contains__(name)   .__iter__()
+RetentionPolicy is @Multibound (Plan 051 / DI-5) — a collection seam; contribute one with
+  varco_core.di.collect.contribute() or a scanned @Singleton/@Provider.
+
+RetentionRegistry(policies: Iterable[RetentionPolicy] = ()) — varco_core.retention.policy
+  Immutable — no public .register() any more (Plan 051 removed it); built by RetentionModule's
+  own async_init() from acollect(container, RetentionPolicy); construct one by hand only for the
+  CLI/tests.
+  .get(name)   .__contains__(name)   .__iter__()
   .schedule_id_for(name) → UUID   (uuid5 seed — the Schedule.schedule_id this policy materializes onto)
 
 RetentionOutcome (frozen) — one RetentionTarget.purge() call's result
@@ -1441,13 +1449,16 @@ inspect_retention_posture(registry=None) → RetentionPostureReport — varco_co
   configured  policy_count  destructive_count  dry_run_count
   platform_wide_policies: tuple[str, ...]   dlq_policies   short_retention_policies   kinds: frozenset[str]
 
-bind_retention_registry(container, registry) — varco_core.retention.di (bind_* verb, no lifecycle
-  side effect, same shape as varco_core.tls.bind_trust_store)
 install_retention_metrics() — varco_core.observability.retention (install_* verb, opt-in counters)
+⚠️ varco_core.retention.di and bind_retention_registry() are GONE (Plan 051 / DI-5) —
+   contribute(container, RetentionPolicy, policy) replaces them; varco_core.retention.di
+   raises ImportError.
 
 RetentionLifecycle(registry, *, container, interval=0.0) — varco_fastapi.retention
   .startup()/.shutdown()  +  .start()/.stop() aliases (ReliabilityLifecycle shape)
-  wrapped by varco_fastapi.modules.RetentionModule(registry, interval=0.0) (Plan 049) —
+  wrapped by varco_fastapi.modules.RetentionModule(interval=0.0) (Plan 049; no registry
+  constructor argument as of Plan 051 — RetentionModule.async_init() builds one from
+  contributed RetentionPolicy instances) —
   modules=[*default_modules(), RetentionModule(...)], appended, never prepended
 
 ⛔ No module-level @Singleton/@Provider/@Configuration anywhere under varco_core.retention —
@@ -1657,43 +1668,48 @@ unresolvable return annotation) and `varco_core/tests/test_observability_di.py`.
 ### Modules (Plan 049 / DI-1)
 
 `varco_core.di.VarcoModule` (ABC) — `register()`/`_register()` (sync) → `async_init()` (async,
-before any `start()`) → `validate()` (defined, not yet called — Plan 052) → `start()`/`stop()`
-(async, LIFO on shutdown). `ModuleRegistry` is the container-bound record `register()`'s
-idempotency is built on; `resolve_module_order()` is the `depends_on`-ordering DFS walk. Full
-design (why a plain ABC and never a providify `@Configuration`, the tri-state, `EdgeSlot`):
-`technical_docs/features/dependency-injection.md`'s §Modules.
+before any `start()`) → `validate()` (defined, not yet called — Plan 052) → `components()`
+(Plan 050 — phased `start()`/`stop()` units the `LifecycleRunner` actually sequences; the default
+wraps the module's own `start()`/`stop()`). `ModuleRegistry` is the container-bound record
+`register()`'s idempotency is built on; `resolve_lifecycle_order()` is `resolve_module_order()`'s
+`depends_on`-ordering DFS walk, stable-sorted by `phase` (§"Lifecycle" below). Full design (why a
+plain ABC and never a providify `@Configuration`, the tri-state, `EdgeSlot`):
+`technical_docs/features/dependency-injection.md`'s §Modules; the phase model: its §Lifecycle
+phases.
 
-| Module | Package | In `default_modules()`? | `depends_on` |
-|---|---|---|---|
-| `CoreModule` | `varco_core.di.module` | ✅ | — |
-| `ObservabilityModule` | `varco_core.di.module` | ✅ | — |
-| `LifecycleModule` (adapter) | `varco_core.di.module` | — | per-instance |
-| `FastAPIModule` | `varco_fastapi.modules` | ✅ | `CoreModule` |
-| `CorsModule` | `varco_fastapi.modules` | ✅ | — |
-| `SecurityHeadersModule` | `varco_fastapi.modules` | ✅ | — |
-| `ErrorEnvelopeModule` | `varco_fastapi.modules` | ✅ | — |
-| `BodyLimitModule` | `varco_fastapi.modules` | ✅ | — |
-| `LoggingModule` | `varco_fastapi.modules` | ✅ | — |
-| `TracingModule` | `varco_fastapi.modules` | ✅ | — |
-| `LocalizationModule` | `varco_fastapi.modules` | ✅ | — |
-| `SecurityPostureModule` | `varco_fastapi.modules` | ✅ (FLIP-1) | `CoreModule` |
-| `MetricsModule` | `varco_fastapi.modules` | opt-in | — |
-| `ProfilingModule` | `varco_fastapi.modules` | opt-in | — |
-| `RateLimitModule` | `varco_fastapi.modules` | opt-in | — |
-| `MigrationsModule` | `varco_fastapi.modules` | opt-in | `CoreModule` |
-| `TenancyModule` | `varco_fastapi.modules` | opt-in | `CoreModule` |
-| `ReliabilityModule` | `varco_fastapi.modules` | opt-in | `CoreModule` |
-| `RetentionModule` | `varco_fastapi.modules` | opt-in | `CoreModule` |
-| `JwksRefreshModule` | `varco_fastapi.modules` | opt-in | `CoreModule` |
-| `MiddlewareModule` (adapter) | `varco_fastapi.modules.base` | — | per-instance |
-| `SAModule` | `varco_sa.modules` | opt-in | `CoreModule` |
-| `BeanieModule` | `varco_beanie.modules` | opt-in | `CoreModule` |
-| `RedisModule` | `varco_redis.modules` | opt-in | `CoreModule` |
-| `KafkaModule` | `varco_kafka.modules` | opt-in | `CoreModule` |
-| `NatsModule` | `varco_nats.modules` | opt-in | `CoreModule` |
-| `MemcachedModule` | `varco_memcached.modules` | opt-in | `CoreModule` |
-| `CasbinModule` | `varco_casbin.modules` | opt-in | `CoreModule` |
-| `WsModule` | `varco_ws.modules` | opt-in | `CoreModule` |
+| Module | Package | `phase` | In `default_modules()`? | `depends_on` |
+|---|---|---|---|---|
+| `CoreModule` | `varco_core.di.module` | `INFRA` (record only — `components()` spans `INFRA`/`BUS`/`CONSUMERS`/`SCHEDULERS`) | ✅ | — |
+| `ObservabilityModule` | `varco_core.di.module` | `INFRA` | ✅ | — |
+| `LifecycleModule` (adapter) | `varco_core.di.module` | `CONSUMERS` (default; per-instance `phase=` kwarg) | — | per-instance |
+| `WebhookModule` | `varco_core.webhook.module` | `CONSUMERS` | opt-in | `CoreModule` |
+| `TrustStoreModule` | `varco_core.tls.module` | `INFRA` | opt-in | `CoreModule` |
+| `FastAPIModule` | `varco_fastapi.modules` | `INFRA` | ✅ | `CoreModule` |
+| `CorsModule` | `varco_fastapi.modules` | `INFRA` | ✅ | — |
+| `SecurityHeadersModule` | `varco_fastapi.modules` | `INFRA` | ✅ | — |
+| `ErrorEnvelopeModule` | `varco_fastapi.modules` | `INFRA` | ✅ | — |
+| `BodyLimitModule` | `varco_fastapi.modules` | `INFRA` | ✅ | — |
+| `LoggingModule` | `varco_fastapi.modules` | `INFRA` | ✅ | — |
+| `TracingModule` | `varco_fastapi.modules` | `INFRA` | ✅ | — |
+| `LocalizationModule` | `varco_fastapi.modules` | `INFRA` | ✅ | — |
+| `SecurityPostureModule` | `varco_fastapi.modules` | `EDGE` | ✅ (FLIP-1) | `CoreModule` |
+| `MetricsModule` | `varco_fastapi.modules` | `INFRA` | opt-in | — |
+| `ProfilingModule` | `varco_fastapi.modules` | `INFRA` | opt-in | — |
+| `RateLimitModule` | `varco_fastapi.modules` | `INFRA` | opt-in | — |
+| `MigrationsModule` | `varco_fastapi.modules` | `INFRA` | opt-in | `CoreModule` |
+| `TenancyModule` | `varco_fastapi.modules` | `INFRA` | opt-in | `CoreModule` |
+| `ReliabilityModule` | `varco_fastapi.modules` | `CONSUMERS` | opt-in | `CoreModule` |
+| `RetentionModule` | `varco_fastapi.modules` | `SCHEDULERS` | opt-in | `CoreModule` |
+| `JwksRefreshModule` | `varco_fastapi.modules` | `SCHEDULERS` | opt-in | `CoreModule` |
+| `MiddlewareModule` (adapter) | `varco_fastapi.modules.base` | `INFRA` | — | per-instance |
+| `SAModule` | `varco_sa.modules` | `INFRA` | opt-in | `CoreModule` |
+| `BeanieModule` | `varco_beanie.modules` | `INFRA` | opt-in | `CoreModule` |
+| `RedisModule` | `varco_redis.modules` | `INFRA` | opt-in | `CoreModule` |
+| `KafkaModule` | `varco_kafka.modules` | `INFRA` | opt-in | `CoreModule` |
+| `NatsModule` | `varco_nats.modules` | `INFRA` | opt-in | `CoreModule` |
+| `MemcachedModule` | `varco_memcached.modules` | `INFRA` | opt-in | `CoreModule` |
+| `CasbinModule` | `varco_casbin.modules` | `INFRA` | opt-in | `CoreModule` |
+| `WsModule` | `varco_ws.modules` | `CONSUMERS` | opt-in | `CoreModule` |
 
 `HttpContributor` (`varco_fastapi.modules.base`, `runtime_checkable` Protocol —
 `middleware()`/`configure_app()`) is deliberately **not** on the core `VarcoModule` ABC, so
@@ -1704,6 +1720,27 @@ outermost-first middleware order table, as code.
 other row's own on/off switch.** With `AbstractServerAuth` bound it runs the app's real auth
 strategy; with nothing bound it still runs, in anonymous mode (pre-Plan-049 parity — see
 `technical_docs/features/dependency-injection.md`'s §Modules Pitfalls table).
+
+### Lifecycle (Plan 050 / DI-9)
+
+`varco_core.di.lifecycle` (re-exported from `varco_core.di`): `Phase` (`IntEnum` — `INFRA(100)` <
+`BUS(200)` < `CONSUMERS(300)` < `SCHEDULERS(400)` < `EDGE(500)`, the `phase` column above),
+`LifecycleComponent` (frozen — `name`/`phase`/`start`/`stop`, what a module's `components()`
+contributes), `LifecycleFailure` (frozen — a recorded, never-raised `stop()` failure),
+`ModulePhaseError` (a `depends_on` edge pointing at a later phase), `resolve_lifecycle_order()`
+(049's `depends_on` DFS, stable-sorted by `phase`), `phased_components()` (flattens every active
+module's `components()`, stable-sorted by `phase`), and `LifecycleRunner` — the actual start/stop
+engine `VarcoLifespan` now delegates to (`AbstractLifecycle` moved here, re-exported identically
+from `varco_fastapi.lifespan`).
+
+`LifecycleRunner` starts in the given (phase, `depends_on`) order and stops the **exact reverse of
+what actually started** — on a clean shutdown and on a rollback after a partial-start failure
+alike (the pre-050 bug: `VarcoLifespan`'s rollback used to stop in forward order). Every
+provider-produced singleton with a `stop()`/`aclose()`/`close()`/`shutdown()` method needs either
+a `@Disposes` in its declaring `@Configuration`, or — when a `VarcoModule` owns that object's
+lifecycle directly — a `module_owned` entry in the package's `di_wiring` conformance subclass;
+`testkit/varco_conformance/di_wiring.py` enforces both. Full model, the phase-owner table, and a
+Pitfalls table: `technical_docs/features/dependency-injection.md`'s §Lifecycle phases.
 
 ---
 
@@ -1764,7 +1801,7 @@ strategy; with nothing bound it still runs, in anonymous mode (pre-Plan-049 pari
 | `webhook/inbound/` | S19 (Plan 038) — inbound webhook signature verification, replay guard | `WebhookVerifier`, `VerificationResult`, `VerificationFailure`, `StandardWebhooksVerifier`, `SvixWebhookVerifier`, `StripeWebhookVerifier`, `GitHubWebhookVerifier`, `SlackWebhookVerifier`, `get_verifier()`, `WebhookReplayGuard` |
 | `flags/` | D7 (Plan 032) — feature-flag evaluation seam, varco-shaped (not OpenFeature-shaped); OpenFeature provider deferred | `AbstractFeatureFlags`, `FlagEvaluationContext`, `FlagResolution`, `InMemoryFeatureFlags`, `NullFeatureFlags`, `enable_feature_flags()` |
 | `schedule/` | D6 (Plan 032) — recurring cron `Schedule` → `Job` materialization, zero new dependencies | `Schedule`, `CatchUpPolicy`, `parse_cron()`, `CronSchedule`, `ScheduleMaterializer`, `AbstractScheduleRepository`, `InMemoryScheduleRepository` |
-| `retention/` | S20 (Plan 039) — a `RetentionPolicy` registry materialized onto the shipped cron→`Job` path; adapters over shipped bulk-delete verbs, no new abstract methods | `RetentionPolicy`, `RetentionRegistry`, `RetentionOutcome`, `RetentionResult`, `RetentionTarget`, `CallableRetentionTarget`, `DlqRetentionTarget`, `AuditRetentionTarget`, `IdempotencyRetentionTarget`, `RevocationRetentionTarget`, `JobRetentionTarget`, `RetentionScheduler`, `execute_policy()`, `RetentionPolicyNotFoundError`, `inspect_retention_posture()`, `bind_retention_registry()` |
+| `retention/` | S20 (Plan 039) — a `RetentionPolicy` registry materialized onto the shipped cron→`Job` path; adapters over shipped bulk-delete verbs, no new abstract methods. `RetentionPolicy` is `@Multibound` as of Plan 051 / DI-5; `retention/di.py`/`bind_retention_registry()` are gone | `RetentionPolicy`, `RetentionRegistry`, `RetentionOutcome`, `RetentionResult`, `RetentionTarget`, `CallableRetentionTarget`, `DlqRetentionTarget`, `AuditRetentionTarget`, `IdempotencyRetentionTarget`, `RevocationRetentionTarget`, `JobRetentionTarget`, `RetentionScheduler`, `execute_policy()`, `RetentionPolicyNotFoundError`, `inspect_retention_posture()` |
 | `revocation/` | S13 (Plan 034) — invalidate a JWT before its `exp`, per token/subject/tenant/issuer | `AbstractTokenRevocationStore`, `RevocationScope`, `RevocationEntry`, `RevocationVerdict`, `RevocationFailureMode`, `NullTokenRevocationStore`, `InMemoryTokenRevocationStore`, `enable_token_revocation()`, `inspect_revocation_posture()` |
 | `auth/api_key.py` | S14 (Plan 034) — stdlib-only (`hashlib`/`hmac`) offline API-key hashing behind `ApiKeyAuth`'s `hashed_keys=` path | `hash_api_key()`, `verify_api_key()` |
 | `redaction/` | S21 (Plan 040) — the unified, key-name-based redaction seam behind spans, `error_params()`, the audit trail, and request logging | `Redactor`, `PolicyRedactor`, `RedactionPolicy`, `is_sensitive_key()`, `redact_mapping()`, `redact_query_string()`, `json_safe()`, `default_redactor()`, `set_default_redactor()`, `reset_redaction_state()`, `DEFAULT_REDACT_PATTERNS`, `EXTENDED_REDACT_PATTERNS`, `PII_REDACT_PATTERNS` |

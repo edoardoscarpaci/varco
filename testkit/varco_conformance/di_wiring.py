@@ -109,6 +109,13 @@ class DIWiringConformance:
     #: module-contract tests below via `pytest.skip` (never a silent pass).
     module_cls: ClassVar[type[Any] | None] = None
 
+    #: Plan 050 / §D-suite — interfaces whose lifecycle a `VarcoModule` owns
+    #: directly (never via a `@Disposes`/`@PreDestroy` hook), e.g.
+    #: `varco_ws`: `{WebSocketEventBus, SSEEventBus}`, `varco_core`:
+    #: `{ReloadingTrustStore}`. The escape hatch
+    #: `test_every_lifecycle_bearing_provider_has_a_disposer_or_owner` reads.
+    module_owned: ClassVar[frozenset[type]] = frozenset()
+
     #: Optional override for how `test_package_module_registers_cleanly`
     #: constructs the module under test — some modules (`SAModule`,
     #: `BeanieModule`) require a constructor argument (`config=`/
@@ -482,3 +489,127 @@ class DIWiringConformance:
 
         if cls is not CoreModule:
             assert CoreModule in cls.depends_on
+
+    # ── Plan 051 / DI-5 — multi-binding collection-seam contracts ──────────────
+
+    async def test_collection_seams_have_no_fallback_contributors(
+        self, container: DIContainer
+    ) -> None:
+        """
+        §D-order/§D-shape: every binding of a `collection_seams()` type on
+        *this package's* bootstrapped container must be non-fallback
+        (`@Fallback` disappears the moment any non-fallback sibling exists,
+        045's structural rule — a collection contribution is never a
+        default to be shadowed) and must carry providify's default
+        `priority=0` (never used as a collection order key, §D-order).
+        """
+        from varco_core.di.collect import collection_seams  # noqa: PLC0415
+
+        for seam in collection_seams():
+            for binding in container.get_all_bindings(seam):
+                assert binding.fallback is False, (
+                    f"{seam.__name__} binding {binding!r} is @Fallback — a collection "
+                    f"contribution must never be a fallback default."
+                )
+                assert binding.priority == 0, (
+                    f"{seam.__name__} binding {binding!r} carries priority="
+                    f"{binding.priority!r} — no varco collection contribution sets "
+                    f"priority= (§D-order: it means opposite things for get() vs. list[T])."
+                )
+
+    async def test_event_consumer_contributions_are_singletons(
+        self, container: DIContainer
+    ) -> None:
+        """Every `EventConsumer` binding on this package's bootstrapped
+        container must be `Scope.SINGLETON` — the same rule
+        `CoreModule.validate()` enforces at app-composition time."""
+        from providify import Scope  # noqa: PLC0415
+        from varco_core.event.consumer import EventConsumer  # noqa: PLC0415
+
+        for binding in container.get_all_bindings(EventConsumer):
+            scope = getattr(binding, "scope", None)
+            if scope is not None:
+                assert scope is Scope.SINGLETON, (
+                    f"EventConsumer binding {binding!r} is scope {scope!r}, not singleton."
+                )
+
+    # ── Plan 050 / §D-suite — lifecycle-phase contracts ─────────────────────
+
+    async def test_every_lifecycle_bearing_provider_has_a_disposer_or_owner(
+        self, container: DIContainer
+    ) -> None:
+        """
+        The varco-side check providify's own `validate()` cannot make
+        (§D-suite): providify's `UNREACHABLE_PRE_DESTROY` only fires for a
+        produced type that itself carries a `@PreDestroy` marker
+        ("Tier B" — `container.py:6255-6280`) — a provider-produced object
+        whose only teardown is a plain `stop()`/`aclose()`/`close()`/
+        `shutdown()` method with NO marker is invisible to it. For every
+        singleton `ProviderBinding` on this package's bootstrapped
+        container whose produced type exposes one of those four methods,
+        either `binding.disposer is not None` or its interface is listed in
+        `module_owned` (a module's `start()`/`stop()` owns it directly,
+        never via providify disposal).
+        """
+        from typing import get_origin  # noqa: PLC0415
+
+        from providify import Scope  # noqa: PLC0415
+        from providify.binding import ProviderBinding  # noqa: PLC0415
+
+        teardown_names = ("stop", "aclose", "close", "shutdown")
+        for binding in container.describe().bindings:
+            if not isinstance(binding, ProviderBinding):
+                continue
+            if binding.scope is not Scope.SINGLETON:
+                continue
+            produced = get_origin(binding.interface) or binding.interface
+            if not isinstance(produced, type):
+                continue
+            if not any(hasattr(produced, name) for name in teardown_names):
+                continue
+            assert binding.disposer is not None or binding.interface in self.module_owned, (
+                f"{binding.interface!r} (produced type {produced!r}) exposes a teardown "
+                f"method but has neither a @Disposes disposer nor a module_owned entry — "
+                f"add a @Disposes in the declaring @Configuration, or list the interface "
+                f"in this subclass's module_owned if a VarcoModule owns its lifecycle."
+            )
+
+    async def test_package_module_declares_a_phase(self) -> None:
+        """Every package's own `VarcoModule` subclass must declare `phase`
+        in its own `__dict__` (§D-phase) — a bare inherited default is a
+        silent "I did not think about ordering" rather than a decision."""
+        if self.module_cls is None:
+            pytest.skip("no module_cls declared")
+
+        from varco_core.di.lifecycle import Phase  # noqa: PLC0415
+
+        cls = self.module_cls
+        assert "phase" in cls.__dict__, f"{cls!r} must declare `phase` in its own __dict__"
+        assert Phase.INFRA <= cls.phase <= Phase.EDGE
+
+    async def test_depends_on_never_points_forward(self) -> None:
+        """A module's `depends_on` must never name a module scheduled for a
+        LATER phase — `resolve_lifecycle_order` raises `ModulePhaseError`
+        for exactly this at `create_varco_app()` time; this test pins the
+        static declaration itself for this package's module."""
+        if self.module_cls is None:
+            pytest.skip("no module_cls declared")
+
+        cls = self.module_cls
+        for dep_cls in cls.depends_on:
+            assert dep_cls.phase <= cls.phase, (
+                f"{cls!r} (phase={cls.phase!r}) depends_on {dep_cls!r} "
+                f"(phase={dep_cls.phase!r}) — a module cannot depend on something "
+                f"scheduled to start in a LATER phase."
+            )
+
+    async def test_health_checks_collect(self, container: DIContainer) -> None:
+        """`collect(container, HealthCheck)` must agree with
+        `get_all_bindings(HealthCheck)` — the two sanctioned reads of one
+        seam (§D-health) must never diverge."""
+        from varco_core.di.collect import collect  # noqa: PLC0415
+        from varco_core.health import HealthCheck  # noqa: PLC0415
+
+        collected = collect(container, HealthCheck)
+        bound_count = len(container.get_all_bindings(HealthCheck))
+        assert len(collected) == bound_count

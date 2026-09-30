@@ -1104,19 +1104,21 @@ def bind_skill_adapter(
         — the decoration-time ``returns=`` override means this closure's
         placeholder return annotation never needs patching.
         """
+        # Plan 050 / §D-asks P-INJ shim — see _di.py's module docstring for
+        # why these runtime-class dependencies cannot be declared
+        # Inject[...] parameters (their types are only known at
+        # bind_skill_adapter() call time, not at factory-decoration time).
+        from varco_fastapi.router._di import _resolve_optional  # noqa: PLC0415
+
         client: Any = None
         if _client_cls is not None:
-            try:
-                client = container.get(_client_cls)
-            except Exception:  # noqa: BLE001
-                client = _client_cls(base_url=_base_url)
+            client = _resolve_optional(container, _client_cls) or _client_cls(base_url=_base_url)
 
         # Resolve optional async job runner and store from the DI container
         runner: Any = None
         if _runner_cls is not None:
-            try:
-                runner = container.get(_runner_cls)
-            except Exception:  # noqa: BLE001
+            runner = _resolve_optional(container, _runner_cls)
+            if runner is None:
                 _logger.warning(
                     "bind_skill_adapter: could not resolve job_runner_cls=%r from container "
                     "— async tasks disabled.",
@@ -1125,9 +1127,8 @@ def bind_skill_adapter(
 
         store: Any = None
         if _store_cls is not None:
-            try:
-                store = container.get(_store_cls)
-            except Exception:  # noqa: BLE001
+            store = _resolve_optional(container, _store_cls)
+            if store is None:
                 _logger.warning(
                     "bind_skill_adapter: could not resolve job_store_cls=%r from container "
                     "— task polling disabled.",
@@ -1136,9 +1137,8 @@ def bind_skill_adapter(
 
         conv_store: Any = None
         if _conv_store_cls is not None:
-            try:
-                conv_store = container.get(_conv_store_cls)
-            except Exception:  # noqa: BLE001
+            conv_store = _resolve_optional(container, _conv_store_cls)
+            if conv_store is None:
                 _logger.warning(
                     "bind_skill_adapter: could not resolve conversation_store_cls=%r from "
                     "container — multi-turn history disabled.",

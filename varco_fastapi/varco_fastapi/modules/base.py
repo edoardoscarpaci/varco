@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from varco_core.di.lifecycle import Phase
 from varco_core.di.module import VarcoModule
 
 from varco_fastapi.middleware.slots import EdgeSlot, MiddlewareSpec
@@ -83,6 +84,8 @@ class MiddlewareModule(VarcoModule):
     """
 
     name = "middleware_adapter"
+    # no lifecycle; declared so the suite's phase test is uniform
+    phase = Phase.INFRA
 
     def __init__(
         self,

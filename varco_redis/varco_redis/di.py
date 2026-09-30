@@ -297,8 +297,7 @@ def enable_redis_token_revocation(container: DIContainer, **redis_kwargs: Any) -
         store = await container.aget(AbstractTokenRevocationStore)
         registry = TrustedIssuerRegistry(revocation_store=store)  # the second step
     """
-    from providify import Provider  # noqa: PLC0415
-    from varco_core.di import AlreadyBoundError, is_user_bound  # noqa: PLC0415
+    from varco_core.di import AlreadyBoundError, bind_instance, is_user_bound  # noqa: PLC0415
 
     from varco_redis.revocation import RedisTokenRevocationStore  # noqa: PLC0415
 
@@ -309,11 +308,18 @@ def enable_redis_token_revocation(container: DIContainer, **redis_kwargs: Any) -
             "seam and only one may win."
         )
 
-    @Provider(singleton=True)
-    def _provide_redis_revocation_store() -> AbstractTokenRevocationStore:
-        return RedisTokenRevocationStore(**redis_kwargs)
+    # Plan 050 / §D-disposes row 16, P-DISP shim: bind_instance(disposer=)
+    # closes the client at container.ashutdown() — before this, the client
+    # this function constructs leaked at every shutdown. providify's
+    # _adispose calls `binding.disposer(instance)` (container.py:5301-5303)
+    # — store.aclose takes no arguments, so a thin async wrapper absorbs
+    # the positional instance argument.
+    store = RedisTokenRevocationStore(**redis_kwargs)
 
-    container.provide(_provide_redis_revocation_store)
+    async def _dispose_store(_instance: object) -> None:
+        await store.aclose()
+
+    bind_instance(container, AbstractTokenRevocationStore, store, disposer=_dispose_store)
     return container
 
 

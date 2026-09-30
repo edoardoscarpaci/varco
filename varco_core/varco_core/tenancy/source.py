@@ -47,6 +47,8 @@ from dataclasses import dataclass, field
 from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING, ClassVar
 
+from providify import Multibound
+
 if TYPE_CHECKING:
     from varco_core.auth.base import AuthContext
     from varco_core.auth.delegation import DelegationRecord
@@ -109,12 +111,25 @@ class TenantClaim:
     trust: TenantTrust
 
 
+@Multibound
 class TenantSource(ABC):
     """
     A single, pluggable origin of tenant identity.
 
+    Plan 051 / DI-5, §D-tenant: a ``@Multibound`` collection seam. An
+    out-of-tree ``TenantSource`` is a scanned ``@Singleton`` subclass (or a
+    ``varco_core.di.collect.contribute()`` call) — but **bound ≠ active**:
+    a contributed source only joins the chain when its ``name`` is also
+    listed in ``VARCO_TENANT_SOURCES``/``TenantProvenanceSettings.sources``
+    (``build_tenant_source_chain``/``resolve_tenant_source_chain``). This is
+    the one collection seam where the allowlist (which names may feed
+    identity at all) stays the operator's, not the scanner's — see
+    ``tenancy/settings.py``'s module docstring.
+
     Args (class-level contract data, declared by every subclass):
-        name: A short, stable, unique identifier (e.g. ``"jwt"``).
+        name: A short, stable, unique identifier (e.g. ``"jwt"``). Must not
+            collide with a built-in name (``jwt``/``subdomain``/``legacy``/
+            ``act_as``) — refused at chain-build time.
         trust: The ``TenantTrust`` this source's claims carry.
 
     Edge cases (the implementer contract — this docstring is the contract's

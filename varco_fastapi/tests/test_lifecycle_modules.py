@@ -95,9 +95,11 @@ class TestReliabilityModule:
 
 class TestRetentionModule:
     async def test_default_interval_is_zero(self) -> None:
-        registry = object()
+        # Plan 051 / DI-5: RetentionModule no longer takes a registry
+        # constructor argument — it builds one in async_init() from
+        # contributed RetentionPolicy instances.
         container = DIContainer()
-        m = RetentionModule(registry)
+        m = RetentionModule()
         m.register(container)
 
         assert m._interval == 0.0  # PLAN-AMBIGUITY: internal attr name assumed
@@ -144,9 +146,15 @@ class TestSecurityPostureModule:
         # not name the exact family count here; this test asserts the
         # report exists and is non-empty, deferring the exact per-family
         # count to test_security_posture*.py's own assertions.
+        #
+        # Plan 051 / DI-5: the five default collectors are contributed by
+        # configure_app() (§D-posture), not register() — create_varco_app()
+        # calls both in sequence; a test exercising start() directly must
+        # call configure_app() first.
         container = DIContainer()
         m = SecurityPostureModule()
         m.register(container)
+        m.configure_app(None, container)
 
         await m.start(container)
 

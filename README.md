@@ -247,7 +247,7 @@ from varco_sa.modules import SAModule
 app = create_varco_app(
     container,
     modules=[
-        MigrationsModule(my_migrator),      # list before the defaults — see the Pitfalls row below
+        MigrationsModule(my_migrator),      # list position no longer matters — INFRA phase (Plan 050)
         *default_modules(),
         SAModule(config=my_sa_config, entities=(User, Post)),
     ],
@@ -283,6 +283,26 @@ model (slots, the tri-state `enabled=`, `depends_on`, `EdgeSlot`/`HttpContributo
 app's own module, a Pitfalls table): [technical_docs/features/dependency-injection.md](technical_docs/features/dependency-injection.md)'s §Modules.
 Full old-keyword → new-module migration table: `CHANGELOG.md`'s `[Unreleased]` →
 **BREAKING — VarcoModule and create_varco_app(modules=…)** entry.
+
+**Lifecycle phases (Plan 050 / DI-9)** — every module also declares a `phase` (`INFRA` → `BUS` →
+`CONSUMERS` (the default) → `SCHEDULERS` → `EDGE`); `create_varco_app` starts modules ascending
+by `(phase, depends_on)` and stops the **exact reverse of what actually started**, so a
+`WebhookModule`/`TrustStoreModule` listed anywhere in `modules=[...]` still starts before the bus
+comes up:
+
+```python
+from varco_core.webhook import WebhookModule
+from varco_core.tls import TrustStoreModule
+from varco_fastapi.modules import default_modules
+
+app = create_varco_app(
+    container,
+    modules=[*default_modules(), WebhookModule(), TrustStoreModule(spec=my_trust_store)],
+)
+```
+
+Full model (the five phases and their owners, `components()`, the `@Disposes`-or-owner rule, a
+Pitfalls table): `technical_docs/features/dependency-injection.md`'s §Lifecycle phases.
 
 ---
 
@@ -830,6 +850,67 @@ container = DIContainer()
 container.scan("varco_core", recursive=True)  # registers BaseAuthorizer, a @Fallback default
 container.bind(AbstractAuthorizer, MyAuthorizer)  # wins — registered AFTER, order doesn't matter
 ```
+
+### Contributing from your own package
+
+Five seams (`EventConsumer`, `RetentionPolicy`, `TenantSource`, `PostureCollector`,
+`HealthCheck`) are `@Multibound` collection points (Plan 051 / DI-5) — a package that never
+imports `varco_fastapi` (or anything beyond `varco_core`) contributes to all of them with plain
+`container.scan()` + an ordinary `@Singleton`/`@Configuration`, no framework edit:
+
+```python
+from datetime import timedelta
+
+from providify import Configuration, Inject, Provider, Singleton
+from varco_core.event.consumer import EventConsumer, listen
+from varco_core.event.dlq import AbstractDeadLetterQueue
+from varco_core.posture import PostureCollector, PostureFinding, PostureSeverity
+from varco_core.retention.policy import RetentionPolicy
+from varco_core.retention.targets import DlqRetentionTarget
+from varco_core.tenancy.source import TenantSource, TenantTrust
+
+
+@Singleton
+class PartnerHeaderTenantSource(TenantSource):  # name = "partner", trust = MEDIUM
+    name = "partner"
+    trust = TenantTrust.MEDIUM
+
+    def resolve(self, request):
+        ...
+
+
+@Singleton
+class PluginPostureCollector(PostureCollector):  # name = "plugin"
+    name = "plugin"
+
+    def collect(self) -> list[PostureFinding]:
+        return [PostureFinding(check="plugin.example", severity=PostureSeverity.INFO, ...)]
+
+
+@Singleton
+class PluginConsumer(EventConsumer):
+    @listen(SomeEvent, channel="plugin")
+    async def on(self, event: SomeEvent) -> None: ...
+
+
+@Configuration
+class PluginRetention:
+    @Provider(singleton=True)
+    def policy(self, dlq: Inject[AbstractDeadLetterQueue]) -> RetentionPolicy:
+        return RetentionPolicy(
+            name="plugin-dlq",
+            target=DlqRetentionTarget(dlq=dlq, acknowledge_dead_letter_deletion=True),
+            cron_expr="0 3 * * *",
+            timezone="UTC",
+            dry_run=True,
+            older_than=timedelta(days=30),
+        )
+```
+
+`varco_core.di.bootstrap(container); container.scan("my_plugin_package")` is all it takes — see
+`testkit/varco_plugin_example` for the full, tested, four-seam worked example (never packaged).
+Full model, the `priority=`/`InjectInstances` pitfalls, and the `contribute()`/`bind_instance()`
+double-call table: `technical_docs/features/dependency-injection.md`'s §Multi-binding.
 
 ### Settings and environment variables
 
@@ -1457,6 +1538,33 @@ chain = TenantSourceChain(
 `TrustedHostMiddleware` (`allowed_hosts=[...]`, Starlette's own) or an edge that rejects unknown
 `Host` values.
 
+**Contributing an out-of-tree source** (Plan 051 / DI-5) — `TenantSource` is `@Multibound`; a
+plugin contributes a plain `@Singleton` and the operator names it in `VARCO_TENANT_SOURCES` to
+make it active (bound ≠ active — the allowlist stays the operator's):
+
+```python
+from providify import Singleton
+from varco_core.tenancy.source import TenantClaim, TenantSource, TenantTrust
+
+
+@Singleton
+class PartnerHeaderTenantSource(TenantSource):
+    name = "partner"
+    trust = TenantTrust.MEDIUM
+
+    def resolve(self, request):
+        tenant_id = request.headers.get("x-partner-tenant")
+        return TenantClaim(tenant_id=tenant_id, source=self.name, trust=self.trust) if tenant_id else None
+```
+
+```bash
+VARCO_TENANT_SOURCES=jwt,partner
+```
+
+`resolve_tenant_source_chain(container)` (`varco_core.tenancy`) reads the 048-bound settings, the
+contributed `TenantSource` pool (`collect(container, TenantSource)`), and an optional
+`DelegationPolicy`, and builds the chain for you.
+
 **Membership binding** — is the authenticated subject allowed to act as the tenant the chain
 resolved? Opt in via the same `enable_*` shape as `varco_casbin.enable_policy_authorizer`:
 
@@ -1833,15 +1941,13 @@ class OrderService(AsyncService[Order, UUID, ...]):
             )
 
 
-# 3. Handle in a consumer (EventConsumer subclass)
+# 3. Handle in a consumer (EventConsumer subclass) — a plain @Singleton;
+#    CoreModule.start() auto-registers it to the bus once the bus has
+#    started (Plan 051 / DI-5) — bound = registered, no @PostConstruct needed.
+@Singleton
 class NotificationConsumer(EventConsumer):
-    def __init__(self, bus: AbstractEventBus, mailer: Mailer):
-        self._bus = bus
+    def __init__(self, mailer: Mailer):
         self._mailer = mailer
-
-    @PostConstruct
-    def _setup(self) -> None:
-        self.register_to(self._bus)
 
     @listen(OrderShippedEvent, channel="orders")
     async def on_order_shipped(self, event: OrderShippedEvent) -> None:
@@ -1851,7 +1957,7 @@ class NotificationConsumer(EventConsumer):
 # 4. Wire in DI
 container = DIContainer()
 container.scan("varco_kafka", recursive=True)  # discovers the Kafka bus @Singletons
-container.install(NotificationConsumerModule)
+container.scan("myapp", recursive=True)  # discovers NotificationConsumer
 ```
 
 **Caveat**: If the handler can fail (e.g., email send timeout), add `retry_policy` and `dlq`:
@@ -2014,6 +2120,13 @@ filter logic as `InMemoryEventBus`.
 
 **Topic naming:** channel `"orders"` → topic `"prod.orders"` (with prefix `"prod."`).
 
+⚠️ **`KafkaEventBus`/`NatsEventBus` no longer start themselves at first DI resolution** (Plan 050
+/ §D-bus — the `@PostConstruct` marker was removed from both). `async with KafkaEventBus(config)
+as bus:` above still works unchanged (`__aenter__` calls `start()` explicitly); a container-wired
+app is started by the `BUS` phase (`CoreModule`, via `create_varco_app`); a hand-wired app that
+resolves the bus from a container and never calls `start()` must add one `await bus.start()` —
+`publish()` before `start()` now raises `RuntimeError` instead of silently working (or hanging).
+
 ---
 
 ### Redis backend (varco_redis)
@@ -2094,6 +2207,25 @@ class SAOutboxRepository(OutboxRepository):
 `varco_sa` and `varco_beanie` each ship a concrete `SAOutboxRepository` / `BeanieOutboxRepository` — use those and skip the manual implementation.
 
 ### OutboxRelay
+
+The recommended path is `ReliabilityModule` — it builds the relay for you, injecting the
+container's `Serializer[Event]` (a `bind_cloudevents_serializer()` swap reaches it with no
+`serializer=` to remember, Plan 050 / DI-10), and runs it at the `CONSUMERS` phase:
+
+```python
+from varco_fastapi.modules import ReliabilityModule
+from varco_core.reliability import ReliabilityPreset
+
+app = create_varco_app(
+    container,
+    modules=[*default_modules(), ReliabilityModule(ReliabilityPreset(outbox=True))],
+)
+```
+
+`ReliabilityPreset(outbox=True, serializer=JsonEventSerializer())` overrides the injected
+serializer explicitly, same as any other DI seam.
+
+By hand:
 
 ```python
 from varco_core.service.outbox import OutboxRelay
@@ -2254,6 +2386,12 @@ in `modules=` nothing is registered and nothing changes:
 | `off` (default) | nothing | migrations run out-of-band already |
 | `check` | fail startup if the schema is behind; never writes DDL | **the recommended production posture** |
 | `upgrade` | lock → apply pending revisions → release | single-instance, dev, PaaS without a pre-deploy hook |
+
+`SAModule(ensure_tables: bool = True)` (Plan 050 / DI-10) generically owns readiness for the SA
+*framework* tables (idempotency store, DLQ, job store, webhook subscriptions) at the `INFRA`
+phase — `checkfirst` DDL, distinct from Alembic-managed *application* tables above. Set
+`ensure_tables=False` when Alembic already owns every framework table this deployment uses; a
+redundant `checkfirst` create is otherwise harmless.
 
 Multi-pod exclusion is a Postgres advisory lock held open in its own transaction across
 Alembic's — released by `COMMIT` and by process death, so there is no TTL to size.
@@ -3198,7 +3336,25 @@ cfg = store.to_ssl_config()  # lossy in the other direction — see the feature 
 
 **Hot reload** — `ReloadingTrustStore` composes `varco_core.watch`/`varco_core.reload` (see
 ["File watching and hot reload"](#file-watching-and-hot-reload)) to pick up certificate rotation
-without a process restart:
+without a process restart. The recommended path is `TrustStoreModule` (Plan 050 / DI-10) — it
+owns the watcher's `start()`/`stop()` at the `INFRA` phase, before the bus or any consumer that
+might need TLS is up:
+
+```python
+from pathlib import Path
+from varco_core.tls import TrustStore, TrustStoreModule
+from varco_fastapi.modules import default_modules
+
+app = create_varco_app(
+    container,
+    modules=[
+        *default_modules(),
+        TrustStoreModule(spec=TrustStore(ca_folders=Path("/etc/ssl/private-ca"))),
+    ],
+)
+```
+
+By hand:
 
 ```python
 from varco_core.tls import ReloadingTrustStore, bind_trust_store
@@ -4160,7 +4316,9 @@ class OrderService(
         return ctx.sub  # override — base returns None
 
 
-# Wire the consumer from @PostConstruct, same rule as any other EventConsumer
+# AuditConsumer is hand-constructed and register_to()-ed here (not a scanned
+# @Singleton) — so it is NOT auto-registered by CoreModule (Plan 051 / DI-5,
+# §D-consumer); @PostConstruct remains the right tool for this one case.
 class AuditWiring:
     def __init__(self, bus: Inject[AbstractEventBus], audit_repo: Inject[SAAuditRepository]):
         self._bus = bus
@@ -4420,9 +4578,14 @@ reference: [technical_docs/settings-reference.md](technical_docs/settings-refere
 - a CloudEvents-serialized and a native-serialized event cannot share a channel mid-migration —
   roll out in three phases, and **drain any existing DLQ backlog first**, because nothing converts
   rows that were stored in the old format;
-- the binding reaches every bus (Kafka, NATS, both Redis shapes) and every `@Configuration`-wired
-  DLQ automatically. **`SADeadLetterQueue` and `OutboxRelay` are constructed by hand** — pass
-  `serializer=` explicitly there or they keep the `JsonEventSerializer` default.
+- the binding reaches every bus (Kafka, NATS, both Redis shapes), every `@Configuration`-wired
+  DLQ, and `OutboxRelay` (via `ReliabilityModule`) automatically (Plan 050 / DI-10) — a
+  `bind_cloudevents_serializer()` swap reaches all of them. `WebhookDispatcher` is unaffected —
+  it never held a `Serializer[Event]`; delivery is HTTP with its own signing scheme, not the bus's
+  wire format. The hand-constructed forms (`SADeadLetterQueue(serializer=...)`,
+  `OutboxRelay(serializer=...)`)
+  still take `serializer=` explicitly and still default to `JsonEventSerializer` — a DLQ backlog
+  stored before a swap is never converted; drain it first.
 
 Full design, the named Redis Streams `ce`-field convention, the three-phase dual-emit rollout and a
 Pitfalls table: `technical_docs/features/cloudevents-envelope.md`.
@@ -4474,6 +4637,24 @@ DLQ, and an admin surface — assembled from parts varco already ships (`RetryPo
 `AbstractDeadLetterQueue`, `DlqRedriver`, `FieldEncryptor`), no new reliability primitive and no
 new crypto path. Everything portable lives in `varco_core.webhook`; `varco_sa`/`varco_beanie`
 hold repositories; `varco_fastapi.webhook` holds only the admin mount.
+
+The recommended path is `WebhookModule` (Plan 050 / DI-10) — it registers the `@Fallback`
+in-memory repository (or your own via `repository=`), and wires `WebhookDispatcher` against
+whatever `WebhookSubscriptionRepository`/`WebhookSettings`/`AbstractDeadLetterQueue` end up bound,
+auto-registered to the bus at the `CONSUMERS` phase (051's auto-`register_to`):
+
+```python
+from varco_core.webhook import WebhookModule
+from varco_fastapi.modules import default_modules
+
+app = create_varco_app(container, modules=[*default_modules(), WebhookModule()])
+```
+
+`VARCO_WEBHOOK_BACKEND=sa`/`beanie` selects a durable repository instead of the in-memory
+default — the durable providers **require** a bound `FieldEncryptor` (`validate()` reports
+`MISSING_BINDING` otherwise, never a silent plaintext fallback).
+
+By hand:
 
 ```python
 from varco_core.webhook.base import InMemoryWebhookSubscriptionRepository
@@ -4541,7 +4722,10 @@ mount_webhook_admin(
 
 Secrets (`WebhookSubscription.active_secrets`) are encrypted at rest via the existing
 `FieldEncryptor` when a repository is constructed with `encryptor=` — ⚠️ `encryptor=None` (the
-default) stores plaintext, a dev/test-only escape hatch. Because delivery is at-least-once,
+default) stores plaintext, a dev/test-only escape hatch **only reachable by hand**: the DI path
+(`WebhookModule` selecting a durable backend) requires a bound `FieldEncryptor` and never
+constructs a repository with `encryptor=None` (Plan 050 / DI-10; the constructor-level refusal
+itself is Plan 056). Because delivery is at-least-once,
 point a varco-app receiver at plan 029's `Idempotency-Key` middleware for dedup on the stable
 `webhook-id`.
 
@@ -4609,6 +4793,23 @@ GitHub's multi-hour retry window) — every name, type, and default:
 Full design (the provider divergence table, why Standard Webhooks/Svix delegates to the shipped
 signer, the replay model, secret sourcing, the raw-body/body-limit story, a Pitfalls table):
 `technical_docs/features/inbound-webhooks.md`.
+
+**Adding a custom provider** (Plan 051 / DI-5, §D-verifier) — `register_webhook_verifier()`, not
+multi-binding: a `WebhookVerifier` is constructed per route with that route's own secrets, so
+there is no shared instance to collect.
+
+```python
+from varco_core.webhook.inbound import WebhookVerifier, get_verifier, register_webhook_verifier
+
+
+class ShopifyWebhookVerifier(WebhookVerifier):
+    provider = "shopify"
+    ...
+
+
+register_webhook_verifier("shopify", ShopifyWebhookVerifier)
+verifier = get_verifier("shopify", secrets=[shop_secret])
+```
 
 ---
 
@@ -4704,17 +4905,22 @@ declare *"prune dead letters older than 30 days at 03:00 Europe/Rome"* once, and
 and runs it with the same DST-safe cron semantics and `AbstractJobRunner`. **Nothing is scheduled
 and nothing is deleted by default.**
 
+`RetentionPolicy` is a `@Multibound` collection seam (Plan 051 / DI-5) — contribute one with
+`contribute()` or a scanned `@Singleton`/`@Provider`; `RetentionModule` builds the registry itself
+from every contributed policy:
+
 ```python
 from datetime import timedelta
 
-from varco_core.retention.di import bind_retention_registry
-from varco_core.retention.policy import RetentionPolicy, RetentionRegistry
+from varco_core.di.collect import contribute
+from varco_core.retention.policy import RetentionPolicy
 from varco_core.retention.targets import AuditRetentionTarget, DlqRetentionTarget
 from varco_fastapi.app import create_varco_app
 from varco_fastapi.modules import RetentionModule, default_modules
 
-registry = RetentionRegistry()
-registry.register(
+contribute(
+    container,
+    RetentionPolicy,
     RetentionPolicy(
         name="nightly-dlq",
         target=DlqRetentionTarget(dlq=my_dlq, acknowledge_dead_letter_deletion=True),
@@ -4722,9 +4928,11 @@ registry.register(
         timezone="Europe/Rome",
         dry_run=True,                  # preview first — would_delete, deletes nothing
         older_than=timedelta(days=30),
-    )
+    ),
 )
-registry.register(
+contribute(
+    container,
+    RetentionPolicy,
     RetentionPolicy(
         name="audit-1y",
         target=AuditRetentionTarget(repo=my_audit_repo),
@@ -4732,15 +4940,19 @@ registry.register(
         timezone="UTC",
         dry_run=False,
         older_than=timedelta(days=365),
-    )
+    ),
 )
 
-bind_retention_registry(container, registry)
 app = create_varco_app(
     container,
-    modules=[*default_modules(), RetentionModule(registry, interval=300.0)],
+    modules=[*default_modules(), RetentionModule(interval=300.0)],
 )
 ```
+
+A third-party package contributes its own policy with no framework edit at all — e.g. a
+`@Configuration` whose `@Provider def policy(self, dlq: Inject[AbstractDeadLetterQueue]) ->
+RetentionPolicy: ...` method has its target's repository *injected* — see "Contributing from your
+own package" below.
 
 | Target | Wraps | Cutoff? | Preview? |
 |---|---|---|---|
@@ -5030,15 +5242,33 @@ app = create_varco_app(container)  # SecurityPostureModule runs the default five
 ```
 
 Turn it off with `VARCO_SECURITY_POSTURE_ENABLED=false`, or drop it from the module list:
-`default_modules(exclude=(SecurityPostureModule,))`. Pass a hand-built collector list to replace
-the default five (the pre-049 `SecurityPostureLifecycle(collectors=[...])` shape still works,
-now as a constructor argument on the module):
+`default_modules(exclude=(SecurityPostureModule,))`.
+
+`PostureCollector` is a `@Multibound` collection seam (Plan 051 / DI-5) — `SecurityPostureModule`
+contributes the five built-in collectors itself (`HttpEdgeCollector`, `LocalPostureCollector`,
+`AuthPostureCollector`, `TenantPostureCollector`, `DataPostureCollector`); add your own with a
+plain `@Singleton` subclass:
 
 ```python
-from functools import partial
+from providify import Singleton
+from varco_core.posture import PostureCollector, PostureFinding, PostureSeverity
 
+
+@Singleton
+class MyPostureCollector(PostureCollector):
+    name = "my_check"
+
+    def collect(self) -> list[PostureFinding]:
+        return [PostureFinding(check="my.check", severity=PostureSeverity.INFO, ...)]
+```
+
+`container.scan("myapp", recursive=True)` is all it takes — no framework edit. Pass
+`collectors=[...]` to `SecurityPostureModule` to replace the built-in five entirely (still
+accepts `PostureCollector` instances or the pre-051 zero-argument callable shape):
+
+```python
 from varco_fastapi.modules import SecurityPostureModule, default_modules
-from varco_fastapi.posture import SecurityPostureSettings, _collect_http, _collect_local
+from varco_fastapi.posture import HttpEdgeCollector, SecurityPostureSettings
 
 app = create_varco_app(
     container,
@@ -5046,12 +5276,7 @@ app = create_varco_app(
         *default_modules(exclude=(SecurityPostureModule,)),
         SecurityPostureModule(
             settings=SecurityPostureSettings(),  # reads VARCO_SECURITY_*
-            collectors=[
-                partial(_collect_http, app=app),
-                partial(_collect_local, container=container, webhook_repository=webhook_repo),
-                # ... _collect_tenant / _collect_auth / _collect_data, each importing its
-                # sibling's inspector inside the function body — see the feature doc
-            ],
+            collectors=[HttpEdgeCollector(app=app), MyPostureCollector()],
         ),
     ],
 )

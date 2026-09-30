@@ -49,14 +49,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from providify import Configuration, Fallback, Provider
+from providify import Configuration, Fallback, Inject, Provider, Requires
 from varco_core.di import BACKEND_PRIORITY
 from varco_core.di.select import selected_by
+from varco_core.encryption import FieldEncryptor
 from varco_core.idempotency.base import AbstractIdempotencyStore
 from varco_core.job.base import AbstractJobStore
 from varco_core.model import DomainModel
 from varco_core.providers import RepositoryProvider
 from varco_core.repository import AsyncRepository
+from varco_core.webhook.base import WebhookSubscriptionRepository
 
 # Re-export BeanieSettings from config so existing imports of
 # ``from varco_beanie.di import BeanieSettings`` keep working.
@@ -134,6 +136,52 @@ class BeanieConfiguration:
         from varco_beanie.job_store import BeanieJobStore  # noqa: PLC0415
 
         return BeanieJobStore()
+
+    @Fallback
+    @Requires(env="VARCO_WEBHOOK_BACKEND", value="beanie")
+    @Provider(singleton=True, priority=BACKEND_PRIORITY)
+    def webhook_repository(
+        self,
+        settings: Inject[BeanieSettings],
+        encryptor: Inject[FieldEncryptor],
+    ) -> WebhookSubscriptionRepository:
+        """
+        Plan 050 / §D-wire row 4-5 — live only when ``VARCO_WEBHOOK_BACKEND=beanie``.
+
+        Unlike ``idempotency_store``/``job_store`` above (which assume the
+        app's own ``init_beanie()`` already registered their document), the
+        webhook repository is a standalone resource with its own
+        ``start()``/``stop()`` lifecycle (same shape as
+        ``SAWebhookSubscriptionRepository``) — it reuses the app's own
+        ``BeanieSettings.mongo_client``/``db_name`` (via the additive
+        ``client=`` kwarg) rather than opening a second Motor client.
+
+        ``encryptor`` is **required, no default** — same reasoning as
+        ``varco_sa.di.SAConfiguration.webhook_repository``'s docstring.
+
+        DESIGN: gate via ``@Requires(env=...)`` directly, not ``selected_by()``
+            Same rationale as the SA-side twin — ``webhook_repository`` is
+            not one of Plan 047's six registered seams
+            (``varco_core.di.seams.SEAMS``), and adding a seventh would
+            revisit ``test_seams_has_exactly_the_six_named_seams``'s pinned
+            invariant, out of this plan's scope.
+
+        Args:
+            settings: The app's bound ``BeanieSettings`` — ``.mongo_client``/
+                ``.db_name`` are reused.
+            encryptor: The app's bound ``FieldEncryptor`` — required.
+
+        Returns:
+            A ``BeanieWebhookSubscriptionRepository(client=settings.mongo_client,
+            db_name=settings.db_name, encryptor=encryptor)``.
+        """
+        from varco_beanie.webhook import BeanieWebhookSubscriptionRepository  # noqa: PLC0415
+
+        return BeanieWebhookSubscriptionRepository(
+            client=settings.mongo_client,
+            db_name=settings.db_name,
+            encryptor=encryptor,
+        )
 
 
 # ── Per-entity repository binding helper ──────────────────────────────────────

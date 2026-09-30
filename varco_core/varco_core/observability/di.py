@@ -118,7 +118,7 @@ from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from providify import Configuration, Fallback, Inject, Provider
+from providify import Configuration, Disposes, Fallback, Inject, Provider
 
 from varco_core.observability.attributes import (
     GlobalAttributes,
@@ -424,6 +424,47 @@ class OtelConfiguration:
         # this provider via metrics.get_meter() without a direct reference.
         otel_metrics.set_meter_provider(provider)
         return provider
+
+    @Disposes(TracerProvider)
+    def shutdown_tracer_provider(self, provider: TracerProvider) -> None:
+        """
+        Flush and shut down the ``TracerProvider`` produced by
+        ``tracer_provider`` on ``container.ashutdown()`` (Plan 050 /
+        §D-disposes row 10).
+
+        DESIGN: ``@Disposes`` over ``@PreDestroy`` (same as
+        ``varco_redis/dlq.py``'s ``close_dlq``)
+            ✅ providify never consults a ``@PreDestroy`` marker on a
+               ``@Provider``-produced instance (Jakarta CDI producer rule) —
+               ``@Disposes`` is the only reachable teardown hook.
+            ✅ Without this, the last batch of spans buffered by the
+               ``BatchSpanProcessor`` is silently dropped at shutdown — the
+               bug this row closes.
+            ❌ One more disposer to keep idempotent — ``shutdown()`` on the
+               OTel SDK's own ``TracerProvider`` already is.
+
+        Args:
+            provider: The ``TracerProvider`` instance this configuration
+                produced.
+
+        Async safety: sync — the SDK's own ``shutdown()`` is sync.
+        """
+        provider.shutdown()
+
+    @Disposes(MeterProvider)
+    def shutdown_meter_provider(self, provider: MeterProvider) -> None:
+        """
+        Flush and shut down the ``MeterProvider`` produced by
+        ``meter_provider`` on ``container.ashutdown()`` (Plan 050 /
+        §D-disposes row 11) — same reasoning as ``shutdown_tracer_provider``.
+
+        Args:
+            provider: The ``MeterProvider`` instance this configuration
+                produced.
+
+        Async safety: sync — the SDK's own ``shutdown()`` is sync.
+        """
+        provider.shutdown()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from varco_core.di.lifecycle import Phase
 from varco_core.di.module import CoreModule, VarcoModule
 
 if TYPE_CHECKING:
@@ -19,6 +20,7 @@ class NatsModule(VarcoModule):
     """Registers ``varco_nats``'s ``@Fallback`` defaults (``bootstrap()``)."""
 
     name = "nats"
+    phase = Phase.INFRA
     depends_on = (CoreModule,)
 
     def _register(self, container: DIContainer) -> None:

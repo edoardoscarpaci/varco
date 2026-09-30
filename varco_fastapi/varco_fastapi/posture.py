@@ -30,60 +30,34 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from enum import StrEnum
 from typing import Any
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import SettingsConfigDict
 from varco_core.config import VarcoSettings
 
+# Plan 051 / DI-5, §D-posture: PostureFinding/PostureSeverity/PostureCollector
+# moved to varco_core.posture (a plugin outside varco_fastapi can now
+# subclass PostureCollector with no varco_fastapi import). Re-exported here,
+# identity-preserving, so every pre-051 `from varco_fastapi.posture import
+# PostureFinding` import site keeps working.
+from varco_core.posture import PostureCollector, PostureFinding, PostureSeverity
+
 _logger = logging.getLogger(__name__)
 
 __all__ = [
     "PostureSeverity",
     "PostureFinding",
+    "PostureCollector",
     "SecurityPosture",
     "SecurityPostureSettings",
     "SecurityPostureLifecycle",
+    "HttpEdgeCollector",
+    "LocalPostureCollector",
+    "AuthPostureCollector",
+    "TenantPostureCollector",
+    "DataPostureCollector",
 ]
-
-
-class PostureSeverity(StrEnum):
-    """
-    The four-value severity ladder (§D-S9-degrade). ``NOT_ASSESSED`` is a
-    severity, not an absence — a collector that could not run must never
-    render as a clean report.
-    """
-
-    INFO = "info"
-    WARN = "warn"
-    HIGH = "high"
-    NOT_ASSESSED = "not_assessed"
-
-
-@dataclass(frozen=True)
-class PostureFinding:
-    """
-    One reported fact.
-
-    Args:
-        check: Stable id — the contract operators suppress on
-            (`VARCO_SECURITY_SUPPRESS`). Never renamed once shipped.
-        severity: Current severity, post environment-demotion and
-            suppression-demotion (§D-S9-oq1, §D-S9-suppress).
-        detail: What was observed. **Never** a raw exception string — see
-            `_wrap_collector`.
-        remediation: The exact env var / kwarg / role that fixes it.
-        suppressed: ``True`` when `check` appears in
-            `SecurityPostureSettings.suppress` — the finding is still
-            produced (never removed), only demoted and marked.
-    """
-
-    check: str
-    severity: PostureSeverity
-    detail: str
-    remediation: str
-    suppressed: bool = False
 
 
 @dataclass(frozen=True)
@@ -281,10 +255,15 @@ class SecurityPostureLifecycle:
     `await`ed directly (e.g. in a test).
 
     Args:
-        collectors: Zero-argument callables, each returning a list of
-            `PostureFinding`. Every collector is wrapped via
-            `_wrap_collector` before it runs — a raising collector never
-            takes the others down with it.
+        collectors: A mix of `varco_core.posture.PostureCollector` instances
+            and/or zero-argument callables, each returning a list of
+            `PostureFinding` (Plan 051 / DI-5, §D-posture — both shapes are
+            accepted so pre-051 hand-wired callables keep working). Every
+            collector is wrapped via `_wrap_collector` before it runs — a
+            raising collector never takes the others down with it. Two
+            collectors sharing one `name` produce a
+            `posture.duplicate_collector` `WARN` finding rather than a crash
+            — both still run.
         settings: `SecurityPostureSettings`. Defaults to
             `SecurityPostureSettings()` (reads `VARCO_SECURITY_*`).
 
@@ -299,7 +278,7 @@ class SecurityPostureLifecycle:
     def __init__(
         self,
         *,
-        collectors: Sequence[Callable[[], list[PostureFinding]]],
+        collectors: Sequence[PostureCollector | Callable[[], list[PostureFinding]]],
         settings: SecurityPostureSettings | None = None,
     ) -> None:
         self._collectors = list(collectors)
@@ -333,10 +312,31 @@ class SecurityPostureLifecycle:
         matched_suppressions: set[str] = set()
 
         raw_findings: list[PostureFinding] = []
+        seen_names: dict[str, int] = {}
         for collector in self._collectors:
-            name = getattr(collector, "__name__", repr(collector))
-            wrapped = _wrap_collector(collector, name=name)
+            if isinstance(collector, PostureCollector):
+                name = collector.name
+                fn: Callable[[], list[PostureFinding]] = collector.collect
+            else:
+                name = getattr(collector, "__name__", repr(collector))
+                fn = collector
+            seen_names[name] = seen_names.get(name, 0) + 1
+            wrapped = _wrap_collector(fn, name=name)
             raw_findings.extend(wrapped())
+
+        # Two collectors sharing one `name` (§D-immutable — dedup at
+        # registration is providify's job; this is varco's own "name
+        # collision" report) — one WARN finding, both collectors still ran.
+        for name, count in seen_names.items():
+            if count > 1:
+                raw_findings.append(
+                    PostureFinding(
+                        check="posture.duplicate_collector",
+                        severity=PostureSeverity.WARN,
+                        detail=f"{count} posture collectors share the name {name!r}.",
+                        remediation="Give each PostureCollector a unique `name`.",
+                    )
+                )
 
         # Unknown suppression ids are a typo that silently suppresses
         # nothing — surfaced rather than swallowed (§D-S9-suppress).
@@ -484,6 +484,14 @@ def _tenant_finding_for_token(token: str) -> PostureFinding:
             "No delegation policy is bound — act-as delegation (RFC 8693) is not in use.",
             "Bind a DelegationPolicy (varco_core.auth.delegation) if your "
             "deployment needs service-to-service delegation.",
+        ),
+        "tenant.third_party_source_high_trust": (
+            PostureSeverity.INFO,
+            "A non-built-in TenantSource in the active chain declares HIGH or higher "
+            "trust — a plugin can elevate itself into the identity chain by claiming "
+            "trust (this may be legitimate, e.g. an mTLS-derived source).",
+            "Confirm the third-party TenantSource's trust level is deliberate "
+            "(Plan 051 / DI-5, §D-tenant).",
         ),
     }
     severity, detail, remediation = table.get(
@@ -839,3 +847,114 @@ def _collect_di(container: Any) -> list[PostureFinding]:
             )
         )
     return findings
+
+
+# ── §D-posture — the five collectors as PostureCollector contributions ──────
+#
+# Plan 051 / DI-5: each class is a thin PostureCollector wrapper over the
+# corresponding `_collect_*` function above — the function bodies are left
+# untouched (the byte-identical-findings promise this plan and 057 both
+# make); the class only owns construction (storing the old function's
+# keyword arguments as instance attributes) so it can be a `@Multibound`
+# contribution instead of a `functools.partial` in a hand-built list.
+# `SecurityPostureModule.configure_app()` is what actually calls
+# `contribute()` for each of these (varco_fastapi/modules/lifecycle.py).
+
+
+class HttpEdgeCollector(PostureCollector):
+    """`PostureCollector` wrapper over `_collect_http` (§D-posture)."""
+
+    name = "http_edge"
+
+    def __init__(self, *, app: Any | None = None) -> None:
+        self._app = app
+
+    def collect(self) -> list[PostureFinding]:
+        return _collect_http(app=self._app)
+
+
+class LocalPostureCollector(PostureCollector):
+    """`PostureCollector` wrapper over `_collect_local` (§D-posture)."""
+
+    name = "local"
+
+    def __init__(
+        self,
+        *,
+        container: Any | None = None,
+        webhook_mounted_unauthenticated: bool = False,
+        reliability_mounted_unauthenticated: bool = False,
+        tenant_admin_mounted: bool = False,
+        webhook_repository: Any | None = None,
+        webhook_dispatcher: Any | None = None,
+    ) -> None:
+        self._container = container
+        self._webhook_mounted_unauthenticated = webhook_mounted_unauthenticated
+        self._reliability_mounted_unauthenticated = reliability_mounted_unauthenticated
+        self._tenant_admin_mounted = tenant_admin_mounted
+        self._webhook_repository = webhook_repository
+        self._webhook_dispatcher = webhook_dispatcher
+
+    def collect(self) -> list[PostureFinding]:
+        return _collect_local(
+            container=self._container,
+            webhook_mounted_unauthenticated=self._webhook_mounted_unauthenticated,
+            reliability_mounted_unauthenticated=self._reliability_mounted_unauthenticated,
+            tenant_admin_mounted=self._tenant_admin_mounted,
+            webhook_repository=self._webhook_repository,
+            webhook_dispatcher=self._webhook_dispatcher,
+        )
+
+
+class AuthPostureCollector(PostureCollector):
+    """`PostureCollector` wrapper over `_collect_auth` (§D-posture)."""
+
+    name = "auth"
+
+    def __init__(
+        self,
+        *,
+        auth: Any | None = None,
+        registry: Any | None = None,
+        store: Any | None = None,
+    ) -> None:
+        self._auth = auth
+        self._registry = registry
+        self._store = store
+
+    def collect(self) -> list[PostureFinding]:
+        return _collect_auth(auth=self._auth, registry=self._registry, store=self._store)
+
+
+class TenantPostureCollector(PostureCollector):
+    """`PostureCollector` wrapper over `_collect_tenant` (§D-posture)."""
+
+    name = "tenant"
+
+    def __init__(
+        self,
+        *,
+        chain: Any | None = None,
+        membership: Any | None = None,
+        delegation: Any | None = None,
+    ) -> None:
+        self._chain = chain
+        self._membership = membership
+        self._delegation = delegation
+
+    def collect(self) -> list[PostureFinding]:
+        return _collect_tenant(
+            chain=self._chain, membership=self._membership, delegation=self._delegation
+        )
+
+
+class DataPostureCollector(PostureCollector):
+    """`PostureCollector` wrapper over `_collect_data` (§D-posture)."""
+
+    name = "data"
+
+    def __init__(self, *, rls_posture: Any | None = None) -> None:
+        self._rls_posture = rls_posture
+
+    def collect(self) -> list[PostureFinding]:
+        return _collect_data(rls_posture=self._rls_posture)

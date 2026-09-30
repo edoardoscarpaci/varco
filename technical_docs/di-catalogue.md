@@ -112,6 +112,8 @@ providify: `2.1.0` · packages: varco_casbin, varco_core, varco_fastapi, varco_k
 | `varco_core.tenancy.settings:TenantProvenanceSettings` | `varco.settings:TenantProvenanceSettings[None]` | varco_core | production-safe |
 | `varco_core.tls.settings:TlsSettings` | `varco.settings:TlsSettings[None]` | varco_core | production-safe |
 | `varco_core.tz.settings:TimezoneSettings` | `varco.settings:TimezoneSettings[None]` | varco_core | production-safe |
+| `varco_core.webhook.base:WebhookSubscriptionRepository` | `BeanieConfiguration.webhook_repository` | varco_core | production-safe |
+| `varco_core.webhook.base:WebhookSubscriptionRepository` | `SAConfiguration.webhook_repository` | varco_core | production-safe |
 | `varco_core.webhook.settings:WebhookSettings` | `varco.settings:WebhookSettings[None]` | varco_core | production-safe |
 | `varco_fastapi.auth.trust_store:TrustStore` | `VarcoFastAPIConfiguration.trust_store` | varco_fastapi | production-safe |
 | `varco_fastapi.client.base:ClientProfile` | `VarcoFastAPIConfiguration.client_profile` | varco_fastapi | production-safe |

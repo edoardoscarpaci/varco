@@ -102,7 +102,7 @@ from typing import Annotated, Any
 from nats import connect
 from nats.js.api import ConsumerConfig
 from nats.js.errors import NotFoundError
-from providify import Fallback, Inject, InjectMeta, Instance, PostConstruct, PreDestroy, Singleton
+from providify import Fallback, Inject, InjectMeta, Instance, PreDestroy, Singleton
 from varco_core.di import BACKEND_PRIORITY
 from varco_core.di.select import selected_by
 from varco_core.event.base import (
@@ -232,13 +232,16 @@ class NatsEventBus(AbstractEventBus):
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
-    @PostConstruct
     async def start(self) -> None:
         """
         Connect to NATS, ensure the JetStream stream, and open consumers.
 
         Must be called before ``publish()``.  Idempotent — calling ``start()``
         twice on an already-started bus is a no-op.
+
+        Started by the ``BUS`` phase — ``CoreModule`` — or by an explicit
+        ``await bus.start()`` in a hand-wired app (Plan 050 / §D-bus): no
+        ``@PostConstruct`` marker any more.
 
         Raises:
             NoServersError:   (nats-py) If no configured server is reachable.

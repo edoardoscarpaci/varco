@@ -9,18 +9,16 @@ notifications.
 
 Lifecycle integration
 ---------------------
-``PostEventConsumer`` now satisfies ``AbstractLifecycle`` via the
-``start()`` / ``stop()`` methods added to ``EventConsumer`` (GAP #3 fix).
-Register it with ``VarcoLifespan`` so subscriptions are created at startup
-and cancelled cleanly at shutdown::
+Plan 051 / DI-5, §D-consumer: ``PostEventConsumer`` is a ``@Singleton``
+``EventConsumer`` bound in the container — ``CoreModule.start()`` discovers
+and registers it to the app's ``AbstractEventBus`` automatically, once the
+bus has started, and stops it (reverse order) before the bus stops.
+``PostAppModule`` no longer overrides ``start()``/``stop()`` for this.
 
-    lifespan.register(bus)          # started first — must be up before consumers
-    lifespan.register(consumer)     # started second — registers handlers
-    ...
-    # Shutdown: consumer.stop() → bus.stop() (LIFO)
-
-The ``self._bus`` attribute must be set in ``__init__`` (via DI injection)
-for ``start()`` to know which bus to register to.
+The ``self._bus`` attribute assignment below is now optional — kept here
+only because it is harmless and documents which bus this consumer would use
+if it were ever passed to ``LifecycleModule``/``VarcoLifespan.register()``
+by hand instead of relying on ``CoreModule``'s auto-discovery.
 
 Retry and DLQ
 -------------
@@ -91,12 +89,10 @@ class PostEventConsumer(EventConsumer):
     All ``@listen`` handlers retry up to 3 times on transient failure.
     Exhausted events are routed to ``_dlq`` for manual inspection.
 
-    **Lifecycle** — when using ``VarcoLifespan``, register this consumer
-    AFTER the bus so subscriptions are created in the correct startup order
-    and cancelled before the bus shuts down::
-
-        lifespan.register(bus)
-        lifespan.register(consumer)  # self._bus must be set in __init__
+    **Lifecycle** — ``CoreModule.start()`` auto-registers this consumer to
+    the app's ``AbstractEventBus`` once the bus has started, and
+    ``CoreModule.stop()`` stops it (reverse order) before the bus stops
+    (§D-consumer). No manual ``lifespan.register(consumer)`` call is needed.
 
     **Standalone usage** (tests, scripts) — call ``register_to(bus)`` directly
     and manage subscription cancellation yourself.
@@ -115,17 +111,16 @@ class PostEventConsumer(EventConsumer):
     def __init__(self, bus: Inject[AbstractEventBus]) -> None:
         """
         Args:
-            bus: The event bus injected by the DI container.
-                 Stored as ``self._bus`` so ``EventConsumer.start()`` can
-                 call ``register_to(bus)`` during the lifespan startup phase.
+            bus: The event bus injected by the DI container. Stored as
+                 ``self._bus`` — optional (§D-consumer), kept for the
+                 hand-passed-lifecycle escape hatch only; ``CoreModule``'s
+                 auto-registration does not read it.
 
         Edge cases:
             - DI injects ``AbstractEventBus`` — the concrete implementation
               (Redis, Kafka, In-Memory) is determined by which bus module
               is installed.  The consumer is bus-agnostic.
         """
-        # Store on self so EventConsumer.start() can call register_to(self._bus).
-        # This is the required convention for VarcoLifespan integration.
         self._bus = bus
 
     @listen(

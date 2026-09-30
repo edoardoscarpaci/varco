@@ -84,12 +84,17 @@ Async safety:   ✅ ``async_init``/``start``/``stop`` are ``async def``;
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, final
+from functools import partial
+from typing import TYPE_CHECKING, Any, final
+
+from varco_core.di.lifecycle import Phase
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from providify import DIContainer
+
+    from varco_core.di.lifecycle import LifecycleComponent
 
 
 class ModuleCycleError(RuntimeError):
@@ -266,6 +271,15 @@ class VarcoModule(ABC):
     #: ``LifecycleModule``/``MiddlewareModule`` adapter shape).
     depends_on: tuple[type[VarcoModule], ...] = ()
 
+    #: The coarse, anonymous start-order bucket (Plan 050 / §D-phase) — see
+    #: ``varco_core.di.lifecycle.Phase``. Defaults to ``CONSUMERS``, the
+    #: right default for a typical app module (a consumer, a relay); a
+    #: module that opens a store/pool other modules depend on must declare
+    #: ``INFRA`` explicitly. Plain class attribute, not ``ClassVar`` — same
+    #: reason as ``depends_on`` above (``LifecycleModule`` shadows it with an
+    #: instance attribute).
+    phase: int = Phase.CONSUMERS
+
     def __init__(self, *, enabled: bool | None = None) -> None:
         self._enabled_kwarg = enabled
 
@@ -414,6 +428,37 @@ class VarcoModule(ABC):
         Async safety: May perform I/O.
         """
 
+    def components(self, container: DIContainer) -> Sequence[LifecycleComponent]:
+        """
+        The phased lifecycle units this module contributes (Plan 050 /
+        §D-components). Default: one component named/phased like the
+        module itself, whose ``start``/``stop`` delegate to
+        ``self.start(container)``/``self.stop(container)``.
+
+        Override when one module's lifecycle spans several phases —
+        ``CoreModule`` is the in-tree example (stores/INFRA, bus/BUS,
+        consumers/CONSUMERS, job_runner/SCHEDULERS).
+
+        Args:
+            container: The ``DIContainer`` this module was registered on.
+
+        Returns:
+            A sequence of ``LifecycleComponent``. May be empty for a
+            module with no lifecycle (e.g. a middleware-only module) — it
+            is still visible to 052's ``varco diagnose`` via
+            ``ModuleRegistry``, just contributes nothing to the runner.
+        """
+        from varco_core.di.lifecycle import LifecycleComponent  # noqa: PLC0415
+
+        return [
+            LifecycleComponent(
+                name=self.name,
+                phase=self.phase,
+                start=partial(self.start, container),
+                stop=partial(self.stop, container),
+            )
+        ]
+
     def is_enabled(self, container: DIContainer) -> bool:
         """
         Resolve the Plan 047 tri-state for this module.
@@ -548,6 +593,16 @@ class CoreModule(VarcoModule):
     """
 
     name = "core"
+    #: For the record — ``components()`` below is what the runner actually
+    #: sequences (its four components span INFRA/BUS/CONSUMERS/SCHEDULERS
+    #: individually); this class-level value only matters for a caller that
+    #: reads ``CoreModule.phase`` directly (e.g. ``depends_on`` ordering
+    #: against a module that has no lifecycle of its own).
+    phase = Phase.INFRA
+
+    def __init__(self, *, enabled: bool | None = None) -> None:
+        super().__init__(enabled=enabled)
+        self._consumers: tuple[Any, ...] = ()
 
     def _register(self, container: DIContainer) -> None:
         from varco_core.di import bootstrap  # noqa: PLC0415
@@ -556,10 +611,143 @@ class CoreModule(VarcoModule):
         bootstrap(container)
         bind_core_settings(container)
 
+    def validate(self, container: DIContainer) -> Sequence[str]:
+        """
+        Flag any bound ``EventConsumer`` that is not ``Scope.SINGLETON``
+        (§D-consumer) — a non-singleton consumer would leak a fresh,
+        never-``stop()``-able subscription set every time it is resolved.
+        """
+        from providify import Scope  # noqa: PLC0415
+
+        from varco_core.event.consumer import EventConsumer  # noqa: PLC0415
+
+        problems: list[str] = []
+        for binding in container.get_all_bindings(EventConsumer):
+            interface = getattr(binding, "interface", None)
+            scope = getattr(binding, "scope", None)
+            if scope is not None and scope is not Scope.SINGLETON:
+                name = getattr(interface, "__name__", repr(interface))
+                problems.append(
+                    f"{name} is an EventConsumer bound at scope {scope!r}, not singleton — "
+                    f"make it @Singleton or set auto_register = False."
+                )
+        return problems
+
     async def start(self, container: DIContainer) -> None:
         """
-        Start the resolved ``AbstractEventBus``/``AbstractJobRunner``, if
-        any.
+        Kept for a hand-wired caller that invokes ``CoreModule`` directly
+        (never through ``components()``/``LifecycleRunner``) — runs every
+        phase's body in the pre-050 single-call order: stores, bus +
+        consumers, job runner.
+
+        Prefer ``components()`` (used by ``create_varco_app``/
+        ``phased_components``), which sequences these four bodies at their
+        own ``INFRA``/``BUS``/``CONSUMERS``/``SCHEDULERS`` phases instead.
+        """
+        await self._start_stores(container)
+        await self._start_bus(container)
+        await self._start_consumers(container)
+        await self._start_job_runner(container)
+
+    async def stop(self, container: DIContainer) -> None:
+        """The exact reverse of ``start()`` — see its docstring."""
+        await self._stop_job_runner(container)
+        await self._stop_consumers(container)
+        await self._stop_bus(container)
+        await self._stop_stores(container)
+
+    def components(self, container: DIContainer) -> Sequence[LifecycleComponent]:
+        """
+        Four phased components (§D-components): ``core.stores`` (``INFRA``),
+        ``core.bus`` (``BUS``), ``core.consumers`` (``CONSUMERS``),
+        ``core.job_runner`` (``SCHEDULERS``) — replacing the single-call
+        ``start()``/``stop()`` body ``LifecycleRunner`` actually sequences.
+        """
+        from varco_core.di.lifecycle import LifecycleComponent  # noqa: PLC0415
+
+        return [
+            LifecycleComponent(
+                name="core.stores",
+                phase=Phase.INFRA,
+                start=partial(self._start_stores, container),
+                stop=partial(self._stop_stores, container),
+            ),
+            LifecycleComponent(
+                name="core.bus",
+                phase=Phase.BUS,
+                start=partial(self._start_bus, container),
+                stop=partial(self._stop_bus, container),
+            ),
+            LifecycleComponent(
+                name="core.consumers",
+                phase=Phase.CONSUMERS,
+                start=partial(self._start_consumers, container),
+                stop=partial(self._stop_consumers, container),
+            ),
+            LifecycleComponent(
+                name="core.job_runner",
+                phase=Phase.SCHEDULERS,
+                start=partial(self._start_job_runner, container),
+                stop=partial(self._stop_job_runner, container),
+            ),
+        ]
+
+    async def _start_stores(self, container: DIContainer) -> None:
+        """
+        Start every resolvable core store/cache seam that exposes
+        ``start()`` — the generalised "seam's owner starts what resolves"
+        rule 049 §D-core stated for the bus, at ``INFRA`` (§D-components).
+
+        Duck-typed: most backends (e.g. ``InMemoryIdempotencyStore``) have
+        no ``start()`` at all and are silently skipped.
+        """
+        from varco_core.cache.base import CacheBackend  # noqa: PLC0415
+        from varco_core.event.dlq import AbstractDeadLetterQueue  # noqa: PLC0415
+        from varco_core.idempotency.base import AbstractIdempotencyStore  # noqa: PLC0415
+        from varco_core.job.base import AbstractJobStore  # noqa: PLC0415
+        from varco_core.revocation.base import AbstractTokenRevocationStore  # noqa: PLC0415
+
+        for seam in (
+            AbstractIdempotencyStore,
+            AbstractDeadLetterQueue,
+            AbstractJobStore,
+            AbstractTokenRevocationStore,
+            CacheBackend,
+        ):
+            if not container.is_resolvable(seam):
+                continue
+            obj: Any = await container.aget(seam)
+            start = getattr(obj, "start", None)
+            if callable(start):
+                await start()
+
+    async def _stop_stores(self, container: DIContainer) -> None:
+        """The exact reverse of ``_start_stores`` — see its docstring."""
+        from varco_core.cache.base import CacheBackend  # noqa: PLC0415
+        from varco_core.event.dlq import AbstractDeadLetterQueue  # noqa: PLC0415
+        from varco_core.idempotency.base import AbstractIdempotencyStore  # noqa: PLC0415
+        from varco_core.job.base import AbstractJobStore  # noqa: PLC0415
+        from varco_core.revocation.base import AbstractTokenRevocationStore  # noqa: PLC0415
+
+        for seam in (
+            CacheBackend,
+            AbstractTokenRevocationStore,
+            AbstractJobStore,
+            AbstractDeadLetterQueue,
+            AbstractIdempotencyStore,
+        ):
+            if not container.is_resolvable(seam):
+                continue
+            obj: Any = await container.aget(seam)
+            stop = getattr(obj, "stop", None)
+            if callable(stop):
+                await stop()
+
+    async def _start_bus(self, container: DIContainer) -> None:
+        """
+        Start the resolved ``AbstractEventBus``, if any (§D-bus — the
+        ``BUS`` phase is now the one starter for every bus, not just
+        Redis's).
 
         Edge cases:
             ``AbstractEventBus`` itself declares no ``start``/``stop`` —
@@ -571,31 +759,63 @@ class CoreModule(VarcoModule):
             silent no-op instead of an ``AttributeError``.
         """
         from varco_core.event.base import AbstractEventBus  # noqa: PLC0415
-        from varco_core.job.base import AbstractJobRunner  # noqa: PLC0415
 
         if container.is_resolvable(AbstractEventBus):
             bus: AbstractEventBus = await container.aget(AbstractEventBus)
             start = getattr(bus, "start", None)
             if callable(start):
                 await start()
-        if container.is_resolvable(AbstractJobRunner):
-            runner: AbstractJobRunner = await container.aget(AbstractJobRunner)
-            await runner.start()
 
-    async def stop(self, container: DIContainer) -> None:
-        """Stop the job runner, then the bus — the reverse of ``start()``
-        (same duck-typing as ``start()`` — see its Edge cases)."""
+    async def _stop_bus(self, container: DIContainer) -> None:
+        """The exact reverse of ``_start_bus`` — see its docstring."""
         from varco_core.event.base import AbstractEventBus  # noqa: PLC0415
-        from varco_core.job.base import AbstractJobRunner  # noqa: PLC0415
 
-        if container.is_resolvable(AbstractJobRunner):
-            runner: AbstractJobRunner = await container.aget(AbstractJobRunner)
-            await runner.stop()
         if container.is_resolvable(AbstractEventBus):
             bus: AbstractEventBus = await container.aget(AbstractEventBus)
             stop = getattr(bus, "stop", None)
             if callable(stop):
                 await stop()
+
+    async def _start_consumers(self, container: DIContainer) -> None:
+        """
+        Auto-register every ``@Singleton``/``@Multibound`` ``EventConsumer``
+        contribution to the (already-started, by phase ordering) bus
+        (§D-consumer, 051's auto-``register_to`` loop, moved verbatim).
+        """
+        from varco_core.di.collect import acollect  # noqa: PLC0415
+        from varco_core.event.base import AbstractEventBus  # noqa: PLC0415
+        from varco_core.event.consumer import EventConsumer  # noqa: PLC0415
+
+        if not container.is_resolvable(AbstractEventBus):
+            return
+        bus: AbstractEventBus = await container.aget(AbstractEventBus)
+        consumers = await acollect(container, EventConsumer)
+        self._consumers = consumers
+        for consumer in consumers:
+            if consumer.auto_register and not consumer.is_registered_to(bus):
+                consumer.register_to(bus)
+
+    async def _stop_consumers(self, container: DIContainer) -> None:
+        """The exact reverse of ``_start_consumers`` — see its docstring."""
+        for consumer in reversed(self._consumers):
+            await consumer.stop()
+        self._consumers = ()
+
+    async def _start_job_runner(self, container: DIContainer) -> None:
+        """Start the resolved ``AbstractJobRunner``, if any."""
+        from varco_core.job.base import AbstractJobRunner  # noqa: PLC0415
+
+        if container.is_resolvable(AbstractJobRunner):
+            runner: AbstractJobRunner = await container.aget(AbstractJobRunner)
+            await runner.start()
+
+    async def _stop_job_runner(self, container: DIContainer) -> None:
+        """The exact reverse of ``_start_job_runner`` — see its docstring."""
+        from varco_core.job.base import AbstractJobRunner  # noqa: PLC0415
+
+        if container.is_resolvable(AbstractJobRunner):
+            runner: AbstractJobRunner = await container.aget(AbstractJobRunner)
+            await runner.stop()
 
 
 class ObservabilityModule(VarcoModule):
@@ -613,6 +833,7 @@ class ObservabilityModule(VarcoModule):
     """
 
     name = "observability"
+    phase = Phase.INFRA
 
     def __init__(
         self,
@@ -667,11 +888,13 @@ class LifecycleModule(VarcoModule):
         name: str | None = None,
         depends_on: tuple[type[VarcoModule], ...] = (),
         enabled: bool | None = None,
+        phase: int = Phase.CONSUMERS,
     ) -> None:
         super().__init__(enabled=enabled)
         self._component = component
         self.name = name or type(component).__name__
         self.depends_on = depends_on
+        self.phase = phase
 
     def _register(self, container: DIContainer) -> None:
         pass

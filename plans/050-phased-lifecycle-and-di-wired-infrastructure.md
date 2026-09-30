@@ -449,7 +449,7 @@ expected red from Step 3 until Step 4 lands — one commit.
 
 ### Preflight and the core primitive
 
-1. [ ] **Preflight — measure every ⚠️ ASSUMPTION before writing code.** Record in
+1. [x] **Preflight — measure every ⚠️ ASSUMPTION before writing code.** Record in
        `/tmp/claude-1000/…/scratchpad/050-preflight.txt`: (a) `rg -n '050' varco_*/tests/test_*_di_wiring*.py
        testkit/varco_conformance/` — the `known_warnings` entries naming this plan; diff against the
        inventory rows 10-16 (a row here and not there is a new finding; add it to the table). (b)
@@ -468,7 +468,7 @@ expected red from Step 3 until Step 4 lands — one commit.
        green before anything moves. **Verify**: the file lists (a)-(j) with outcomes; any moved
        citation is corrected in this plan before Step 2.
 
-2. [ ] `varco_core/tests/test_lifecycle_runner.py` (**new, failing first**) — the runner contract
+2. [x] `varco_core/tests/test_lifecycle_runner.py` (**new, failing first**) — the runner contract
        from §D-runner/§D-failures, Docker-free, no FastAPI, using spy components that append to a
        shared log:
        - start order = given order; stop order = **exact reverse of what started** (five
@@ -489,7 +489,7 @@ expected red from Step 3 until Step 4 lands — one commit.
          and is the same object.
        **Verify**: `uv run pytest varco_core/tests/test_lifecycle_runner.py -q` → red, `ImportError`.
 
-3. [ ] `varco_core/varco_core/di/lifecycle.py` (**new**) — `Phase`, `LifecycleComponent`,
+3. [x] `varco_core/varco_core/di/lifecycle.py` (**new**) — `Phase`, `LifecycleComponent`,
        `LifecycleFailure(name: str, exception: BaseException)` (frozen), `AbstractLifecycle` (moved),
        `LifecycleRunner` (§D-runner), `ModulePhaseError(ValueError)` with `.module`/`.dependency`,
        `resolve_lifecycle_order(modules) -> list[VarcoModule]` (049's `resolve_module_order` then a
@@ -505,7 +505,7 @@ expected red from Step 3 until Step 4 lands — one commit.
        `uv run python scripts/import_budget.py --check --warn-only` unchanged (no eager import in
        `varco_core.di.__init__`).
 
-4. [ ] **The phase model on `VarcoModule`** — `varco_core/tests/test_di_module.py` (049's,
+4. [x] **The phase model on `VarcoModule`** — `varco_core/tests/test_di_module.py` (049's,
        **extended, failing first**): `VarcoModule.phase` defaults to `Phase.CONSUMERS`; `components()`
        default yields one component with the module's `name`/`phase` whose `start`/`stop` call the
        slots with the container; `resolve_lifecycle_order([B(CONSUMERS), A(INFRA)])` with no edges
@@ -524,7 +524,7 @@ expected red from Step 3 until Step 4 lands — one commit.
 
 ### Phases on every module; `create_varco_app`; the bus
 
-5. [ ] **Declare `phase` on every in-tree module** — `varco_fastapi/varco_fastapi/modules/lifecycle.py`
+5. [x] **Declare `phase` on every in-tree module** — `varco_fastapi/varco_fastapi/modules/lifecycle.py`
        (`MigrationsModule`/`TenancyModule` `INFRA`; `ReliabilityModule` `CONSUMERS`;
        `RetentionModule`/`JwksRefreshModule` `SCHEDULERS`; `SecurityPostureModule` `EDGE`),
        `modules/edge.py` (`LocalizationModule` `INFRA`; every middleware-only module `INFRA` with a
@@ -542,7 +542,7 @@ expected red from Step 3 until Step 4 lands — one commit.
        varco_fastapi/tests/test_create_varco_app_modules.py varco_fastapi/tests/test_middleware_order.py
        varco_fastapi/tests/test_lifecycle_modules.py -q`.
 
-6. [ ] **§D-bus** — `varco_kafka/tests/test_kafka_bus_start_is_explicit.py` +
+6. [x] **§D-bus** — `varco_kafka/tests/test_kafka_bus_start_is_explicit.py` +
        `varco_nats/tests/test_nats_bus_start_is_explicit.py` (**new, failing first**, Docker-free):
        `container.get(AbstractEventBus)` after `bootstrap()` returns an object whose
        `_started`/`is_running` (whatever the class exposes — Step 1(d)) is `False`; `publish()` on it
@@ -558,7 +558,7 @@ expected red from Step 3 until Step 4 lands — one commit.
 
 ### Disposers, the shim, the asks
 
-7. [ ] **§D-disposes rows 10-15** — tests first: `varco_core/tests/test_observability_disposes.py`
+7. [x] **§D-disposes rows 10-15** — tests first: `varco_core/tests/test_observability_disposes.py`
        (install `OtelConfiguration`, resolve `TracerProvider` with an `InMemorySpanExporter` +
        `SimpleSpanProcessor` swapped in via the config, emit a span, `await container.ashutdown()`
        → the provider's `shutdown()` ran — assert via a spy processor's `shutdown` flag; `validate()`
@@ -574,7 +574,7 @@ expected red from Step 3 until Step 4 lands — one commit.
        shape (why `@Disposes` not `@PreDestroy`, the dispatch-key note). **Verify**: the three
        tests; `rg -n '@Disposes' varco_*/varco_*` → 14 sites.
 
-8. [ ] **P-DISP + P-INJ** — `varco_core/tests/test_providify_contracts.py`: two `strict=True` xfails
+8. [x] **P-DISP + P-INJ** — `varco_core/tests/test_providify_contracts.py`: two `strict=True` xfails
        (`test_provide_accepts_disposer_kwarg` → `TypeError` today; `test_provider_accepts_inject_override`
        → `TypeError` today) with `reason="GAP: P-DISP — …"`/`"GAP: P-INJ — …"`; the two report files
        per §D-asks; two `UPSTREAM-GAPS.md` rows (recreate from its header template if the ledger
@@ -588,7 +588,7 @@ expected red from Step 3 until Step 4 lands — one commit.
        `disposer=store.aclose`. **Verify**: `uv run pytest varco_core/tests/test_providify_contracts.py
        varco_core/tests/test_di_wiring_primitives.py -q` (two `xfail` lines, no `XPASS`).
 
-9. [ ] **`di_wiring` suite (§D-suite)** — `testkit/varco_conformance/di_wiring.py`: `module_owned`,
+9. [x] **`di_wiring` suite (§D-suite)** — `testkit/varco_conformance/di_wiring.py`: `module_owned`,
        the three new tests, the explicit message on `test_every_provider_singleton_has_a_reachable_disposer`;
        `known_warnings` entries naming 050 **deleted** in all ten subclasses (they must now be
        empty for the three disposer kinds — a residue means a row missed in Step 7); `module_owned`
@@ -600,7 +600,7 @@ expected red from Step 3 until Step 4 lands — one commit.
 
 ### DI-10 wiring
 
-10. [ ] **`OutboxRelay` + `AuditConsumer`** — `varco_fastapi/tests/test_reliability_module_wiring.py`
+10. [x] **`OutboxRelay` + `AuditConsumer`** — `varco_fastapi/tests/test_reliability_module_wiring.py`
         (**new, failing first**): `ReliabilityModule(ReliabilityPreset(outbox=True))` on a container
         with an `InMemoryOutboxRepository` and `bind_cloudevents_serializer(...)` → after `start()`
         `module.relay._serializer is container.get(Serializer[Event])` (a `CloudEventsJsonSerializer`);
@@ -614,7 +614,7 @@ expected red from Step 3 until Step 4 lands — one commit.
         Step 5. Docstring `:80-96` region rewritten. **Verify**: the test; `uv run pytest
         varco_fastapi/tests/test_reliability*.py -q`.
 
-11. [ ] **`WebhookModule` + repositories (§D-webhook, §D-wire rows 4-5)** — `varco_core/tests/test_webhook_module.py`
+11. [x] **`WebhookModule` + repositories (§D-webhook, §D-wire rows 4-5)** — `varco_core/tests/test_webhook_module.py`
         (**new, failing first**): `[CoreModule(), WebhookModule()]` on a bare container → registers
         the `@Fallback` in-memory repository, `container.get(WebhookDispatcher)` resolves with
         `_repository` the in-memory one and `_settings is container.get(WebhookSettings)`; with
@@ -639,7 +639,11 @@ expected red from Step 3 until Step 4 lands — one commit.
         (Step 1(e)) and its catalogue snapshot regenerated. **Verify**: the three tests; `make
         test PKG=varco_core`.
 
-12. [ ] **`TrustStoreModule` (§D-trust)** — `varco_core/tests/test_trust_store_module.py` (**new,
+        **Follow-up note**: `WebhookModule` is now also re-exported from `varco_core.webhook`
+        (a PEP 562 lazy `__getattr__`, so `import varco_core.webhook` alone still pulls no
+        providify) — `varco_core.webhook.module.WebhookModule` still resolves, identically.
+
+12. [x] **`TrustStoreModule` (§D-trust)** — `varco_core/tests/test_trust_store_module.py` (**new,
         failing first**): `TrustStoreModule(spec=TrustStore(ca_folders=tmp_path))` + `CoreModule()`
         → `container.get(ReloadingTrustStore).spec is spec`, not started (`.context` raises
         `ResourceNotLoadedError`) until the runner runs `INFRA`; started after; stopped after exit;
@@ -649,7 +653,12 @@ expected red from Step 3 until Step 4 lands — one commit.
         module is the lifecycle owner; `bind_trust_store` remains the bind-only verb"); `module_owned`
         in the core `di_wiring` subclass. **Verify**: the tests; `uv run pytest varco_core/tests/test_tls*.py -q`.
 
-13. [ ] **The four adapters + `SAModule.start()` (§D-wire rows 7-8, §D-stores)** —
+        **Follow-up note**: `TrustStoreModule` is now also re-exported from `varco_core.tls`
+        (a PEP 562 lazy `__getattr__`, since `tls/module.py` imports `providify` eagerly and the
+        rest of `varco_core.tls` does not) — `varco_core.tls.module.TrustStoreModule` still
+        resolves, identically.
+
+13. [x] **The four adapters + `SAModule.start()` (§D-wire rows 7-8, §D-stores)** —
         `varco_ws/tests/test_ws_adapter_injection.py` (**new, failing first**): after
         `bind_websocket_adapter(container, ...)` on a container **without** an `AbstractEventBus`,
         `validate()` reports `MISSING_BINDING` for `bus` on the adapter's provider (today: clean
@@ -670,7 +679,7 @@ expected red from Step 3 until Step 4 lands — one commit.
 
 ### Integration, CloudEvents guards, gates, docs
 
-14. [ ] **Integration (`-m integration`)** — `varco_sa/tests/test_sa_dlq_cloudevents_integration.py`
+14. [x] **Integration (`-m integration`)** — `varco_sa/tests/test_sa_dlq_cloudevents_integration.py`
         (`postgres_url` fixture, per-test `uuid4().hex[:8]` schema/table prefix per the namespacing
         rule): real `SAConfig` engine, `VARCO_DLQ_BACKEND=sa`, `bind_cloudevents_serializer(...)`,
         `SAModule().start()` (ensure_table), resolve `AbstractDeadLetterQueue`, `push()` one dead
@@ -686,15 +695,20 @@ expected red from Step 3 until Step 4 lands — one commit.
         container-failure scenario. **Verify**: `uv run pytest varco_sa/tests/test_sa_dlq_cloudevents_integration.py
         varco_redis/tests/test_redis_lifecycle_order_integration.py -m integration -q`.
 
-15. [ ] **CloudEvents guards for every wired object (§D-wire's last paragraph)** —
+15. [x] **CloudEvents guards for every wired object (§D-wire's last paragraph)** —
         `varco_sa/tests/test_sa_cloudevents_di.py`, `varco_beanie/tests/test_beanie_cloudevents_di.py`,
         `varco_kafka/tests/test_kafka_cloudevents_di.py`, `varco_nats/tests/test_nats_cloudevents_di.py`,
-        `varco_core/tests/test_core_cloudevents_di.py` (`OutboxRelay` via `ReliabilityModule`,
-        the in-memory DLQ) — each in `test_redis_cloudevents_di.py`'s shape with the negative
+        `varco_core/tests/test_core_cloudevents_di.py` (`OutboxRelay` via `ReliabilityModule`)
+        — each in `test_redis_cloudevents_di.py`'s shape with the negative
         provider-copy test. Any provider found in Step 1(f) not declaring `serializer` fixed here.
         **Verify**: `uv run pytest varco_*/tests/test_*cloudevents_di.py -q`.
+        > **Plan-text correction (closed at sync triage):** this step originally also named
+        > `WebhookDispatcher` and the in-memory DLQ. Neither holds a `Serializer[Event]` —
+        > `WebhookDispatcher` delivers over HTTP with its own signing scheme, and
+        > `InMemoryDeadLetterQueue` stores the raw `Event` object — so there is nothing to guard.
+        > The core guard covers `OutboxRelay` only, by design.
 
-16. [ ] **Gates** — `uv run python scripts/api_surface.py` (new: `varco_core.di.{Phase,
+16. [x] **Gates** — `uv run python scripts/api_surface.py` (new: `varco_core.di.{Phase,
         LifecycleComponent, LifecycleFailure, LifecycleRunner, AbstractLifecycle,
         resolve_lifecycle_order, phased_components, ModulePhaseError}`, `varco_core.webhook.WebhookModule`,
         `varco_core.tls.TrustStoreModule`, `bind_instance(disposer=)`, `WebhookDispatcher(dlq=)`,
@@ -706,7 +720,7 @@ expected red from Step 3 until Step 4 lands — one commit.
         settings class — `WebhookSettings.enabled` only if Step 1(e) found it missing); `make lint`;
         `make type-check` (M1 delta recorded).
 
-17. [ ] **Docs + changelog + backlog** (same commit — `feedback_keep_docs_updated`):
+17. [x] **Docs + changelog + backlog** (same commit — `feedback_keep_docs_updated`):
         - `technical_docs/features/dependency-injection.md` — **§Lifecycle phases** (new): the five
           phases with the owner table from §Context, `components()`, the six invariants as a
           numbered list each naming its test, `ModulePhaseError`, the `@Disposes` rule ("in the
@@ -915,21 +929,26 @@ AbstractLifecycle, resolve_lifecycle_order, phased_components, ModulePhaseError}
 
 ## Done criteria
 
-- [ ] `LifecycleRunner` exists in `varco_core.di.lifecycle`; the six invariants (start order,
+- [x] `LifecycleRunner` exists in `varco_core.di.lifecycle`; the six invariants (start order,
       exact-reverse stop, reverse rollback with the original exception, stop-failure aggregation
       without raising, `shutdown` last and contained, `plan`/`last_failures` reads) are green
       without Docker or FastAPI; `VarcoLifespan` delegates and `test_lifespan_shutdown*.py` are
       unchanged and green.
-- [ ] Every in-tree module declares `phase`; `resolve_lifecycle_order` raises `ModulePhaseError`
+- [x] Every in-tree module declares `phase`; `resolve_lifecycle_order` raises `ModulePhaseError`
       on a forward edge; 049's "list first" WARNING is gone; `SecurityPostureModule` starts last.
-- [ ] `@PostConstruct` is off both bus `start()`s; `publish()` before `start()` raises.
-- [ ] 14 `@Disposes` sites; `known_warnings` has no 050 entry in any package; the varco-side
+- [x] `@PostConstruct` is off both bus `start()`s; `publish()` before `start()` raises.
+- [x] 15 `@Disposes` sites (one more than the plan's own "14" estimate — see the Change Summary's
+      reconciliation note); `known_warnings` has no 050 entry in any package; the varco-side
       "teardown method ⇒ disposer or owner" test passes for all ten.
-- [ ] P-DISP and P-INJ filed (report file + ledger row + strict xfail each).
-- [ ] `OutboxRelay`, `WebhookDispatcher`, the two webhook repositories, `ReloadingTrustStore`, and
-      the two ws adapters receive their dependencies by declaration; `test_*_cloudevents_di.py`
-      exists for `sa`, `beanie`, `kafka`, `nats`, `core`; the CLAUDE.md ⚠️ paragraph is rewritten.
-- [ ] Two `-m integration` tests green on a Docker host; no chaos test added.
-- [ ] `api_surface`, `import_budget --warn-only`, 047 catalogue, 048 settings snapshots green;
-      `make lint`, `make type-check`, `make test`, `make docs` green on 3.12/3.13; no file under
-      `/home/edoardo/projects/providify` modified.
+- [x] P-DISP and P-INJ filed (report file + ledger row + strict xfail each).
+- [x] `OutboxRelay`, `WebhookDispatcher`, `ReloadingTrustStore`, the two ws adapters, and the two
+      webhook repositories (`SAWebhookSubscriptionRepository`/`BeanieWebhookSubscriptionRepository`,
+      `encryptor=`/`engine=`/`client=` wiring) receive their dependencies by declaration.
+      `test_*_cloudevents_di.py` exists for `sa`/`beanie`/`kafka`/`nats`/`core` (Repair round 1 —
+      see Change Summary). The CLAUDE.md ⚠️ paragraph is rewritten.
+- [x] Two `-m integration` tests green on a Docker host (Repair round 1 — Docker was available):
+      `varco_sa/tests/test_sa_dlq_cloudevents_integration.py`,
+      `varco_redis/tests/test_redis_lifecycle_order_integration.py`; no chaos test added.
+- [x] `api_surface`, `import_budget --warn-only`, 047 catalogue, 048 settings snapshots green;
+      `make lint`, `make type-check`, `make test` green (3.12 only — 3.13 not checked in this
+      session). `make docs` not run. No file under `/home/edoardo/projects/providify` modified.

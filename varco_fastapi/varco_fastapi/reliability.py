@@ -82,17 +82,28 @@ class ReliabilityLifecycle:
             )
 
         if self._preset.outbox:
-            from varco_core.event.base import AbstractEventBus
+            from varco_core.event.base import AbstractEventBus, Event
+            from varco_core.serialization import Serializer
             from varco_core.service.outbox import OutboxRelay, OutboxRepository
 
             outbox_repo = await self._resolve(OutboxRepository)
             bus = await self._resolve(AbstractEventBus)
+            # Plan 050 / §D-wire row 1: an explicit preset.serializer always
+            # wins; otherwise inject whatever Serializer[Event] the
+            # container resolves — the 045 @Fallback default is
+            # JsonEventSerializer, so this always resolves and a
+            # bind_cloudevents_serializer() swap reaches the outbox with no
+            # code change here.
+            serializer = self._preset.serializer
+            if serializer is None and self._container.is_resolvable(Serializer[Event]):
+                serializer = await self._container.aget(Serializer[Event])
             self._relay = OutboxRelay(
                 outbox=outbox_repo,
                 bus=bus,
                 retry_policy=self._preset.retry_policy,
                 dlq=self._preset.dlq,
                 max_attempts=self._preset.outbox_max_attempts,
+                serializer=serializer,
             )
             await self._relay.start()
 
@@ -106,7 +117,15 @@ class ReliabilityLifecycle:
             self._audit_consumer.register_to(bus)
 
     async def shutdown(self) -> None:
-        """Stop the outbox relay started by ``startup()``, if any."""
+        """
+        Stop the audit consumer, then the outbox relay — the reverse of
+        ``startup()`` (Plan 050 / §Context: the ``AuditConsumer`` used to
+        never be stopped here, leaking its subscription on every
+        shutdown).
+        """
+        if self._audit_consumer is not None:
+            await self._audit_consumer.stop()
+            self._audit_consumer = None
         if self._relay is not None:
             await self._relay.stop()
             self._relay = None

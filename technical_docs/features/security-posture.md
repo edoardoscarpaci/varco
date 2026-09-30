@@ -71,46 +71,71 @@ because the two plans already commit to those together.
 
 | Collector | Source seam | Contributes |
 |---|---|---|
-| `_collect_tenant` | 033 `inspect_tenant_provenance()` | Re-emits 033's `tenant.*` stable tokens (`tenant.no_chain`, `tenant.legacy_source_implicit`, `tenant.no_membership_provider`, `tenant.membership_missing_claim_allows`, `tenant.cross_check_lenient`, `tenant.unchained_claim_tenant_setter`, `tenant.delegation_unbound`, …) with severity assigned here |
-| `_collect_auth` | 034 `inspect_auth_posture()` + `inspect_revocation_posture()` | `auth.api_key_query_fallback`, `auth.api_key_plaintext`, `auth.passthrough_bound`, `auth.revocation_unbound`, `auth.revocation_registry_unwired`, `auth.revocation_fail_open` |
-| `_collect_http` | 035 `inspect_http_edge()` | Re-emits 035's nine `http.*` ids and severities unchanged |
-| `_collect_data` | 037 `inspect_rls_posture()` | `data.rls_disabled`, `data.rls_not_forced`, `data.role_bypasses_rls`, `data.rls_not_checked` |
-| `_collect_local` | this plan | `posture.admin_mount_unauthenticated`, `posture.tenant_admin_mounted`, `posture.webhook_secrets_plaintext`, `posture.base_authorizer_bound`, `posture.webhook_transport_unverified` |
+| `TenantPostureCollector` | 033 `inspect_tenant_provenance()` | Re-emits 033's `tenant.*` stable tokens (`tenant.no_chain`, `tenant.legacy_source_implicit`, `tenant.no_membership_provider`, `tenant.membership_missing_claim_allows`, `tenant.cross_check_lenient`, `tenant.unchained_claim_tenant_setter`, `tenant.delegation_unbound`, `tenant.third_party_source_high_trust` (Plan 051), …) with severity assigned here |
+| `AuthPostureCollector` | 034 `inspect_auth_posture()` + `inspect_revocation_posture()` | `auth.api_key_query_fallback`, `auth.api_key_plaintext`, `auth.passthrough_bound`, `auth.revocation_unbound`, `auth.revocation_registry_unwired`, `auth.revocation_fail_open` |
+| `HttpEdgeCollector` | 035 `inspect_http_edge()` | Re-emits 035's nine `http.*` ids and severities unchanged |
+| `DataPostureCollector` | 037 `inspect_rls_posture()` | `data.rls_disabled`, `data.rls_not_forced`, `data.role_bypasses_rls`, `data.rls_not_checked` |
+| `LocalPostureCollector` | this plan | `posture.admin_mount_unauthenticated`, `posture.tenant_admin_mounted`, `posture.webhook_secrets_plaintext`, `posture.base_authorizer_bound`, `posture.webhook_transport_unverified` |
 
-Each collector takes optional, already-resolved objects as keyword arguments (`app=`,
+⚠️ **Plan 051 / DI-5**: these five (`_collect_tenant`/`_collect_auth`/`_collect_http`/
+`_collect_data`/`_collect_local`) are now classes implementing `varco_core.posture.
+PostureCollector` (`TenantPostureCollector`/`AuthPostureCollector`/`HttpEdgeCollector`/
+`DataPostureCollector`/`LocalPostureCollector`, in `varco_fastapi.posture`) — `PostureCollector`
+is a `@Multibound` collection seam; `SecurityPostureModule.configure_app()` contributes all five
+via `contribute()`. Each class's `__init__` takes exactly the old function's keyword arguments;
+`collect()` is the old function's unchanged body.
+
+Each collector takes optional, already-resolved objects as constructor keyword arguments (`app=`,
 `container=`, `auth=`, `rls_posture=`, …) rather than resolving them itself from a `container` —
-this keeps every collector a pure, synchronous, dependency-free function, callable with zero
-arguments when nothing is wired. `inspect_rls_posture()` is `async def` and needs a live
-`AsyncConnection`; `_collect_data` cannot call it inline, so a caller that wants this check live
-must `await inspect_rls_posture(conn, tables=...)` itself and pass the result as `rls_posture=`
-— otherwise `_collect_data` reports `data.rls_not_checked` at `NOT_ASSESSED`.
+this keeps every collector's `collect()` a pure, synchronous, dependency-free method. `inspect_
+rls_posture()` is `async def` and needs a live `AsyncConnection`; `DataPostureCollector` cannot
+call it inline, so a caller that wants this check live must `await inspect_rls_posture(conn,
+tables=...)` itself and pass the result as `rls_posture=` — otherwise it reports
+`data.rls_not_checked` at `NOT_ASSESSED`.
 
 ### Wiring a collector
 
-```python
-from functools import partial
+A plugin never needs to touch `SecurityPostureModule` at all — a scanned `@Singleton` subclass
+of `varco_core.posture.PostureCollector` joins the report automatically:
 
+```python
+from providify import Singleton
+from varco_core.posture import PostureCollector, PostureFinding, PostureSeverity
+
+
+@Singleton
+class MyPostureCollector(PostureCollector):
+    name = "my_check"
+
+    def collect(self) -> list[PostureFinding]:
+        return [PostureFinding(check="my.check", severity=PostureSeverity.INFO, ...)]
+```
+
+To replace the built-in five entirely, pass `collectors=` to `SecurityPostureModule` (still
+accepts `PostureCollector` instances or the pre-051 zero-argument callable shape):
+
+```python
+from varco_fastapi.modules import SecurityPostureModule
 from varco_fastapi.posture import (
-    SecurityPostureLifecycle,
-    _collect_auth,
-    _collect_data,
-    _collect_http,
-    _collect_local,
-    _collect_tenant,
+    AuthPostureCollector,
+    DataPostureCollector,
+    HttpEdgeCollector,
+    LocalPostureCollector,
+    TenantPostureCollector,
 )
 
-lifecycle = SecurityPostureLifecycle(
+module = SecurityPostureModule(
     collectors=[
-        partial(_collect_tenant, chain=my_chain, membership=my_membership),
-        partial(_collect_auth, auth=my_server_auth, registry=my_issuer_registry),
-        partial(_collect_http, app=app),
-        partial(_collect_data, rls_posture=None),  # or an awaited RlsPosture
-        partial(_collect_local, container=container, webhook_repository=webhook_repo),
+        TenantPostureCollector(chain=my_chain, membership=my_membership),
+        AuthPostureCollector(auth=my_server_auth, registry=my_issuer_registry),
+        HttpEdgeCollector(app=app),
+        DataPostureCollector(rls_posture=None),  # or an awaited RlsPosture
+        LocalPostureCollector(container=container, webhook_repository=webhook_repo),
     ],
 )
 ```
 
-`_collect_local`'s `posture.base_authorizer_bound` is the row's headline check: it resolves
+`LocalPostureCollector`'s `posture.base_authorizer_bound` is the row's headline check: it resolves
 `AbstractAuthorizer` from `container` and compares `type(x) is BaseAuthorizer`. The resolution
 itself can construct singletons, so it runs inside the collector's own `try` — a resolution
 failure is `NOT_ASSESSED`, never a crash of startup.

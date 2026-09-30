@@ -144,17 +144,11 @@ class PostAppModule(VarcoModule):
         self._app.include_router(auth_router)
         self._app.include_router(streams_router)
 
-    async def start(self, container: DIContainer) -> None:
-        from example.consumer import PostEventConsumer  # noqa: PLC0415
-
-        consumer: PostEventConsumer = await container.aget(PostEventConsumer)
-        await consumer.start()
-
-    async def stop(self, container: DIContainer) -> None:
-        from example.consumer import PostEventConsumer  # noqa: PLC0415
-
-        consumer: PostEventConsumer = await container.aget(PostEventConsumer)
-        await consumer.stop()
+    # Plan 051 / DI-5, §D-consumer: PostEventConsumer is a @Singleton
+    # EventConsumer bound in the container — CoreModule.start() discovers
+    # and registers it to the app's AbstractEventBus automatically, once the
+    # bus has started, and stops it (reverse order) before the bus stops.
+    # No start()/stop() override is needed here any more.
 
 
 __all__ = ["PostAppModule"]

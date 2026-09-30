@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from varco_core.di.lifecycle import Phase
 from varco_core.di.module import CoreModule, VarcoModule
 
 from varco_fastapi.middleware.slots import EdgeSlot, MiddlewareSpec
@@ -71,6 +72,8 @@ class CorsModule(VarcoModule):
     """
 
     name = "cors"
+    phase = Phase.INFRA
+    # no lifecycle; declared so the suite's phase test is uniform
 
     def __init__(self, config: Any | None = None, *, enabled: bool | None = None) -> None:
         super().__init__(enabled=enabled)
@@ -111,6 +114,8 @@ class SecurityHeadersModule(VarcoModule):
     """
 
     name = "security_headers"
+    phase = Phase.INFRA
+    # no lifecycle; declared so the suite's phase test is uniform
 
     def __init__(
         self,
@@ -173,6 +178,8 @@ class BodyLimitModule(VarcoModule):
     """Installs ``BodyLimitMiddleware`` (Plan 035 / §D-S8-default) — default-on, 10 MiB."""
 
     name = "body_limit"
+    phase = Phase.INFRA
+    # no lifecycle; declared so the suite's phase test is uniform
 
     def __init__(
         self, *, settings: BodyLimitSettings | None = None, enabled: bool | None = None
@@ -230,6 +237,8 @@ class ErrorEnvelopeModule(VarcoModule):
     """
 
     name = "error_envelope"
+    phase = Phase.INFRA
+    # no lifecycle; declared so the suite's phase test is uniform
 
     def _register(self, container: DIContainer) -> None:
         pass
@@ -293,6 +302,8 @@ class TracingModule(VarcoModule):
     """Installs ``TracingMiddleware`` — absorbs ``enable_tracing=``."""
 
     name = "tracing"
+    phase = Phase.INFRA
+    # no lifecycle; declared so the suite's phase test is uniform
 
     def _register(self, container: DIContainer) -> None:
         pass
@@ -320,6 +331,8 @@ class LoggingModule(VarcoModule):
     """
 
     name = "logging"
+    phase = Phase.INFRA
+    # no lifecycle; declared so the suite's phase test is uniform
 
     def __init__(self, *, redactor: Redactor | None = None, enabled: bool | None = None) -> None:
         super().__init__(enabled=enabled)
@@ -349,6 +362,8 @@ class MetricsModule(VarcoModule):
     """Installs ``MetricsMiddleware`` and mounts ``MetricsRouter`` — opt-in."""
 
     name = "metrics"
+    phase = Phase.INFRA
+    # no lifecycle; declared so the suite's phase test is uniform
 
     def _register(self, container: DIContainer) -> None:
         pass
@@ -375,6 +390,8 @@ class ProfilingModule(VarcoModule):
     """Installs ``ProfilingMiddleware`` — opt-in, innermost (``EdgeSlot.PROFILING``)."""
 
     name = "profiling"
+    phase = Phase.INFRA
+    # no lifecycle; declared so the suite's phase test is uniform
 
     def _register(self, container: DIContainer) -> None:
         pass
@@ -411,6 +428,8 @@ class RateLimitModule(VarcoModule):
     """
 
     name = "rate_limit"
+    phase = Phase.INFRA
+    # no lifecycle; declared so the suite's phase test is uniform
 
     def __init__(self, bundle: RateLimitBundle, *, enabled: bool | None = None) -> None:
         super().__init__(enabled=enabled)
@@ -502,6 +521,7 @@ class LocalizationModule(VarcoModule):
     """
 
     name = "localization"
+    phase = Phase.INFRA
 
     def __init__(
         self,
@@ -631,6 +651,7 @@ class FastAPIModule(VarcoModule):
     """
 
     name = "fastapi"
+    phase = Phase.INFRA
     depends_on = (CoreModule,)
 
     def __init__(self, *, configure_jwt: bool = True, enabled: bool | None = None) -> None:
