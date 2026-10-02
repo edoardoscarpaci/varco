@@ -21,6 +21,7 @@ from varco_core.settings import (  # noqa: F401  (import is the red-mode probe)
     CommaSeparated,
     SettingsAlreadyBoundError,
     SettingsValidationError,
+    all_provenance,
     bind_settings,
     provenance_of,
 )
@@ -335,3 +336,49 @@ class TestLegacyEnvNameWarns:
 
         hits = [r for r in caplog.records if "VARCO_CA_CERT" in r.message]
         assert len(hits) == 1
+
+
+class TestAllProvenance:
+    """
+    Plan 052 Step 3 — ``all_provenance(container)``, the one enumerator
+    §D-settings-hook adds: a read over 048's per-container provenance
+    dict, sorted by ``cls.__qualname__`` then qualifier.
+
+    ``all_provenance`` does not exist yet, so every test below is expected
+    to fail with an ``ImportError``/``AttributeError`` at collection or
+    call time until Plan 052 Step 3 lands it.
+    """
+
+    def test_empty_container_returns_empty_tuple(self, di_container: DIContainer) -> None:
+        assert all_provenance(di_container) == ()
+
+    def test_two_classes_one_qualified_yields_three_sorted_records(
+        self, di_container: DIContainer, demo_env: None
+    ) -> None:
+        class _Other(VarcoSettings):
+            model_config = SettingsConfigDict(env_prefix="VARCO_OTHER_", frozen=True)
+
+            flag: bool = False
+
+        bind_settings(di_container, _Demo)
+        bind_settings(di_container, _Demo, qualifier="secondary")
+        bind_settings(di_container, _Other)
+
+        records = all_provenance(di_container)
+
+        assert len(records) == 3
+        # sorted by cls.__qualname__ then qualifier
+        qualnames = [(r.cls.__qualname__, r.qualifier) for r in records]
+        assert qualnames == sorted(qualnames, key=lambda pair: (pair[0], pair[1] or ""))
+
+    def test_records_match_point_read_provenance_of(
+        self, di_container: DIContainer, demo_env: None
+    ) -> None:
+        bind_settings(di_container, _Demo)
+
+        (record,) = all_provenance(di_container)
+        point = provenance_of(di_container, _Demo)
+
+        assert record.cls is point.cls
+        assert record.fields == point.fields
+        assert record.source == point.source

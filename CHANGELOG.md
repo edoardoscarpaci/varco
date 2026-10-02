@@ -9,6 +9,54 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### BREAKING — runtime validate() in the lifespan (Plan 052)
+
+`create_varco_app(validate=True)` now also runs `container.validate()` inside the lifespan, after
+every `async_init()` and before the first `start()`. An ERROR issue refuses startup with
+`ConfigurationError` (the log lists each issue; the exception text is a count). With
+`strict_validation=True`, varco-side WARNING findings (e.g. `di.revocation_store_not_wired`,
+`module.<name>.validate`) refuse too — providify's own WARNING tier does not. Fix the binding or
+pass `validate=False`. The `VARCO_MIGRATE_MODE`/`VARCO_TENANCY_ISOLATION` "unowned" check and the
+bootstrapped-but-unselected check are now report findings (`settings.unowned`,
+`di.bootstrapped_unselected`), logged at lifespan start instead of at `create_varco_app()` build
+time; the private `_warn_unowned_settings` is removed.
+
+### Dependencies (Plan 052)
+
+- `providify>=2.1.1` is now required (all ten packages). 2.1.1 closes **P34-VALIDATE-INACTIVE-OWNER-DEPS**:
+  `validate()` no longer reports `MISSING_BINDING` ERRORs for the own dependencies of a
+  `@Requires`/`@Profile`-inactive binding. On 2.1.0 that false ERROR (e.g. the `VARCO_WEBHOOK_BACKEND=sa`-gated
+  `SAConfiguration.webhook_repository` → `FieldEncryptor`) would have refused startup of every `SAModule`
+  app without a bound `FieldEncryptor` under the runtime `validate()` above.
+
+### Added (Plan 052, DI-7 / DI-11 / RO-2)
+
+- `varco_core.di.report.build_wiring_report`/`WiringReport`, `varco diagnose` (`--modules`/`--container`/
+  `--app`, `--static`, `--json`, `--check`), startup report log + `VARCO_DIAGNOSE_STARTUP_REPORT`/
+  `_JSON`, `app.state.varco_wiring_report`/`varco_container`/`varco_modules`.
+- `varco_core.settings.all_provenance`, `varco_core.deprecation.fired_deprecations` (ledger).
+- `JwksPostureCollector`/`RetentionPostureCollector` contributed by `CoreModule`; posture ids
+  `auth.jwks_refresh_off`, `auth.jwks_keysets_unloaded`, `retention.platform_wide`,
+  `retention.dry_run_only`, `retention.short_retention`.
+- `varco_core.testing` (`InMemoryProfile`, `in_memory_modules`, `register_modules`,
+  `clear_backend_selection`); `varco_fastapi.testing.in_memory_app_modules()` (FastAPI default set,
+  `development`/`warn` posture, `InMemoryProfile` last); `CoreModule(job_runner=False)`.
+- Findings `settings.unowned`, `di.bootstrapped_unselected` (WARNING) and `deprecation.fired`
+  (INFO); report header `environment`/`enforce`/`enforce_source` from
+  `varco_fastapi.diagnose.posture_header()` (`app.state.varco_posture_header`).
+- `varco_core.di.diagnose.capture_direct_deprecations`/`direct_deprecation_records` (shared
+  deprecation capture window for `diagnose()` and the startup lifespan) and
+  `varco_core.di.select.evaluate_backend_selection` (non-logging backend-selection evaluator).
+- `varco_core` lazy top-level exports: `fired_deprecations`, `build_wiring_report`, `WiringReport`,
+  `DiagnoseSettings`, `InMemoryProfile`, `in_memory_modules`, `JwksPostureCollector`,
+  `RetentionPostureCollector`, `all_provenance`.
+- `varco diagnose --check` exits 1 only on an ERROR or WARNING (INFO findings never fail it); a
+  module whose `async_init()` raises prints `<ModuleName>.async_init failed: <exc>`;
+  `WiringValidationError` lists `owner: message` for each issue.
+- `di_wiring` conformance test `test_diagnose_runs_clean_on_bootstrapped_package`.
+- Upstream gaps filed: P32 (`DIContainer.copy()` drops `_collection_points`), P33
+  (`ContainerOverrides.instance()` false scope-leak). P28 was already filed by Plan 045.
+
 ### BREAKING — multi-binding for collection seams (Plan 051, DI-5)
 
 Five hand-rolled "all implementations of X" registries are gone, replaced by one convention:

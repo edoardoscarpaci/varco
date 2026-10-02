@@ -68,6 +68,8 @@ import uvicorn
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
+from example.backends import IN_PROCESS_BACKENDS as _IN_PROCESS_BACKENDS
+
 _logger = logging.getLogger(__name__)
 
 
@@ -213,12 +215,16 @@ async def running_server(
     # InMemoryCache and this e2e test would never touch the containers above.
     prev_event_bus_backend = os.environ.get("VARCO_EVENT_BUS_BACKEND")
     prev_cache_backend = os.environ.get("VARCO_CACHE_BACKEND")
+    # Plan 052 — the seams this example deliberately keeps in-process are
+    # named too, so the run matches docker-compose and `varco diagnose --check`.
+    prev_in_process = {k: os.environ.get(k) for k in _IN_PROCESS_BACKENDS}
 
     os.environ["DATABASE_URL"] = db_url
     os.environ["VARCO_REDIS_URL"] = redis_url
     os.environ["VARCO_REDIS_CACHE_URL"] = redis_url
     os.environ["VARCO_EVENT_BUS_BACKEND"] = "redis"
     os.environ["VARCO_CACHE_BACKEND"] = "redis"
+    os.environ.update(_IN_PROCESS_BACKENDS)
     # example/app.py constructs JwtBearerAuth(registry=..., required=False)
     # with no audience=. Since Plan 005 Phase 2, JwtBearerAuth() refuses to
     # construct with ValueError unless an audience is configured (a
@@ -289,6 +295,7 @@ async def running_server(
             ("VARCO_JWT_ALLOW_ANY_AUDIENCE", prev_jwt_allow_any_audience),
             ("VARCO_EVENT_BUS_BACKEND", prev_event_bus_backend),
             ("VARCO_CACHE_BACKEND", prev_cache_backend),
+            *prev_in_process.items(),
         ]:
             if prev is None:
                 os.environ.pop(key, None)

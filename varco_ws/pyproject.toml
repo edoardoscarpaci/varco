@@ -22,7 +22,7 @@ dependencies = [
     "varco-core~=3.0",
     # Direct importers: varco_ws/sse.py:79, varco_ws/websocket.py:85 — previously
     # satisfied only transitively via varco-core, an undeclared dependency.
-    "providify>=2.1.0",
+    "providify>=2.1.1",
 ]
 
 [project.urls]

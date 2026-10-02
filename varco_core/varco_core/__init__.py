@@ -128,6 +128,9 @@ if TYPE_CHECKING:
         UnknownKidError,
     )
 
+    # ── Wiring report / diagnose / test profile (Plan 052 / DI-7, DI-11, RO-2) ──
+    from varco_core.authority.posture import JwksPostureCollector
+
     # ── Cache system ────────────────────────────────────────────────────────────────
     from varco_core.cache import (
         AsyncCache,
@@ -175,8 +178,9 @@ if TYPE_CHECKING:
         resolve_precedence,
     )
 
-    # ── Deprecation mechanism (Plan 022 / §D-DEP) ─────────────────────────────────
-    from varco_core.deprecation import deprecated, deprecated_alias
+    # ── Deprecation mechanism (Plan 022 / §D-DEP; ledger added Plan 052 / §D-deprecations) ──
+    from varco_core.deprecation import deprecated, deprecated_alias, fired_deprecations
+    from varco_core.di.report import DiagnoseSettings, WiringReport, build_wiring_report
 
     # ── DTO layer ──────────────────────────────────────────────────────────────────
     from varco_core.dto import (
@@ -402,6 +406,7 @@ if TYPE_CHECKING:
         retry,
         timeout,
     )
+    from varco_core.retention.posture import RetentionPostureCollector
 
     # ── Serialization ────────────────────────────────────────────────────────────────
     from varco_core.serialization import JsonSerializer, NoOpSerializer, Serializer
@@ -428,6 +433,7 @@ if TYPE_CHECKING:
         SettingsError,
         SettingsProvenance,
         SettingsValidationError,
+        all_provenance,
         bind_settings,
         provenance_of,
     )
@@ -481,6 +487,7 @@ if TYPE_CHECKING:
         inspect_tenant_provenance,
         provenance_context,
     )
+    from varco_core.testing import InMemoryProfile, in_memory_modules
 
     # ── Tracing / correlation ID ────────────────────────────────────────────────────
     from varco_core.tracing import (
@@ -792,6 +799,14 @@ _LAZY: Final[dict[str, str]] = {
     "enable_tenant_membership": "varco_core.tenancy",
     "error_code_for": "varco_core.exception.http",
     "error_message_for": "varco_core.exception.http",
+    "fired_deprecations": "varco_core.deprecation",
+    "build_wiring_report": "varco_core.di.report",
+    "WiringReport": "varco_core.di.report",
+    "DiagnoseSettings": "varco_core.di.report",
+    "InMemoryProfile": "varco_core.testing",
+    "in_memory_modules": "varco_core.testing",
+    "JwksPostureCollector": "varco_core.authority.posture",
+    "RetentionPostureCollector": "varco_core.retention.posture",
     "generate_correlation_id": "varco_core.tracing",
     "generate_dtos": "varco_core.dto.factory",
     "histogram": "varco_core.observability",
@@ -802,6 +817,7 @@ _LAZY: Final[dict[str, str]] = {
     "paged_response": "varco_core.dto.pagination",
     "provenance_context": "varco_core.tenancy",
     "provenance_of": "varco_core.settings",
+    "all_provenance": "varco_core.settings",
     "read_claim": "varco_core.jwt",
     "redact_mapping": "varco_core.redaction",
     "redact_query_string": "varco_core.redaction",
@@ -945,9 +961,17 @@ __all__ = [
     "register",
     # ── Provider ABC ───────────────────────────────────────────────────────────
     "RepositoryProvider",
-    # ── Deprecation mechanism (Plan 022 / §D-DEP) ──────────────────────────────
+    # ── Deprecation mechanism (Plan 022 / §D-DEP; ledger Plan 052 / §D-deprecations) ──
     "deprecated",
     "deprecated_alias",
+    "fired_deprecations",
+    "build_wiring_report",
+    "WiringReport",
+    "DiagnoseSettings",
+    "InMemoryProfile",
+    "in_memory_modules",
+    "JwksPostureCollector",
+    "RetentionPostureCollector",
     # ── DTO layer ──────────────────────────────────────────────────────────────
     "CreateDTO",
     "ReadDTO",
@@ -1038,6 +1062,7 @@ __all__ = [
     "SettingsError",
     "SettingsProvenance",
     "SettingsValidationError",
+    "all_provenance",
     "bind_settings",
     "provenance_of",
     # ── Serialization ────────────────────────────────────────────────────────────

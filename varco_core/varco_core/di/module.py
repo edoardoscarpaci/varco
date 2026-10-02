@@ -600,9 +600,20 @@ class CoreModule(VarcoModule):
     #: against a module that has no lifecycle of its own).
     phase = Phase.INFRA
 
-    def __init__(self, *, enabled: bool | None = None) -> None:
+    def __init__(self, *, enabled: bool | None = None, job_runner: bool = True) -> None:
+        """
+        Args:
+            enabled: The usual Plan 047 tri-state.
+            job_runner: Whether ``components()`` plans the ``SCHEDULERS``-phase
+                ``core.job_runner`` component (Plan 052 / §D-testprofile —
+                ``varco_core.testing.in_memory_modules()`` passes ``False`` so
+                an in-memory test container plans no background poller). The
+                store itself stays bound either way — only the poller is
+                omitted.
+        """
         super().__init__(enabled=enabled)
         self._consumers: tuple[Any, ...] = ()
+        self._job_runner = job_runner
 
     def _register(self, container: DIContainer) -> None:
         from varco_core.di import bootstrap  # noqa: PLC0415
@@ -610,6 +621,48 @@ class CoreModule(VarcoModule):
 
         bootstrap(container)
         bind_core_settings(container)
+        # §D-RO2: guarded by is_enabled() (evaluated now — the same
+        # registration-time value `register()` will shortly record) — a
+        # disabled CoreModule contributes nothing, mirroring "a disabled
+        # module registers nothing" elsewhere in this class.
+        if self.is_enabled(container):
+            self._register_ro2_collectors(container)
+
+    def _register_ro2_collectors(self, container: DIContainer) -> None:
+        """
+        Contribute RO-2's two posture collectors (Plan 052 / §D-RO2).
+
+        DESIGN: contributed by ``CoreModule``, not by ``JwksRefreshModule``/
+        ``RetentionModule`` (051 Step 20's handoff, corrected) — the
+        decisive ``auth.jwks_refresh_off`` finding fires precisely when
+        ``JwksRefreshModule`` is *absent*; a collector contributed by that
+        module would never run for the app it exists to warn. Suppliers
+        are lazy (``lambda: ...``) so a registry built after this call —
+        the common case — is still seen correctly at ``collect()`` time.
+        """
+        from varco_core.authority.posture import JwksPostureCollector  # noqa: PLC0415
+        from varco_core.authority.registry import TrustedIssuerRegistry  # noqa: PLC0415
+        from varco_core.di.collect import contribute  # noqa: PLC0415
+        from varco_core.posture import PostureCollector  # noqa: PLC0415
+        from varco_core.retention.policy import RetentionRegistry  # noqa: PLC0415
+        from varco_core.retention.posture import RetentionPostureCollector  # noqa: PLC0415
+
+        def _jwks_registry() -> Any:
+            return (
+                container.get(TrustedIssuerRegistry)
+                if container.is_resolvable(TrustedIssuerRegistry)
+                else None
+            )
+
+        def _retention_registry() -> Any:
+            return (
+                container.get(RetentionRegistry)
+                if container.is_resolvable(RetentionRegistry)
+                else None
+            )
+
+        contribute(container, PostureCollector, JwksPostureCollector(_jwks_registry))  # type: ignore[type-abstract]
+        contribute(container, PostureCollector, RetentionPostureCollector(_retention_registry))  # type: ignore[type-abstract]
 
     def validate(self, container: DIContainer) -> Sequence[str]:
         """
@@ -647,11 +700,13 @@ class CoreModule(VarcoModule):
         await self._start_stores(container)
         await self._start_bus(container)
         await self._start_consumers(container)
-        await self._start_job_runner(container)
+        if self._job_runner:
+            await self._start_job_runner(container)
 
     async def stop(self, container: DIContainer) -> None:
         """The exact reverse of ``start()`` — see its docstring."""
-        await self._stop_job_runner(container)
+        if self._job_runner:
+            await self._stop_job_runner(container)
         await self._stop_consumers(container)
         await self._stop_bus(container)
         await self._stop_stores(container)
@@ -665,7 +720,7 @@ class CoreModule(VarcoModule):
         """
         from varco_core.di.lifecycle import LifecycleComponent  # noqa: PLC0415
 
-        return [
+        components = [
             LifecycleComponent(
                 name="core.stores",
                 phase=Phase.INFRA,
@@ -684,13 +739,17 @@ class CoreModule(VarcoModule):
                 start=partial(self._start_consumers, container),
                 stop=partial(self._stop_consumers, container),
             ),
-            LifecycleComponent(
-                name="core.job_runner",
-                phase=Phase.SCHEDULERS,
-                start=partial(self._start_job_runner, container),
-                stop=partial(self._stop_job_runner, container),
-            ),
         ]
+        if self._job_runner:
+            components.append(
+                LifecycleComponent(
+                    name="core.job_runner",
+                    phase=Phase.SCHEDULERS,
+                    start=partial(self._start_job_runner, container),
+                    stop=partial(self._stop_job_runner, container),
+                )
+            )
+        return components
 
     async def _start_stores(self, container: DIContainer) -> None:
         """

@@ -25,6 +25,8 @@ VARCO_REDIS_URL="redis://localhost:6379" \
 VARCO_REDIS_CACHE_URL="redis://localhost:6379" \
 VARCO_EVENT_BUS_BACKEND="redis" \
 VARCO_CACHE_BACKEND="redis" \
+VARCO_DLQ_BACKEND="memory" VARCO_IDEMPOTENCY_BACKEND="memory" \
+VARCO_JOB_STORE_BACKEND="memory" VARCO_REVOCATION_BACKEND="null" \
 uv run uvicorn example.app:create_app --factory --reload
 
 # 4. Open the interactive docs
@@ -295,6 +297,8 @@ uv run pytest example/example/tests/test_e2e_integration.py -m integration -v
 | `VARCO_REDIS_CACHE_URL` | Yes | — | Redis URL for the cache backend |
 | `VARCO_EVENT_BUS_BACKEND` | Yes (since Plan 047) | `memory` | Set `redis` to make the bootstrapped Redis bus live — unset silently uses the in-process `InMemoryEventBus` instead |
 | `VARCO_CACHE_BACKEND` | Yes (since Plan 047) | `memory` | Set `redis` to make the bootstrapped Redis cache live — unset silently uses the in-process `InMemoryCache` instead |
+| `VARCO_DLQ_BACKEND` / `VARCO_IDEMPOTENCY_BACKEND` / `VARCO_JOB_STORE_BACKEND` | Recommended | `memory` | The example keeps these in-process on purpose; setting `memory` explicitly states that and keeps `varco diagnose --check` free of `di.bootstrapped_unselected` warnings (values in `example/backends.py`) |
+| `VARCO_REVOCATION_BACKEND` | Recommended | `null` | Same, for token revocation (`null` = no revocation store) |
 | `VARCO_JWT_PRIVATE_KEY_PEM` | No | auto-generated | RSA/EC PEM private key for JWT signing |
 | `VARCO_REDIS_USE_STREAMS` | No | `false` | Set `true` to use Redis Streams (at-least-once delivery) |
 | `VARCO_CORS_ORIGINS` | No | `*` | Comma-separated allowed CORS origins |

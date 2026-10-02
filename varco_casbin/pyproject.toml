@@ -21,7 +21,7 @@ classifiers   = [
 dependencies = [
     "varco-core~=3.0",
     "casbin>=1.36",
-    "providify>=2.1.0",
+    "providify>=2.1.1",
     "pydantic-settings>=2.14.2",
 ]
 

@@ -49,7 +49,8 @@ from __future__ import annotations
 from typing import Generic, TypeVar
 
 import pytest
-from providify import DIContainer, IssueKind, Profile, Singleton
+from providify import DIContainer, Inject, IssueKind, Profile, Requires, Singleton
+from providify.exceptions import ScopeViolationDetectedError
 
 T = TypeVar("T")
 
@@ -771,3 +772,145 @@ class TestP050UpstreamAsks:
 
         # `inject=` is not a real provide() kwarg today — expected TypeError.
         container.provide(factory, returns=str, inject={"client": _RuntimeOnlyType})  # type: ignore[call-arg]
+
+
+class TestP32CopyCollectionPoints:
+    """
+    Plan 052 / Step 11 — P32, filed against providify 2.1.0.
+
+    `DIContainer.copy()` bypasses `__init__` via `__new__` and never sets
+    `_collection_points` (set at `container.py:875`) — so `get()`/`aget()`
+    on the copy raises `AttributeError` the moment the container has any
+    `@Multibound` type registered, since `_is_collection_point()`
+    (`container.py:1725`) reads it unconditionally.
+
+    Report: `design/upstream-gaps/providify-copy-collection-points.md`.
+    """
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AttributeError,
+        reason="GAP: P32 — DIContainer.copy() never copies _collection_points on "
+        "providify 2.1.0 (container.py:7800+ vs. __init__'s container.py:875); "
+        "see design/upstream-gaps/providify-copy-collection-points.md",
+    )
+    def test_copy_preserves_collection_points(self) -> None:
+        from providify import DIContainer, Multibound, Singleton
+
+        @Multibound
+        class _Seam:
+            pass
+
+        @Singleton
+        class _Contribution(_Seam):
+            pass
+
+        base = DIContainer()
+        base.register(_Contribution)
+        base.multibind(_Seam)
+        clone = base.copy()
+
+        # Expected to raise AttributeError on providify 2.1.0 — see report.
+        # (`_multibound_inner()` only consults `_collection_points` for a
+        # `list[T]`-shaped request — see the report's §2 for the exact path.)
+        clone.get(list[_Seam])
+
+
+class TestP33OverrideInstanceScopeLeak:
+    """
+    Plan 052 / Step 11 — P33, filed against providify 2.1.0.
+
+    `ContainerOverrides.instance()` always binds `Scope.DEPENDENT`
+    (`testing.py:128-130`); `_check_scope_violation()` then reports a
+    false-positive scope leak for any `SINGLETON` consumer holding the
+    overridden interface via plain `Inject[T]`.
+
+    Report: `design/upstream-gaps/providify-override-instance-scope-leak.md`.
+    """
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=ScopeViolationDetectedError,
+        reason="GAP: P33 — ContainerOverrides.instance() always binds Scope.DEPENDENT "
+        "(providify 2.1.0 testing.py:128-130), tripping _check_scope_violation() for a "
+        "SINGLETON consumer using plain Inject[T]; see "
+        "design/upstream-gaps/providify-override-instance-scope-leak.md",
+    )
+    async def test_instance_override_trips_scope_leak_on_singleton_consumer(self) -> None:
+        from providify.testing import ContainerOverrides
+
+        @Singleton
+        class _Dep:
+            pass
+
+        @Singleton
+        class _Consumer:
+            def __init__(self, d: Inject[_Dep]) -> None:
+                self.d = d
+
+        container = DIContainer()
+        container.register(_Dep)
+        container.register(_Consumer)
+
+        overrides = ContainerOverrides(container)
+        overrides.instance(_Dep, _Dep())
+
+        # Expected to raise ScopeViolationDetectedError on providify 2.1.0 — see report.
+        await container.aget(_Consumer)
+
+
+# P34 fixtures live at module scope: under `from __future__ import annotations`
+# a function-local class in an `Inject[...]` annotation cannot be resolved by
+# validate(), which would fail the guard with UNRESOLVED_ANNOTATION — the wrong
+# reason.
+class _P34Unbound:
+    """Deliberately never bound in any container."""
+
+
+class _P34Port:
+    """The interface the gated implementation is bound under."""
+
+
+@Singleton
+@Requires(env="VARCO_TEST_P34_GATE", value="on")
+class _P34Gated(_P34Port):
+    """Active only when ``VARCO_TEST_P34_GATE=on`` — never set by the suite."""
+
+    def __init__(self, dep: Inject[_P34Unbound]) -> None:
+        self.dep = dep
+
+
+class TestP34ValidateInactiveOwnerDeps:
+    """
+    Plan 052 (amendment 4) — P34, filed against providify 2.1.0, **resolved in
+    providify 2.1.1** (inactive owners now skip the graph tier). Converted from a
+    strict xfail into a regular regression guard.
+
+    `validate()`'s graph tier walks the *own* injection points of every
+    registered binding (`container.py:6442`, pass 2 at `:6529+`) without asking
+    `_binding_is_active()` about the owner — only the candidates are filtered
+    (`:2150`). So a `@Requires`-inactive binding, which `get()` can never
+    construct, still reports its unbound dependencies as `MISSING_BINDING`
+    ERRORs. varco hits it through `SAConfiguration.webhook_repository`'s
+    required `FieldEncryptor` (`varco diagnose --check` exits 1).
+
+    Report: `design/upstream-gaps/providify-validate-inactive-owner-deps.md`.
+    """
+
+    def test_inactive_owner_dependencies_are_not_missing_binding_errors(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The gate env var is unset, so the condition is OFF for this test.
+        # (@Requires reads it at evaluation time, never at decoration time.)
+        monkeypatch.delenv("VARCO_TEST_P34_GATE", raising=False)
+
+        container = DIContainer()
+        container.bind(_P34Port, _P34Gated)
+        report = container.validate(raise_on_error=False)
+
+        # Precondition (holds today): providify itself knows _Gated is inactive.
+        assert not container.is_resolvable(_P34Port)
+        assert any(i.kind is IssueKind.CONDITION_INACTIVE for i in report.infos)
+        # Fixed in providify 2.1.1: an inactive owner's own dependencies are no
+        # longer checked (2.1.0 reported two MISSING_BINDING ERRORs here).
+        assert report.errors == (), [(i.kind, i.owner) for i in report.errors]

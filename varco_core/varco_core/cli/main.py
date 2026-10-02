@@ -5,7 +5,7 @@ varco_core.cli.main
 (``[project.scripts] varco = "varco_core.cli.main:main"``).
 
 Subcommands are discovered via the ``varco.commands`` entry-point group —
-``varco_core`` itself only ships ``migrate`` (built in, not a plugin, since
+``varco_core`` itself only ships ``migrate`` and ``diagnose`` (built in, not plugins, since
 it depends only on ``varco_core.migration``). Backend packages
 (``varco_sa``, ``varco_beanie``) may contribute additional top-level
 subcommands the same way, keeping ``varco_core`` free of sibling
@@ -24,6 +24,7 @@ import sys
 from collections.abc import Sequence
 from importlib.metadata import entry_points
 
+from varco_core.cli import diagnose as _diagnose_module
 from varco_core.cli import dlq as _dlq_module
 from varco_core.cli import migrate as _migrate_module
 from varco_core.cli import retention as _retention_module
@@ -39,6 +40,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _tenant_module.register(subparsers)
     _dlq_module.register(subparsers)
     _retention_module.register(subparsers)
+    _diagnose_module.register(subparsers)
 
     # Backend-contributed subcommands, discovered lazily so a package that
     # is not installed simply does not appear — never a hard ImportError at

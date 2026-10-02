@@ -121,6 +121,24 @@
         "type": "varco_core.connection.ssl.SSLConfig | None"
       }
     ],
+    "varco_core.di.report.DiagnoseSettings": [
+      {
+        "default": "True",
+        "description": "",
+        "env": "VARCO_DIAGNOSE_STARTUP_REPORT",
+        "field": "startup_report",
+        "secret": false,
+        "type": "<class 'bool'>"
+      },
+      {
+        "default": "False",
+        "description": "",
+        "env": "VARCO_DIAGNOSE_STARTUP_REPORT_JSON",
+        "field": "startup_report_json",
+        "secret": false,
+        "type": "<class 'bool'>"
+      }
+    ],
     "varco_core.event.cloudevents.CloudEventsSettings": [
       {
         "default": "'application/json'",

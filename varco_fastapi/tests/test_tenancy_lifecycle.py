@@ -78,12 +78,19 @@ def test_create_varco_app_with_tenancy_none_registers_nothing() -> None:
 def test_isolation_env_var_without_tenancy_kwarg_logs_one_warning(
     monkeypatch, caplog: logging.LogCaptureFixture
 ) -> None:
+    """
+    Plan 052: the build-time ``_warn_unowned_settings`` log became the
+    ``settings.unowned`` wiring finding, logged at WARNING when the lifespan
+    runs the startup preflight (same text, new place).
+    """
     monkeypatch.setenv("VARCO_TENANCY_ISOLATION", "schema")
+    from fastapi.testclient import TestClient
     from providify import DIContainer
     from varco_fastapi.app import create_varco_app
 
-    with caplog.at_level(logging.WARNING):
-        create_varco_app(DIContainer(), validate=False)
+    app = create_varco_app(DIContainer(), validate=False)
+    with caplog.at_level(logging.WARNING), TestClient(app):
+        pass
 
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert any("VARCO_TENANCY_ISOLATION" in r.getMessage() for r in warnings)

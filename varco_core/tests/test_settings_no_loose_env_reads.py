@@ -113,13 +113,31 @@ def _varco_literal(node: ast.expr | None) -> bool:
     )
 
 
-def _loose_reads_in(text: str) -> set[int]:
-    """Return the 1-indexed line numbers of loose ``VARCO_*`` reads in ``text``."""
+def _loose_reads_in(text: str) -> set[str]:
+    """Return the enclosing-scope qualnames of loose ``VARCO_*`` reads in ``text``.
+
+    Args:
+        text: Python source.
+
+    Returns:
+        A set of dotted qualnames (``Class.method``, ``func.<locals>.inner`` is
+        flattened to ``func.inner``); a read at module scope is ``"<module>"``.
+
+    DESIGN: key on the enclosing function's qualname, not the line number.
+        ✅ An unrelated edit above the read (or moving the read within its own
+           function) no longer breaks the allowlist.
+        ✅ A read added in a *different* function is still flagged.
+        ❌ A second read in an already-allowlisted function is not flagged —
+           accepted: the allowlist grants a function, not a line.
+    """
     tree = ast.parse(text)
     env_names = _env_alias_names(tree)
-    lines: set[int] = set()
+    scopes: set[str] = set()
 
-    for node in ast.walk(tree):
+    def visit(node: ast.AST, stack: tuple[str, ...]) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            stack = (*stack, node.name)
+        hit = False
         # <env>.get("VARCO_...")  /  os.getenv("VARCO_...")  /  getenv("VARCO_...")
         if isinstance(node, ast.Call):
             fn = node.func
@@ -130,21 +148,26 @@ def _loose_reads_in(text: str) -> set[int]:
                 and _is_os_environ(fn.value, env_names)
                 and _varco_literal(first)
             ):
-                lines.add(node.lineno)
+                hit = True
             elif (
                 (isinstance(fn, ast.Attribute) and fn.attr == "getenv")
                 or (isinstance(fn, ast.Name) and fn.id == "getenv")
             ) and _varco_literal(first):
-                lines.add(node.lineno)
+                hit = True
         # <env>["VARCO_..."]
         elif (
             isinstance(node, ast.Subscript)
             and _is_os_environ(node.value, env_names)
             and _varco_literal(node.slice)
         ):
-            lines.add(node.lineno)
+            hit = True
+        if hit:
+            scopes.add(".".join(stack) or "<module>")
+        for child in ast.iter_child_nodes(node):
+            visit(child, stack)
 
-    return lines
+    visit(tree, ())
+    return scopes
 
 
 def _find_loose_reads(root: Path) -> set[str]:
@@ -154,8 +177,8 @@ def _find_loose_reads(root: Path) -> set[str]:
         if not pkg_src.is_dir():
             continue
         for path in pkg_src.rglob("*.py"):
-            for lineno in _loose_reads_in(path.read_text()):
-                hits.add(f"{path.relative_to(root)}:{lineno}")
+            for qualname in _loose_reads_in(path.read_text()):
+                hits.add(f"{path.relative_to(root)}:{qualname}")
     return hits
 
 
@@ -166,6 +189,33 @@ class TestNoLooseEnvReads:
         found = _find_loose_reads(repo_root)
 
         assert found == set(LOOSE_ENV_READ_ALLOWLIST)
+
+
+class TestAllowlistIsKeyedOnQualname:
+    """Moving a read within a function is fine; a read elsewhere is flagged."""
+
+    _BASE = 'import os\nclass C:\n    def m(self):\n        return os.environ.get("VARCO_X")\n'
+
+    def test_moving_read_within_same_function_keeps_the_same_key(self) -> None:
+        moved = (
+            "import os\n"
+            "\n\n# padding shifts every line number\n"
+            "class C:\n"
+            "    def m(self):\n"
+            "        y = 1\n"
+            '        return os.environ.get("VARCO_X")\n'
+        )
+
+        assert _loose_reads_in(self._BASE) == _loose_reads_in(moved) == {"C.m"}
+
+    def test_read_in_a_different_function_is_a_different_key(self) -> None:
+        other = self._BASE.replace("def m(", "def n(")
+
+        assert _loose_reads_in(other) == {"C.n"}
+        assert _loose_reads_in(other) != _loose_reads_in(self._BASE)
+
+    def test_module_level_read_is_keyed_module(self) -> None:
+        assert _loose_reads_in('import os\nx = os.environ["VARCO_X"]\n') == {"<module>"}
 
 
 class TestGuardDetectsWhatTheRegexMissed:
@@ -180,12 +230,12 @@ class TestGuardDetectsWhatTheRegexMissed:
             '    return env.get("VARCO_OTEL_GLOBAL_ATTRS", "")\n'
         )
 
-        assert _loose_reads_in(src) == {4}
+        assert _loose_reads_in(src) == {"f"}
 
     def test_chained_alias_read_is_detected(self) -> None:
         src = 'import os\na = os.environ\nb = a\nx = b["VARCO_THING"]\n'
 
-        assert _loose_reads_in(src) == {4}
+        assert _loose_reads_in(src) == {"<module>"}
 
     def test_docstring_mentioning_environ_is_not_a_read(self) -> None:
         """A regex counted this as a hit; the AST cannot see it at all."""

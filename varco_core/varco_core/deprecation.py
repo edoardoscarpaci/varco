@@ -54,17 +54,135 @@ result stays awaitable.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import inspect
+import sys
+import threading
 import warnings
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-__all__ = ["deprecated", "deprecated_alias"]
+__all__ = [
+    "DeprecationRecord",
+    "deprecated",
+    "deprecated_alias",
+    "fired_deprecations",
+    "reset_fired_deprecations",
+]
 
 _T = TypeVar("_T")
+
+
+@dataclasses.dataclass(frozen=True)
+class DeprecationRecord:
+    """
+    One deprecated subject's cumulative firing history (Plan 052 / §D-deprecations).
+
+    A single record per ``subject`` accumulates ``count`` across every call —
+    the ledger is a dedup, not a log. ``first_location`` is fixed at the first
+    fire and never updated by later ones.
+
+    Args:
+        subject:       What is deprecated, as rendered in the warning message.
+        since:         Version the deprecation began, or ``None`` for a direct
+                       ``warnings.warn(DeprecationWarning)`` site this module
+                       does not own (Plan 052's eight direct sites).
+        removed_in:    Version the subject is removed in, or ``None`` (ditto).
+        replacement:   Preferred replacement, or ``None`` if there is none.
+        count:         Number of times this subject has fired since the last
+                       :func:`reset_fired_deprecations` call.
+        first_location: ``"<file>:<lineno>"`` of the first call site observed.
+    """
+
+    subject: str
+    since: str | None
+    removed_in: str | None
+    replacement: str | None
+    count: int
+    first_location: str
+
+
+#: Process-global ledger, keyed by subject (dedup key — see DeprecationRecord).
+#: DESIGN: a plain dict under a sync `threading.Lock`, not an `asyncio.Lock`
+#! ✅ `warnings.warn` itself is synchronous and may be called from any thread;
+#!    the lazy-`asyncio.Lock` rule (CLAUDE.md) is about event-loop binding,
+#!    which does not apply to a plain mutex guarding a dict.
+#! ✅ Module-level construction is correct here — a `threading.Lock` has no
+#!    running-event-loop requirement, unlike `asyncio.Lock`.
+#! ❌ Process-global, inherently — reset only in tests (`reset_fired_deprecations`).
+_FIRED: dict[str, DeprecationRecord] = {}
+_FIRED_LOCK = threading.Lock()
+
+
+def _note(
+    subject: str,
+    *,
+    since: str | None,
+    removed_in: str | None,
+    replacement: str | None,
+) -> None:
+    """
+    Record one firing of ``subject`` in the process-global ledger.
+
+    Called immediately **before** each ``warnings.warn(DeprecationWarning)``
+    site in this module, so the ledger captures a fire regardless of the
+    active warnings filter (a ``-W ignore::DeprecationWarning`` process still
+    gets a record — that is the entire reason this hook exists).
+
+    Args:
+        subject:     Dedup key — the deprecated name as rendered in the message.
+        since:       Version the deprecation began, or ``None``.
+        removed_in:  Version of removal, or ``None``.
+        replacement: Preferred replacement, or ``None``.
+
+    Thread safety: guarded by ``_FIRED_LOCK`` — safe to call concurrently from
+    multiple threads (exercised by the ledger's own thread-safety test).
+    """
+    # frame 0 = this function, frame 1 = the one-level wrapper that called us,
+    # frame 2 = whoever called the deprecated thing — the caller we want to blame.
+    frame = sys._getframe(2)
+    location = f"{frame.f_code.co_filename}:{frame.f_lineno}"
+    with _FIRED_LOCK:
+        existing = _FIRED.get(subject)
+        if existing is None:
+            _FIRED[subject] = DeprecationRecord(
+                subject=subject,
+                since=since,
+                removed_in=removed_in,
+                replacement=replacement,
+                count=1,
+                first_location=location,
+            )
+        else:
+            _FIRED[subject] = dataclasses.replace(existing, count=existing.count + 1)
+
+
+def fired_deprecations() -> tuple[DeprecationRecord, ...]:
+    """
+    Snapshot the process-global deprecation ledger.
+
+    Returns:
+        A tuple of :class:`DeprecationRecord`, one per distinct subject that
+        has fired since the last :func:`reset_fired_deprecations` call (or
+        process start). Order is insertion order (first-fired-first).
+    """
+    with _FIRED_LOCK:
+        return tuple(_FIRED.values())
+
+
+def reset_fired_deprecations() -> None:
+    """
+    Empty the process-global deprecation ledger.
+
+    Test-only. Production code should never call this — the ledger is
+    documented as "since process start" (varco diagnose's report footnote).
+    """
+    with _FIRED_LOCK:
+        _FIRED.clear()
+
 
 #: ``stacklevel`` for a warning raised inside a one-level wrapper: 1 is the
 #: wrapper itself, 2 is whoever called it. Every warn() below is exactly one
@@ -200,8 +318,9 @@ def _deprecate_class(
     Returns:
         The very same class object, with a wrapped ``__init__``.
     """
+    subject = name or cls.__name__
     message = _build_message(
-        name or cls.__name__,
+        subject,
         since=since,
         removed_in=removed_in,
         replacement=replacement,
@@ -210,6 +329,7 @@ def _deprecate_class(
 
     @functools.wraps(original_init)
     def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
+        _note(subject, since=since, removed_in=removed_in, replacement=replacement)
         warnings.warn(message, DeprecationWarning, stacklevel=_CALLER_STACKLEVEL)
         original_init(self, *args, **kwargs)
 
@@ -239,8 +359,9 @@ def _deprecate_callable(
         A ``functools.wraps``-preserving wrapper of the same async-ness as
         ``fn``, so ``inspect.iscoroutinefunction`` is unchanged.
     """
+    subject = name or str(getattr(fn, "__name__", repr(fn)))
     message = _build_message(
-        name or str(getattr(fn, "__name__", repr(fn))),
+        subject,
         since=since,
         removed_in=removed_in,
         replacement=replacement,
@@ -250,6 +371,7 @@ def _deprecate_callable(
 
         @functools.wraps(fn)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            _note(subject, since=since, removed_in=removed_in, replacement=replacement)
             warnings.warn(message, DeprecationWarning, stacklevel=_CALLER_STACKLEVEL)
             return await fn(*args, **kwargs)
 
@@ -257,6 +379,7 @@ def _deprecate_callable(
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        _note(subject, since=since, removed_in=removed_in, replacement=replacement)
         warnings.warn(message, DeprecationWarning, stacklevel=_CALLER_STACKLEVEL)
         return fn(*args, **kwargs)
 
@@ -329,15 +452,17 @@ def deprecated_alias(
           deprecated name should not be advertised by autocomplete.
     """
     target_name = getattr(target, "__name__", None)
+    alias_replacement = str(target_name) if target_name is not None else None
     message = _build_message(
         name,
         since=since,
         removed_in=removed_in,
-        replacement=str(target_name) if target_name is not None else None,
+        replacement=alias_replacement,
     )
 
     def module_getattr(requested: str) -> object:
         if requested == name:
+            _note(name, since=since, removed_in=removed_in, replacement=alias_replacement)
             warnings.warn(message, DeprecationWarning, stacklevel=_CALLER_STACKLEVEL)
             return target
         if fallback is not None:

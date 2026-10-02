@@ -75,6 +75,8 @@ because the two plans already commit to those together.
 | `AuthPostureCollector` | 034 `inspect_auth_posture()` + `inspect_revocation_posture()` | `auth.api_key_query_fallback`, `auth.api_key_plaintext`, `auth.passthrough_bound`, `auth.revocation_unbound`, `auth.revocation_registry_unwired`, `auth.revocation_fail_open` |
 | `HttpEdgeCollector` | 035 `inspect_http_edge()` | Re-emits 035's nine `http.*` ids and severities unchanged |
 | `DataPostureCollector` | 037 `inspect_rls_posture()` | `data.rls_disabled`, `data.rls_not_forced`, `data.role_bypasses_rls`, `data.rls_not_checked` |
+| `JwksPostureCollector` (Plan 052 / RO-2, `CoreModule`) | `inspect_jwks_posture()` | `auth.jwks_refresh_off` (WARN), `auth.jwks_keysets_unloaded` (INFO) |
+| `RetentionPostureCollector` (Plan 052 / RO-2, `CoreModule`) | `inspect_retention_posture()` | `retention.platform_wide` (WARN), `retention.dry_run_only` (INFO), `retention.short_retention` (INFO) |
 | `LocalPostureCollector` | this plan | `posture.admin_mount_unauthenticated`, `posture.tenant_admin_mounted`, `posture.webhook_secrets_plaintext`, `posture.base_authorizer_bound`, `posture.webhook_transport_unverified` |
 
 ⚠️ **Plan 051 / DI-5**: these five (`_collect_tenant`/`_collect_auth`/`_collect_http`/

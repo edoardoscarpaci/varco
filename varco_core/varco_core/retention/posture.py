@@ -37,10 +37,14 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
+from varco_core.posture import PostureCollector, PostureFinding, PostureSeverity
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from varco_core.retention.policy import RetentionRegistry
 
-__all__ = ["RetentionPostureReport", "inspect_retention_posture"]
+__all__ = ["RetentionPostureCollector", "RetentionPostureReport", "inspect_retention_posture"]
 
 _SHORT_RETENTION_FLOOR = timedelta(hours=24)
 
@@ -142,3 +146,74 @@ def inspect_retention_posture(registry: RetentionRegistry | None = None) -> Rete
         short_retention_policies=tuple(short_retention),
         kinds=frozenset(kinds),
     )
+
+
+class RetentionPostureCollector(PostureCollector):
+    """
+    RO-2's second ``SecurityPosture`` collector — wraps
+    :func:`inspect_retention_posture` as a ``PostureCollector``
+    contribution (Plan 052 / §D-RO2).
+
+    Args:
+        registry_supplier: A zero-arg callable returning the app's
+            ``RetentionRegistry``, or ``None`` if retention was never
+            configured. A supplier (not the registry itself) so a
+            registry built after this collector is contributed — the
+            common case, since ``CoreModule`` contributes it long before
+            ``RetentionModule.async_init()`` builds the registry — is
+            still seen correctly.
+    """
+
+    name = "retention"
+
+    def __init__(self, registry_supplier: Callable[[], RetentionRegistry | None]) -> None:
+        self._registry_supplier = registry_supplier
+
+    def collect(self) -> list[PostureFinding]:
+        """
+        Findings: ``retention.platform_wide`` (WARN, naming every
+        cross-tenant policy — "the genuinely security-relevant finding",
+        Plan 039), ``retention.dry_run_only`` (INFO, when every configured
+        policy is dry-run), ``retention.short_retention`` (INFO). Empty
+        when no registry is configured.
+        """
+        registry = self._registry_supplier()
+        report = inspect_retention_posture(registry)
+        if not report.configured:
+            return []
+
+        findings: list[PostureFinding] = []
+        if report.platform_wide_policies:
+            findings.append(
+                PostureFinding(
+                    check="retention.platform_wide",
+                    severity=PostureSeverity.WARN,
+                    detail=(
+                        f"Platform-wide (cross-tenant) retention polic{'y' if len(report.platform_wide_policies) == 1 else 'ies'}: "
+                        f"{', '.join(report.platform_wide_policies)}"
+                    ),
+                    remediation="set tenant_ids=(...) on the policy, or confirm the cross-tenant scope is intentional",
+                )
+            )
+        if report.policy_count > 0 and report.destructive_count == 0:
+            findings.append(
+                PostureFinding(
+                    check="retention.dry_run_only",
+                    severity=PostureSeverity.INFO,
+                    detail="every retention policy is dry-run — nothing is purged",
+                    remediation="set dry_run=False on a policy once its preview output looks right",
+                )
+            )
+        if report.short_retention_policies:
+            findings.append(
+                PostureFinding(
+                    check="retention.short_retention",
+                    severity=PostureSeverity.INFO,
+                    detail=(
+                        f"Short-retention (<24h) polic{'y' if len(report.short_retention_policies) == 1 else 'ies'}: "
+                        f"{', '.join(report.short_retention_policies)}"
+                    ),
+                    remediation="confirm the short older_than window is intentional",
+                )
+            )
+        return findings

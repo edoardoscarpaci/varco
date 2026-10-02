@@ -137,6 +137,12 @@ services:
       # InMemoryEventBus/InMemoryCache and the redis service above is unused.
       VARCO_EVENT_BUS_BACKEND: "redis"
       VARCO_CACHE_BACKEND: "redis"
+      # The remaining selectable seams stay in-process on purpose; naming them
+      # keeps `varco diagnose --check` clean (Plan 052). Mirrors example/backends.py.
+      VARCO_DLQ_BACKEND: "memory"
+      VARCO_IDEMPOTENCY_BACKEND: "memory"
+      VARCO_JOB_STORE_BACKEND: "memory"
+      VARCO_REVOCATION_BACKEND: "null"
 
       # ── JWT signing key ───────────────────────────────────────────────────
       # Leave blank (or remove) to auto-generate an ephemeral key at startup.

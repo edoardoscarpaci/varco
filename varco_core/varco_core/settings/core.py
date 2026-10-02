@@ -49,6 +49,7 @@ def _classes() -> tuple[type, ...]:
     """
     from varco_core.authority.config import AuthorizationConfig
     from varco_core.cache.config import CacheSettings
+    from varco_core.di.report import DiagnoseSettings
     from varco_core.exception.settings import ErrorEnvelopeSettings
     from varco_core.i18n.settings import I18nSettings
     from varco_core.idempotency.settings import IdempotencySettings
@@ -76,6 +77,7 @@ def _classes() -> tuple[type, ...]:
         TenantMembershipSettings,
         AuthorizationConfig,
         TlsSettings,
+        DiagnoseSettings,
     )
 
 

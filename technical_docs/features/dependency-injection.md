@@ -2,7 +2,7 @@
 
 > Plan 045 wrote the **Default bindings** section below. Plan 047 wrote
 > **Selecting a backend** and **Enabling a feature**. Plan 058 completes
-> this document (multi-binding, lifecycle, testing).
+> this document. Plan 052 wrote **Diagnostics** and **Testing** (final form).
 
 ## Default bindings
 
@@ -739,3 +739,139 @@ needs a teardown hook and has no `@Configuration` of its own (`enable_redis_toke
 | `enable_*` constructing a connection-holding object without `disposer=` | Leaks at every `container.ashutdown()` — pass `bind_instance(..., disposer=obj.aclose)`. |
 | A Kafka/NATS bus resolved by hand and never started | `publish()` raises `RuntimeError` mentioning `start()` — no more silent hang or first-resolution auto-start (`@PostConstruct` removed in 4.0). |
 | `SAModule(ensure_tables=True)` under an Alembic-managed schema | Harmless (`checkfirst`) but redundant — set `ensure_tables=False` when Alembic owns every framework table this deployment uses. |
+
+
+## Diagnostics (Plan 052 / DI-7)
+
+`varco_core.di.report.build_wiring_report(container, ...) -> WiringReport` is the one frozen,
+JSON-serialisable answer to "what is this app running and why". It is the only wiring report:
+a new wiring fact is a `WiringFinding` there, never a second `inspect_*` harness.
+
+| Question | Section |
+|---|---|
+| Which implementation of each ABC is live? | **Seams** / **Features** / **Other defaults** / **Collections** |
+| Where did it come from? | `source`: `code` / `profile` / `env-dotted` / `env` / `default` / `absent` |
+| Which deprecations fired? | **Deprecations** (the `varco_core.deprecation` ledger + a capture window for the direct `warnings.warn` sites, during bootstrap only) |
+| Which features are off? | **Features** (`enabled=false`) |
+| Who owns what / in what order? | **Modules**, **Lifecycle** (planned order; `realised` filled post-start by `varco_fastapi.diagnose.wiring_report(app)`) |
+| Which settings fields came from env? | **Settings** (`varco_core.settings.all_provenance()`) |
+| Is anything bound but not wired? | **Findings** (table below) + providify's `ValidationReport` folded in verbatim |
+
+Shadowing (`shadowed`/`inactive`) is computed from `inspect_bindings()`, never from
+`FALLBACK_SHADOWED` INFOs, so it is correct for the 22 scanned-class defaults that providify
+2.1.0 never emits the INFO for (P28, filed by Plan 045).
+
+### `varco diagnose`
+
+```bash
+varco diagnose --modules myapp.wiring:modules [--static] [--json] [--check] [--verbose]
+varco diagnose --container myapp.wiring:container [--modules ...]
+varco diagnose --app myapp.main:app          # reads app.state.varco_container / varco_modules
+varco diagnose --path DIR ...                # prepended to sys.path (repeatable)
+```
+
+It runs `register()` -> `async_init()` -> module `validate()` -> `container.validate()` and
+**never calls `start()`**. `--static` skips `async_init` (Docker-free; the report carries a
+banner because a `MISSING_BINDING` naming an `ainstall()`-registered provider may be spurious).
+Exit codes: `0` report produced (content never changes it without `--check`); `1` `--check` and
+the worst severity is ERROR/WARNING, or the driver failed; `2` usage error.
+
+### The startup report and the runtime `validate()` gate
+
+`create_varco_app` runs the same preflight inside the lifespan, after every `async_init()` and
+before the first `start()`, logs the rendered report once at INFO (logger
+`varco_core.di.diagnose`) and stores it at `app.state.varco_wiring_report`.
+
+| `validate` | `strict_validation` | ERROR | WARNING | Result |
+|---|---|---|---|---|
+| `True` (default) | `False` (default) | yes | - | `ConfigurationError` (message is a count; every ERROR is logged by owner/message) |
+| `True` | `False` | no | yes | logged at WARNING, startup proceeds |
+| `True` | `True` | no | yes (varco `WiringFinding` only) | `ConfigurationError` |
+| `False` | any | - | - | no `container.validate()`; report still built and logged |
+
+⚠️ `strict_validation=True` promotes only varco-side WARNING *findings*; providify's own WARNING
+tier (e.g. `MISSING_BINDING_DEFAULTED` for `InMemoryEventBus`'s `error_policy`/`dispatch_mode`,
+present on every stock container) never refuses and `WiringReport.worst()`/`--check` ignore it —
+read `report.validation.warnings` directly if you want it gated.
+
+`VARCO_DIAGNOSE_STARTUP_REPORT=false` silences the rendered block (never the problem lines);
+`VARCO_DIAGNOSE_STARTUP_REPORT_JSON=true` logs one JSON line instead.
+
+### "Bound but not wired" findings
+
+| `check` | Meaning |
+|---|---|
+| `di.revocation_store_not_wired` | a revocation store is bound but not passed to `TrustedIssuerRegistry(revocation_store=...)` |
+| `module.<name>.validate` | a module's own `validate()` returned a message |
+| `di.bootstrapped_unselected` | a backend package registered values for a seam whose `VARCO_<SEAM>_BACKEND` is unset - the in-process default is live (WARNING) |
+| `settings.unowned` | `VARCO_MIGRATE_MODE`/`VARCO_TENANCY_ISOLATION` is set but no `MigrationsModule`/`TenancyModule` is registered (WARNING; only evaluated when the app passed an explicit module list) |
+| `deprecation.fired` | one INFO per deprecation recorded during `async_init` (never blocks) |
+
+`settings.unowned` and `di.bootstrapped_unselected` are evaluated at lifespan start, not at
+`create_varco_app()` build time (the pre-052 build-time `_warn_unowned_settings` log is gone);
+both are also logged as individual WARNING lines. Fired deprecations also appear in the
+**Deprecations** section. The report header's `environment`/`enforce`/`enforce_source` come from
+`varco_fastapi.diagnose.posture_header(container, modules)` (stored at
+`app.state.varco_posture_header`); a bare `varco_core` caller that passes nothing gets
+`unknown`/`default`, since `varco_core` cannot import `SecurityPostureSettings`.
+
+The startup and `diagnose()` paths share one capture window
+(`varco_core.di.diagnose.capture_direct_deprecations()` +
+`direct_deprecation_records()`) so the direct `warnings.warn` sites are seen identically. A
+module whose `async_init()` raises surfaces as
+`ModuleAsyncInitError("<ModuleName>.async_init failed: <exc>")`; a refused startup raises
+`WiringValidationError`, whose message lists `owner: message` per ERROR and `check: detail` per
+WARNING finding (`varco_fastapi` maps it to `ConfigurationError`).
+
+### Pitfalls (Diagnostics)
+
+| Pitfall | Fix |
+|---|---|
+| `varco diagnose` with no Redis/DB fails in `async_init` | use `--static` |
+| `--check` in CI without `--static` needs the brokers | `--static`, or provision them |
+| A `MISSING_BINDING` under `--static` may be an `ainstall()` provider | re-run without `--static` |
+| A deprecation fired at import time before the capture window | only `deprecated()`-helper sites are ledgered |
+| `di.bootstrapped_unselected` fires in a process that merely *imported* a backend | the backend registry is process-global: any `bootstrap()`/import of `varco_redis`/`varco_kafka`/... in the same interpreter (a test session, a shared worker) registers values for the seam, so an app that never selected it still gets the WARNING. Set `VARCO_<SEAM>_BACKEND` (to the default value to silence), or `clear_backend_selection(monkeypatch)` in tests |
+| `validate=False` also skips the runtime gate | keep it `True`; fix the binding |
+| Startup refused on an ERROR that never bit on 3.x | read the report, fix the binding; `validate=False` is the escape |
+
+## Testing (Plan 052 / DI-11)
+
+`varco_core.testing.in_memory_modules()` is a varco app on in-process defaults: no job
+runner/scheduler (`CoreModule(job_runner=False)`), and it binds `ErrorPolicy`/`DispatchMode` so
+`validate()` is warning-clean. For a FastAPI app, append your own modules and call
+`create_varco_app(container, modules=in_memory_modules(*extra))`, or use
+`varco_fastapi.testing.in_memory_app_modules(*extra)` - the FastAPI default module set with
+`CoreModule(job_runner=False)`, a `development`/`warn` `SecurityPostureModule` (a test app never
+refuses over a posture finding), `*extra`, then `InMemoryProfile()` last. `InMemoryProfile` is a `VarcoModule` that *asserts* the shape
+(`validate()` names any seam that left its default) and never fixes it. Swap **one** binding with
+providify's own fixtures - varco ships no fixture (RL-3):
+
+```python
+@pytest.fixture(scope="session")
+def app_container():
+    c = DIContainer(); register_modules(c, in_memory_modules()); return c
+
+@pytest.fixture
+def di_container(app_container):        # redefines providify's fixture: fresh copy per test
+    c = app_container.copy(); yield c; c.shutdown()
+
+async def test_uses_fake_cache(di_container, di_overrides):
+    di_overrides.instance(CacheBackend, FakeCache())
+    svc = await di_container.aget(OrderService)
+```
+
+⚠️ On providify 2.1.0/2.1.1 the recipe above needs two interim workarounds, both used by
+`varco_core/tests/test_single_override_recipe.py` (the working form): after
+`app_container.copy()` set `c._collection_points = set(app_container._collection_points)` (P32),
+and have a `SINGLETON` consumer take the overridden interface as `Instance[CacheBackend]` and call
+`.get()` (P33) rather than plain `Inject[CacheBackend]`.
+
+Notes: `instance()` drops **every** binding of the interface (any qualifier); use `bind()`/
+`remove(qualifier=)` for finer control. Use `clear_backend_selection(monkeypatch)` when a test
+adds a backend module on purpose. Integration form:
+`create_varco_app(container, modules=in_memory_modules())` + `TestClient`. Two providify gaps
+touch this recipe: P32 (`copy()` loses `_collection_points`) and P33 (`instance()` binds
+`DEPENDENT`, tripping a false scope-leak for singleton consumers) - see
+`design/upstream-gaps/providify-copy-collection-points.md` and
+`providify-override-instance-scope-leak.md`.

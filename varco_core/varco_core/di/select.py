@@ -228,6 +228,63 @@ def _known_values_for(seam_name: str) -> tuple[str, ...]:
     return (seam.default_value, *registered)
 
 
+def evaluate_backend_selection(
+    *, environ: Mapping[str, str] | None = None
+) -> BackendSelectionReport:
+    """
+    The pure half of :func:`check_backend_selection` — classify every seam's
+    ``VARCO_<SEAM>_BACKEND`` value and raise on a typo, but log nothing.
+
+    Exists so the wiring report (Plan 052 / §D-wired) can turn the
+    "bootstrapped but unselected" case into a ``WiringFinding`` without
+    emitting the same WARNING a second time.
+
+    Args:
+        environ: Defaults to ``os.environ``. Overridable for tests.
+
+    Returns:
+        A ``BackendSelectionReport`` — one ``SeamCheck`` per seam.
+
+    Raises:
+        BackendSelectionError: A named value is neither the seam's default
+            nor registered in this process.
+    """
+    env = environ if environ is not None else os.environ
+    checks: list[SeamCheck] = []
+    for seam in SEAMS:
+        raw = env.get(seam.env)
+        registered = frozenset(_REGISTERED_VALUES.get(seam.seam, set()))
+        if not raw:
+            kind = "unset"
+        elif ":" in raw:
+            kind = "dotted"
+        elif raw == seam.default_value:
+            kind = "default"
+        else:
+            kind = "named"
+        checks.append(
+            SeamCheck(
+                seam=seam.seam,
+                env=seam.env,
+                raw_value=raw,
+                kind=kind,
+                known_values=_known_values_for(seam.seam),
+                registered_values=registered,
+            )
+        )
+
+    for check in checks:
+        if check.kind == "named" and check.raw_value not in check.registered_values:
+            raise BackendSelectionError(
+                f"{check.env}={check.raw_value!r} is not a known backend value — "
+                f"known values: {', '.join(check.known_values)}. Values are exact "
+                f"and lower-case; did you bootstrap the package that registers "
+                f"{check.raw_value!r}?"
+            )
+
+    return BackendSelectionReport(checks=tuple(checks))
+
+
 def check_backend_selection(
     container: DIContainer,
     *,
@@ -271,38 +328,8 @@ def check_backend_selection(
         varco_redis.di.bootstrap(container)
         check_backend_selection(container)  # warns: redis bootstrapped, unselected
     """
-    env = environ if environ is not None else os.environ
-    checks: list[SeamCheck] = []
-    for seam in SEAMS:
-        raw = env.get(seam.env)
-        registered = frozenset(_REGISTERED_VALUES.get(seam.seam, set()))
-        if not raw:
-            kind = "unset"
-        elif ":" in raw:
-            kind = "dotted"
-        elif raw == seam.default_value:
-            kind = "default"
-        else:
-            kind = "named"
-        checks.append(
-            SeamCheck(
-                seam=seam.seam,
-                env=seam.env,
-                raw_value=raw,
-                kind=kind,
-                known_values=_known_values_for(seam.seam),
-                registered_values=registered,
-            )
-        )
-
-    for check in checks:
-        if check.kind == "named" and check.raw_value not in check.registered_values:
-            raise BackendSelectionError(
-                f"{check.env}={check.raw_value!r} is not a known backend value — "
-                f"known values: {', '.join(check.known_values)}. Values are exact "
-                f"and lower-case; did you bootstrap the package that registers "
-                f"{check.raw_value!r}?"
-            )
+    report = evaluate_backend_selection(environ=environ)
+    checks = report.checks
 
     for check in checks:
         if check.kind == "unset" and check.registered_values:

@@ -126,6 +126,15 @@
     },
     {
       "category": "production-safe",
+      "implementation": "varco.settings:DiagnoseSettings[None]",
+      "interface": "varco_core.di.report:DiagnoseSettings",
+      "package": "varco_core",
+      "priority": 0,
+      "qualifier": null,
+      "shape": "provider"
+    },
+    {
+      "category": "production-safe",
       "implementation": "KafkaChannelManager",
       "interface": "varco_core.event.channel:ChannelManager",
       "package": "varco_core",
@@ -631,7 +640,7 @@
     "varco_sa",
     "varco_ws"
   ],
-  "providify": "2.1.0",
+  "providify": "2.1.1",
   "schema_version": 1,
   "seams": [
     {

@@ -408,4 +408,31 @@ def provenance_of(
     )
 
 
-__all__ = ["SettingsProvenance", "bind_settings", "provenance_of"]
+def all_provenance(container: DIContainer) -> tuple[SettingsProvenance, ...]:
+    """
+    Enumerate ``SettingsProvenance`` for every class this container's
+    ``bind_settings()`` calls have touched (Plan 052 / §D-settings-hook).
+
+    The one enumerator 048 did not ship — a read over the same per-container
+    ``_REGISTRY`` dict ``provenance_of()`` already maintains, no new state.
+
+    Args:
+        container: The container ``bind_settings()`` was called on.
+
+    Returns:
+        A tuple of ``SettingsProvenance``, one per distinct ``(cls,
+        qualifier)`` this container's ``bind_settings()`` has bound, sorted
+        by ``cls.__qualname__`` then ``qualifier`` (``None`` sorts first).
+        Empty tuple if ``bind_settings()`` was never called on *container*.
+
+    Edge cases:
+        - Reuses ``provenance_of()`` per key rather than re-deriving field
+          provenance inline, so the two never disagree (Step 3's own
+          contract test asserts this).
+    """
+    registry = _registry_for(container)
+    keys = sorted(registry.keys(), key=lambda key: (key[0].__qualname__, key[1] or ""))
+    return tuple(provenance_of(container, cls, qualifier=qualifier) for cls, qualifier in keys)
+
+
+__all__ = ["SettingsProvenance", "all_provenance", "bind_settings", "provenance_of"]

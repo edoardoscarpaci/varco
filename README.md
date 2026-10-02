@@ -274,6 +274,40 @@ app = create_varco_app(
 )
 ```
 
+### varco diagnose
+
+`varco diagnose --modules myapp.wiring:modules [--static] [--json] [--check]` prints what every
+seam is bound to, where each binding came from, active deprecations, module phases, settings
+provenance and providify's `validate()` result - without starting anything. In CI:
+`varco diagnose --modules myapp.wiring:modules --static --json --check`. `create_varco_app` logs
+the same report at INFO on startup (`VARCO_DIAGNOSE_STARTUP_REPORT=false` to silence) and refuses
+to start on a `validate()` ERROR (`validate=False` is the escape; `strict_validation=True` also
+refuses on WARNING). Detail: `technical_docs/features/dependency-injection.md` section Diagnostics.
+
+### Testing a varco app
+
+```python
+from varco_core.testing import in_memory_modules, register_modules
+
+@pytest.fixture(scope="session")
+def app_container():
+    c = DIContainer(); register_modules(c, in_memory_modules()); return c
+
+@pytest.fixture
+def di_container(app_container):
+    c = app_container.copy(); yield c; c.shutdown()
+
+async def test_uses_fake_cache(di_container, di_overrides):
+    di_overrides.instance(CacheBackend, FakeCache())
+```
+
+`di_container`/`di_overrides` are providify's own fixtures - varco ships none. For a whole FastAPI app
+under `TestClient`, `varco_fastapi.testing.in_memory_app_modules()` is the equivalent module set. ⚠️ On providify
+2.1.0 two interim workarounds apply (P32/P33): set `c._collection_points =
+set(app_container._collection_points)` after `copy()`, and have a singleton consumer take the
+overridden interface as `Instance[CacheBackend]` (`.get()`) rather than `Inject[...]`. The working
+form is `varco_core/tests/test_single_override_recipe.py`.
+
 Every package ships exactly one `VarcoModule` (`varco_sa.modules.SAModule`,
 `varco_kafka.modules.KafkaModule`, `varco_casbin.modules.CasbinModule`, …) — its `_register()`
 calls that package's own `bootstrap()` first. `LifecycleModule(component)` and

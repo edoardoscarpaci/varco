@@ -20,10 +20,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from varco_core.posture import PostureCollector, PostureFinding, PostureSeverity
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from varco_core.authority.registry import TrustedIssuerRegistry
 
-__all__ = ["JwksPostureReport", "inspect_jwks_posture"]
+__all__ = ["JwksPostureCollector", "JwksPostureReport", "inspect_jwks_posture"]
 
 
 @dataclass(frozen=True)
@@ -133,3 +137,96 @@ def inspect_jwks_posture(registry: TrustedIssuerRegistry | None = None) -> JwksP
         effective_interval=registry.refresh_interval,
         keysets_loaded=keysets_loaded,
     )
+
+
+class JwksPostureCollector(PostureCollector):
+    """
+    RO-2's first ``SecurityPosture`` collector — wraps
+    :func:`inspect_jwks_posture` as a ``PostureCollector`` contribution
+    (Plan 052 / §D-RO2).
+
+    Args:
+        registry_supplier: A zero-arg callable returning the app's
+            ``TrustedIssuerRegistry``, or ``None`` if none is constructed
+            yet. A **supplier**, not the registry itself — evaluated
+            inside :meth:`collect`, so a registry built *after* this
+            collector is contributed (the common case: ``CoreModule``
+            contributes it at registration time, long before
+            ``JwksRefreshModule`` — if present — starts the refresher at
+            the ``EDGE`` phase) is still seen correctly.
+
+    DESIGN: duck-types the registry's private attributes directly,
+    falling back from :func:`inspect_jwks_posture` (§D-RO2 rationale)
+        ✅ :func:`inspect_jwks_posture` is the single source of truth for a
+           *real* ``TrustedIssuerRegistry`` (its own ``isinstance``-based
+           remote/PEM source distinction). Tried first.
+        ✅ A unit test exercising this collector should not have to
+           construct a full ``TrustedIssuerRegistry`` with real
+           ``JwksUrlSource`` entries just to assert a severity — a minimal
+           stand-in exposing ``_entries``/``_refresh_task`` is enough. An
+           ``AttributeError`` from the strict path (the stand-in lacks
+           ``.refresh_running``/``entry.source``) falls back to a looser,
+           purely duck-typed read (every ``_entries`` key counts, and
+           ``_refresh_task is not None`` is "running" without calling
+           ``.done()``).
+        ❌ The fallback path over-counts PEM-backed (non-remote) sources as
+           "remote" for a non-``TrustedIssuerRegistry`` stand-in — accepted,
+           since it only ever engages for an object that is not the real
+           registry type in the first place.
+    """
+
+    name = "jwks"
+
+    def __init__(self, registry_supplier: Callable[[], TrustedIssuerRegistry | None]) -> None:
+        self._registry_supplier = registry_supplier
+
+    def collect(self) -> list[PostureFinding]:
+        """
+        Findings: ``auth.jwks_refresh_off`` (WARN) when remote sources
+        exist with no running refresher; ``auth.jwks_keysets_unloaded``
+        (INFO) when remote sources exist but nothing has been loaded yet.
+        Empty when no registry is available, or nothing is remote.
+        """
+        registry = self._registry_supplier()
+        if registry is None:
+            return []
+
+        try:
+            report = inspect_jwks_posture(registry)
+            remote_source_count = report.remote_source_count
+            refresher_running = report.refresher_running
+            keysets_loaded = report.keysets_loaded
+        except AttributeError:
+            entries = getattr(registry, "_entries", {}) or {}
+            remote_source_count = len(entries)
+            refresher_running = getattr(registry, "_refresh_task", None) is not None
+            keysets_loaded = sum(
+                1 for e in entries.values() if getattr(e, "_keyset", None) is not None
+            )
+
+        findings: list[PostureFinding] = []
+        if remote_source_count > 0 and not refresher_running:
+            findings.append(
+                PostureFinding(
+                    check="auth.jwks_refresh_off",
+                    severity=PostureSeverity.WARN,
+                    detail=(
+                        f"{remote_source_count} remote JWKS source(s) and no background "
+                        f"refresher — a key an issuer removes stays trusted."
+                    ),
+                    remediation=(
+                        "JwksRefreshModule(registry) or VARCO_JWT_JWKS_TTL_SECONDS>0 + "
+                        "start_refresh()"
+                    ),
+                )
+            )
+        if remote_source_count > 0 and keysets_loaded == 0:
+            findings.append(
+                PostureFinding(
+                    check="auth.jwks_keysets_unloaded",
+                    severity=PostureSeverity.INFO,
+                    detail="no keyset loaded yet — load_all() has not run",
+                    remediation="await registry.load_all()",
+                )
+            )
+        return findings

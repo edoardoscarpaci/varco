@@ -43,7 +43,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 import pytest
-from providify import DIContainer, IssueKind
+from providify import DIContainer, IssueKind, Severity
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -613,3 +613,62 @@ class DIWiringConformance:
         collected = collect(container, HealthCheck)
         bound_count = len(container.get_all_bindings(HealthCheck))
         assert len(collected) == bound_count
+
+    async def test_diagnose_runs_clean_on_bootstrapped_package(
+        self, container: DIContainer
+    ) -> None:
+        """
+        Plan 052 Step 12 — ``build_wiring_report()`` must agree with this
+        package's own declared ``expected_defaults`` shape: every declared
+        default appears in the report's seams/features/other_defaults with
+        ``source in ("default", "env")``, and the report is JSON-safe.
+
+        The report must also have ``worst() in (None, INFO)`` — note
+        ``worst()`` deliberately ignores providify's own WARNING tier
+        (defaulted-parameter warnings), so this does not gate those. A
+        qualified default (a seam's ``in_memory`` twin) is satisfied by its
+        seam's single unqualified row.
+        """
+        import json  # noqa: PLC0415
+
+        from varco_core.di.report import build_wiring_report  # noqa: PLC0415
+
+        validation = container.validate(raise_on_error=False)
+        report = build_wiring_report(container, validation=validation)
+
+        json.dumps(report.to_dict())
+        # Plan 052 Step 12: no providify ERROR and no varco WARNING/ERROR finding
+        # on a freshly bootstrapped package. (worst() excludes providify's
+        # defaulted-parameter WARNINGs by design — see WiringReport.worst().)
+        # A freshly bootstrapped backend package is *by definition*
+        # bootstrapped-but-unselected (its VARCO_<SEAM>_BACKEND is unset in a
+        # unit run), so that one finding is excluded here — its own contract
+        # is pinned in varco_core/tests/test_wiring_findings.py.
+        blocking = [
+            f
+            for f in report.findings
+            if f.check != "di.bootstrapped_unselected"
+            and f.severity in (Severity.ERROR, Severity.WARNING)
+        ]
+        assert not blocking and not report.validation.errors, (blocking, report.validation.errors)
+
+        all_rows = {
+            (row.interface, row.qualifier, row.source)
+            for row in (*report.seams, *report.features, *report.other_defaults)
+        }
+        by_pair = {(interface, qualifier): source for interface, qualifier, source in all_rows}
+        seam_interfaces = {interface for interface, _ in by_pair}
+        for interface, qualifier in self.expected_defaults:
+            if (interface, qualifier) not in by_pair:
+                # A qualified default (the seam's ``in_memory`` twin) is
+                # represented by its seam's single, unqualified row — the
+                # report keys a seam by interface, not by candidate.
+                assert qualifier is not None and interface in seam_interfaces, (
+                    f"{interface!r} (qualifier={qualifier!r}) missing from the wiring report"
+                )
+                continue
+            assert by_pair[(interface, qualifier)] in ("default", "env"), (
+                f"{interface!r} (qualifier={qualifier!r}) reported source "
+                f"{by_pair[(interface, qualifier)]!r}, expected default/env on a "
+                "freshly bootstrapped container"
+            )

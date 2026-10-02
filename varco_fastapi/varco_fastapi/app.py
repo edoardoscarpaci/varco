@@ -96,7 +96,11 @@ from varco_core.di.lifecycle import phased_components, resolve_lifecycle_order
 from varco_core.di.module import ModuleRegistry, VarcoModule
 
 from varco_fastapi.middleware.slots import sort_specs
-from varco_fastapi.validation import validate_container_bindings, validate_router_class
+from varco_fastapi.validation import (
+    ConfigurationError,
+    validate_container_bindings,
+    validate_router_class,
+)
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -181,9 +185,10 @@ def create_varco_app(
           start them before ``CoreModule``'s bus regardless of list
           position; the pre-050 "list it first or get a WARNING" caveat no
           longer applies and the WARNING it described is gone. A separate,
-          unrelated warning (``_warn_unowned_settings``) still fires when
-          ``VARCO_MIGRATE_MODE``/``VARCO_TENANCY_ISOLATION`` is set in the
-          environment but no matching module was passed at all.
+          unrelated check still fires when ``VARCO_MIGRATE_MODE``/
+          ``VARCO_TENANCY_ISOLATION`` is set in the environment but no
+          matching module was passed at all — as the ``settings.unowned``
+          wiring-report finding (Plan 052), logged at startup.
 
     Thread safety:  ✅ Called once at startup.
     Async safety:   ✅ No async operations at construction time.
@@ -210,8 +215,6 @@ def create_varco_app(
     else:
         active = []
 
-    _warn_unowned_settings(container, active)
-
     # ── Step 2: config-driven backend selection check (Plan 047 §D-check) ──
     from varco_core.di import check_backend_selection  # noqa: PLC0415
 
@@ -236,14 +239,51 @@ def create_varco_app(
             validate_router_class(router_cls, strict=strict_validation)
 
     # ── Step 5: build VarcoLifespan ─────────────────────────────────────────
+    lifespan_components = phased_components(active, container)
+
+    from varco_fastapi.diagnose import posture_header  # noqa: PLC0415
+
+    header = posture_header(container, active)
+
     async def _async_init_all() -> None:
-        for m in active:
-            await m.async_init(container)
+        from varco_core.di.diagnose import (  # noqa: PLC0415
+            capture_direct_deprecations,
+            direct_deprecation_records,
+        )
+
+        # Same deprecation-capture window `diagnose()` opens (§D-deprecations).
+        with capture_direct_deprecations() as caught:
+            for m in active:
+                await m.async_init(container)
+        direct_deprecations = direct_deprecation_records(caught)
+
+        # Plan 052 / §D-startup: the runtime half of validate=/strict_validation=
+        # — run AFTER every module's async_init, BEFORE the first start().
+        from varco_core.di.diagnose import (  # noqa: PLC0415
+            WiringValidationError,
+            run_wiring_preflight,
+        )
+
+        try:
+            report = await run_wiring_preflight(
+                container,
+                modules=active,
+                lifecycle=lifespan_components,
+                validate=validate,
+                strict=strict_validation,
+                extra_deprecations=direct_deprecations,
+                **header,
+            )
+        except WiringValidationError as exc:
+            _log_wiring_report(exc.report, container)
+            raise ConfigurationError(str(exc)) from exc
+
+        _log_wiring_report(report, container)
+        app.state.varco_wiring_report = report
 
     async def _container_shutdown() -> None:
         await container.ashutdown()
 
-    lifespan_components = phased_components(active, container)
     varco_lifespan = VarcoLifespan(
         *lifespan_components, setup=_async_init_all, shutdown=_container_shutdown
     )
@@ -262,6 +302,12 @@ def create_varco_app(
         openapi_url=openapi_url,
         docs_url=docs_url,
     )
+    # Plan 052 / §D-cli: what `varco diagnose --app module:attr` reads, and
+    # what `varco_fastapi.diagnose.wiring_report(app)` re-renders post-start.
+    app.state.varco_container = container
+    app.state.varco_modules = active
+    app.state.varco_lifespan = varco_lifespan
+    app.state.varco_posture_header = header
 
     # ── Step 7: configure_app() on every active HttpContributor ────────────
     for m in active:
@@ -312,6 +358,51 @@ def create_varco_app(
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
 
+_wiring_logger = logging.getLogger("varco_core.di.diagnose")
+
+
+def _log_wiring_report(report: Any, container: DIContainer) -> None:
+    """
+    Log *report* per ``DiagnoseSettings`` (Plan 052 / §D-startup).
+
+    Logs from the ``varco_core.di.diagnose`` logger (never
+    ``varco_fastapi.app``) so the CLI and the startup lifespan share one
+    greppable logger name. The rendered/JSON block is opt-outable
+    (``VARCO_DIAGNOSE_STARTUP_REPORT=false``); every ERROR/WARNING
+    validation issue and WARNING finding is *also* emitted as its own
+    ``logger.error``/``logger.warning`` record regardless, so a log
+    pipeline that drops INFO still sees the problem lines.
+
+    Args:
+        report: The ``WiringReport`` to log.
+        container: The container to read ``DiagnoseSettings`` from, if
+            bound (falls back to the class default otherwise).
+    """
+    from varco_core.di.report import DiagnoseSettings  # noqa: PLC0415
+
+    settings = (
+        container.get(DiagnoseSettings)
+        if container.is_resolvable(DiagnoseSettings)
+        else DiagnoseSettings()
+    )
+
+    if settings.startup_report:
+        if settings.startup_report_json:
+            import json as _json  # noqa: PLC0415
+
+            _wiring_logger.info("varco wiring report\n%s", _json.dumps(report.to_dict()))
+        else:
+            _wiring_logger.info("varco wiring report\n%s", report.render())
+
+    for issue in (*report.validation.errors, *report.validation.warnings):
+        level = logging.ERROR if issue.get("severity") == "error" else logging.WARNING
+        _wiring_logger.log(level, "%s: %s", issue.get("owner"), issue.get("message"))
+    for finding in report.findings:
+        if str(finding.severity) in ("error", "warning"):
+            level = logging.ERROR if str(finding.severity) == "error" else logging.WARNING
+            _wiring_logger.log(level, "%s: %s", finding.check, finding.detail)
+
+
 def _default_modules_list() -> list[VarcoModule]:
     """Lazily import to avoid a hard, eager ``varco_fastapi.modules`` import
     for every ``create_varco_app`` caller that always passes ``modules=``."""
@@ -324,38 +415,6 @@ def _is_http_contributor(module: VarcoModule) -> TypeGuard[HttpContributor]:
     from varco_fastapi.modules.base import HttpContributor  # noqa: PLC0415
 
     return isinstance(module, HttpContributor)
-
-
-def _warn_unowned_settings(container: DIContainer, active: Sequence[VarcoModule]) -> None:
-    """
-    The two kept pre-049 warnings: a set ``VARCO_MIGRATE_MODE``/
-    ``VARCO_TENANCY_ISOLATION`` with no corresponding module registered —
-    the failure mode that wastes the most operator time (Plan 006 step 43).
-
-    Args:
-        container: The container modules were registered on.
-        active: The resolved, enabled module list.
-    """
-    import os as _os  # noqa: PLC0415
-
-    from varco_fastapi.modules.lifecycle import MigrationsModule, TenancyModule  # noqa: PLC0415
-
-    has_migrations = any(isinstance(m, MigrationsModule) for m in active)
-    has_tenancy = any(isinstance(m, TenancyModule) for m in active)
-
-    if not has_migrations and "VARCO_MIGRATE_MODE" in _os.environ:
-        _logger.warning(
-            "VARCO_MIGRATE_MODE=%r is set but create_varco_app() received no "
-            "MigrationsModule — no migration will run. Add MigrationsModule(<migrator>) "
-            "to modules= to enable auto-on-startup migrations.",
-            _os.environ["VARCO_MIGRATE_MODE"],
-        )
-    if not has_tenancy and "VARCO_TENANCY_ISOLATION" in _os.environ:
-        _logger.warning(
-            "VARCO_TENANCY_ISOLATION is set but create_varco_app() received no "
-            "TenancyModule — no tenancy lifecycle will run. Add "
-            "TenancyModule(pool=...) to modules= to enable it."
-        )
 
 
 def _scan_routers(

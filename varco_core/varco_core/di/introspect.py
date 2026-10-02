@@ -41,6 +41,10 @@ class BindingRecord:
         conditions: Every ``@Requires`` marker's ``describe()`` string.
         active: Whether every condition currently holds (evaluated now,
             never cached).
+        profiles: Every ``@Profile`` expression the implementation carries
+            (``binding.py:202``, Plan 052 / premise 5 — added for the
+            wiring report's ``source == "profile"`` provenance; empty for
+            a plain unconditional binding).
     """
 
     interface: Any
@@ -52,6 +56,7 @@ class BindingRecord:
     exact_only: bool
     conditions: tuple[str, ...]
     active: bool
+    profiles: tuple[str, ...] = ()
 
 
 def _binding_owner_name(binding: Any) -> str:
@@ -99,6 +104,7 @@ def inspect_bindings(container: DIContainer) -> tuple[BindingRecord, ...]:
                 exact_only=getattr(binding, "exact_only", False),
                 conditions=conditions,
                 active=active,
+                profiles=tuple(getattr(binding, "profiles", ())),
             )
         )
     return tuple(records)

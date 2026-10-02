@@ -71,6 +71,7 @@ from fastapi import FastAPI
 from providify import DIContainer
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+from varco_core.di.module import VarcoModule
 from varco_fastapi.app import create_varco_app
 from varco_fastapi.modules.defaults import default_modules
 from varco_redis.modules import RedisModule
@@ -89,6 +90,87 @@ from example.module import PostAppModule
 # Declared here (not in models.py) to keep the domain model backend-agnostic.
 class Base(DeclarativeBase):
     """Shared SQLAlchemy declarative base for all entities in this app."""
+
+
+_STATIC_DATABASE_URL = "postgresql+asyncpg://static:static@localhost/static"
+"""Placeholder URL for ``modules()`` when no real database is configured.
+
+``create_async_engine`` never connects at construction, so the placeholder is
+inert: it exists only so ``varco diagnose --static`` can build the module list
+on a machine with no ``DATABASE_URL`` (and no Docker).
+"""
+
+
+def modules(database_url: str | None = None) -> list[VarcoModule]:
+    """
+    Build the app's ``VarcoModule`` list — the same list ``create_app()`` boots.
+
+    Docker-free and env-free: nothing here connects to Postgres or Redis
+    (``create_async_engine`` is lazy; ``RedisModule``/``WsModule`` open their
+    connections in ``async_init``/``start``), so ``varco diagnose --static``
+    can inspect the real wiring without ``DATABASE_URL``.
+
+    Args:
+        database_url: SQLAlchemy async URL. ``None`` falls back to
+            ``$DATABASE_URL``, then to an inert placeholder.
+
+    Returns:
+        ``[*default_modules(), SAModule, RedisModule, WsModule, PostAppModule]``.
+
+    Raises:
+        KeyLoadError: ``VARCO_JWT_PRIVATE_KEY_PEM`` is set but malformed.
+
+    Edge cases:
+        - Without a PEM env var an ephemeral RSA key is generated per call.
+        - ``create_app()`` passes ``os.environ["DATABASE_URL"]`` explicitly so
+          its fail-fast ``KeyError`` on a missing URL is preserved; only
+          ``modules()`` tolerates the absence.
+
+    Example:
+        ``uv run varco diagnose --path examples/00-full-stack-post-api
+        --modules example.app:modules --static``
+    """
+    # ── 1. JWT authority (auth infrastructure) ────────────────────────────────
+    # Built outside DI — a pure value object (key material), no lifecycle;
+    # passed directly to PostAppModule for AuthRouter/TrustedIssuerRegistry.
+    authority = build_jwt_authority()
+
+    from varco_core.authority.registry import TrustedIssuerRegistry  # noqa: PLC0415
+
+    registry = TrustedIssuerRegistry()
+    registry.register_authority(authority, label="VARCO_EXAMPLE")
+
+    # JwtBearerAuth verifies Authorization: Bearer <token> on every request.
+    # required=False so anonymous callers can still hit public endpoints
+    # (list posts, read posts) without providing a token.
+    from varco_fastapi.auth import JwtBearerAuth  # noqa: PLC0415
+
+    # allow_any_audience=True: the demo has no single audience to enforce (the
+    # e2e conftest opts out the same way via env). Explicit in code so the
+    # example boots — and ``varco diagnose --static`` runs — with no env at all.
+    server_auth = JwtBearerAuth(registry=registry, required=False, allow_any_audience=True)
+
+    # ── 2. SAConfig from DATABASE_URL ──────────────────────────────────────────
+    # Eager here (not the lazy make_sa_provider() shape) — SAModule's own
+    # contract is "bind_instance(container, SAConfig, config)" with an
+    # already-constructed value; DATABASE_URL is already set by the time
+    # create_app() is called (the same constraint the pre-049 lazy provider
+    # carried — its first resolution always happened after env setup too).
+    sa_config = SAConfig(
+        engine=create_async_engine(
+            database_url or os.environ.get("DATABASE_URL") or _STATIC_DATABASE_URL
+        ),
+        base=Base,
+        entity_classes=(Post,),
+    )
+
+    return [
+        *default_modules(),
+        SAModule(config=sa_config, entities=(Post,)),
+        RedisModule(cache=True),
+        WsModule(),
+        PostAppModule(authority, registry, server_auth),
+    ]
 
 
 def create_app() -> FastAPI:
@@ -138,46 +220,10 @@ def create_app() -> FastAPI:
     Thread safety:  ✅ Called once at startup; not thread-safe to call twice.
     Async safety:   ✅ Sync — no event loop required at call time.
     """
-    # ── 1. JWT authority (auth infrastructure) ────────────────────────────────
-    # Built outside DI — a pure value object (key material), no lifecycle;
-    # passed directly to PostAppModule for AuthRouter/TrustedIssuerRegistry.
-    authority = build_jwt_authority()
-
-    from varco_core.authority.registry import TrustedIssuerRegistry  # noqa: PLC0415
-
-    registry = TrustedIssuerRegistry()
-    registry.register_authority(authority, label="VARCO_EXAMPLE")
-
-    # JwtBearerAuth verifies Authorization: Bearer <token> on every request.
-    # required=False so anonymous callers can still hit public endpoints
-    # (list posts, read posts) without providing a token.
-    from varco_fastapi.auth import JwtBearerAuth  # noqa: PLC0415
-
-    server_auth = JwtBearerAuth(registry=registry, required=False)
-
-    # ── 2. SAConfig from DATABASE_URL ──────────────────────────────────────────
-    # Eager here (not the lazy make_sa_provider() shape) — SAModule's own
-    # contract is "bind_instance(container, SAConfig, config)" with an
-    # already-constructed value; DATABASE_URL is already set by the time
-    # create_app() is called (the same constraint the pre-049 lazy provider
-    # carried — its first resolution always happened after env setup too).
-    sa_config = SAConfig(
-        engine=create_async_engine(os.environ["DATABASE_URL"]),
-        base=Base,
-        entity_classes=(Post,),
-    )
-
-    # ── 3. Build the app through create_varco_app(modules=[...]) ──────────────
     container = DIContainer()
     app = create_varco_app(
         container,
-        modules=[
-            *default_modules(),
-            SAModule(config=sa_config, entities=(Post,)),
-            RedisModule(cache=True),
-            WsModule(),
-            PostAppModule(authority, registry, server_auth),
-        ],
+        modules=modules(os.environ["DATABASE_URL"]),
         routers=[],  # PostAppModule.async_init() mounts the three app routers
         title="Varco Post Example",
         version="1.0.0",

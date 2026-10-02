@@ -212,6 +212,12 @@ def test_all_list_is_unchanged_in_length() -> None:
     # it to 287. Plan 051 / DI-5 Step 9 added 2 more (register_webhook_verifier,
     # registered_webhook_verifiers — already exported from
     # varco_core.webhook.inbound, now also at the varco_core top level), taking
-    # it to 289.
-    assert len(varco_core.__all__) == 289
+    # it to 289. Plan 052 / DI-7, DI-11 added 2 more (fired_deprecations,
+    # all_provenance — the deprecation ledger's read and 048's settings
+    # provenance enumerator, both now at the varco_core top level), taking
+    # it to 291. Plan 052 drift repair added 7 more (build_wiring_report,
+    # WiringReport, DiagnoseSettings, InMemoryProfile, in_memory_modules,
+    # JwksPostureCollector, RetentionPostureCollector — plan Step 16), taking
+    # it to 298.
+    assert len(varco_core.__all__) == 298
     assert len(set(varco_core.__all__)) == len(varco_core.__all__)

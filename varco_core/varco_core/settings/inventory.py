@@ -363,33 +363,25 @@ def check_unique_env_names(classes: list[type[BaseSettings]]) -> list[str]:
 #: fails ``test_settings_no_loose_env_reads.py`` until it is either folded
 #: into a settings class or added here with a reason (in the linked doc,
 #: not inline — this tuple is grepped by the test, not read as prose).
+#:
+#: Keys are ``<repo-relative path>:<enclosing function qualname>`` (``<module>``
+#: for a module-scope read), NOT line numbers (Plan 052 amendment): an unrelated
+#: edit above a read, or moving it within its own function, must not break the
+#: guard, while a read added in a different function is still flagged.
 LOOSE_ENV_READ_ALLOWLIST: tuple[str, ...] = (
     # §D-loose — allowlisted by design (see the module's own §D-loose table):
-    "varco_core/varco_core/observability/params.py:669",
-    "varco_core/varco_core/observability/params.py:676",
-    "varco_core/varco_core/profiling/config.py:33",
-    "varco_fastapi/varco_fastapi/app.py:351",
-    "varco_fastapi/varco_fastapi/auth/server_auth.py:435",
-    "varco_core/varco_core/cli/tenant.py:71",
-    "varco_core/varco_core/cli/retention.py:66",
-    "varco_core/varco_core/cli/retention.py:67",
-    "varco_core/varco_core/cli/retention.py:75",
-    "varco_core/varco_core/cli/retention.py:76",
-    # §D-loose — the observability global-attribute registry. These four reads
-    # are allowlisted by §D-loose's own table, but were INVISIBLE to this
-    # guard until Plan 048's repair round 2 replaced its line-oriented regex
-    # with an AST walk: `attributes.py` aliases the mapping first
-    # (`env = environ if environ is not None else os.environ`) and then reads
-    # `env.get("VARCO_...")`, so the literal token `environ` never appears on
-    # the reading line. They are genuine, sanctioned loose reads — the global
-    # attribute registry is a process-wide observability concern read once at
-    # import/registration time, deliberately not a bound settings class
-    # (§Out of scope / Parked: folding VARCO_OTEL_* into an ObservabilitySettings
-    # would redesign OtelConfig, which is code-only by design).
-    "varco_core/varco_core/observability/attributes.py:450",
-    "varco_core/varco_core/observability/attributes.py:461",
-    "varco_core/varco_core/observability/attributes.py:477",
-    "varco_core/varco_core/observability/attributes.py:478",
+    "varco_core/varco_core/observability/params.py:param_capture_from_env",
+    "varco_core/varco_core/profiling/config.py:<module>",
+    # moved from app.py by Plan 052 (settings.unowned)
+    "varco_core/varco_core/di/report.py:_unowned_settings_findings",
+    "varco_fastapi/varco_fastapi/auth/server_auth.py:ApiKeyAuth.__init__",
+    "varco_core/varco_core/cli/tenant.py:_run_async",
+    "varco_core/varco_core/cli/retention.py:register",
+    # §D-loose — the observability global-attribute registry. Invisible to the
+    # guard until Plan 048's AST rewrite (it aliases the mapping first, then
+    # reads ``env.get("VARCO_...")``); a sanctioned process-wide read at
+    # registration time, deliberately not a bound settings class.
+    "varco_core/varco_core/observability/attributes.py:load_global_attributes_from_env",
 )
 
 

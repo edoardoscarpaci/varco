@@ -76,7 +76,7 @@ A row moves to `## ✅ Shipped` only when its plan is built and merged.
 - `DI-1`, `FLIP-1` — plans/049-varco-module-and-composable-app.md — `done (Plan 049)`
 - `DI-9`, `DI-10` — plans/050-phased-lifecycle-and-di-wired-infrastructure.md — `done (Plan 050)`
 - `DI-5` — plans/051-multi-binding-registries.md — `done (Plan 051)`
-- `DI-7`, `DI-11` — plans/052-diagnose-report-and-test-profile.md
+- `DI-7`, `DI-11` — plans/052-diagnose-report-and-test-profile.md — `done (Plan 052)`
 - `FLIP-5`, `FLIP-034-4`, `FLIP-034-1`, `FLIP-034-2`, `FLIP-034-3` — plans/053-credential-and-auth-flips.md
 - `FLIP-2`, `FLIP-10`, `FLIP-3`, `FLIP-4` — plans/054-http-edge-and-admin-surface-flips.md
 - `FLIP-7`, `FLIP-6`, `FLIP-9` — plans/055-tenant-provenance-flips.md (⚠️ FLIP-6: 12-month floor — default flips to the chain, `chain=None` → `TypeError` waits for 5.0); `FLIP-14` — 055 §D-flip14, design only, implementation is its own future plan

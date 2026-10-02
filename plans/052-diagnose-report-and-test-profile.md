@@ -616,7 +616,7 @@ hooks and driver (TDD each); 10–13 the CLI, startup, RO-2, profile; 14–17 do
 
 ### Preflight and hooks
 
-1. [ ] **Preflight — confirm the landed surface, measure every ⚠️, decide P28.** Record in
+1. [x] **Preflight — confirm the landed surface, measure every ⚠️, decide P28.** Record in
        `/tmp/claude-1000/…/scratchpad/052-preflight.txt`:
        (a) providify `2.1.0` installed; re-read every `providify/…:line` in §Context on the
        installed copy; fix drift in this plan first.
@@ -643,7 +643,7 @@ hooks and driver (TDD each); 10–13 the CLI, startup, RO-2, profile; 14–17 do
        server: count `MISSING_BINDING`s per mode (the §D-driver banner's justification).
        **Verify**: the file has (a)–(f); every ⚠️ ASSUMPTION in §Risks has a measured value.
 
-2. [ ] `varco_core/tests/test_deprecation_ledger.py` (**new, failing first**) → then
+2. [x] `varco_core/tests/test_deprecation_ledger.py` (**new, failing first**) → then
        `varco_core/varco_core/deprecation.py` (§D-deprecations): `DeprecationRecord`, `_FIRED`
        + lock, `_note()` before each `warnings.warn`, `fired_deprecations()`,
        `reset_fired_deprecations()`; `__all__` += the three public names. Tests: a `@deprecated`
@@ -653,14 +653,14 @@ hooks and driver (TDD each); 10–13 the CLI, startup, RO-2, profile; 14–17 do
        thread-safety smoke (two threads × 100 calls → `count == 200`).
        **Verify**: green; `uv run python scripts/import_budget.py --check --warn-only` unchanged.
 
-3. [ ] `varco_core/tests/test_settings_bind.py` — add (**failing first**) `test_all_provenance_lists_every_bound_class`
+3. [x] `varco_core/tests/test_settings_bind.py` — add (**failing first**) `test_all_provenance_lists_every_bound_class`
        (two classes bound, one qualified → three records, sorted; empty container → `()`) → then
        `varco_core/varco_core/settings/bind.py`: `all_provenance(container)` (§D-settings-hook);
        re-export in `varco_core/settings/__init__.py` and the lazy map. **Verify**: green.
 
 ### The report model and the driver
 
-4. [ ] `varco_core/tests/test_wiring_report.py` (**new, failing first**) — against a container
+4. [x] `varco_core/tests/test_wiring_report.py` (**new, failing first**) — against a container
        built by `varco_core.di.bootstrap(c)` + `CoreModule().register(c)` (no Docker): (a)
        `build_wiring_report(c, validation=c.validate(raise_on_error=False))` returns a
        `WiringReport` whose `seams` has one row per 047 seam, every `source == "default"`,
@@ -689,7 +689,7 @@ hooks and driver (TDD each); 10–13 the CLI, startup, RO-2, profile; 14–17 do
        + `DESIGN:` block. Lazy-map entries in `varco_core/__init__.py`.
        **Verify**: green; import budget unchanged; `make type-check`.
 
-5. [ ] `varco_core/tests/test_wiring_findings.py` (**new, failing first**) → the finding
+5. [x] `varco_core/tests/test_wiring_findings.py` (**new, failing first**) → the finding
        producers in `report.py` (§D-wired): (a) `bind_instance(c, AbstractTokenRevocationStore,
        InMemoryTokenRevocationStore())` + a `TrustedIssuerRegistry` bound **without**
        `revocation_store=` → one `di.revocation_store_not_wired` WARNING whose remediation names
@@ -702,7 +702,7 @@ hooks and driver (TDD each); 10–13 the CLI, startup, RO-2, profile; 14–17 do
        value → `BackendSelectionError` propagates out of the builder (the CLI maps it to exit 1).
        **Verify**: green.
 
-6. [ ] `varco_core/tests/test_diagnose_driver.py` (**new, failing first**) → `varco_core/varco_core/di/diagnose.py`
+6. [x] `varco_core/tests/test_diagnose_driver.py` (**new, failing first**) → `varco_core/varco_core/di/diagnose.py`
        (§D-driver): `diagnose(container, modules, *, async_init=True, validate=True)` and
        `run_wiring_preflight(container, *, modules, lifecycle, validate, strict) -> WiringReport`
        (raises `WiringValidationError(RuntimeError)` carrying the report — `varco_fastapi` maps it to
@@ -724,7 +724,7 @@ hooks and driver (TDD each); 10–13 the CLI, startup, RO-2, profile; 14–17 do
 
 ### CLI, startup, RO-2, profile
 
-7. [ ] `varco_core/tests/test_cli_diagnose.py` (**new, failing first**) → `varco_core/varco_core/cli/diagnose.py`
+7. [x] `varco_core/tests/test_cli_diagnose.py` (**new, failing first**) → `varco_core/varco_core/cli/diagnose.py`
        + one line in `cli/main.py:_build_parser()` (§D-cli). Tests drive `main([...])` like
        `test_cli_asyncapi*.py` does, with a `tmp_path` module exposing `modules()` (returns
        `in_memory_modules()`), `container()` (returns a bootstrapped container) and, in
@@ -738,7 +738,7 @@ hooks and driver (TDD each); 10–13 the CLI, startup, RO-2, profile; 14–17 do
        mod:container` works; (h) `--app` reads `app.state.varco_*` (varco_fastapi test); (i)
        `varco --help` lists `diagnose`; (j) `--path` prepends. **Verify**: green.
 
-8. [ ] `varco_fastapi/tests/test_startup_wiring_report.py` (**new, failing first**) →
+8. [x] `varco_fastapi/tests/test_startup_wiring_report.py` (**new, failing first**) →
        `varco_fastapi/varco_fastapi/app.py` (§D-startup): the `setup=` coroutine calls
        `run_wiring_preflight` after `_async_init_all`, maps `WiringValidationError` →
        `ConfigurationError`, stores `app.state.varco_wiring_report`, `app.state.varco_container`,
@@ -762,7 +762,7 @@ hooks and driver (TDD each); 10–13 the CLI, startup, RO-2, profile; 14–17 do
        `test_app_factory*`/`test_middleware_order` suites stay green unchanged (no construction
        change). **Verify**: `make test PKG=varco_fastapi`.
 
-9. [ ] `varco_core/tests/test_posture_collectors_ro2.py` (**new, failing first**) →
+9. [x] `varco_core/tests/test_posture_collectors_ro2.py` (**new, failing first**) →
        `varco_core/varco_core/authority/posture.py` + `varco_core/varco_core/retention/posture.py`
        (§D-RO2 classes; `__all__` += each) + `CoreModule._register()` contributions (+ the
        `RetentionModule.async_init()` `bind_instance` line iff Step 1(b) found the registry unbound).
@@ -780,7 +780,7 @@ hooks and driver (TDD each); 10–13 the CLI, startup, RO-2, profile; 14–17 do
        `varco_fastapi/tests/test_security_posture*.py` counts if a test asserts the number of
        collectors. **Verify**: `make test PKG=varco_core`, `PKG=varco_fastapi`.
 
-10. [ ] `varco_core/tests/test_testing_profile.py` (**new, failing first**) →
+10. [x] `varco_core/tests/test_testing_profile.py` (**new, failing first**) →
         `varco_core/varco_core/testing.py` + `varco_fastapi/varco_fastapi/testing.py`
         (§D-testprofile; `CoreModule(job_runner=)` iff Step 1(b) found it missing). Tests, all
         Docker-free: (a) `register_modules(DIContainer(), in_memory_modules())` → every 047 seam
@@ -789,13 +789,13 @@ hooks and driver (TDD each); 10–13 the CLI, startup, RO-2, profile; 14–17 do
         `Phase.SCHEDULERS` component; (c) with `varco_kafka.di.bootstrap` added via a `KafkaModule()`
         extra and `VARCO_EVENT_BUS_BACKEND=kafka` → `InMemoryProfile.validate()` returns one message
         naming the seam (the profile *asserts* the shape, never fixes it); (d) `clear_backend_selection(monkeypatch)`
-        removes the six + three names; (e) `varco_fastapi.testing.in_memory_modules()` contains
+        removes the six + three names; (e) `varco_fastapi.testing.in_memory_app_modules()` contains
         `SecurityPostureModule` with `enforce == "warn"` and `environment == "development"`, no
         `JwksRefreshModule`/`RetentionModule`; `create_varco_app(DIContainer(), modules=...)` +
         `TestClient` boots and `/health` answers; (f) `test_modules_never_scanned.py` (049) still
         passes — `InMemoryProfile` carries no providify marker. **Verify**: green.
 
-11. [ ] `varco_core/tests/test_single_override_recipe.py` (**new**) — the recipe verbatim
+11. [x] `varco_core/tests/test_single_override_recipe.py` (**new**) — the recipe verbatim
         (§D-testprofile): a module-local `conftest`-style `app_container` fixture (session-scoped,
         `register_modules(c, in_memory_modules())`), a **redefined `di_container`** yielding
         `app_container.copy()`, then `test_uses_fake_cache(di_container, di_overrides)`:
@@ -808,7 +808,7 @@ hooks and driver (TDD each); 10–13 the CLI, startup, RO-2, profile; 14–17 do
         "this test is the README recipe; keep them identical". Mention in the module docstring that
         `test_providify_pytest_plugin.py` is the fixtures' own contract test. **Verify**: green.
 
-12. [ ] `testkit/varco_conformance/di_wiring.py` — add `test_diagnose_runs_clean_on_bootstrapped_package`:
+12. [x] `testkit/varco_conformance/di_wiring.py` — add `test_diagnose_runs_clean_on_bootstrapped_package`:
         `report = build_wiring_report(container, validation=container.validate(raise_on_error=False))`
         → `report.worst() is None` (no ERROR/WARNING from either providify or varco findings, modulo
         `known_warnings`); every `(interface, qualifier)` in `expected_defaults` appears in
@@ -817,27 +817,27 @@ hooks and driver (TDD each); 10–13 the CLI, startup, RO-2, profile; 14–17 do
         subclasses inherit it; `COVERAGE.md`'s `di_wiring` row mentions the new test.
         **Verify**: `make test` (all eleven suites).
 
-13. [ ] **P28 filing or record** per §D-P28's outcome table (report file, ledger row, strict
+13. [x] **P28 filing or record** per §D-P28's outcome table (report file, ledger row, strict
         xfail in `test_providify_contracts.py`, CHANGELOG line — or the preflight note + a sentence
         in the docs). **Verify**: `rg -c '^\| \*\*P2' UPSTREAM-GAPS.md` matches the decision;
         `uv run pytest varco_core/tests/test_providify_contracts.py -q -rxX` → `0 xpassed`.
 
 ### Docs, changelog, gates
 
-14. [ ] Docs per §D-docs: `dependency-injection.md` §Diagnostics + §Testing (final), README's two
+14. [x] Docs per §D-docs: `dependency-injection.md` §Diagnostics + §Testing (final), README's two
         subsections, CLAUDE.md's lines/branch/command, `security-posture.md`, `ARCHITECTURE.md`,
         `common-pitfalls.md` row, `varco_core/cli/main.py` module docstring (lists `diagnose`),
         `docs/` nav if `technical_docs/features/*.md` are listed. **Verify**: `rg -n 'varco diagnose'
         README.md CLAUDE.md technical_docs ARCHITECTURE.md` ≥ 6 hits; `make docs`.
 
-15. [ ] `CHANGELOG.md` `[Unreleased]`: `### Added (Plan 052, DI-7 / DI-11 / RO-2)` (report model,
+15. [x] `CHANGELOG.md` `[Unreleased]`: `### Added (Plan 052, DI-7 / DI-11 / RO-2)` (report model,
         `varco diagnose`, startup report + `VARCO_DIAGNOSE_*`, `all_provenance`, the deprecation
         ledger, two RO-2 collectors + five ids, `varco_core.testing`/`varco_fastapi.testing`,
         `app.state.varco_*`, the `di_wiring` test; P28 line if filed); `### BREAKING — runtime
         validate() in the lifespan (Plan 052)` = §Migration. `BACKLOG.md:78,92,110` → `done (Plan
         052)`; the index's row 052 unchanged. **Verify**: `rg -n 'Plan 052' CHANGELOG.md BACKLOG.md` ≥ 4.
 
-16. [ ] **Gates.** `uv run python scripts/api_surface.py` (new top-level names in
+16. [x] **Gates.** `uv run python scripts/api_surface.py` (new top-level names in
         `varco_core.__all__`: `build_wiring_report`, `WiringReport`, `DiagnoseSettings`,
         `fired_deprecations`, `all_provenance`, `InMemoryProfile`, `in_memory_modules`,
         `JwksPostureCollector`, `RetentionPostureCollector` — additions are notes, never failures;
@@ -847,7 +847,7 @@ hooks and driver (TDD each); 10–13 the CLI, startup, RO-2, profile; 14–17 do
         `settings-reference-check`, `di-catalogue-check` all green); `make type-check`; `make test`
         (eleven suites, `0 xpassed`, `xfailed` = P28 iff filed).
 
-17. [ ] **Handoff paragraph** appended to `plans/000-index-4-0-di-standardization.md` row 052:
+17. [x] **Handoff paragraph** appended to `plans/000-index-4-0-di-standardization.md` row 052:
         **054** — the report's `enforce`/`enforce_source` fields are where the flipped default
         becomes visible; nothing else to touch. **058** — §Diagnostics/§Testing are final;
         §Migration below is the DI-7 entry; the `varco_core.testing` module is the "Testing" chapter's
@@ -900,9 +900,15 @@ uv run pytest varco_core/tests/test_posture_collectors_ro2.py varco_core/tests/t
 uv run pytest varco_fastapi/tests/test_startup_wiring_report.py varco_fastapi/tests/test_cli_diagnose_app.py -q
 uv run pytest varco_core/tests/test_providify_contracts.py -q -rxX                  # 0 xpassed
 
-# The CLI itself, against the example app
-uv run varco diagnose --path examples/00-full-stack-post-api --modules example.app:modules --static
-uv run varco diagnose --path examples/00-full-stack-post-api --modules example.app:modules --static --json --check; echo $?
+# The CLI itself, against the example app (Docker-free, no DATABASE_URL needed)
+uv run varco diagnose --path examples/00-full-stack-post-api --modules example.app:modules --static          # exits 0
+uv run varco diagnose --path examples/00-full-stack-post-api --modules example.app:modules --static --json   # exits 0
+uv run pytest examples/00-full-stack-post-api/example/tests/test_diagnose_static.py -q   # (run from examples/00-full-stack-post-api)
+# --check with the example's deployed backend selection (example/backends.py, mirrored in
+# docker-compose.yml): exits 0 — no ERROR, no WARNING finding (Amendments, item 4).
+VARCO_EVENT_BUS_BACKEND=redis VARCO_CACHE_BACKEND=redis VARCO_DLQ_BACKEND=memory \
+VARCO_IDEMPOTENCY_BACKEND=memory VARCO_JOB_STORE_BACKEND=memory VARCO_REVOCATION_BACKEND=null \
+uv run varco diagnose --path examples/00-full-stack-post-api --modules example.app:modules --static --check   # exits 0
 
 # Gates
 uv run python scripts/api_surface.py            # then commit the snapshot
@@ -948,7 +954,7 @@ binding error that never bit at runtime must fix the binding or pass `validate=F
 **New** — `varco diagnose` (built-in verb); `varco_core.di.build_wiring_report`/`WiringReport`;
 `varco_core.settings.all_provenance`; `varco_core.deprecation.fired_deprecations`;
 `varco_core.testing` (`InMemoryProfile`, `in_memory_modules`, `register_modules`,
-`clear_backend_selection`) and `varco_fastapi.testing.in_memory_modules`.
+`clear_backend_selection`) and `varco_fastapi.testing.in_memory_app_modules`.
 
 **New posture ids (RO-2)** — `auth.jwks_refresh_off` (WARN), `auth.jwks_keysets_unloaded` (INFO),
 `retention.platform_wide` (WARN), `retention.dry_run_only` (INFO), `retention.short_retention`
@@ -973,25 +979,56 @@ same text, new place.
 
 ## Done criteria
 
-- [ ] `build_wiring_report()` returns a frozen `WiringReport`; `to_dict()` is JSON-safe with
+- [x] `build_wiring_report()` returns a frozen `WiringReport`; `to_dict()` is JSON-safe with
       `schema_version: 1` and embeds 047's catalogue verbatim; `render()` prints every section.
-- [ ] Provenance per row is one of `code`/`profile`/`env-dotted`/`env`/`default`/`absent` and is
+- [x] Provenance per row is one of `code`/`profile`/`env-dotted`/`env`/`default`/`absent` and is
       computed from public reads (+047's single private walk); shadowing is correct for
       scanned-class defaults with or without `FALLBACK_SHADOWED`.
-- [ ] `all_provenance()` and `fired_deprecations()` exist with tests; the driver captures direct
+- [x] `all_provenance()` and `fired_deprecations()` exist with tests; the driver captures direct
       `DeprecationWarning` sites during bootstrap.
-- [ ] `varco diagnose` accepts `--modules`/`--container`/`--app`, honours `--static`/`--json`/
+- [x] `varco diagnose` accepts `--modules`/`--container`/`--app`, honours `--static`/`--json`/
       `--check`, exits `0/1/2` as specified, never calls `start()`.
-- [ ] Every `create_varco_app` lifespan validates after `async_init`, before the first `start()`;
+- [x] Every `create_varco_app` lifespan validates after `async_init`, before the first `start()`;
       the four-row `validate`/`strict_validation` table is test-pinned; the report is logged at INFO
       with the env opt-out; `app.state.varco_wiring_report` is set.
-- [ ] `JwksPostureCollector`/`RetentionPostureCollector` are contributed by `CoreModule`, run inside
+- [x] `JwksPostureCollector`/`RetentionPostureCollector` are contributed by `CoreModule`, run inside
       `SecurityPosture`, with the five ids documented in `security-posture.md`.
-- [ ] `varco_core.testing.in_memory_modules()` boots with zero Docker and `validate()` clean; the
+- [x] `varco_core.testing.in_memory_modules()` boots with zero Docker and `validate()` clean; the
       single-override recipe test passes using providify's `di_container`/`di_overrides` unwrapped.
-- [ ] The `di_wiring` suite's `test_diagnose_runs_clean_on_bootstrapped_package` is green for all
+- [x] The `di_wiring` suite's `test_diagnose_runs_clean_on_bootstrapped_package` is green for all
       ten packages.
-- [ ] P28 measured; filed (report + ledger + strict xfail) or recorded as closed.
-- [ ] `dependency-injection.md` §Diagnostics/§Testing final; README, CLAUDE.md, ARCHITECTURE.md,
+- [x] P28 measured; filed (report + ledger + strict xfail) or recorded as closed.
+- [x] `dependency-injection.md` §Diagnostics/§Testing final; README, CLAUDE.md, ARCHITECTURE.md,
       `security-posture.md`, pitfalls, CHANGELOG, BACKLOG (`DI-7`, `DI-11`, `RO-2` → done) updated;
       `api_surface` + settings snapshots regenerated; `make lint`/`type-check`/`test`/`docs` green.
+
+## Amendments (post-implementation, user-approved)
+
+1. **`WiringReport.worst()` ignores providify defaulted-parameter WARNINGs.** `strict_validation`
+   and `--check` act only on varco findings and providify ERRORs. Step 1(e)'s "0 ERROR / 0 WARNING"
+   assumption was wrong; those WARNINGs are informational.
+2. **`InMemoryProfile` binding `ErrorPolicy`/`DispatchMode` is accepted.**
+3. **The `di_wiring` conformance test's acceptance of qualified twins, and its exclusion of
+   `di.bootstrapped_unselected`, are accepted.**
+4. **Verification replaced.** The example-app commands now use `example.app:modules` (a Docker-free,
+   env-free `modules()` callable added to `examples/00-full-stack-post-api`), without `--check`, plus
+   a test in the example's suite. Open finding (needs a decision): `--check` exits 1 because
+   providify `validate()` reports the `@Requires(env="VARCO_WEBHOOK_BACKEND", value="sa")`-gated
+   `SAConfiguration.webhook_repository` as MISSING_BINDING (`FieldEncryptor`) although it is inactive.
+   The example test pins this as the only tolerated ERROR. **Filed as upstream gap
+   P34-VALIDATE-INACTIVE-OWNER-DEPS** (`design/upstream-gaps/providify-validate-inactive-owner-deps.md`,
+   guard `varco_core/tests/test_providify_contracts.py::TestP34ValidateInactiveOwnerDeps`, strict
+   xfail): providify's graph tier never checks the *owner's* activation. **Closed 2026-10-02:**
+   fixed in providify 2.1.1; varco pins `providify>=2.1.1`, the guard is a regular test, and the
+   example test asserts zero errors. The remaining six `di.bootstrapped_unselected` WARNINGs were resolved
+   (user decision, 2026-10-02) by having the example name every selectable seam it uses:
+   `example/backends.py` (`redis` for event bus + cache, `memory` for dlq/idempotency/job store,
+   `null` for revocation), mirrored in `docker-compose.yml` and the README run command, and set by
+   the e2e conftest. `--check` is restored to Verification with that environment; the example's
+   `test_diagnose_static.py` asserts it exits 0, and that dropping one selection brings the
+   finding back.
+5. **`LOOSE_ENV_READ_ALLOWLIST` re-keyed** from `path:lineno` to `path:enclosing-function-qualname`
+   (`<module>` for module scope), all entries; the guard walks scopes and a test proves a moved read
+   stays allowed while a read in another function is flagged.
+7. **Rename:** `varco_fastapi.testing.in_memory_modules` -> `in_memory_app_modules` (no alias,
+   unreleased). `varco_core.testing.in_memory_modules` is unchanged.

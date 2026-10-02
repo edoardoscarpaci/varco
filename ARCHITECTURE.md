@@ -266,6 +266,9 @@ generate_asyncapi(consumers | container, ...) -> dict   (varco_core.asyncapi, Pl
   AsyncAPI 3.1.0 from LIVE, registered consumers — never a static import walk, because a
   @listen channel may be Callable[[Any], str] resolved at register_to() time.
   CLI: `varco export-asyncapi [--check]` (varco_core.cli.asyncapi)
+  CLI: `varco diagnose [--modules|--container|--app] [--static] [--json] [--check]`
+       (varco_core.cli.diagnose; di/report.py WiringReport + di/diagnose.py driver; varco_core.testing
+       InMemoryProfile/in_memory_modules; varco_fastapi.testing.in_memory_app_modules — Plan 052)
 ```
 ### File watching (Plan 025 / T1)
 

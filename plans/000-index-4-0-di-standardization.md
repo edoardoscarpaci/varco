@@ -82,6 +82,7 @@ Flip track:  053 (after 045) · 054 · 055 · 056 · 057   (each independently m
   section before building the diagnose report: the scanned-class blind spot (P28,
   `design/upstream-gaps/providify-fallback-shadowed-scanned-class.md`) means 22 of varco's own
   default sites never emit the INFO — the report must fall back to a static catalogue for those.
+- **052 → 054/058 handoff**: 054 — the report's `enforce`/`enforce_source` fields are where the flipped default becomes visible; nothing else to touch. 058 — `dependency-injection.md` §Diagnostics/§Testing are final; the 052 Migration entry is in CHANGELOG; `varco_core.testing` is the Testing chapter's source; open gaps P32/P33 (P28 pre-existing).
 - **053** — `BaseAuthorizer` is `@Fallback @Singleton` with no priority constant at all (the removed
   `_FALLBACK_PRIORITY`); the posture message at `varco_fastapi/varco_fastapi/posture.py` (the
   `base_authorizer_bound` finding's `remediation` string) was reworded to "register any

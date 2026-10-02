@@ -41,6 +41,13 @@
 | `PORT` | `port` | `<class 'int'>` | `0` | False |
 | `SSL` | `ssl` | `varco_core.connection.ssl.SSLConfig | None` | `None` | False |
 
+## `varco_core.di.report.DiagnoseSettings`
+
+| Env var | Field | Type | Default | Secret |
+|---|---|---|---|---|
+| `VARCO_DIAGNOSE_STARTUP_REPORT` | `startup_report` | `<class 'bool'>` | `True` | False |
+| `VARCO_DIAGNOSE_STARTUP_REPORT_JSON` | `startup_report_json` | `<class 'bool'>` | `False` | False |
+
 ## `varco_core.event.cloudevents.CloudEventsSettings`
 
 | Env var | Field | Type | Default | Secret |

@@ -68,6 +68,7 @@ def _fastapi_expected_defaults() -> tuple[tuple[type, str | None], ...]:
     from varco_core.authority.config import AuthorizationConfig
     from varco_core.cache.config import CacheSettings
     from varco_core.context.defaults import TenantDefaultsProvider
+    from varco_core.di.report import DiagnoseSettings
     from varco_core.exception.settings import ErrorEnvelopeSettings
     from varco_core.i18n.catalog import MessageCatalog
     from varco_core.i18n.settings import I18nSettings
@@ -136,6 +137,9 @@ def _fastapi_expected_defaults() -> tuple[tuple[type, str | None], ...]:
         # companion ClientProfileSettings, bound via bind_settings() in
         # bootstrap() beside CORSConfig/BodyLimitSettings/etc.
         (ClientProfileSettings, None),
+        # Plan 052 / DI-7 — DiagnoseSettings (VARCO_DIAGNOSE_*) added to
+        # bind_core_settings()'s §D-core-list.
+        (DiagnoseSettings, None),
     )
 
 
@@ -153,6 +157,7 @@ def _fastapi_settings_classes() -> tuple[type, ...]:
     """
     from varco_core.authority.config import AuthorizationConfig
     from varco_core.cache.config import CacheSettings
+    from varco_core.di.report import DiagnoseSettings
     from varco_core.exception.settings import ErrorEnvelopeSettings
     from varco_core.i18n.settings import I18nSettings
     from varco_core.idempotency.settings import IdempotencySettings
@@ -192,6 +197,7 @@ def _fastapi_settings_classes() -> tuple[type, ...]:
         RateLimitSettings,
         CORSConfig,
         ClientProfileSettings,
+        DiagnoseSettings,
     )
 
 

@@ -408,6 +408,10 @@
         "kind": "class",
         "module": "varco_core.tenancy.provisioner"
       },
+      "DiagnoseSettings": {
+        "kind": "class",
+        "module": "varco_core.di.report"
+      },
       "DomainMigrator": {
         "kind": "class",
         "module": "varco_core.migrator"
@@ -540,6 +544,10 @@
         "kind": "class",
         "module": "varco_core.migration.inmemory"
       },
+      "InMemoryProfile": {
+        "kind": "class",
+        "module": "varco_core.testing"
+      },
       "InvalidationStrategy": {
         "kind": "class",
         "module": "varco_core.cache.base"
@@ -583,6 +591,10 @@
       "JwkBuilder": {
         "kind": "class",
         "module": "varco_core.jwk.builder"
+      },
+      "JwksPostureCollector": {
+        "kind": "class",
+        "module": "varco_core.authority.posture"
       },
       "JwtAuthority": {
         "kind": "class",
@@ -783,6 +795,10 @@
       "Resolved": {
         "kind": "class",
         "module": "varco_core.context.precedence"
+      },
+      "RetentionPostureCollector": {
+        "kind": "class",
+        "module": "varco_core.retention.posture"
       },
       "RetryExhaustedError": {
         "kind": "class",
@@ -1092,6 +1108,15 @@
         "kind": "class",
         "module": "varco_core.model"
       },
+      "WiringReport": {
+        "kind": "class",
+        "module": "varco_core.di.report"
+      },
+      "all_provenance": {
+        "kind": "function",
+        "module": "varco_core.settings.bind",
+        "signature": "(container: 'DIContainer') -> 'tuple[SettingsProvenance, ...]'"
+      },
       "assert_tenant_matches": {
         "kind": "function",
         "module": "varco_core.tenancy.provenance",
@@ -1116,6 +1141,11 @@
         "kind": "function",
         "module": "varco_core.tenancy.settings",
         "signature": "(settings: 'TenantProvenanceSettings | None' = None, *, delegation_policy: 'DelegationPolicy | None' = None, sources: 'Iterable[TenantSource]' = ()) -> 'TenantSourceChain | None'"
+      },
+      "build_wiring_report": {
+        "kind": "function",
+        "module": "varco_core.di.report",
+        "signature": "(container: 'DIContainer', *, validation: 'ValidationReport | None', modules: 'Sequence[VarcoModule] | None' = None, lifecycle: 'Sequence[Any] | None' = None, extra_findings: 'Sequence[WiringFinding]' = (), module_validate_messages: 'Mapping[VarcoModule, Sequence[str]] | None' = None, static: 'bool' = False, extra_deprecations: 'Sequence[DeprecationRecord]' = (), environment: 'str' = 'unknown', enforce: 'str' = 'unknown', enforce_source: \"Literal['code', 'env', 'default']\" = 'default') -> 'WiringReport'"
       },
       "cached": {
         "kind": "function",
@@ -1232,6 +1262,11 @@
         "module": "varco_core.exception.http",
         "signature": "(exc: 'ServiceException', *, translator: 'Callable[[str], str] | None' = None, message_resolver: 'MessageResolver | None' = None, envelope_settings: 'ErrorEnvelopeSettings | None' = None) -> 'ErrorMessage'"
       },
+      "fired_deprecations": {
+        "kind": "function",
+        "module": "varco_core.deprecation",
+        "signature": "() -> 'tuple[DeprecationRecord, ...]'"
+      },
       "generate_correlation_id": {
         "kind": "function",
         "module": "varco_core.tracing",
@@ -1246,6 +1281,11 @@
         "kind": "function",
         "module": "varco_core.observability.metrics",
         "signature": "(cfg: 'HistogramConfig') -> 'Callable[[_F], _F]'"
+      },
+      "in_memory_modules": {
+        "kind": "function",
+        "module": "varco_core.testing",
+        "signature": "(*extra: 'VarcoModule') -> 'list[VarcoModule]'"
       },
       "inspect_tenant_provenance": {
         "kind": "function",

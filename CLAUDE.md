@@ -407,7 +407,16 @@ never an imperative env read inside `bootstrap()`.
 
 The `enable_policy_authorizer` bullet above also has an env form: `VARCO_POLICY_AUTHORIZER_ENABLED=true`.
 The revocation two-step pitfall (`varco_core.revocation`) also applies to its env form —
-`VARCO_REVOCATION_BACKEND=redis` still needs `TrustedIssuerRegistry(revocation_store=...)`.
+`VARCO_REVOCATION_BACKEND=redis` still needs `TrustedIssuerRegistry(revocation_store=...)` —
+`varco diagnose` reports it as `di.revocation_store_not_wired`.
+
+**Rule (Plan 052)**: `varco diagnose` / `varco_core.di.report.build_wiring_report()` is the only wiring
+report — never a second `inspect_*` harness; a new wiring fact is a `WiringFinding` there.
+**Rule**: tests swap a binding with providify's `di_overrides.instance()` on a
+`varco_core.testing.in_memory_modules()` container — never a varco fixture.
+Command: `uv run varco diagnose --modules pkg.mod:modules --static --check`.
+**Decision tree**: *"What is live and why?"* → `varco_core.di.report.build_wiring_report` / `varco diagnose`; *"is it safe?"*
+→ `SecurityPosture`; *"swap one binding in a test?"* → `varco_core.testing` + `di_overrides`.
 
 **Rule (Plan 048 / DI-6)**: every settings class is bound by `varco_core.settings.
 bind_settings()` — never `@Singleton`, never a scanned `@Provider`, never a hand-rolled

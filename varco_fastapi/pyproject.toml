@@ -28,7 +28,7 @@ dependencies = [
     # pydantic-settings for env-var-based configuration (CORSConfig, TrustStore, etc.)
     "pydantic-settings>=2.14.2",
     # providify for DI wiring (@Configuration, @Provider, Inject[], DIContainer)
-    "providify>=2.1.0",
+    "providify>=2.1.1",
     # python-multipart is required for FastAPI form data parsing (file uploads, etc.)
     "python-multipart>=0.0.31",
     # typing-extensions provides PEP 696 TypeVar(default=...) on Python 3.12

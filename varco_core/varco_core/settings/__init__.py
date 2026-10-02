@@ -28,7 +28,12 @@ Async safety:   see ``bind.py``.
 from __future__ import annotations
 
 from varco_core.config import VarcoSettings
-from varco_core.settings.bind import SettingsProvenance, bind_settings, provenance_of
+from varco_core.settings.bind import (
+    SettingsProvenance,
+    all_provenance,
+    bind_settings,
+    provenance_of,
+)
 from varco_core.settings.errors import (
     SettingsAlreadyBoundError,
     SettingsError,
@@ -43,6 +48,7 @@ __all__ = [
     "SettingsProvenance",
     "SettingsValidationError",
     "VarcoSettings",
+    "all_provenance",
     "bind_settings",
     "provenance_of",
 ]
