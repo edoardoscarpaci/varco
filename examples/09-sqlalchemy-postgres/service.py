@@ -50,7 +50,7 @@ class PostService(AsyncService[Post, UUID, PostCreate, PostRead, PostUpdate]):
     CRUD service for ``Post`` entities backed by PostgreSQL.
 
     Inherits the full ``AsyncService`` contract:
-    - Authorization via injected ``AbstractAuthorizer`` (defaults to permissive).
+    - Authorization via injected ``AbstractAuthorizer`` (permissive, development only).
     - DTO ↔ domain translation via injected ``PostAssembler``.
     - Unit-of-work management via ``IUoWProvider`` (provided by SAConfiguration).
     - No event publishing in this example — keeps it focused on SA patterns.
@@ -71,7 +71,9 @@ class PostService(AsyncService[Post, UUID, PostCreate, PostRead, PostUpdate]):
         Args:
             uow_provider: Injected ``IUoWProvider`` — provided by ``SAConfiguration``.
             authorizer:   Injected ``AbstractAuthorizer`` — ``BaseAuthorizer``
-                          (permissive) is auto-registered by varco_core.
+                          (permissive), bound in ``app.py``. Since 4.0 that
+                          class-keyed bind is gated: run with
+                          ``VARCO_SECURITY_ENV=development`` (Plan 053 / FLIP-5).
             assembler:    Injected ``PostAssembler`` — handles DTO ↔ Post mapping.
         """
         # No producer injection — this example does not publish domain events.

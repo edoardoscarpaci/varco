@@ -18,35 +18,35 @@ pre-Plan-011 JSON body for every exception, built-in or not, with no other
 code change. See "The one wire delta" below for why the default is *on*
 despite this repo's usual off-by-default posture.
 
-A third, related but separate knob — `VARCO_ERROR_INCLUDE_DETAIL` (default `true`,
-Plan 035 / S3, §D-S3b) — gates the `detail` member (`str(exc)`) rather than `message_key`/
-`params`. See "S3 — the unmapped-exception fallback no longer echoes `str(exc)`" below for the
-full picture: this is a **warn-only**, 4.0-flip-candidate knob, not the S3 security fix itself
-(that fix is unconditional and has no toggle).
+A third, related but separate knob — `VARCO_ERROR_INCLUDE_DETAIL` (default `false` since 4.0,
+Plan 054 / FLIP-10; introduced by Plan 035 / S3, §D-S3b) — gates the `detail` member
+(`str(exc)`) rather than `message_key`/`params`. `true` restores the 3.x echo and is reported as
+`http.error.detail_exposed`. It is not the S3 security fix itself (that fix is unconditional and
+has no toggle) — see `http-edge-hardening.md`'s S3 section for the exception-by-exception table.
 
 ## The envelope, by example
 
-A built-in `ServiceNotFoundError`, default settings:
+A built-in `ServiceNotFoundError`, default settings (no `detail` since 4.0 — add
+`"detail": "Post with pk=42 not found."` with `VARCO_ERROR_INCLUDE_DETAIL=true`):
 
 ```json
 {
   "code": "FASTREST_001",
   "http_status": 404,
   "message": "The requested resource was not found.",
-  "detail": "Post with pk=42 not found.",
   "message_key": "varco.error.not_found",
   "params": {"entity": "Post", "entity_id": "42"}
 }
 ```
 
-An out-of-tree `ServiceException` subclass that never sets `message_key`:
+An out-of-tree `ServiceException` subclass that never sets `message_key` (and, by default since
+4.0, carries no `detail` either — override `error_params()` to expose structured content):
 
 ```json
 {
   "code": "APP_001",
   "http_status": 429,
-  "message": "Request quota exceeded.",
-  "detail": "..."
+  "message": "Request quota exceeded."
 }
 ```
 
@@ -203,8 +203,8 @@ return `{"code": ..., "message": "An internal error occurred."}` plus `correlati
 the exception type server-side at ERROR with `exc_info=True`.
 
 This is a **separate** knob from `ErrorEnvelopeSettings.include_detail` above — that one gates the
-*mapped*-exception `detail` echo, kept because it is `RouteGuard`'s only actionable channel and
-therefore a warn-only, 4.0-flip-candidate default. The S3 fix is unconditional and shipped in 3.2
+*mapped*-exception `detail` echo, which flipped to off by default in 4.0 (Plan 054 / FLIP-10;
+`RouteGuard`'s denial text survives in `params.operation`). The S3 fix is unconditional and shipped in 3.2
 because the only channel it closes is a body that was already failing to render properly.
 
 ## RD-7 — framework responsibility line
@@ -227,5 +227,5 @@ deciding what your `.mo` files say. See
 | Pitfall | Symptom | Root Cause | Fix |
 |---|---|---|---|
 | **Error body gained `message_key`/`params` after upgrade** | An exact-equality assertion on an error response body fails after a version bump | Plan 011 / D-4 — the one deliberate wire delta: built-in varco exceptions now emit `message_key` (`varco.error.not_found`) and non-empty `params` as extension members. An out-of-tree `ServiceException` with no `message_key` is unaffected | Assert on the keys you care about instead of the whole dict, or restore the exact pre-plan body with `VARCO_ERROR_INCLUDE_MESSAGE_KEY=false` / `VARCO_ERROR_INCLUDE_PARAMS=false` |
-| **The response no longer carries the exception string** | A previously-informative unmapped-exception body now reads `"An internal error occurred."` | Plan 035 / S3, §D-S3a — the fallback `str(exc)` echo was a genuine information leak and is fixed unconditionally in 3.2 (unlike `include_detail`, which is warn-only) | Correlate via the `correlation_id` in the response body against the server-side ERROR log line, which carries the exception type and `exc_info=True` |
+| **The response no longer carries the exception string** | A previously-informative unmapped-exception body now reads `"An internal error occurred."` | Plan 035 / S3, §D-S3a — the fallback `str(exc)` echo was a genuine information leak and is fixed unconditionally in 3.2 (unlike `include_detail`, which flipped in 4.0) | Correlate via the `correlation_id` in the response body against the server-side ERROR log line, which carries the exception type and `exc_info=True` |
 | **Error response not localized although i18n is enabled** | A 404/500 body is in English (and has no `Content-Language` header) despite I18n being enabled and `?lang=fr` set | `ErrorEnvelopeModule` only wires `message_catalog=` into the error paths when a `MessageCatalog` was actually resolved (`i18n.enabled=True` **and** a container was passed) — with no catalog bound, both `_make_error_response()`/`add_exception_handlers()` and `ErrorMiddleware` are byte-identical to before this fix: `message_key`/`params` still appear, but `message` stays `default_message` | Confirm the app's `LocalizationModule(i18n=I18nSettings(enabled=True))` (or `VARCO_I18N_ENABLED=true`) and that a `MessageCatalog` (e.g. `GettextMessageCatalog`) is actually bound in the container; if you built a custom exception handler yourself, pass `message_catalog=`/`set_content_language=` explicitly — see `technical_docs/features/error-taxonomy-and-i18n.md`'s `message_resolver` section |

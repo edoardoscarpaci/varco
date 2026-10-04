@@ -179,7 +179,12 @@ if TYPE_CHECKING:
     )
 
     # ── Deprecation mechanism (Plan 022 / §D-DEP; ledger added Plan 052 / §D-deprecations) ──
-    from varco_core.deprecation import deprecated, deprecated_alias, fired_deprecations
+    from varco_core.deprecation import (
+        deprecated,
+        deprecated_alias,
+        fired_deprecations,
+        warn_deprecated,
+    )
     from varco_core.di.report import DiagnoseSettings, WiringReport, build_wiring_report
 
     # ── DTO layer ──────────────────────────────────────────────────────────────────
@@ -199,6 +204,9 @@ if TYPE_CHECKING:
         SortCursorField,
         paged_response,
     )
+
+    # ── Field encryption — the FLIP-13 dev/test hatch (Plan 056) ─────────────────────
+    from varco_core.encryption import PlaintextFieldEncryptor
 
     # ── Event system ────────────────────────────────────────────────────────────────
     from varco_core.event import (
@@ -376,6 +384,7 @@ if TYPE_CHECKING:
 
     # ── Redaction (Plan 040 / S21) ───────────────────────────────────────────────────
     from varco_core.redaction import (
+        AUDIT_REDACTION_POLICY,
         DEFAULT_REDACT_PATTERNS,
         EXTENDED_REDACT_PATTERNS,
         PII_REDACT_PATTERNS,
@@ -681,6 +690,7 @@ _LAZY: Final[dict[str, str]] = {
     "PageCursor": "varco_core.dto.pagination",
     "PagedReadDTO": "varco_core.dto.pagination",
     "PendingMigrationsError": "varco_core.migration",
+    "PlaintextFieldEncryptor": "varco_core.encryption",
     "PolicyRedactor": "varco_core.redaction",
     "PostureCollector": "varco_core.posture",
     "PostureFinding": "varco_core.posture",
@@ -690,6 +700,7 @@ _LAZY: Final[dict[str, str]] = {
     "QueryParser": "varco_core.query.parser",
     "ReadDTO": "varco_core.dto",
     "RedactionPolicy": "varco_core.redaction",
+    "AUDIT_REDACTION_POLICY": "varco_core.redaction",
     "Redactor": "varco_core.redaction",
     "RepositoryProvider": "varco_core.providers",
     "RequestContext": "varco_core.context",
@@ -800,6 +811,7 @@ _LAZY: Final[dict[str, str]] = {
     "error_code_for": "varco_core.exception.http",
     "error_message_for": "varco_core.exception.http",
     "fired_deprecations": "varco_core.deprecation",
+    "warn_deprecated": "varco_core.deprecation",
     "build_wiring_report": "varco_core.di.report",
     "WiringReport": "varco_core.di.report",
     "DiagnoseSettings": "varco_core.di.report",
@@ -965,6 +977,7 @@ __all__ = [
     "deprecated",
     "deprecated_alias",
     "fired_deprecations",
+    "warn_deprecated",
     "build_wiring_report",
     "WiringReport",
     "DiagnoseSettings",
@@ -1248,10 +1261,13 @@ __all__ = [
     "IrreversibleMigrationError",
     "MigrationBackendUnavailable",
     "InMemoryMigrator",
+    # ── Field encryption — the FLIP-13 dev/test hatch (Plan 056) ───────────
+    "PlaintextFieldEncryptor",
     # ── Redaction (Plan 040 / S21) ─────────────────────────────────────────
     "Redactor",
     "PolicyRedactor",
     "RedactionPolicy",
+    "AUDIT_REDACTION_POLICY",
     "is_sensitive_key",
     "redact_mapping",
     "redact_query_string",

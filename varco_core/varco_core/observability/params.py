@@ -147,10 +147,16 @@ class ParamCaptureConfig:
             — the decorator only ever sees the plain function at
             class-definition time.
         redact_patterns:
-            Case-insensitive substrings matched against parameter names.
-            A match replaces the value with ``redaction_placeholder`` —
-            applied even to names explicitly listed in ``include``
-            (fail-closed).
+            Case-insensitive patterns matched against parameter names on
+            word-boundary tokens by default (Plan 057 / FLIP-040-1);
+            ``redact_match_mode="substring"`` restores the 3.x substring
+            semantics. A match replaces the value with
+            ``redaction_placeholder`` — applied even to names explicitly
+            listed in ``include`` (fail-closed).
+        redact_match_mode:
+            ``"word"`` (default) or ``"substring"`` — the ``match_mode`` of
+            the ``RedactionPolicy`` built from ``redact_patterns``
+            (§D-span). Code-level only; no env var.
         redaction_placeholder:
             The literal value written in place of a redacted parameter.
 
@@ -175,6 +181,13 @@ class ParamCaptureConfig:
     capture_varargs: bool = False
     capture_self: bool = False
     redact_patterns: tuple[str, ...] = DEFAULT_REDACT_PATTERNS
+    # DESIGN (Plan 057 / §D-span): the escape hatch lives on the config the
+    # caller already holds.
+    #   ✅ A custom `redact_patterns` that relied on substring semantics
+    #      ("pwd" for `dbpwd`) is restored with one additive field.
+    #   ❌ A second place the match mode is spelled — accepted, the same
+    #      reason `redact_patterns` duplicates `RedactionPolicy.patterns`.
+    redact_match_mode: Literal["word", "substring"] = "word"
     redaction_placeholder: str = _REDACTION_PLACEHOLDER_DEFAULT
 
 
@@ -297,14 +310,15 @@ def _sanitize_value_inner(
 
 
 def _is_redacted(name: str, config: ParamCaptureConfig) -> bool:
-    # Plan 040 / S21, §D-S21-compat: the decision now delegates to
-    # varco_core.redaction.is_sensitive_key — byte-identical
-    # case-insensitive substring semantics (RedactionPolicy's default
-    # match_mode), against whatever patterns THIS config carries (which may
-    # differ from DEFAULT_REDACT_PATTERNS if the caller overrode
-    # redact_patterns=). Rendering (sanitize_value) is untouched — only the
-    # decision half of the incumbent split moves.
-    return _redaction_is_sensitive_key(name, RedactionPolicy(patterns=config.redact_patterns))
+    # Plan 040 / S21, §D-S21-compat: the decision delegates to
+    # varco_core.redaction.is_sensitive_key, against whatever patterns and
+    # match mode THIS config carries (Plan 057 / §D-span: word-boundary by
+    # default, `redact_match_mode="substring"` for the 3.x semantics).
+    # Rendering (sanitize_value) is untouched — only the decision moves.
+    return _redaction_is_sensitive_key(
+        name,
+        RedactionPolicy(patterns=config.redact_patterns, match_mode=config.redact_match_mode),
+    )
 
 
 def _is_eligible(name: str, config: ParamCaptureConfig) -> bool:

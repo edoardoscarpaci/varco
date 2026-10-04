@@ -9,6 +9,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from tests._tenant_fixtures import legacy_chain
+
 
 class _FakeCatalog:
     def __init__(self, status: str) -> None:
@@ -33,7 +35,11 @@ def _build_app(catalog, pool, tenant_header: str = "X-Tenant-Id"):
     from varco_fastapi.middleware.tenant_resolution import TenantResolutionMiddleware
 
     app = FastAPI()
-    app.add_middleware(TenantResolutionMiddleware, catalog=catalog, pool=pool, header=tenant_header)
+    # Plan 055 / FLIP-6: header-only resolution named explicitly — the implicit
+    # chain=None fallback is deprecated (and an error under this suite's config).
+    app.add_middleware(
+        TenantResolutionMiddleware, catalog=catalog, pool=pool, chain=legacy_chain(tenant_header)
+    )
 
     @app.get("/ping")
     async def ping():

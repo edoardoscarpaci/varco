@@ -23,7 +23,7 @@ event delivery, using `varco_sa` (SQLAlchemy/PostgreSQL) and `SADeduplicator`.
 ```bash
 export DATABASE_URL="postgresql+asyncpg://user:pw@localhost:5432/mydb"
 cd examples/17-transactional-outbox
-uv run uvicorn app:app --reload
+VARCO_SECURITY_ENV=development uv run uvicorn app:app --reload
 ```
 
 ```bash
@@ -39,7 +39,7 @@ curl http://localhost:8000/v1/events
 ## Run integration tests
 
 ```bash
-uv run pytest examples/17-transactional-outbox/tests/ -v -m integration
+VARCO_SECURITY_ENV=development uv run pytest examples/17-transactional-outbox/tests/ -v -m integration
 ```
 
 ## Key design decisions

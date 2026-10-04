@@ -17,9 +17,10 @@ What this module does NOT register
     ``AbstractDTOAssembler``  — ``ProductAssembler`` self-registers via ``@Singleton``.
     ``AsyncService``          — ``ProductService`` self-registers via ``@Singleton``.
     ``ProductRouter``         — self-registers via ``@Singleton``.
-    ``AbstractAuthorizer``    — ``BaseAuthorizer`` (permissive) is auto-registered
-                               by varco_core at lowest priority; no custom
-                               authorizer is needed for this example.
+    ``AbstractAuthorizer``    — ``BaseAuthorizer`` (permissive) is varco_core's
+                               ``@Fallback`` default, a binding only under
+                               ``VARCO_SECURITY_ENV=development`` (4.0, Plan
+                               053) — run this example with that variable set.
 
 DESIGN: explicit @Provider for IUoWProvider over @Singleton on the class
     ``InMemoryUoWProvider`` is declared in ``repo.py`` which intentionally has
@@ -67,12 +68,12 @@ class ProductModule:
         ``IUoWProvider`` → ``InMemoryUoWProvider`` singleton
 
     Prerequisites (must be installed/scanned before the first request):
-        - ``VarcoFastAPIModule`` (``TaskRegistry``, ``AbstractJobRunner``, defaults)
+        - ``VarcoFastAPIConfiguration`` (``TaskRegistry``, ``AbstractJobRunner``, defaults)
 
     Usage::
 
         container = DIContainer()
-        container.install(VarcoFastAPIModule)
+        container.install(VarcoFastAPIConfiguration)
         container.install(ProductModule)
         container.scan(".", recursive=True)  # discovers @Singleton classes
         # ProductAssembler, ProductService, ProductRouter are now available.

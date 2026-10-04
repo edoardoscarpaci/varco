@@ -21,6 +21,14 @@ from varco_conformance.webhook_subscription import WebhookSubscriptionRepository
 pytestmark = pytest.mark.integration
 
 
+def _plaintext():
+    # The conformance suite tests the repository contract, not the cipher —
+    # the Fernet round-trip lives in test_webhook_repository_encryptor_required.py.
+    from varco_core.encryption import PlaintextFieldEncryptor
+
+    return PlaintextFieldEncryptor(acknowledge_plaintext=True)
+
+
 def _tenant() -> str:
     return f"webhook-tenant-{uuid4().hex[:8]}"
 
@@ -32,7 +40,7 @@ class TestSAWebhookSubscriptionRepositoryConformance(WebhookSubscriptionReposito
     async def repo(self, postgres_url: str):
         from varco_sa.webhook import SAWebhookSubscriptionRepository
 
-        repo = SAWebhookSubscriptionRepository(url=postgres_url)
+        repo = SAWebhookSubscriptionRepository(url=postgres_url, encryptor=_plaintext())
         await repo.start()
         yield repo
         await repo.stop()
@@ -42,7 +50,7 @@ class TestSAWebhookSubscriptionRepositoryConformance(WebhookSubscriptionReposito
 async def repo(postgres_url: str):
     from varco_sa.webhook import SAWebhookSubscriptionRepository
 
-    repo = SAWebhookSubscriptionRepository(url=postgres_url)
+    repo = SAWebhookSubscriptionRepository(url=postgres_url, encryptor=_plaintext())
     await repo.start()
     yield repo
     await repo.stop()

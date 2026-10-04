@@ -3,7 +3,7 @@ app
 ===
 FastAPI application bootstrap for the minimal CRUD example.
 
-``create_app()`` wires the container, installs ``VarcoFastAPIModule`` and
+``create_app()`` wires the container, installs ``VarcoFastAPIConfiguration`` and
 ``ProductModule``, registers ``@Singleton`` classes, resolves the router via
 DI (so service injection works), and returns a FastAPI app with all product
 CRUD endpoints.
@@ -63,7 +63,7 @@ def create_app() -> FastAPI:
     Bootstrap sequence:
         1. Create a fresh ``DIContainer``.
         2. Scan ``varco_core`` to register ``BaseAuthorizer`` and other defaults.
-        3. Scan ``varco_fastapi`` to discover ``VarcoFastAPIModule`` and all
+        3. Scan ``varco_fastapi`` to discover ``VarcoFastAPIConfiguration`` and all
            framework ``@Singleton`` defaults.
         4. Install ``ProductModule`` — registers ``IUoWProvider →
            InMemoryUoWProvider``.
@@ -91,11 +91,12 @@ def create_app() -> FastAPI:
     """
     container = DIContainer()
 
-    # Scan varco_core first — registers BaseAuthorizer (lowest-priority fallback)
+    # Scan varco_core first — registers BaseAuthorizer (a @Fallback default that is
+    # a binding only under VARCO_SECURITY_ENV=development since 4.0, Plan 053)
     # and other @Singleton defaults (InMemoryEventBus, etc.).
     container.scan("varco_core", recursive=True)
 
-    # Scan varco_fastapi — auto-discovers VarcoFastAPIModule (@Configuration)
+    # Scan varco_fastapi — auto-discovers VarcoFastAPIConfiguration (@Configuration)
     # and all framework @Singleton defaults: TaskRegistry, AbstractJobRunner, etc.
     container.scan("varco_fastapi", recursive=True)
 

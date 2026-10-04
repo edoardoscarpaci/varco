@@ -218,6 +218,12 @@ def test_all_list_is_unchanged_in_length() -> None:
     # it to 291. Plan 052 drift repair added 7 more (build_wiring_report,
     # WiringReport, DiagnoseSettings, InMemoryProfile, in_memory_modules,
     # JwksPostureCollector, RetentionPostureCollector — plan Step 16), taking
-    # it to 298.
-    assert len(varco_core.__all__) == 298
+    # it to 298. Plan 053 / §D-apikey added 1 more (warn_deprecated — the
+    # parameter-path deprecation helper, beside its two siblings), taking it
+    # to 299. Plan 056 / FLIP-13 added 1 more (PlaintextFieldEncryptor — the
+    # acknowledged dev/test hatch for the now-required webhook encryptor),
+    # taking it to 300. Plan 057 / FLIP-040-2 added 1 more
+    # (AUDIT_REDACTION_POLICY — the AuditLogMixin redaction default, beside
+    # RedactionPolicy), taking it to 301.
+    assert len(varco_core.__all__) == 301
     assert len(set(varco_core.__all__)) == len(varco_core.__all__)

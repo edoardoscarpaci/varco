@@ -18,9 +18,14 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
-from varco_fastapi.admin._tenant_scope import resolve_ctx, resolve_tenant_scope
+from varco_fastapi.admin._tenant_scope import (
+    admin_guard,
+    require_server_auth,
+    resolve_ctx,
+    resolve_tenant_scope,
+)
 
 if TYPE_CHECKING:
     from varco_core.service.audit import AuditRepository
@@ -43,7 +48,7 @@ def _entry_to_dict(entry: Any) -> dict[str, Any]:
 def build_audit_router(
     audit_repo: AuditRepository,
     *,
-    server_auth: Any | None = None,
+    server_auth: Any,
     admin_role: str = "reliability-admin",
     cross_tenant_role: str = "cross-tenant-admin",
     prefix: str = "/audit",
@@ -53,10 +58,23 @@ def build_audit_router(
     Build the audit-log admin ``APIRouter``.
 
     Args:
+        audit_repo: The ``AuditRepository`` to administer.
+        server_auth: **Required.** Auth strategy — resolved and enforced on
+            every route (4.0, Plan 054 / FLIP-3), once per request; the
+            caller's ``dependencies=`` are additive.
+        admin_role: Role required on every route (403 otherwise).
         cross_tenant_role: Role required to omit ``tenant_id`` and reach
             every tenant, or to supply a ``tenant_id`` other than the
             resolved one (§D-S4-scope). Same semantics as
             ``build_dlq_router``'s kwarg of the same name.
+        prefix: URL prefix. Defaults to ``"/audit"``.
+        allow_delete: Register the ``DELETE {prefix}/entries`` retention
+            sweep. ``False`` (default) — the route is absent from the
+            router and the OpenAPI schema entirely.
+
+    Returns:
+        An ``APIRouter`` whose every route runs the ``admin_role`` guard as
+        a router-level dependency.
 
     Routes:
         GET  {prefix}/entries                          all list() filters as query params
@@ -64,8 +82,19 @@ def build_audit_router(
         GET  {prefix}/entries/{entity_type}/{entity_id} list_for_entity
         POST {prefix}/verify-chain                      Plan 009 Phase 12 (R8) hash-chain verification
         DELETE {prefix}/entries                          retention sweep; only when allow_delete=True
+
+    Raises:
+        ValueError: ``server_auth is None`` (Plan 054 / FLIP-3). Omitting
+            the keyword is Python's own ``TypeError``.
     """
-    router = APIRouter(prefix=prefix, tags=["audit-admin"])
+    require_server_auth(
+        server_auth, owner="build_audit_router", surface="read and delete audit records"
+    )
+    router = APIRouter(
+        prefix=prefix,
+        tags=["audit-admin"],
+        dependencies=[Depends(admin_guard(server_auth, admin_role))],
+    )
 
     @router.get("/entries")
     async def list_entries(

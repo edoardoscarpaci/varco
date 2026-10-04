@@ -323,3 +323,64 @@ def test_warns_at_least_once_under_the_default_filter(deprecated) -> None:
 
     deprecations = [w for w in record if issubclass(w.category, DeprecationWarning)]
     assert len(deprecations) >= 1
+
+
+# ── Plan 053 / warn_deprecated() (§D-apikey) ─────────────────────────────────────────────
+
+
+def _warn_deprecated():
+    from varco_core.deprecation import warn_deprecated
+
+    return warn_deprecated
+
+
+def test_warn_deprecated_is_exported():
+    import varco_core.deprecation as module
+
+    assert "warn_deprecated" in module.__all__
+
+
+def test_warn_deprecated_message_shape():
+    warn_deprecated = _warn_deprecated()
+    with pytest.warns(
+        DeprecationWarning,
+        match=r"^Thing\(x=\.\.\.\) is deprecated since 4\.0\.0 and will be removed in 5\.0\.0\. Use Other instead\.$",
+    ):
+        warn_deprecated("Thing(x=...)", since="4.0.0", removed_in="5.0.0", replacement="Other")
+
+
+def test_warn_deprecated_blames_caller():
+    warn_deprecated = _warn_deprecated()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        warn_deprecated("Thing(x=...)", since="4.0.0", removed_in="5.0.0")
+    assert len(caught) == 1
+    assert caught[0].filename == __file__
+
+
+def test_warn_deprecated_stacklevel_passthrough():
+    # A one-frame helper (like ApiKeyAuth.__init__) passes stacklevel=3 so the
+    # warning names ITS caller — this test file.
+    warn_deprecated = _warn_deprecated()
+
+    def _one_frame_helper() -> None:
+        warn_deprecated("Thing(x=...)", since="4.0.0", removed_in="5.0.0", stacklevel=3)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _one_frame_helper()
+    assert len(caught) == 1
+    assert caught[0].filename == __file__
+
+
+def test_warn_deprecated_lands_in_the_ledger():
+    # 052's ledger is in the tree: the new helper must record there too.
+    from varco_core.deprecation import fired_deprecations, reset_fired_deprecations
+
+    warn_deprecated = _warn_deprecated()
+    reset_fired_deprecations()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        warn_deprecated("LedgerThing(x=...)", since="4.0.0", removed_in="5.0.0")
+    assert any(r.subject == "LedgerThing(x=...)" for r in fired_deprecations())
+    reset_fired_deprecations()

@@ -27,6 +27,7 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from varco_core.auth.api_key import hash_api_key
 from varco_core.auth.base import AuthContext
 from varco_fastapi.auth.server_auth import AbstractServerAuth, AnonymousAuth, ApiKeyAuth
 from varco_fastapi.router.mcp import MCPAuthMiddleware
@@ -102,7 +103,7 @@ async def _call_middleware(
 
 async def test_non_mcp_path_passes_through_without_auth():
     """Requests to other paths must not trigger the auth check."""
-    auth = ApiKeyAuth(keys={})  # empty — would reject everything
+    auth = ApiKeyAuth(hashed_keys={})  # empty — would reject everything
     middleware = MCPAuthMiddleware(_ok_app, server_auth=auth, mount_path="/mcp")
 
     status, body = await _call_middleware(middleware, "/api/orders")
@@ -110,7 +111,7 @@ async def test_non_mcp_path_passes_through_without_auth():
 
 
 async def test_root_path_outside_mount_passes_through():
-    auth = ApiKeyAuth(keys={})
+    auth = ApiKeyAuth(hashed_keys={})
     middleware = MCPAuthMiddleware(_ok_app, server_auth=auth, mount_path="/mcp")
 
     status, _ = await _call_middleware(middleware, "/")
@@ -119,7 +120,7 @@ async def test_root_path_outside_mount_passes_through():
 
 async def test_similar_prefix_path_does_not_match():
     """``/mcptools`` must NOT match when mount_path is ``/mcp``."""
-    auth = ApiKeyAuth(keys={})  # would reject if called
+    auth = ApiKeyAuth(hashed_keys={})  # would reject if called
     middleware = MCPAuthMiddleware(_ok_app, server_auth=auth, mount_path="/mcp")
 
     # /mcptools does NOT start with /mcp when normalized
@@ -135,7 +136,9 @@ async def test_similar_prefix_path_does_not_match():
 
 async def test_mcp_path_no_credentials_returns_401():
     """Request to the MCP path without credentials → 401."""
-    auth = ApiKeyAuth(keys={"real-key": AuthContext(user_id="agent")}, required=True)
+    auth = ApiKeyAuth(
+        hashed_keys={hash_api_key("real-key"): AuthContext(user_id="agent")}, required=True
+    )
     middleware = MCPAuthMiddleware(_ok_app, server_auth=auth, mount_path="/mcp")
 
     status, body = await _call_middleware(middleware, "/mcp")
@@ -145,7 +148,9 @@ async def test_mcp_path_no_credentials_returns_401():
 
 async def test_mcp_subpath_no_credentials_returns_401():
     """Request to /mcp/sse (sub-path) also triggers auth."""
-    auth = ApiKeyAuth(keys={"real-key": AuthContext(user_id="agent")}, required=True)
+    auth = ApiKeyAuth(
+        hashed_keys={hash_api_key("real-key"): AuthContext(user_id="agent")}, required=True
+    )
     middleware = MCPAuthMiddleware(_ok_app, server_auth=auth, mount_path="/mcp")
 
     status, body = await _call_middleware(middleware, "/mcp/sse")
@@ -155,7 +160,9 @@ async def test_mcp_subpath_no_credentials_returns_401():
 
 async def test_mcp_path_invalid_key_returns_401():
     """Wrong API key → 401 with error detail."""
-    auth = ApiKeyAuth(keys={"correct-key": AuthContext(user_id="agent")}, required=True)
+    auth = ApiKeyAuth(
+        hashed_keys={hash_api_key("correct-key"): AuthContext(user_id="agent")}, required=True
+    )
     middleware = MCPAuthMiddleware(_ok_app, server_auth=auth, mount_path="/mcp")
 
     status, body = await _call_middleware(middleware, "/mcp", headers=[("X-API-Key", "wrong-key")])
@@ -165,7 +172,9 @@ async def test_mcp_path_invalid_key_returns_401():
 
 async def test_mcp_path_valid_key_passes_through():
     """Valid API key → request forwarded to wrapped app (200)."""
-    auth = ApiKeyAuth(keys={"valid-key": AuthContext(user_id="agent")}, required=True)
+    auth = ApiKeyAuth(
+        hashed_keys={hash_api_key("valid-key"): AuthContext(user_id="agent")}, required=True
+    )
     middleware = MCPAuthMiddleware(_ok_app, server_auth=auth, mount_path="/mcp")
 
     status, _ = await _call_middleware(middleware, "/mcp", headers=[("X-API-Key", "valid-key")])
@@ -201,7 +210,7 @@ async def test_unexpected_auth_error_returns_500():
 
 async def test_lifespan_scope_passes_through():
     """Lifespan scope is not HTTP — must always pass through without auth."""
-    auth = ApiKeyAuth(keys={}, required=True)  # would reject HTTP
+    auth = ApiKeyAuth(hashed_keys={}, required=True)  # would reject HTTP
     middleware = MCPAuthMiddleware(_ok_app, server_auth=auth, mount_path="/mcp")
 
     # Lifespan scope has no meaningful send/receive for response; just ensure no error
@@ -224,7 +233,7 @@ async def test_lifespan_scope_passes_through():
 
 async def test_mount_path_trailing_slash_normalised():
     """``mount_path="/mcp/"`` is treated identically to ``"/mcp"``."""
-    auth = ApiKeyAuth(keys={}, required=True)
+    auth = ApiKeyAuth(hashed_keys={}, required=True)
     middleware = MCPAuthMiddleware(_ok_app, server_auth=auth, mount_path="/mcp/")
 
     status, _ = await _call_middleware(middleware, "/mcp")
@@ -254,7 +263,9 @@ def test_repr_includes_server_auth():
 def test_middleware_integrates_with_fastapi_app():
     """Verify the middleware works when added to a real FastAPI app."""
     app = FastAPI()
-    auth = ApiKeyAuth(keys={"agent-key": AuthContext(user_id="agent")}, required=True)
+    auth = ApiKeyAuth(
+        hashed_keys={hash_api_key("agent-key"): AuthContext(user_id="agent")}, required=True
+    )
     app.add_middleware(MCPAuthMiddleware, server_auth=auth, mount_path="/mcp")
 
     @app.get("/mcp/tools")

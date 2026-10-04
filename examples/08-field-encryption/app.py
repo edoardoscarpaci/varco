@@ -63,7 +63,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 from varco_core.encryption import FieldEncryptor
 from varco_core.service.base import IUoWProvider
-from varco_fastapi.di import VarcoFastAPIModule
+from varco_fastapi.di import bootstrap as fastapi_bootstrap
 from varco_sa.config import SAConfig
 from varco_sa.di import bootstrap as sa_bootstrap
 from varco_sa.di import create_tables
@@ -98,7 +98,7 @@ def _build_container(db_url: str, encryptor: FieldEncryptor) -> DIContainer:
        called with the encryptor — enabling transparent encryption at the mapper.
     2. Expose the pre-wired provider to the container via ``@Provider``.
     3. Register ``SAConfig`` for framework tooling (health checks, ``create_tables``).
-    4. Install ``VarcoFastAPIModule`` for framework defaults.
+    4. Run ``varco_fastapi.di.bootstrap()`` for framework defaults.
     5. Scan ``varco_sa`` (via ``sa_bootstrap``) to discover ``SAConfiguration`` — but
        pass NO ``entity_classes`` so DI does not auto-rebuild the Patient mapper
        without the encryptor.
@@ -173,13 +173,19 @@ def _build_container(db_url: str, encryptor: FieldEncryptor) -> DIContainer:
 
     container.provide(_sa_config)
 
-    # ── 4. Install varco_fastapi module ───────────────────────────────────────
-    container.install(VarcoFastAPIModule)
+    # ── 4. Bootstrap varco_fastapi ─────────────────────────────────────────────
+    # 4.0 (Plan 049): the framework @Configuration is VarcoFastAPIConfiguration; the
+    # 4.0 hand-wired form is the package bootstrap() (scan-installs it, idempotent,
+    # so create_varco_app's FastAPIModule re-running it later is safe).
+    fastapi_bootstrap(container)
 
     # ── 4b. Permissive authorizer ─────────────────────────────────────────────
     from varco_core.auth.authorizer import BaseAuthorizer  # noqa: PLC0415
     from varco_core.auth.base import AbstractAuthorizer  # noqa: PLC0415
 
+    # 4.0 (Plan 053 / FLIP-5): a class-keyed bind of BaseAuthorizer is gated
+    # exactly like the scanned fallback — run with VARCO_SECURITY_ENV=development
+    # (see README). A production app registers a real AbstractAuthorizer.
     container.bind(AbstractAuthorizer, BaseAuthorizer)
 
     # ── 5. Scan varco_sa (no entity_classes) ─────────────────────────────────

@@ -181,6 +181,25 @@ class SAModelRegistry:
             ) from None
 
     @classmethod
+    def registered(cls) -> tuple[type, ...]:
+        """
+        Every domain class ``SAModelFactory`` has built an ORM class for.
+
+        Read-only snapshot; the candidate source for the RLS posture
+        collector (Plan 056 / §D-flip12-candidates) — it includes classes
+        bound by a hand ``bind_repositories()`` call, not just
+        ``SAModule(entities=)``.
+
+        Returns:
+            A ``tuple`` copy, in registration order. A later registration is
+            never reflected in an earlier snapshot.
+
+        Thread safety:  ✅ Safe once startup registration is complete (the
+                           class-level contract above).
+        """
+        return tuple(cls._registry)
+
+    @classmethod
     def _register(cls, domain_cls: type, orm_cls: type) -> None:
         cls._registry[domain_cls] = orm_cls
 

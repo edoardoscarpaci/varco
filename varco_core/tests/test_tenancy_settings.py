@@ -17,7 +17,7 @@ def test_default_settings_match_documented_defaults() -> None:
     settings = TenancySettings()
 
     assert settings.isolation == TenantIsolation.SHARED
-    assert settings.enforce_rls is False
+    assert settings.enforce_rls is True  # Plan 056 / FLIP-12: default flipped
     assert settings.max_entries == 50
     assert settings.idle_ttl_s == 300.0
     assert settings.catalog_ttl_s == 60.0
@@ -40,7 +40,7 @@ def test_from_env_with_empty_environ_yields_documented_defaults() -> None:
     settings = TenancySettings.from_env()
 
     assert settings.isolation == TenantIsolation.SHARED
-    assert settings.enforce_rls is False
+    assert settings.enforce_rls is True  # Plan 056 / FLIP-12: default flipped
     assert settings.max_entries == 50
     assert settings.idle_ttl_s == 300.0
     assert settings.catalog_ttl_s == 60.0
@@ -106,8 +106,8 @@ def test_from_env_ignores_mount_admin_env_var_entirely(monkeypatch: pytest.Monke
 # ════════════════════════════════════════════════════════════════════════════════
 # Plan 037 / Step 12 — §D-S12-hook: two new, additive, off-by-default flags.
 #
-# ``enforce_rls`` means one thing only (RLS is enabled on every routed
-# table); these two flags are about the GUC-setting hook, not the assertion,
+# ``enforce_rls`` (default True since 4.0, Plan 056 / FLIP-12) gates the
+# startup RLS posture read and never sets the GUC; these two flags are about the GUC-setting hook, not the assertion,
 # and must default to False so an app that upgrades and changes no code sees
 # byte-identical behaviour (§D-S12-hook's "DESIGN" block).
 # ════════════════════════════════════════════════════════════════════════════════
@@ -162,7 +162,7 @@ def test_byte_identical_defaults_assertion_still_passes_with_new_fields_present(
     settings = TenancySettings()
 
     assert settings.isolation == TenantIsolation.SHARED
-    assert settings.enforce_rls is False
+    assert settings.enforce_rls is True  # Plan 056 / FLIP-12: default flipped
     assert settings.max_entries == 50
     assert settings.idle_ttl_s == 300.0
     assert settings.catalog_ttl_s == 60.0
@@ -188,3 +188,45 @@ def test_node_id_and_store_id_default_none_and_read_from_env(
 
     assert settings.node_id == "node-1"
     assert settings.store_id == "store-1"
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Plan 056 / FLIP-12 — enforce_rls defaults to True; env "false" is the hatch.
+# ════════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("raw", ["false", "0", "no", "off"])
+def test_enforce_rls_env_false_is_the_hatch(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
+    # The one greppable opt-out line must turn the flipped default back off.
+    from varco_core.tenancy.settings import TenancySettings
+
+    monkeypatch.setenv("VARCO_TENANCY_ENFORCE_RLS", raw)
+
+    assert TenancySettings.from_env().enforce_rls is False
+
+
+def test_enforce_rls_default_is_true_field_guard() -> None:
+    # Class-level default guard: api_surface.py --check cannot see class fields.
+    from varco_core.tenancy.settings import TenancySettings
+
+    assert TenancySettings.model_fields["enforce_rls"].default is True
+
+
+def test_every_other_default_is_unchanged() -> None:
+    # "Byte-identical to pre-Plan-007 except enforce_rls" — made mechanical.
+    from varco_core.tenancy.settings import TenancySettings, TenantIsolation
+
+    s = TenancySettings()
+
+    assert s.isolation == TenantIsolation.SHARED
+    assert s.rls_set_tenant is False
+    assert s.rls_require_tenant is False
+    assert s.assert_tenant_filter is False
+    assert s.fanout_framework_tables is False
+    assert s.global_writable is False
+    assert s.global_dsn is None
+    assert s.schema_template == "t_{tenant_id}"
+    assert s.db_template == "db_{tenant_id}"
+    assert s.max_entries == 50
+    assert s.idle_ttl_s == 300.0
+    assert s.catalog_ttl_s == 60.0

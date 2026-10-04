@@ -22,7 +22,7 @@ This module provides:
     models out of the box.  Pydantic is an optional dependency — the
     serializer degrades gracefully when Pydantic is not installed.
     Registered as the default ``TaskSerializer`` binding in
-    ``VarcoFastAPIModule``.
+    ``VarcoFastAPIConfiguration``.
 
 Supported types (``DefaultTaskSerializer``)
 -------------------------------------------
@@ -194,7 +194,8 @@ class TaskSerializer(ABC):
         container.bind(TaskSerializer, MySerializer)
 
     The framework default (``DefaultTaskSerializer``) is registered via
-    ``VarcoFastAPIModule`` — installing that module is enough for most apps.
+    ``VarcoFastAPIConfiguration`` — ``varco_fastapi.di.bootstrap(container)``
+    installs it, which is enough for most apps.
 
     Thread safety:  ✅ Implementations should be stateless; design for sharing.
     Async safety:   ✅ Both methods are synchronous value transformations.

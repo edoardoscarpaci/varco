@@ -263,7 +263,7 @@ meaning change and could land in the same PR or the next; do not land them befor
 
 ### Phase A — FLIP-040-1: word-boundary default
 
-1. [ ] **Preflight — record the two premises as executed facts.** Run and paste output into
+1. [x] **Preflight — record the two premises as executed facts.** Run and paste output into
        `/tmp/claude-1000/-home-edoardo-projects-varco/625af1a2-0cf8-4199-b924-0b3f986861e6/scratchpad/057-preflight.txt`:
        `uv run python -c "from varco_core.redaction import RedactionPolicy, is_sensitive_key as k; p=RedactionPolicy(match_mode='word'); print([k(x,p) for x in ('api_key','apiKey','x-api-key','private_key','session_id','password2','credentials')])"`
        → expected today `[False, False, False, False, False, False, False]` (premise 1);
@@ -273,7 +273,7 @@ meaning change and could land in the same PR or the next; do not land them befor
        revise §D-word / §D-audit-policy before continuing.
        **Verify**: the scratchpad file exists with both outputs.
 
-2. [ ] `varco_core/tests/test_redaction_word_mode.py` (**new**, red) — the §D-word contract:
+2. [x] `varco_core/tests/test_redaction_word_mode.py` (**new**, red) — the §D-word contract:
        (a) `TestTokenizer` — one parametrised test over the tokenizer table (`x-api-key`,
        `apiKey`, `HTTPAuthorization`, `password2`, `sha256`, `X-Hub-Signature-256`,
        `shipping_address`, `Authorization`, `__dunder__` → `("dunder",)`, `""` → `()`);
@@ -290,7 +290,7 @@ meaning change and could land in the same PR or the next; do not land them befor
        **Verify**: `uv run pytest varco_core/tests/test_redaction_word_mode.py -q` → red on
        (b)/(d)/(e) and on the `api_key` tokenizer rows; (c) already passes.
 
-3. [ ] `varco_core/tests/test_redaction.py` — flip the pinned defaults: `:55-58`
+3. [x] `varco_core/tests/test_redaction.py` — flip the pinned defaults: `:55-58`
        `test_default_match_mode_is_substring` → `test_default_match_mode_is_word` asserting
        `"word"`; `:109-118` `test_hyphenated_api_key_header_not_caught_by_default_alone` →
        `test_hyphenated_api_key_header_caught_by_default_under_word_mode` (`True` for
@@ -309,7 +309,7 @@ meaning change and could land in the same PR or the next; do not land them befor
        `dbpwd`; the default does not).
        **Verify**: both files red on the renamed/added tests only.
 
-4. [ ] `varco_core/varco_core/redaction/policy.py` — implement §D-word: `_WORD_TOKEN_RE` →
+4. [x] `varco_core/varco_core/redaction/policy.py` — implement §D-word: `_WORD_TOKEN_RE` →
        `r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+"`; `match_mode` default `"word"`;
        `__post_init__` additionally raises `ValueError` naming the offending pattern when
        `match_mode == "word"` and `_tokenize(p) == ()`; a memoised `_pattern_tokens(patterns:
@@ -333,7 +333,7 @@ meaning change and could land in the same PR or the next; do not land them befor
        varco_core/tests/test_observability_params.py -q`; the Step 1 premise-1 command now prints
        all `True`.
 
-5. [ ] `varco_core/varco_core/observability/params.py` — §D-span: `ParamCaptureConfig` gains
+5. [x] `varco_core/varco_core/observability/params.py` — §D-span: `ParamCaptureConfig` gains
        `redact_match_mode: Literal["word", "substring"] = "word"` (after `redact_patterns`,
        `:177`), documented in `Args` (`:149-153` — reword "Case-insensitive substrings" to
        "patterns matched on word-boundary tokens by default; `redact_match_mode="substring"`
@@ -342,7 +342,7 @@ meaning change and could land in the same PR or the next; do not land them befor
        **Verify**: Step 3's two new `test_observability_params.py` tests green; the rest of that
        file unmodified and green.
 
-6. [ ] `varco_core/varco_core/redaction/posture.py` — reword only: `:170-177` detail →
+6. [x] `varco_core/varco_core/redaction/posture.py` — reword only: `:170-177` detail →
        "The process default redactor opted out of word-boundary matching
        (`match_mode='substring'`) — 040's known false positives apply (e.g. 'pin' redacts
        'shipping_address')."; module docstring `:7-11` ⛔ paragraph → "Wired into
@@ -359,7 +359,7 @@ meaning change and could land in the same PR or the next; do not land them befor
 
 ### Phase B — FLIP-040-2: audit redaction on by default (after Phase A)
 
-7. [ ] `varco_core/tests/test_audit_redaction.py` (red) — rewrite the "Default" section
+7. [x] `varco_core/tests/test_audit_redaction.py` (red) — rewrite the "Default" section
        (`:98-142`): (a) **first**, `test_audit_default_precondition_word_mode` — imports
        `AUDIT_REDACTION_POLICY` from `varco_core.redaction`, asserts `.match_mode == "word"`,
        `.render_non_json is False`, `.patterns == DEFAULT_REDACT_PATTERNS`, and that
@@ -389,7 +389,7 @@ meaning change and could land in the same PR or the next; do not land them befor
        **Verify**: red on (a)-(e), (h), and the posture rewrite; `test_audit.py` untouched and
        green (its diffs have no sensitive names and no non-JSON leaves).
 
-8. [ ] Implementation: `varco_core/varco_core/redaction/policy.py` — add
+8. [x] Implementation: `varco_core/varco_core/redaction/policy.py` — add
        `AUDIT_REDACTION_POLICY: RedactionPolicy = RedactionPolicy(render_non_json=False)` with
        a DESIGN block (§D-audit-policy's ✅/❌: why `render_non_json=False`, why no explicit
        `match_mode`, `dataclasses.replace(AUDIT_REDACTION_POLICY, patterns=…)` as the extension
@@ -415,13 +415,13 @@ meaning change and could land in the same PR or the next; do not land them befor
        --warn-only` reports no `varco_core` breach (no new eager import — `varco_core.__init__`
        is PEP 562 lazy and `audit.py` already imported `varco_core.redaction`).
 
-9. [ ] **Phase B gate** — `uv run pytest varco_core/tests/test_audit.py
+9. [x] **Phase B gate** — `uv run pytest varco_core/tests/test_audit.py
        varco_core/tests/test_audit_redaction.py varco_core/tests/test_redaction_posture.py -q`
        green with `test_audit.py` showing **zero diff** in `git diff --stat`.
 
 ### Phase C — RO-5: the `SecurityPosture` collector
 
-10. [ ] `varco_fastapi/tests/test_posture_redaction_collector.py` (**new**, red) — (a)
+10. [x] `varco_fastapi/tests/test_posture_redaction_collector.py` (**new**, red) — (a)
         `test_zero_arg_collector_is_clean_on_a_default_process` — `reset_redaction_state()`;
         `_collect_redaction()` → `[]` (post-flip a default app has **no** redaction finding —
         the "opted out, not not-opted-in" property RO-5 was parked on); (b)
@@ -446,7 +446,7 @@ meaning change and could land in the same PR or the next; do not land them befor
         worst-case configuration exercising all four). All `async def`.
         **Verify**: red with `ImportError` on `_collect_redaction`.
 
-11. [ ] `varco_fastapi/varco_fastapi/posture.py` — add `_collect_redaction(*, service_classes:
+11. [x] `varco_fastapi/varco_fastapi/posture.py` — add `_collect_redaction(*, service_classes:
         tuple[type, ...] = (), envelope_settings: Any | None = None) -> list[PostureFinding]`
         after `_collect_data` (`:604-668`), §D-posture's shape: body-local `from
         varco_core.redaction.posture import inspect_redaction_posture`, a module-level
@@ -464,7 +464,7 @@ meaning change and could land in the same PR or the next; do not land them befor
 
 ### Docs
 
-12. [ ] Feature docs, same commit as the code (feedback memory):
+12. [x] Feature docs, same commit as the code (feedback memory):
         - `technical_docs/features/redaction.md` — §"The substring matcher's real false
           positives" (`:111-136`) → "Word-boundary matching (the 4.0 default) and the substring
           escape hatch": the tokenizer table, the §D-word ✅/❌ contract table **verbatim** (it is
@@ -521,7 +521,7 @@ meaning change and could land in the same PR or the next; do not land them befor
         `rg -n 'substring' technical_docs/features/redaction.md` hits only the escape-hatch and
         pitfall lines.
 
-13. [ ] `CHANGELOG.md` — under `## [Unreleased]` (`:10`), **above** Plan 043's block, add
+13. [x] `CHANGELOG.md` — under `## [Unreleased]` (`:10`), **above** Plan 043's block, add
         `### BREAKING — word-boundary redaction, audit redaction on by default, redaction posture
         collector (Plan 057, FLIP-040-1 / FLIP-040-2 / RO-5)` with four bullets: the matcher
         change (same fifteen literals; `api_key`/`apiKey`/`x-api-key` now caught by DEFAULT;
@@ -539,7 +539,7 @@ meaning change and could land in the same PR or the next; do not land them befor
 
 ### Verification
 
-14. [ ] `make test PKG=varco_core`; `make test PKG=varco_fastapi`; `make lint` (no-`PKG` path:
+14. [x] `make test PKG=varco_core`; `make test PKG=varco_fastapi`; `make lint` (no-`PKG` path:
         `api-check` **clean with the regenerated snapshot**, `asyncapi-check` unchanged,
         `import-budget --warn-only` no breach); `make type-check` clean (`Literal` defaults and
         the new field type-check under `strict`; no new `type: ignore`); `git diff --stat` shows

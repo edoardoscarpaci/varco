@@ -62,8 +62,11 @@ class TenantProvenancePosture:
             value, or ``None`` when no claim-based provider is bound.
         delegation_policy: Phase 6 only; ``None`` when S16 is cut or no
             policy is bound.
-        unchained_claim_tenant_setter: ``RequestContextMiddleware`` still
-            sets the tenant alone (Correction 1).
+        unchained_claim_tenant_setter: A hand-wired component sets the
+            tenant from a claim alone (Correction 1). Unreachable through
+            varco since 4.0 — ``RequestContextMiddleware`` never sets the
+            tenant (Plan 055 / FLIP-9); the field remains for hand-wired
+            setters.
         findings: Stable tokens — see the module for the pinned set.
     """
 
@@ -87,7 +90,7 @@ def inspect_tenant_provenance(
     *,
     membership: AbstractTenantMembership | None = None,
     delegation: DelegationPolicy | None = None,
-    request_context_sets_tenant: bool = True,
+    request_context_sets_tenant: bool = False,
 ) -> TenantProvenancePosture:
     """
     Inspect a (possibly absent) tenant-provenance configuration.
@@ -100,9 +103,10 @@ def inspect_tenant_provenance(
             deployment has not adopted one (today's header-only behaviour).
         membership: The bound ``AbstractTenantMembership``, or ``None``.
         delegation: The bound delegation policy (Phase 6 / S16), or ``None``.
-        request_context_sets_tenant: Whether
-            ``RequestContextMiddleware.enable_tenant_context`` is ``True``
-            in this deployment.
+        request_context_sets_tenant: ``True`` only for a hand-wired
+            component that sets the tenant from a claim alone — varco's own
+            middleware never sets the tenant since 4.0 (Plan 055 / FLIP-9),
+            so the default is ``False``.
 
     Returns:
         A ``TenantProvenancePosture`` snapshot.

@@ -47,6 +47,13 @@ class EdgeSlot(IntEnum):
     TRACING = 70
     METRICS = 80
     RATE_LIMIT_PRE_AUTH = 90
+    # Plan 055 §D-flip6-slot: TenancyModule's TenantResolutionMiddleware.
+    # Inside ERROR (a chain rejection is enveloped/logged/traced) and inside
+    # RATE_LIMIT_PRE_AUTH (the chain may run a JWT verify — IP limiting must
+    # protect that cost); outside REQUEST_CONTEXT (the provenance-deferral
+    # contract needs the chain to run first) and RATE_LIMIT_POST_AUTH (a
+    # TENANT-scoped rule reads current_tenant(), which this slot sets).
+    TENANT_RESOLUTION = 95
     REQUEST_CONTEXT = 100
     RATE_LIMIT_POST_AUTH = 110
     LOCALIZATION = 120

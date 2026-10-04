@@ -169,7 +169,7 @@
     ],
     "varco_core.exception.settings.ErrorEnvelopeSettings": [
       {
-        "default": "True",
+        "default": "False",
         "description": "",
         "env": "VARCO_ERROR_INCLUDE_DETAIL",
         "field": "include_detail",
@@ -391,12 +391,12 @@
         "type": "<enum 'RevocationFailureMode'>"
       },
       {
-        "default": "False",
+        "default": "None",
         "description": "",
         "env": "VARCO_JWT_REVOCATION_REQUIRE_JTI",
         "field": "revocation_require_jti",
         "secret": false,
-        "type": "<class 'bool'>"
+        "type": "bool | None"
       },
       {
         "default": "60.0",
@@ -765,7 +765,7 @@
         "type": "<class 'str'>"
       },
       {
-        "default": "<MissingClaimPolicy.ALLOW: 'allow'>",
+        "default": "<MissingClaimPolicy.DENY: 'deny'>",
         "description": "",
         "env": "VARCO_TENANT_MEMBERSHIP_ON_MISSING",
         "field": "on_missing_claim",
@@ -799,7 +799,7 @@
         "type": "<class 'str'>"
       },
       {
-        "default": "False",
+        "default": "True",
         "description": "",
         "env": "VARCO_TENANCY_ENFORCE_RLS",
         "field": "enforce_rls",
@@ -1535,12 +1535,12 @@
         "type": "<class 'bool'>"
       },
       {
-        "default": "'warn'",
+        "default": "None",
         "description": "",
         "env": "VARCO_SECURITY_ENFORCE",
         "field": "enforce",
         "secret": false,
-        "type": "<class 'str'>"
+        "type": "str | None"
       },
       {
         "default": "'production'",

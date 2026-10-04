@@ -25,6 +25,7 @@ from fastapi import Body, Depends, Query, Request
 from fastapi.testclient import TestClient
 from providify import DIContainer
 from pydantic import BaseModel
+from varco_core.auth.api_key import hash_api_key
 from varco_core.auth.base import AuthContext
 from varco_fastapi.app import create_varco_app
 from varco_fastapi.auth import AnonymousAuth, ApiKeyAuth
@@ -220,7 +221,7 @@ def test_all_param_kinds_together():
     resolves every argument correctly.
     """
     ctx_admin = AuthContext(user_id="adm", scopes=frozenset({"reports:read"}))
-    auth = ApiKeyAuth(keys={"admin-key": ctx_admin}, required=False)
+    auth = ApiKeyAuth(hashed_keys={hash_api_key("admin-key"): ctx_admin}, required=False)
 
     class R(GenericRouter):
         _prefix = "/reports"
@@ -265,7 +266,7 @@ def test_all_param_kinds_together():
 def test_combined_handler_still_enforces_guard():
     """The RouteGuard still denies an under-privileged caller on a rich handler."""
     ctx_unpriv = AuthContext(user_id="u", scopes=frozenset())
-    auth = ApiKeyAuth(keys={"unpriv-key": ctx_unpriv}, required=False)
+    auth = ApiKeyAuth(hashed_keys={hash_api_key("unpriv-key"): ctx_unpriv}, required=False)
 
     class R(GenericRouter):
         _prefix = "/reports"

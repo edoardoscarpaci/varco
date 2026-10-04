@@ -1,18 +1,21 @@
 """
 One deprecation mechanism for the whole workspace (Plan 022 / §D-DEP).
 
-Two public helpers:
+Three public helpers:
 
 * :func:`deprecated` — decorate a function, coroutine function or class whose
   *name is staying* but whose use is discouraged.
 * :func:`deprecated_alias` — build a PEP 562 module ``__getattr__`` so an
   **old name** keeps resolving, to the identical object, after a rename.
+* :func:`warn_deprecated` — emit the warning for one deprecated *parameter
+  path* of a callable that stays (Plan 053 / §D-apikey, e.g.
+  ``ApiKeyAuth(keys=...)``).
 
-Both force ``removed_in=`` at authoring time. That is the single discipline an
-ad-hoc ``warnings.warn`` call cannot enforce, and it makes every scheduled
-removal greppable::
+All three force ``removed_in=`` at authoring time. That is the single
+discipline an ad-hoc ``warnings.warn`` call cannot enforce, and it makes every
+scheduled removal greppable::
 
-    rg 'removed_in="3\\.' varco_*/varco_*
+    rg 'removed_in="[45]\\.' varco_*/varco_*
 
 DESIGN: one shared mechanism now, written policy later (RL-9)
   ✅ Replaces ad-hoc ``warnings.warn`` deprecation sites with one concept, so
@@ -71,6 +74,7 @@ __all__ = [
     "deprecated_alias",
     "fired_deprecations",
     "reset_fired_deprecations",
+    "warn_deprecated",
 ]
 
 _T = TypeVar("_T")
@@ -123,6 +127,7 @@ def _note(
     since: str | None,
     removed_in: str | None,
     replacement: str | None,
+    depth: int = 2,
 ) -> None:
     """
     Record one firing of ``subject`` in the process-global ledger.
@@ -137,13 +142,18 @@ def _note(
         since:       Version the deprecation began, or ``None``.
         removed_in:  Version of removal, or ``None``.
         replacement: Preferred replacement, or ``None``.
+        depth:       Frame depth of the call site to record, counted from this
+                     function (0) — the same number a ``warnings.warn``
+                     ``stacklevel`` issued by our direct caller would use.
+                     Default ``2`` (a one-level wrapper's caller);
+                     :func:`warn_deprecated` passes its own ``stacklevel``.
 
     Thread safety: guarded by ``_FIRED_LOCK`` — safe to call concurrently from
     multiple threads (exercised by the ledger's own thread-safety test).
     """
     # frame 0 = this function, frame 1 = the one-level wrapper that called us,
     # frame 2 = whoever called the deprecated thing — the caller we want to blame.
-    frame = sys._getframe(2)
+    frame = sys._getframe(depth)
     location = f"{frame.f_code.co_filename}:{frame.f_lineno}"
     with _FIRED_LOCK:
         existing = _FIRED.get(subject)
@@ -213,6 +223,72 @@ def _build_message(
     """
     tail = f" Use {replacement} instead." if replacement else ""
     return f"{subject} is deprecated since {since} and will be removed in {removed_in}.{tail}"
+
+
+def warn_deprecated(
+    subject: str,
+    *,
+    since: str,
+    removed_in: str,
+    replacement: str | None = None,
+    stacklevel: int = _CALLER_STACKLEVEL,
+) -> None:
+    """
+    Emit one ``DeprecationWarning`` for a deprecated *parameter path*.
+
+    The only helper for deprecating one way of calling something that itself
+    stays — neither :func:`deprecated` (a whole symbol) nor
+    :func:`deprecated_alias` (a renamed name) can express "``keys=`` is
+    deprecated, ``ApiKeyAuth`` is not". Same canonical sentence
+    (:func:`_build_message`), same required ``removed_in=``, and the fire is
+    recorded in the ledger (:func:`fired_deprecations`) before warning, so a
+    ``-W ignore::DeprecationWarning`` process still sees it.
+
+    Args:
+        subject:     What is deprecated, as the reader would write it — e.g.
+                     ``"ApiKeyAuth(keys=...)"``. Put first in the message, so
+                     a pytest ``error:<subject-regex>`` filter can match it.
+        since:       Version in which the deprecation began.
+        removed_in:  Version in which the path stops working. Required.
+        replacement: What to use instead, or ``None``.
+        stacklevel:  ``warnings.warn`` stacklevel, counted from *this*
+                     helper: ``2`` (default) blames the helper's caller; a
+                     constructor calling this passes ``3`` so the warning
+                     blames the code that called the constructor.
+
+    Raises:
+        DeprecationWarning: Only when the active warnings filter turns it
+            into an error (e.g. pytest ``filterwarnings = error:...``).
+        TypeError: If ``since`` or ``removed_in`` is omitted.
+
+    Edge cases:
+        - ``stacklevel`` counts from the helper's caller's perspective plus
+          one: wrapping the call in another helper means adding one more.
+        - Warns on every call (subject to the warnings filter's own
+          once-per-location dedup); the ledger counts every call.
+
+    Thread safety: ✅ ``warnings.warn`` and the ledger's lock are thread-safe.
+    Async safety:  ✅ Synchronous, no I/O.
+
+    Example::
+
+        # Inside a constructor, so stacklevel=3 blames the constructor's caller.
+        # (Example values are placeholders — the real call sites are what
+        # `rg 'removed_in="[45]\\.'` is meant to find.)
+        if old_param is not None:
+            warn_deprecated(
+                "Widget(old_param=...)",
+                since="X.0.0",
+                removed_in="Y.0.0",
+                replacement="Widget(new_param=...)",
+                stacklevel=3,
+            )
+    """
+    message = _build_message(subject, since=since, removed_in=removed_in, replacement=replacement)
+    # depth == stacklevel: _note's frame 0 is itself, frame 1 is this helper —
+    # exactly warnings.warn's numbering from here, so both blame the same frame.
+    _note(subject, since=since, removed_in=removed_in, replacement=replacement, depth=stacklevel)
+    warnings.warn(message, DeprecationWarning, stacklevel=stacklevel)
 
 
 def deprecated(

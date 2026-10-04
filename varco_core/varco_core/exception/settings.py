@@ -40,14 +40,15 @@ class ErrorEnvelopeSettings(VarcoSettings):
             ``"https://errors.example.com/"`` +
             ``"varco.error.not_found"``. ``None`` uses ``"about:blank"``.
         include_detail: Emit the ``detail`` member (``str(exc)``) on the
-            error envelope. Default ``True`` — byte-identical to pre-3.2
-            behaviour (Plan 035 / §D-S3b). This is a **warn-only** knob in
-            3.2: ``detail`` is deliberately still present by default because
-            it is the only actionable channel for e.g. ``RouteGuard`` denial
-            messages (``exceptions.py:135-141``); ``inspect_http_edge()``
-            reports ``http.error.detail_exposed`` so an operator can flip it
-            per-deployment. **4.0 flip candidate** — the default is planned
-            to become ``False`` in varco 4.0.
+            error envelope. Default ``False`` (4.0, Plan 054 / FLIP-10).
+            ``true`` restores the 3.x echo — reported by
+            ``inspect_http_edge()`` as ``http.error.detail_exposed`` (WARN;
+            blocks a production start under the default ``enforce`` unless
+            suppressed). Every built-in ``ServiceException`` carries its
+            actionable content in ``params`` (D-4) — including
+            ``RouteGuard`` denials (``params.operation``); an out-of-tree
+            subclass should override ``error_params()`` rather than
+            re-enable this.
         redact_params: Plan 040 / S21, §D-S21-errparams. Route
             ``error_params()``'s return value through
             ``varco_core.redaction.redact_mapping()`` (secret-named keys ->
@@ -69,5 +70,5 @@ class ErrorEnvelopeSettings(VarcoSettings):
     include_params: bool = True
     problem_details: bool = False
     problem_type_base: str | None = None
-    include_detail: bool = True
+    include_detail: bool = False
     redact_params: bool = True

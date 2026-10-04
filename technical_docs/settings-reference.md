@@ -65,7 +65,7 @@
 
 | Env var | Field | Type | Default | Secret |
 |---|---|---|---|---|
-| `VARCO_ERROR_INCLUDE_DETAIL` | `include_detail` | `<class 'bool'>` | `True` | False |
+| `VARCO_ERROR_INCLUDE_DETAIL` | `include_detail` | `<class 'bool'>` | `False` | False |
 | `VARCO_ERROR_INCLUDE_MESSAGE_KEY` | `include_message_key` | `<class 'bool'>` | `True` | False |
 | `VARCO_ERROR_INCLUDE_PARAMS` | `include_params` | `<class 'bool'>` | `True` | False |
 | `VARCO_ERROR_PROBLEM_DETAILS` | `problem_details` | `<class 'bool'>` | `False` | False |
@@ -107,7 +107,7 @@
 | `VARCO_JWT_LEEWAY_SECONDS` | `leeway_seconds` | `<class 'float'>` | `0.0` | False |
 | `VARCO_JWT_REVOCATION_ENABLED` | `revocation_enabled` | `<class 'bool'>` | `True` | False |
 | `VARCO_JWT_REVOCATION_FAILURE_MODE` | `revocation_failure_mode` | `<enum 'RevocationFailureMode'>` | `<RevocationFailureMode.FAIL_CLOSED: 'fail_closed'>` | False |
-| `VARCO_JWT_REVOCATION_REQUIRE_JTI` | `revocation_require_jti` | `<class 'bool'>` | `False` | False |
+| `VARCO_JWT_REVOCATION_REQUIRE_JTI` | `revocation_require_jti` | `bool | None` | `None` | False |
 | `VARCO_JWT_REVOCATION_SKEW_SECONDS` | `revocation_skew_seconds` | `<class 'float'>` | `60.0` | False |
 
 ## `varco_core.jwt.transform.config.JwtTransformSettings`
@@ -168,7 +168,7 @@
 | Env var | Field | Type | Default | Secret |
 |---|---|---|---|---|
 | `VARCO_TENANT_MEMBERSHIP_CLAIM` | `claim_key` | `<class 'str'>` | `'tenants'` | False |
-| `VARCO_TENANT_MEMBERSHIP_ON_MISSING` | `on_missing_claim` | `<enum 'MissingClaimPolicy'>` | `<MissingClaimPolicy.ALLOW: 'allow'>` | False |
+| `VARCO_TENANT_MEMBERSHIP_ON_MISSING` | `on_missing_claim` | `<enum 'MissingClaimPolicy'>` | `<MissingClaimPolicy.DENY: 'deny'>` | False |
 
 ## `varco_core.tenancy.settings.TenancySettings`
 
@@ -177,7 +177,7 @@
 | `VARCO_TENANCY_ASSERT_TENANT_FILTER` | `assert_tenant_filter` | `<class 'bool'>` | `False` | False |
 | `VARCO_TENANCY_CATALOG_TTL` | `catalog_ttl_s` | `<class 'float'>` | `60.0` | False |
 | `VARCO_TENANCY_DB_TEMPLATE` | `db_template` | `<class 'str'>` | `'db_{tenant_id}'` | False |
-| `VARCO_TENANCY_ENFORCE_RLS` | `enforce_rls` | `<class 'bool'>` | `False` | False |
+| `VARCO_TENANCY_ENFORCE_RLS` | `enforce_rls` | `<class 'bool'>` | `True` | False |
 | `VARCO_TENANCY_FANOUT_FRAMEWORK_TABLES` | `fanout_framework_tables` | `<class 'bool'>` | `False` | False |
 | `VARCO_TENANCY_GLOBAL_DSN` | `global_dsn` | `str | None` | `None` | False |
 | `VARCO_TENANCY_GLOBAL_WRITABLE` | `global_writable` | `<class 'bool'>` | `False` | False |
@@ -326,7 +326,7 @@
 | Env var | Field | Type | Default | Secret |
 |---|---|---|---|---|
 | `VARCO_SECURITY_POSTURE_ENABLED` | `enabled` | `<class 'bool'>` | `True` | False |
-| `VARCO_SECURITY_ENFORCE` | `enforce` | `<class 'str'>` | `'warn'` | False |
+| `VARCO_SECURITY_ENFORCE` | `enforce` | `str | None` | `None` | False |
 | `VARCO_SECURITY_ENV` | `environment` | `<class 'str'>` | `'production'` | False |
 | `VARCO_SECURITY_SUPPRESS` | `suppress` | `<class 'str'>` | `''` | False |
 

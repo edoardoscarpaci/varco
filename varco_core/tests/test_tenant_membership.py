@@ -141,3 +141,69 @@ class TestMalformedClaimNeverRaises:
         ]
         for ctx in weird_ctxs:
             await provider.check(ctx, "acme")  # must not raise
+
+
+# ── Plan 055 / FLIP-7 — on_missing_claim defaults DENY (red until Step 3) ────
+
+
+class TestFlip7DenyByDefault:
+    async def test_missing_claim_denies_by_default(self) -> None:
+        # The flip itself: no `tenants` claim + non-matching tenant_id must
+        # fail closed with no explicit policy (brief 006 §2 rule 5).
+        mod = _mod()
+        provider = mod.ClaimTenantMembership()
+
+        decision = await provider.check(_auth_ctx(tenant_id="other"), "acme")
+
+        assert decision.allowed is False
+        assert decision.reason == "claim_absent"
+
+    def test_default_policy_is_deny_signature_guard(self) -> None:
+        # api_surface --check cannot see class __init__ defaults; this is the guard.
+        import inspect
+
+        mod = _mod()
+        sig = inspect.signature(mod.ClaimTenantMembership.__init__)
+        assert sig.parameters["on_missing_claim"].default is mod.MissingClaimPolicy.DENY
+        assert mod.TenantMembershipSettings().on_missing_claim is mod.MissingClaimPolicy.DENY
+
+    async def test_self_tenant_still_allows_under_default(self) -> None:
+        # The no-IdP-change path for single-tenant fleets must survive the flip.
+        mod = _mod()
+        provider = mod.ClaimTenantMembership()
+
+        decision = await provider.check(_auth_ctx(tenant_id="acme"), "acme")
+
+        assert decision.allowed is True
+        assert decision.reason == "self_tenant"
+
+    async def test_explicit_allow_still_allows_and_warns_once(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Control: the explicit escape hatch keeps 3.2 behaviour.
+        mod = _mod()
+        monkeypatch.setattr(mod, "_missing_claim_warned", False)
+        provider = mod.ClaimTenantMembership(on_missing_claim=mod.MissingClaimPolicy.ALLOW)
+
+        with caplog.at_level(logging.WARNING):
+            d1 = await provider.check(_auth_ctx(), "acme")
+            d2 = await provider.check(_auth_ctx(), "acme")
+
+        assert d1.allowed is True and d2.allowed is True
+        assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
+
+    async def test_deny_logs_once_per_process_with_deny_in_message(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The one log line is how an operator finds out why a fleet 403s.
+        mod = _mod()
+        monkeypatch.setattr(mod, "_missing_claim_warned", False)
+        provider = mod.ClaimTenantMembership()
+
+        with caplog.at_level(logging.WARNING):
+            await provider.check(_auth_ctx(), "acme")
+            await provider.check(_auth_ctx(), "acme")
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "on_missing_claim=deny" in warnings[0].getMessage()

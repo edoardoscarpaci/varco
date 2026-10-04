@@ -168,6 +168,10 @@
       }
     },
     "varco_core": {
+      "AUDIT_REDACTION_POLICY": {
+        "kind": "constant",
+        "module": "varco_core.redaction.policy"
+      },
       "AbstractDeadLetterQueue": {
         "kind": "class",
         "module": "varco_core.event.dlq"
@@ -744,6 +748,10 @@
         "kind": "class",
         "module": "varco_core.migration.errors"
       },
+      "PlaintextFieldEncryptor": {
+        "kind": "class",
+        "module": "varco_core.encryption"
+      },
       "PolicyRedactor": {
         "kind": "class",
         "module": "varco_core.redaction.redactor"
@@ -1145,7 +1153,7 @@
       "build_wiring_report": {
         "kind": "function",
         "module": "varco_core.di.report",
-        "signature": "(container: 'DIContainer', *, validation: 'ValidationReport | None', modules: 'Sequence[VarcoModule] | None' = None, lifecycle: 'Sequence[Any] | None' = None, extra_findings: 'Sequence[WiringFinding]' = (), module_validate_messages: 'Mapping[VarcoModule, Sequence[str]] | None' = None, static: 'bool' = False, extra_deprecations: 'Sequence[DeprecationRecord]' = (), environment: 'str' = 'unknown', enforce: 'str' = 'unknown', enforce_source: \"Literal['code', 'env', 'default']\" = 'default') -> 'WiringReport'"
+        "signature": "(container: 'DIContainer', *, validation: 'ValidationReport | None', modules: 'Sequence[VarcoModule] | None' = None, lifecycle: 'Sequence[Any] | None' = None, extra_findings: 'Sequence[WiringFinding]' = (), module_validate_messages: 'Mapping[VarcoModule, Sequence[str]] | None' = None, static: 'bool' = False, extra_deprecations: 'Sequence[DeprecationRecord]' = (), environment: 'str' = 'unknown', enforce: 'str' = 'unknown', enforce_source: \"Literal['code', 'env', 'default', 'derived']\" = 'default') -> 'WiringReport'"
       },
       "cached": {
         "kind": "function",
@@ -1290,7 +1298,7 @@
       "inspect_tenant_provenance": {
         "kind": "function",
         "module": "varco_core.tenancy.posture",
-        "signature": "(chain: 'TenantSourceChain | None', *, membership: 'AbstractTenantMembership | None' = None, delegation: 'DelegationPolicy | None' = None, request_context_sets_tenant: 'bool' = True) -> 'TenantProvenancePosture'"
+        "signature": "(chain: 'TenantSourceChain | None', *, membership: 'AbstractTenantMembership | None' = None, delegation: 'DelegationPolicy | None' = None, request_context_sets_tenant: 'bool' = False) -> 'TenantProvenancePosture'"
       },
       "is_sensitive_key": {
         "kind": "function",
@@ -1421,6 +1429,11 @@
         "kind": "function",
         "module": "varco_core.resilience.timeout",
         "signature": "(seconds: 'float') -> 'Callable[..., Any]'"
+      },
+      "warn_deprecated": {
+        "kind": "function",
+        "module": "varco_core.deprecation",
+        "signature": "(subject: 'str', *, since: 'str', removed_in: 'str', replacement: 'str | None' = None, stacklevel: 'int' = 2) -> 'None'"
       }
     },
     "varco_fastapi": {
@@ -2146,6 +2159,10 @@
         "kind": "class",
         "module": "varco_sa.tenancy.rls_check"
       },
+      "RlsPostureCollector": {
+        "kind": "class",
+        "module": "varco_sa.tenancy.rls_posture"
+      },
       "RlsTablePlan": {
         "kind": "class",
         "module": "varco_sa.rls_autogen"
@@ -2295,6 +2312,11 @@
         "module": "varco_sa.alembic_helpers",
         "signature": "(*domain_classes: 'type[DomainModel]', base: 'type[DeclarativeBase] | None' = None, include_framework: 'bool' = False) -> 'MetaData'"
       },
+      "hook_installed": {
+        "kind": "function",
+        "module": "varco_sa.tenancy.rls_session",
+        "signature": "(target: 'Any | None' = None) -> 'bool'"
+      },
       "idempotency_metadata": {
         "kind": "constant",
         "module": "sqlalchemy.sql.schema"
@@ -2345,6 +2367,16 @@
         "kind": "function",
         "module": "varco_sa.rls_autogen",
         "signature": "(plans: 'Sequence[RlsTablePlan]', *, setting: 'str' = 'rls.tenant_id', null_tenant: 'NullTenantPolicy' = <NullTenantPolicy.REFUSE: 'refuse'>) -> 'list[str]'"
+      },
+      "rls_candidate_tables": {
+        "kind": "function",
+        "module": "varco_sa.rls_autogen",
+        "signature": "(domain_classes: 'Iterable[type]', *, tenant_column: 'str' = 'tenant_id', table_lookup: 'Callable[[type], sa.Table] | None' = None) -> 'tuple[str, ...]'"
+      },
+      "rls_findings": {
+        "kind": "function",
+        "module": "varco_sa.tenancy.rls_posture",
+        "signature": "(posture: 'RlsPosture | None', *, guc_setter_present: 'bool | None' = None, not_checked_reason: 'str | None' = None) -> 'list[PostureFinding]'"
       },
       "sagas_metadata": {
         "kind": "constant",

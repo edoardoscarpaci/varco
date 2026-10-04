@@ -57,7 +57,7 @@ class _SiblingModule:
     A second, unrelated ``@Configuration`` module sharing the container.
 
     Deliberately declared inside ``varco_core``'s test suite rather than
-    importing ``varco_fastapi.di.VarcoFastAPIModule``: the reported failure is
+    importing ``varco_fastapi.di.VarcoFastAPIConfiguration``: the reported failure is
     generic to *any* pair of ``@Configuration`` modules, and ``varco_core``
     must not gain a dependency on ``varco_fastapi``.
     """
@@ -77,7 +77,7 @@ class _SiblingSetting:
 
 class TestRegressionOtelDependencyInjection:
     """
-    User reports: with ``VarcoFastAPIModule`` and ``OtelConfiguration`` in the
+    User reports: with ``VarcoFastAPIConfiguration`` and ``OtelConfiguration`` in the
     same container, ``container.get(TracerProvider)`` raises ``TypeError:
     tracer_provider() missing 1 required positional argument: 'config'``.
 

@@ -71,7 +71,7 @@ from uuid import UUID, uuid4
 from varco_core.event.audit_event import AuditEvent
 from varco_core.event.base import AbstractEventBus, Event, Subscription
 from varco_core.event.consumer import EventConsumer, listen
-from varco_core.redaction import redact_mapping
+from varco_core.redaction import AUDIT_REDACTION_POLICY, PolicyRedactor, redact_mapping
 from varco_core.resilience import RetryPolicy
 from varco_core.service.mixin import ServiceMixin
 
@@ -492,25 +492,24 @@ class AuditLogMixin(ServiceMixin):
     """
 
     #: Plan 040 / S21, §D-S21-audit — the docstring's promise, finally kept.
-    #: ``None`` (default) means "no redaction" — every ``diff`` is written
-    #: byte-identical to pre-3.2 behaviour. Set to a ``Redactor`` (e.g.
-    #: ``PolicyRedactor()``) on a concrete service to redact sensitive
-    #: fields in that service's audit diffs going forward.
+    #: On by default as of 4.0 (Plan 057 / FLIP-040-2): every diff goes
+    #: through ``PolicyRedactor(AUDIT_REDACTION_POLICY)`` — secret-named keys
+    #: become ``"[REDACTED]"``; non-sensitive leaves (incl. ``datetime``/
+    #: ``UUID``/``Decimal``) are untouched (``render_non_json=False``). The
+    #: three 3.2 reasons for opt-in are each answered — (1) word-boundary
+    #: matching (FLIP-040-1) removes the ``shipping_address``/``author``
+    #: false positives; (2) the persisted change is the point: it closes the
+    #: ``password_hash``-on-a-read-DTO leak that was 3.2's only live leak;
+    #: (3) redact-at-write is hash-chain-safe (``_audit_diff`` DESIGN below).
+    #: Opt out with ``_audit_redactor = None`` on the concrete service;
+    #: posture reports it as ``redaction.audit.disabled``.
     #:
     #: A class attribute, not a constructor parameter: ``AuditLogMixin`` has
     #: no ``__init__``, and adding one would break MRO composition with
     #: ``ValidatorServiceMixin``/``TenantAwareService``/``SoftDeleteService``
-    #: (CLAUDE.md's mixin-composition rule). Deliberately **opt-in**, not
-    #: on by default — three independent reasons, all argued in
-    #: §D-S21-audit: (1) the incumbent substring matcher has real false
-    #: positives on domain-named fields (``"pin"`` matches
-    #: ``shipping_address``) that would corrupt audit data by default; (2)
-    #: flipping this changes what is *persisted*, which is irreversible for
-    #: rows already written — it fails the "cheap caller-side fix" test a
-    #: safe default must pass; (3) it interacts with the hash chain
-    #: (§D-S21-hashchain) and deserves the deliberateness of an explicit
-    #: opt-in rather than a silent default flip.
-    _audit_redactor: Redactor | None = None
+    #: (CLAUDE.md's mixin-composition rule). Sharing one frozen
+    #: ``PolicyRedactor`` across every subclass is safe — it is immutable.
+    _audit_redactor: Redactor | None = PolicyRedactor(AUDIT_REDACTION_POLICY)
 
     def _audit_diff(self, action: str, diff: dict[str, Any]) -> dict[str, Any]:
         """
@@ -555,9 +554,10 @@ class AuditLogMixin(ServiceMixin):
             diff: The freshly built diff dict for this emission.
 
         Returns:
-            ``diff`` unchanged when ``self._audit_redactor is None``
-            (byte-identical to pre-3.2); otherwise
-            ``redact_mapping(diff, self._audit_redactor)``.
+            ``redact_mapping(diff, self._audit_redactor)`` — redacted
+            through ``AUDIT_REDACTION_POLICY`` by default; ``diff``
+            unchanged when ``self._audit_redactor is None`` (the explicit
+            opt-out, byte-identical to 3.2).
         """
         if self._audit_redactor is None:
             return diff
@@ -599,11 +599,10 @@ class AuditLogMixin(ServiceMixin):
 
         Edge cases:
             - ``diff`` contains the full ``read_dto.model_dump()`` — every field
-              visible to the caller is recorded, UNLESS redacted: set
-              ``self._audit_redactor`` (e.g. ``PolicyRedactor()``) or
-              override ``_audit_diff()`` (Plan 040 / S21, §D-S21-audit).
-              Default (``_audit_redactor is None``) is byte-identical to
-              pre-3.2 — the full, unredacted diff.
+              visible to the caller is recorded, redacted through
+              ``AUDIT_REDACTION_POLICY`` unless ``_audit_redactor = None``
+              (Plan 057 / FLIP-040-2); override ``_audit_diff()`` to take
+              full control.
         """
         await self._producer._produce(  # type: ignore[attr-defined]
             AuditEvent(
@@ -612,7 +611,7 @@ class AuditLogMixin(ServiceMixin):
                 action="create",
                 actor_id=self._get_audit_actor(ctx),
                 # Record the full read_dto fields as the creation diff,
-                # through _audit_diff() (no-op unless a redactor is set).
+                # through _audit_diff() (redacted by default; Plan 057).
                 diff=self._audit_diff("create", read_dto.model_dump()),
                 tenant_id=ctx.metadata.get("tenant_id") if ctx else None,
             ),
@@ -642,8 +641,9 @@ class AuditLogMixin(ServiceMixin):
               field-level diff can be computed by comparing the two dicts.
             - Redaction (``self._audit_redactor``/``_audit_diff()``) is
               applied to the assembled ``{"before": ..., "after": ...}``
-              dict, so a sensitive field is redacted in both halves
-              (Plan 040 / S21, §D-S21-audit).
+              dict, so a sensitive field is redacted in both halves —
+              through ``AUDIT_REDACTION_POLICY`` unless
+              ``_audit_redactor = None`` (Plan 057 / FLIP-040-2).
         """
         await self._producer._produce(  # type: ignore[attr-defined]
             AuditEvent(

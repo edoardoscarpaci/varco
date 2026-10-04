@@ -456,8 +456,8 @@ mount_reliability_admin(
     dlq=dlq,
     redriver=redriver,  # omit to hide the redrive routes entirely
     acknowledge_bundled_admin=True,  # required — ValueError without it (RD-9)
-    server_auth=auth,
-    admin_role="reliability-admin",
+    server_auth=auth,  # required — ValueError on None, TypeError if omitted (4.0)
+    admin_role="reliability-admin",  # enforced on every route
     prefix="/reliability",
 )
 ```
@@ -465,8 +465,12 @@ mount_reliability_admin(
 Mirrors Plan 007 RD-9 (the tenant control plane) exactly: this surface can
 **replay messages onto the bus** and **delete DLQ entries** — at least as
 privileged as the tenant admin — so there is deliberately **no** env var
-that mounts it, ever. `server_auth=None` mounts unauthenticated and logs one
-WARNING at mount time naming the risk.
+that mounts it, ever. `server_auth` is required: `server_auth=None` refuses
+(`ValueError`, 4.0, Plan 054 / FLIP-3) — behind a gateway that already
+verified the caller, pass `PassthroughAuth(acknowledge_unverified=True)`. Every
+route resolves it once per request and enforces `admin_role` (403 otherwise);
+a `dependencies=` is additive. `build_dlq_router(dlq, server_auth=...)` used
+directly refuses `None` the same way.
 
 ## Selecting a DLQ backend via env (Plan 047)
 
@@ -491,6 +495,7 @@ precedence rule and the dotted-path escape hatch.
 | `delete_where()` with no predicate | `ValueError` by design — refuses to delete the whole DLQ |
 | `list_entries(tenant_id="acme")` misses a framework-level entry | Correct — a `None`-tenant entry is never "every tenant"; use no filter for the operator/global view |
 | `mount_reliability_admin()` without `acknowledge_bundled_admin=True` | `ValueError` — bundling admin-adjacent privilege into the app pod is a deliberate, friction-gated choice |
+| `mount_reliability_admin(server_auth=None)` | `ValueError` since 4.0 (FLIP-3) — pass a strategy; a gateway deployment uses `PassthroughAuth(acknowledge_unverified=True)` |
 
 | Pitfall | Symptom | Root Cause | Fix |
 |---|---|---|---|

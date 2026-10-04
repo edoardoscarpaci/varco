@@ -279,6 +279,9 @@ def error_message_for(
           Filter ``detail`` before including it in external API responses
           if the data could leak internal state.
         - Empty ``str(exc)`` is normalized to ``detail=None`` for cleaner JSON.
+        - ``detail`` is ``None`` unless ``include_detail`` is enabled
+          (``VARCO_ERROR_INCLUDE_DETAIL=true``; off by default since 4.0,
+          Plan 054 / FLIP-10) — the structured content is in ``params``.
         - An out-of-tree ``ServiceException`` subclass with no
           ``message_key`` gets a byte-identical body — neither
           ``message_key`` nor ``params`` ever appears (D-4).
@@ -323,11 +326,13 @@ def error_message_for(
             message = error_code.default_message
 
     # Normalize empty str(exc) to None — avoids {"detail": ""} in JSON output.
-    # Plan 035 / §D-S3b: `include_detail` gates this echo of str(exc). It
-    # defaults to True (byte-identical to pre-3.2 behaviour) because
-    # suppressing it by default breaks the one documented consumer
-    # (RouteGuard denial messages, exceptions.py:135-141) — a warn-only
-    # `inspect_http_edge()` finding covers deployments that want it off.
+    # Plan 054 / FLIP-10: `include_detail` gates this echo of str(exc) and
+    # defaults to False since 4.0 — application-authored text never reaches
+    # an error body by default. The 3.2 reason to keep it (RouteGuard denial
+    # messages) no longer applies: a RouteGuard denial is a
+    # ServiceAuthorizationError whose denial text is `params.operation`.
+    # VARCO_ERROR_INCLUDE_DETAIL=true restores the echo (and is reported as
+    # `http.error.detail_exposed` by inspect_http_edge()).
     raw_detail = str(exc)
     detail: str | None = raw_detail if (raw_detail and settings.include_detail) else None
 

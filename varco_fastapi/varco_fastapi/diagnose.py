@@ -38,12 +38,12 @@ def posture_header(container: Any, modules: Any = ()) -> dict[str, Any]:
             ``settings=`` makes the source ``"code"``.
 
     Returns:
-        ``{"environment", "enforce", "enforce_source"}``; ``enforce_source``
-        is ``"code"`` (explicit settings object), ``"env"``
-        (``VARCO_SECURITY_ENFORCE`` set) or ``"default"``.
+        ``{"environment", "enforce", "enforce_source"}``; ``enforce`` is
+        the *effective* mode (``effective_enforce``); ``enforce_source`` is
+        ``"derived"`` (unset — derived from ``VARCO_SECURITY_ENV``, Plan
+        054 / FLIP-2), ``"code"`` (explicit settings object) or ``"env"``
+        (``VARCO_SECURITY_ENFORCE`` set).
     """
-    import os  # noqa: PLC0415
-
     from varco_fastapi.modules.lifecycle import SecurityPostureModule  # noqa: PLC0415
     from varco_fastapi.posture import SecurityPostureSettings  # noqa: PLC0415
 
@@ -55,20 +55,48 @@ def posture_header(container: Any, modules: Any = ()) -> dict[str, Any]:
         settings = container.get(SecurityPostureSettings)
     except LookupError:
         settings = SecurityPostureSettings()
-    explicit = any(
-        isinstance(m, SecurityPostureModule) and m._settings_arg is not None for m in modules
-    )
-    if explicit:
+    # Plan 054 / §D-compose: a derived mode is reported as "derived" first
+    # — the field itself is still None, so no other source is honest.
+    source: str
+    if settings.enforce_is_derived:
+        source = "derived"
+    elif any(isinstance(m, SecurityPostureModule) and m._settings_arg is not None for m in modules):
         source = "code"
-    elif "VARCO_SECURITY_ENFORCE" in os.environ:
-        source = "env"
     else:
-        source = "default"
+        source = _bound_enforce_source(container, SecurityPostureSettings)
     return {
         "environment": settings.environment,
-        "enforce": settings.enforce,
+        "enforce": settings.effective_enforce,
         "enforce_source": source,
     }
+
+
+def _bound_enforce_source(container: Any, cls: type[Any]) -> str:
+    """
+    Provenance of an explicitly-set ``enforce`` field: 048's
+    ``provenance_of()`` when the settings came through ``bind_settings()``,
+    else ``"env"`` iff ``VARCO_SECURITY_ENFORCE`` is set, else ``"code"``.
+
+    Args:
+        container: The container the settings class may be bound on.
+        cls: ``SecurityPostureSettings``.
+
+    Returns:
+        ``"code"`` or ``"env"``.
+    """
+    import os  # noqa: PLC0415
+
+    from varco_core.settings import provenance_of  # noqa: PLC0415
+
+    try:
+        field_source = provenance_of(container, cls).fields.get("enforce")
+    except (KeyError, TypeError):
+        # Not bound via bind_settings() on this container (or not a
+        # container at all) — fall back to the env-presence read.
+        field_source = None
+    if field_source in ("code", "env"):
+        return field_source
+    return "env" if "VARCO_SECURITY_ENFORCE" in os.environ else "code"
 
 
 def wiring_report(app: FastAPI) -> WiringReport:

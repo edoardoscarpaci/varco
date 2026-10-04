@@ -132,7 +132,7 @@ def configure_jwt_from_env() -> None:
     module) and ``configure_token_profiles(None)``
     (``varco_core.jwt.profile``) into one call — used by
     ``create_varco_app()`` at startup so the process-global state matches
-    what ``VarcoFastAPIModule``'s DI providers hand out, without callers
+    what ``VarcoFastAPIConfiguration``'s DI providers hand out, without callers
     needing to know both registries exist.
 
     Edge cases:

@@ -969,17 +969,22 @@ class TestAsyncServiceDI:
     """
 
     @pytest.fixture()
-    def di_container(self) -> DIContainer:
+    def di_container(self, monkeypatch: pytest.MonkeyPatch) -> DIContainer:
         """
         Fresh ``DIContainer`` with all dependencies registered.
+
+        Args:
+            monkeypatch: Sets ``VARCO_SECURITY_ENV=development`` (FLIP-5).
 
         Returns:
             Container ready to resolve ``ConcretePostService``.
         """
+        # FLIP-5 (Plan 053): BaseAuthorizer binds only in development.
+        monkeypatch.setenv("VARCO_SECURITY_ENV", "development")
         container = DIContainer()
 
-        # BaseAuthorizer carries @Singleton(priority=-(2**31)) — scanned
-        # from its module so it auto-registers as AbstractAuthorizer.
+        # BaseAuthorizer is @Fallback @Requires(VARCO_SECURITY_ENV=development)
+        # — scanned from its module so it registers as AbstractAuthorizer.
         container.scan("varco_core.auth.authorizer")
 
         # FakeUoWProvider is @Singleton — registers as IUoWProvider.

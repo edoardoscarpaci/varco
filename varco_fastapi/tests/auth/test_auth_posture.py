@@ -6,6 +6,8 @@ wrapper composition (CompositeServerAuth members, WebSocketAuth.inner).
 
 from __future__ import annotations
 
+import pytest
+from varco_core.auth.api_key import hash_api_key
 from varco_core.auth.base import AuthContext
 from varco_fastapi.auth.server_auth import (
     ApiKeyAuth,
@@ -19,7 +21,7 @@ class TestInspectAuthPostureApiKey:
     def test_default_query_fallback_disabled(self):
         from varco_fastapi.auth.posture import inspect_auth_posture
 
-        auth = ApiKeyAuth(keys={"k": AuthContext()})
+        auth = ApiKeyAuth(hashed_keys={hash_api_key("k"): AuthContext()})
         report = inspect_auth_posture(auth)
         assert report.api_key_query_fallback_enabled is False
         assert report.api_key_query_param_name is None
@@ -27,7 +29,7 @@ class TestInspectAuthPostureApiKey:
     def test_named_param_reports_enabled_and_name(self):
         from varco_fastapi.auth.posture import inspect_auth_posture
 
-        auth = ApiKeyAuth(keys={"k": AuthContext()}, param="api_key")
+        auth = ApiKeyAuth(hashed_keys={hash_api_key("k"): AuthContext()}, param="api_key")
         report = inspect_auth_posture(auth)
         assert report.api_key_query_fallback_enabled is True
         assert report.api_key_query_param_name == "api_key"
@@ -35,7 +37,10 @@ class TestInspectAuthPostureApiKey:
     def test_plaintext_keys_reports_plaintext_source_true(self):
         from varco_fastapi.auth.posture import inspect_auth_posture
 
-        auth = ApiKeyAuth(keys={"k": AuthContext()})
+        # The plaintext path is what this test is about — deprecated since
+        # 4.0.0 (Plan 053 / FLIP-034-1), so the warning is asserted too.
+        with pytest.warns(DeprecationWarning, match=r"ApiKeyAuth\(keys="):
+            auth = ApiKeyAuth(keys={"k": AuthContext()})
         report = inspect_auth_posture(auth)
         assert report.api_key_plaintext_source is True
 
@@ -52,7 +57,7 @@ class TestInspectAuthPosturePassthrough:
     def test_bare_passthrough_reports_bound_true(self):
         from varco_fastapi.auth.posture import inspect_auth_posture
 
-        auth = PassthroughAuth()
+        auth = PassthroughAuth(acknowledge_unverified=True)
         report = inspect_auth_posture(auth)
         assert report.passthrough_auth_bound is True
 
@@ -61,7 +66,7 @@ class TestInspectAuthPosturePassthrough:
         # WebSocketAuth.inner.
         from varco_fastapi.auth.posture import inspect_auth_posture
 
-        composite = CompositeServerAuth([PassthroughAuth()])
+        composite = CompositeServerAuth([PassthroughAuth(acknowledge_unverified=True)])
         auth = WebSocketAuth(inner=composite)
         report = inspect_auth_posture(auth)
         assert report.passthrough_auth_bound is True
@@ -69,7 +74,7 @@ class TestInspectAuthPosturePassthrough:
     def test_components_lists_every_class_walked_in_order(self):
         from varco_fastapi.auth.posture import inspect_auth_posture
 
-        composite = CompositeServerAuth([PassthroughAuth()])
+        composite = CompositeServerAuth([PassthroughAuth(acknowledge_unverified=True)])
         auth = WebSocketAuth(inner=composite)
         report = inspect_auth_posture(auth)
         assert report.components[0] == "WebSocketAuth"
@@ -94,7 +99,7 @@ class TestInspectAuthPostureRobustness:
         # Edge case: an auth object containing itself must not infinite-loop.
         from varco_fastapi.auth.posture import inspect_auth_posture
 
-        composite = CompositeServerAuth([PassthroughAuth()])
+        composite = CompositeServerAuth([PassthroughAuth(acknowledge_unverified=True)])
         composite._strategies.append(composite)  # type: ignore[attr-defined]
         report = inspect_auth_posture(composite)
         assert report is not None
@@ -104,7 +109,17 @@ class TestInspectAuthPostureRobustness:
 
         from varco_fastapi.auth.posture import inspect_auth_posture
 
-        auth = ApiKeyAuth(keys={"k": AuthContext()})
+        auth = ApiKeyAuth(hashed_keys={hash_api_key("k"): AuthContext()})
         with caplog.at_level(logging.DEBUG):
             inspect_auth_posture(auth)
         assert caplog.records == []
+
+
+# ── Plan 053 / FLIP-034-4 ────────────────────────────────────────────────────────────────
+
+
+def test_acknowledged_passthrough_is_still_reported():
+    from varco_fastapi.auth.posture import inspect_auth_posture
+
+    report = inspect_auth_posture(PassthroughAuth(acknowledge_unverified=True))
+    assert report.passthrough_auth_bound is True

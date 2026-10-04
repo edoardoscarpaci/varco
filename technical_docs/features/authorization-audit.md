@@ -26,6 +26,11 @@ container.scan("myapp", recursive=True)     # binds the app's real AbstractAutho
 enable_authorization_audit(container)        # call LAST
 ```
 
+In production with no app authorizer, `enable_authorization_audit()` raises `LookupError` (4.0,
+Plan 053 / FLIP-5 — the permissive `BaseAuthorizer` binds only under
+`VARCO_SECURITY_ENV=development`, and auditing a permissive authorizer is meaningless) — bind the
+real authorizer first, as the "call it last" rule already says.
+
 `enable_authorization_audit(container, *, policy=AuditDecisionPolicy.DENIALS)` lives in
 `varco_core.auth.di` (§D-036-oq2 — resolved at implementation time: it wraps `AbstractAuthorizer`
 and injects `AbstractEventProducer`, both `varco_core` interfaces with zero HTTP dependency, so it
@@ -114,5 +119,6 @@ conformance suite (Plan 036, §D-S11-conformance)" row for the full written verd
 | Pitfall | Why it happens | Fix |
 |---|---|---|
 | Calling `enable_authorization_audit()` before the app's own authorizer is bound | It resolves the **currently bound** `AbstractAuthorizer` — an earlier call wraps `BaseAuthorizer` and is then shadowed by the app's real, later binding, so the wrapper silently never runs | Call it **last**, after every other DI wiring that could register an `AbstractAuthorizer` |
+| `enable_authorization_audit()` raises `LookupError` in production | Since 4.0 (Plan 053 / FLIP-5) `BaseAuthorizer` is not a binding outside `VARCO_SECURITY_ENV=development`, so with no app authorizer there is nothing to wrap | Bind the app's real `AbstractAuthorizer` first; in development export `VARCO_SECURITY_ENV=development` |
 | Assuming every allow/deny lands durably | `AuditingAuthorizer` produces onto `AbstractEventProducer` — it inherits the bus's own delivery semantics; a dropped event is a missing audit row | Use the outbox pattern (`varco_core.service.outbox`) for a deployment that cannot tolerate a missing row, the same documented answer as every other event-shaped audit trail — this is a Pitfalls row, not a new mechanism |
 | Assuming `AuditDecisionPolicy.NONE` removes the wrapper | `NONE` still wraps — `_record()` is simply never called | If the goal is truly zero overhead, don't call `enable_authorization_audit()` at all; `NONE` exists so a *bound* policy can be flipped without re-wiring DI |

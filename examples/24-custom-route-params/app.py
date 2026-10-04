@@ -33,6 +33,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from providify import DIContainer
 from router import CatalogRouter
+from varco_core.auth.api_key import hash_api_key
 from varco_core.auth.base import AuthContext
 from varco_fastapi.app import create_varco_app
 from varco_fastapi.auth import ApiKeyAuth
@@ -62,7 +63,7 @@ def create_app() -> FastAPI:
     # required=False → anonymous callers fall through to an anonymous AuthContext
     # instead of being rejected at the middleware, so /catalog/health stays open.
     server_auth = ApiKeyAuth(
-        keys={"reader-key": _READER, "guest-key": _GUEST},
+        hashed_keys={hash_api_key("reader-key"): _READER, hash_api_key("guest-key"): _GUEST},
         required=False,
     )
     # build_router() reads _auth at call time — set it before create_varco_app.

@@ -230,12 +230,19 @@ def domain_replace(entity: D, **changes: Any) -> D:
         A new instance with ``changes`` applied AND all ``init=False`` fields
         copied from ``entity``.
 
+    Raises:
+        ValueError: ``changes`` names an ``init=False`` field (raised by
+            ``dataclasses.replace()``).
+        TypeError:  ``changes`` names a field the dataclass does not have
+            (raised by ``dataclasses.replace()``).
+
     Edge cases:
-        - Passing an ``init=False`` field name in ``changes`` will be silently
-          overwritten by the copy-back loop — this mirrors the Python 3.13
-          behaviour where ``dataclasses.replace()`` ignores ``init=False``
-          fields in ``changes`` with a ``TypeError`` on < 3.13.  Do not pass
-          ``init=False`` fields in ``changes``.
+        - Passing an ``init=False`` field name in ``changes`` (e.g.
+          ``created_at``/``updated_at``) raises ``ValueError`` — the call is
+          forwarded to ``dataclasses.replace()``, which rejects ``init=False``
+          fields on every supported Python version, before the copy-back loop
+          ever runs.  Never pass ``init=False`` fields in ``changes``; they are
+          always copied from ``entity``.
         - Works correctly on ``frozen=True`` dataclasses — ``object.__setattr__``
           is the standard pattern used by the ORM mapper itself.
 

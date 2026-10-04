@@ -39,8 +39,40 @@ Instead, in 3.2 the mount keeps what it already had — a **mandatory** `server_
 already stricter than the other two surfaces — and gains exactly one thing: an S9 finding,
 `posture.tenant_admin_mounted` (`INFO`), so the mount is visible in the security posture report.
 This is a real gap, named openly: the most powerful surface in the platform still has a single
-line of defence (a role). A separate provisioning-authority model is a named 4.0 candidate
-(flip-list row 14 in `technical_docs/features/security-posture.md`), not a guard this plan builds.
+line of defence (a role). A separate provisioning-authority model (flip-list row 14 in
+`technical_docs/features/security-posture.md`) is designed below, not built.
+
+### The provisioning-authority model (designed in Plan 055, not built)
+
+**The problem.** `POST /tenants`, `PATCH … suspend|resume`, `DELETE` and `migrate` sit behind one
+role string (`"tenant-admin"`) on whatever token *any* issuer the `TrustedIssuerRegistry` trusts
+chose to mint — including the tenant-user IdP. Membership binding is a category error here
+(provisioning *creates* the scope), so the fix is about **who may hold provisioning power** and
+**what each holder may do**, not which tenant they belong to.
+
+| Option | ✅ | ❌ |
+|---|---|---|
+| **(A) Per-operation capability scopes** — every route requires a scope (`tenant:provision`, `tenant:suspend`, `tenant:deprovision`, `tenant:migrate`, `tenant:read`) via `require_scopes()` on top of `admin_role` | Least privilege per verb (a CI job that provisions cannot delete); brief 006 §3 *"scope it"*; shipped `RouteGuard` machinery; audit-visible through `AuditingAuthorizer` | Still purely token-borne — any trusted issuer, including the tenant-user IdP, can mint the scope. Necessary, not sufficient |
+| **(B) A signed provisioning `TokenProfile`** — `TokenProfile(name="tenant-provisioning", issuers={<control-plane issuer>}, audiences={"varco:tenancy-admin"}, token_type="provisioning", required_claims={"actor"})`, every route gated by `require_token_profile("tenant-provisioning")` | Binds authority to a **dedicated issuer + audience** — an ordinary user token cannot match even if it carries the role; the `act` claim (RFC 8693) makes the human behind the automation visible, *"logged at issuance AND use"* (CVE-2025-55241's lesson); shipped machinery (`TokenProfile`, `require_token_profile`, `JwtAuthority`); declarative, so posture can report it | Needs an internal issuer or an IdP that does token exchange — real application work; the profile's `implied_roles` must **not** grant `tenant-admin` (a profile granting the role it gates is circular) |
+| **(C) A control-plane tenant with membership** — a reserved tenant id; callers must be members of it (`AbstractTenantMembership.check(ctx, CONTROL_PLANE)`) | Reuses brief 006 §2's membership rule uniformly; fail-closed since FLIP-7 | Leaks a varco-reserved id into every IdP's `tenants` claim; collides with `reserved_labels`/subdomain semantics and with catalogs; minted by the same IdP as user tokens, so it does not separate issuers the way (B) does |
+| (D) Status quo + S11 audit + `posture.tenant_admin_mounted` | Nothing to build | One line of defence. Rejected as the end state |
+
+**Recommendation: (B) as the authority gate, layered with (A) as the capability gate, keeping
+`admin_role` as the third barrier** — three independent statements per request: *the token is a
+provisioning token* (issuer/audience/type), *it may perform this verb* (scope), *its subject
+holds the role* (role); every decision through `AuditingAuthorizer`. (C) is the fallback shape
+for a platform whose IdP cannot mint a second profile — weaker, but better than (D).
+
+Sketch the future plan will refine: `mount_tenant_admin(app, control_service, *,
+acknowledge_bundled_admin, server_auth, admin_role="tenant-admin", provisioning_profile: str |
+None = None, operation_scopes: Mapping[str, str] | None = None, …)`; `provisioning_profile=None`
+keeps today's role-only guard and emits a new **`posture.tenant_admin_role_only` (WARN)** — so
+under the 4.0 derived `refuse` a production mount without a profile needs an explicit
+suppression. No `TenantAdminModule` — RD-9 (never a `create_varco_app` kwarg/module for a
+privileged mount) stands.
+
+**Implementation is its own future plan; BACKLOG `FLIP-14` carries it as `designed`.** Do not
+add a tenant guard to `mount_tenant_admin`, and do not build this model outside that plan.
 
 ## `cross_tenant_role` — one kwarg, fail-closed with no auth at all (§D-S4-role)
 
@@ -53,8 +85,11 @@ mount_reliability_admin(app, dlq=my_dlq, audit_repo=my_audit_repo, server_auth=m
 ```
 
 The guard resolves `allow_cross_tenant = ctx is not None and cross_tenant_role in ctx.roles`.
-**`ctx is None` ⇒ `False`, unconditionally** — an unauthenticated mount (`server_auth=None`)
-can never cross a tenant boundary, in either direction. This is a distinct role from the surface's
+**`ctx is None` ⇒ `False`, unconditionally** — a caller with no context can never cross a tenant
+boundary, in either direction. Since 4.0 (Plan 054 / FLIP-3/4) this is reachable only through a
+`server_auth` that returns `None` (an anonymous-allowing strategy) — no mount can be
+unauthenticated any more (`server_auth=None` is a `ValueError`), and such a caller also fails the
+`admin_role` check (403) before the cross-tenant question is asked. This is a distinct role from the surface's
 `admin_role` (`"webhook-admin"` / `"reliability-admin"` / `"tenant-admin"`) deliberately: the
 existing role answers *may you use this surface*, crossing a tenant boundary is a strictly
 stronger permission that must be separately grantable — the same precedent
@@ -101,10 +136,19 @@ exists in exactly one place) which reuses 033's own `None` semantics: `assert_te
 the webhook admin's 404 remap, because there is no existence-oracle concern here (the caller is
 not probing for a specific resource's presence).
 
+**`admin_role` is enforced on every route (4.0, Plan 054 / FLIP-3).** Both routers install one
+router-level dependency (`admin_guard()` in `_tenant_scope.py`) that resolves `server_auth` once
+per request, 403s with `'reliability-admin' role required.` when the role is absent (the webhook
+router's text), and stashes the ctx on `request.state` so the per-route cross-tenant reads never
+call `server_auth` a second time. Before 4.0 `server_auth` was resolved on only 3 of 8 DLQ routes
+and 3 of 6 audit routes, and `admin_role` was enforced on none unless the caller passed their own
+`dependencies=` — which are now **additive** (an IP allowlist, an mTLS check), never the only gate.
+
 ## Pitfalls
 
 | Pitfall | Why it happens | Fix |
 |---|---|---|
 | A cross-tenant probe against a webhook by-id route gets 404, not 403 | §D-S4-bola's deliberate existence-oracle closure — the routes already 404 on a genuine miss, so the two cases are indistinguishable by construction | Not a bug — check the server-side log (with `correlation_id`) to distinguish a genuine miss from a cross-tenant hit while debugging |
 | An omitted `tenant_id` on `mount_reliability_admin` no longer means "every tenant" | §D-S4-scope reuses 033's `None → current_tenant()` semantics | Grant `cross_tenant_role` to restore an unscoped sweep exactly, or pass `tenant_id=` explicitly |
-| Mounting any of the three unauthenticated (`server_auth=None`) and expecting cross-tenant access to still work | §D-S4-role: `ctx is None` ⇒ `allow_cross_tenant=False`, unconditionally — there is no way to cross a tenant boundary through an unauthenticated mount | Pass `server_auth=` and grant `cross_tenant_role` on the token that needs it |
+| `mount_*(server_auth=None)` / a builder with `server_auth=None` | `ValueError` since 4.0 (Plan 054 / FLIP-3/4) — omitting the keyword is a `TypeError`; there is no acknowledgement kwarg | Pass a strategy; behind a gateway that already verified the caller, `PassthroughAuth(acknowledge_unverified=True)` (expect `auth.passthrough_bound`) |
+| A reliability admin token without `admin_role` now gets 403 | `admin_role` is enforced on every reliability route since 4.0 — a `dependencies=` that used to be the only gate is now additive | Grant `admin_role` (default `reliability-admin`) on the admin token |

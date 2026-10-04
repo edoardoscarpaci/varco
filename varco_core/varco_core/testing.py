@@ -64,8 +64,11 @@ class InMemoryProfile(VarcoModule):
     """
     The whole-app in-memory profile (brief 015 §5, Quarkus ``@TestProfile``).
 
-    Binds nothing new — the in-process defaults every seam already ships
-    *are* the profile. ``_register()`` only closes one pre-existing,
+    Binds almost nothing new — the in-process defaults every seam already
+    ships *are* the profile. Two exceptions: the permissive authorizer (see
+    ``_bind_test_profile_authorizer`` — Plan 053 / FLIP-5 made varco's own
+    ``BaseAuthorizer`` a binding only under ``VARCO_SECURITY_ENV=development``,
+    and the profile must boot with zero env vars), and one pre-existing,
     cosmetic wart: ``InMemoryEventBus.__init__``'s ``error_policy``/
     ``dispatch_mode`` parameters have no DI binding, so providify reports a
     ``MISSING_BINDING_DEFAULTED`` **warning** for both on every bare
@@ -83,6 +86,8 @@ class InMemoryProfile(VarcoModule):
     def _register(self, container: DIContainer) -> None:
         from varco_core.di import bind_instance, is_user_bound  # noqa: PLC0415
         from varco_core.event.base import DispatchMode, ErrorPolicy  # noqa: PLC0415
+
+        _bind_test_profile_authorizer(container)
 
         # See the class docstring — silences a cosmetic MISSING_BINDING_DEFAULTED
         # warning that would otherwise make every in-memory-profile container
@@ -113,6 +118,48 @@ class InMemoryProfile(VarcoModule):
     def components(self, container: DIContainer) -> Sequence[LifecycleComponent]:
         """No lifecycle of its own — a pure assertion module."""
         return ()
+
+
+def _bind_test_profile_authorizer(container: DIContainer) -> None:
+    """
+    Bind the permissive ``BaseAuthorizer`` as this test profile's own,
+    deliberate ``@Fallback`` ``AbstractAuthorizer`` (Plan 053 §D-flip5-tests).
+
+    Since FLIP-5 the scanned ``BaseAuthorizer`` class binds only under
+    ``VARCO_SECURITY_ENV=development``. The in-memory profile promises a
+    whole app with **zero** env vars, so it binds an *instance* through a
+    provider closure — exactly the explicit code path a deliberate
+    permissive deployment uses, never the env gate.
+
+    DESIGN: ``@Fallback`` provider closure, not ``bind_instance()``
+        ✅ Any app authorizer — an ``extra`` module, a scanned app
+           ``@Singleton``, ``di_overrides`` — still wins regardless of
+           registration order (``bind_instance`` is non-fallback and would
+           collide with an app ``@Singleton`` scanned later).
+        ✅ Coexists with the gated class fallback in development (two
+           fallbacks, neither shadowing a user binding).
+        ❌ Two fallback candidates in development — harmless, both build a
+           ``BaseAuthorizer``; the request still sees exactly one.
+
+    Args:
+        container: The container being registered.
+
+    Edge cases:
+        Called once per container — ``VarcoModule.register()`` is
+        idempotent per module class.
+    """
+    from providify import Fallback, Provider  # noqa: PLC0415
+
+    from varco_core.auth.authorizer import BaseAuthorizer  # noqa: PLC0415
+    from varco_core.auth.base import AbstractAuthorizer  # noqa: PLC0415
+
+    def _test_profile_authorizer() -> AbstractAuthorizer:
+        return BaseAuthorizer()
+
+    container.provide(
+        Fallback(Provider(singleton=True)(_test_profile_authorizer)),
+        returns=AbstractAuthorizer,
+    )
 
 
 def in_memory_modules(*extra: VarcoModule) -> list[VarcoModule]:

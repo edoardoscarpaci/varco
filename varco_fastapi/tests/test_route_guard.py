@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from providify import DIContainer
+from varco_core.auth.api_key import hash_api_key
 from varco_core.auth.base import Action, AuthContext, ResourceGrant
 from varco_core.exception.service import ServiceAuthorizationError
 from varco_fastapi.app import create_varco_app
@@ -275,7 +276,7 @@ def test_build_router_allows_requires_with_auth():
 
     class AuthedRouter(GenericRouter):
         _prefix = "/authed"
-        _auth = ApiKeyAuth(keys={"k": ctx})
+        _auth = ApiKeyAuth(hashed_keys={hash_api_key("k"): ctx})
 
         @route("GET", "/data", requires=require_scopes("data:read"))
         async def get_data(self, ctx_: Any) -> dict:
@@ -303,9 +304,9 @@ def _make_guarded_app() -> tuple[Any, str]:
     unpriv_ctx = AuthContext(user_id="unpriv", scopes=frozenset())
 
     auth = ApiKeyAuth(
-        keys={
-            "admin-key": admin_ctx,
-            "unpriv-key": unpriv_ctx,
+        hashed_keys={
+            hash_api_key("admin-key"): admin_ctx,
+            hash_api_key("unpriv-key"): unpriv_ctx,
         },
         required=False,  # fall through to anon if no key
     )

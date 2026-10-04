@@ -17,9 +17,10 @@ scoped to the ambient ``current_tenant()`` via 033's
 header — the header used to be trusted directly, which was a confused-
 deputy bug (BOLA). A caller holding ``cross_tenant_role`` (default
 ``"cross-tenant-admin"``) may still address another tenant's resource;
-``ctx is None`` (``server_auth=None``, unauthenticated) can never hold it,
-so an unauthenticated mount is strictly narrower than any authenticated
-one. By-id routes 404 (not 403) on a cross-tenant hit — see
+``ctx is None`` (a ``server_auth`` that returns ``None`` for an anonymous
+caller — ``server_auth=None`` itself is refused since 4.0, Plan 054 /
+FLIP-4) can never hold it, and fails the ``admin_role`` check first. By-id
+routes 404 (not 403) on a cross-tenant hit — see
 ``_scoped_subscription_or_404``.
 
 Thread safety:  N/A — stateless route handlers.
@@ -64,21 +65,37 @@ def _subscription_to_dict(sub: Any, *, reveal_secrets: bool = False) -> dict[str
     return body
 
 
+def _require_server_auth(server_auth: Any, *, owner: str) -> None:
+    """
+    Refuse ``server_auth=None`` at build/mount time (Plan 054 / FLIP-4).
+
+    Args:
+        server_auth: The caller-supplied auth strategy.
+        owner: The public function name, for the message.
+
+    Raises:
+        ValueError: ``server_auth is None``.
+    """
+    if server_auth is None:
+        raise ValueError(
+            f"{owner}() requires server_auth — an admin surface that can create/delete "
+            f"webhook subscriptions and rotate secrets must never mount unauthenticated "
+            f"(4.0, Plan 054 / FLIP-4). Behind a gateway that already verified the caller, "
+            f"pass PassthroughAuth(acknowledge_unverified=True)."
+        )
+
+
 async def _resolve_ctx(server_auth: Any, request: Request) -> Any:
     """
     Resolve ``server_auth`` (a plain callable dependency, not necessarily an
-    ``AbstractServerAuth`` — see module docstring) to its context object, or
-    ``None`` when no auth strategy is configured at all.
+    ``AbstractServerAuth`` — see module docstring) to its context object.
 
     Returns:
-        The resolved context (whatever ``server_auth`` returns), or
-        ``None`` when ``server_auth is None`` — the §D-S4-role fail-closed
-        signal: ``ctx is None`` must make every cross-tenant check resolve
-        ``allow_cross_tenant=False`` unconditionally.
+        The resolved context (whatever ``server_auth`` returns — ``None``
+        for an anonymous caller, which then fails ``_require_role`` and can
+        never satisfy ``_allow_cross_tenant``, the §D-S4-role fail-closed
+        signal).
     """
-    if server_auth is None:
-        return None
-
     import inspect
 
     if inspect.signature(server_auth).parameters:
@@ -106,7 +123,9 @@ async def _require_role(ctx: Any, admin_role: str) -> None:
 def _allow_cross_tenant(ctx: Any, cross_tenant_role: str) -> bool:
     """
     §D-S4-role: ``ctx is None`` ⇒ ``False``, unconditionally — an
-    unauthenticated mount can never cross a tenant boundary.
+    anonymous caller (a ``server_auth`` that returns ``None``; a ``None``
+    ``server_auth`` itself is refused since 4.0) can never cross a tenant
+    boundary.
     """
     return ctx is not None and cross_tenant_role in getattr(ctx, "roles", [])
 
@@ -147,8 +166,8 @@ async def _scoped_subscription_or_404(
 def build_webhook_router(
     repository: WebhookSubscriptionRepository,
     *,
+    server_auth: Any,
     redriver: DlqRedriver | None = None,
-    server_auth: Any | None = None,
     admin_role: str = "webhook-admin",
     cross_tenant_role: str = "cross-tenant-admin",
     prefix: str = "/webhooks",
@@ -162,16 +181,20 @@ def build_webhook_router(
                      exhaustion. ``None`` (default) — the replay route is
                      not registered at all (same "absent capability, absent
                      route" rule as ``build_dlq_router``).
-        server_auth: Optional callable resolving to an object exposing
-                     ``.roles`` — enforced via ``admin_role`` on every
-                     route when given. ``None`` mounts unauthenticated.
-        admin_role:  Role required on every route (when ``server_auth`` is
-                     given). Defaults to ``"webhook-admin"``.
+        server_auth: **Required** (4.0, Plan 054 / FLIP-4). A callable
+                     resolving to an object exposing ``.roles`` —
+                     ``admin_role`` is enforced on every route.
+        admin_role:  Role required on every route. Defaults to
+                     ``"webhook-admin"``.
         cross_tenant_role: Role required to address a subscription outside
                      the resolved (``current_tenant()``) tenant — §D-S4-role.
-                     Never granted when ``server_auth is None`` (``ctx is
-                     None`` ⇒ ``allow_cross_tenant=False`` unconditionally).
+                     Never granted to a ``None`` ctx (``allow_cross_tenant=
+                     False`` unconditionally).
         prefix:      URL prefix. Defaults to ``"/webhooks"``.
+
+    Returns:
+        An ``APIRouter`` whose every route resolves ``server_auth`` and
+        enforces ``admin_role`` (403 ``"'<admin_role>' role required."``).
 
     Routes:
         GET    {prefix}/subscriptions               list, scoped to the
@@ -187,16 +210,20 @@ def build_webhook_router(
         DELETE {prefix}/subscriptions/{pk}            404 on cross-tenant
         POST   {prefix}/deliveries/{entry_id}/replay      only when
                                                       ``redriver`` is given
+
+    Raises:
+        ValueError: ``server_auth is None`` — refused by the builder itself,
+            so bypassing ``mount_webhook_admin`` gains nothing.
+        TypeError: ``server_auth`` omitted.
     """
+    _require_server_auth(server_auth, owner="build_webhook_router")
     router = APIRouter(prefix=prefix, tags=["webhook-admin"])
 
     async def _enforce(request: Request) -> Any:
-        """Resolve ``ctx`` and (when ``server_auth`` is configured) enforce
-        ``admin_role``. Always returns the resolved ``ctx`` (``None`` when
-        unauthenticated) so callers can compute cross-tenant eligibility."""
+        """Resolve ``ctx`` and enforce ``admin_role``; returns the resolved
+        ``ctx`` so callers can compute cross-tenant eligibility."""
         ctx = await _resolve_ctx(server_auth, request)
-        if server_auth is not None:
-            await _require_role(ctx, admin_role)
+        await _require_role(ctx, admin_role)
         return ctx
 
     @router.get("/subscriptions")

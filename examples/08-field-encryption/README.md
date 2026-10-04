@@ -29,7 +29,7 @@ The HTTP API, service layer, and assembler are **identical** to a non-encrypted 
 ```bash
 export DATABASE_URL="postgresql+asyncpg://user:pw@localhost:5432/mydb"
 cd examples/08-field-encryption
-uv run uvicorn app:app --reload
+VARCO_SECURITY_ENV=development uv run uvicorn app:app --reload
 ```
 
 Try it:
@@ -50,7 +50,7 @@ curl http://localhost:8000/v1/patients/<id>
 
 ```bash
 # From the workspace root (requires Docker)
-uv run pytest examples/08-field-encryption/tests/ -v -m integration
+VARCO_SECURITY_ENV=development uv run pytest examples/08-field-encryption/tests/ -v -m integration
 ```
 
 The tests spin up a PostgreSQL 16 container via testcontainers. One test directly queries the `patients` table and verifies that the `ssn` column contains ciphertext bytes, not the original string.

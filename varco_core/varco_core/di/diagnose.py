@@ -150,7 +150,7 @@ async def diagnose(
     validate: bool = True,
     environment: str = "unknown",
     enforce: str = "unknown",
-    enforce_source: Literal["code", "env", "default"] = "default",
+    enforce_source: Literal["code", "env", "default", "derived"] = "default",
 ) -> WiringReport:
     """
     Obtain a ``WiringReport`` from *modules*, never calling ``start()``
@@ -237,7 +237,7 @@ async def run_wiring_preflight(
     extra_deprecations: Sequence[DeprecationRecord] = (),
     environment: str = "unknown",
     enforce: str = "unknown",
-    enforce_source: Literal["code", "env", "default"] = "default",
+    enforce_source: Literal["code", "env", "default", "derived"] = "default",
 ) -> WiringReport:
     """
     Build a ``WiringReport`` for *modules* (already registered on

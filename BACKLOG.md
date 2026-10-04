@@ -77,11 +77,12 @@ A row moves to `## ✅ Shipped` only when its plan is built and merged.
 - `DI-9`, `DI-10` — plans/050-phased-lifecycle-and-di-wired-infrastructure.md — `done (Plan 050)`
 - `DI-5` — plans/051-multi-binding-registries.md — `done (Plan 051)`
 - `DI-7`, `DI-11` — plans/052-diagnose-report-and-test-profile.md — `done (Plan 052)`
-- `FLIP-5`, `FLIP-034-4`, `FLIP-034-1`, `FLIP-034-2`, `FLIP-034-3` — plans/053-credential-and-auth-flips.md
-- `FLIP-2`, `FLIP-10`, `FLIP-3`, `FLIP-4` — plans/054-http-edge-and-admin-surface-flips.md
-- `FLIP-7`, `FLIP-6`, `FLIP-9` — plans/055-tenant-provenance-flips.md (⚠️ FLIP-6: 12-month floor — default flips to the chain, `chain=None` → `TypeError` waits for 5.0); `FLIP-14` — 055 §D-flip14, design only, implementation is its own future plan
-- `FLIP-13`, `FLIP-12` — plans/056-data-layer-flips.md
-- `FLIP-040-1`, `FLIP-040-2` — plans/057-redaction-flips.md
+- `FLIP-5`, `FLIP-034-4`, `FLIP-034-1`, `FLIP-034-2`, `FLIP-034-3` — plans/053-credential-and-auth-flips.md — `done (Plan 053)`
+- `FLIP-2`, `FLIP-10`, `FLIP-3`, `FLIP-4` — plans/054-http-edge-and-admin-surface-flips.md — `done (Plan 054)`
+- `FLIP-7`, `FLIP-6`, `FLIP-9` — plans/055-tenant-provenance-flips.md — `done (Plan 055)` (FLIP-6: the default flips to the chain; `chain=None` → `TypeError` deferred to 5.0.0 — 12-month floor from 3.2.0, the implicit fallback is `removed_in="5.0.0"`)
+- `FLIP-14` — `designed (Plan 055 §D-flip14) — implementation is its own future plan` (`technical_docs/features/admin-surface-tenancy.md`)
+- `FLIP-13`, `FLIP-12` — plans/056-data-layer-flips.md — `done (Plan 056)`
+- `FLIP-040-1`, `FLIP-040-2`, `RO-5` — plans/057-redaction-flips.md — `done (Plan 057)`
 - `DI-14` — plans/058-di-guide-migration-and-4-0-release.md
 
 ### Carried over from 3.2 (open, not this cycle's theme)
@@ -94,7 +95,7 @@ Roll-forward rows that lost their un-IDed status here; none is DI-shaped and non
 | `RO-2` | Wire `inspect_jwks_posture()` and `inspect_retention_posture()` into `SecurityPosture` | 🟡 should | S | ✅ planned → plans/052-diagnose-report-and-test-profile.md | Plans 041/039 export the inspectors; the harness (`posture.py:258`, collectors `:400+`) does not call them. Natural to land inside `DI-7`. Post-Plan-051: each is now a ~15-line `PostureCollector` subclass contributed by `JwksRefreshModule`/`RetentionModule` — `PostureCollector` is `@Multibound`, so no `varco_fastapi/posture.py` edit is needed | `plans/039` §D-S20-posture |
 | `RO-3` | Confirm Stripe's inbound HMAC secret encoding against a real delivery | 🟡 should | S | todo | `StripeWebhookVerifier` pins `RAW_UTF8` against brief 013 §2's conflicting description; if wrong, one enum value on one class | `plans/038` Risks table |
 | `RO-4` | `create_varco_app` gains a `log_redactor=` keyword | 🟡 should | S | `done (Plan 049)` — landed as `LoggingModule(redactor=...)`, not a `create_varco_app` keyword | Deliberately not added by Plan 040; folds into `DI-1`'s module shape | `plans/040` §D-S21-logging |
-| `RO-5` | `inspect_redaction_posture()` becomes a `SecurityPosture` collector | 🟡 should | S | ✅ planned → plans/057-redaction-flips.md | Un-parked by `FLIP-040-2` — the finding then means "opted out" | `plans/040` §D-S21-posture |
+| `RO-5` | `inspect_redaction_posture()` becomes a `SecurityPosture` collector | 🟡 should | S | `done (Plan 057)` — `varco_fastapi.posture.RedactionPostureCollector`, a default collector contributed by `SecurityPostureModule`; the audited services are explicit input via `SecurityPostureModule(audited_services=...)` | Un-parked by `FLIP-040-2` — the finding then means "opted out" | `plans/040` §D-S21-posture |
 | `RO-6` | `varco_core.schedule` general driver (a materialization loop for non-retention schedules) | 🟡 should | S | todo | Plan 032 shipped `ScheduleMaterializer` with no general caller; 039 closed it for retention only | `plans/039` §D-S20-driver |
 | `RO-7` | `0007_schedules_table.py` vs. `materializer.py:29`'s claimed `UNIQUE(schedule_id, run_at)` index — fix the DESIGN block (the index cannot exist; `uuid5` `job_id` is the real backstop) | 🟡 should | S | todo | Verified absent by Plan 039 / Step 12 | `varco_sa/varco_sa/schedule.py:11-19` |
 | `RO-8` | DLQ and `WebhookDelivery` payload redaction (fifth/sixth redaction surfaces) | 🟡 should | M | todo | Out of Plan 040's scope | `plans/040` §Parked |
@@ -216,7 +217,7 @@ trigger fires. Grouped by theme; each line is `item — why · ⏵ trigger`.
 | **CORS defaults** | Hardened in 3.0.0 (Plan 022 / AB-5): `allow_origins` defaults to `()` |
 | **SSRF guard** | Five-layer model in `varco_core/webhook/ssrf.py` is solid; its only weakness (nothing asserts callers use `pinned_ip`) is a `SecurityPosture` collector, not a row |
 | **Cache-key tenancy** | `tenancy_cache_key()` fails closed outside `tenant_context()` — the house pattern |
-| **Admin mount acknowledgement** | Three independent barriers per mount; the `server_auth=None` gap is `FLIP-3`/`FLIP-4` |
+| **Admin mount acknowledgement** | Three barriers per mount, uniformly, since Plan 054 (`server_auth=None` → `ValueError` on all three mounts — `FLIP-3`/`FLIP-4` closed the gap) |
 | **providify pytest fixtures** | `di_container`/`di_acontainer`/`di_overrides`/`di_global` are used under providify's own names (RL-3); `DI-11` documents, never wraps |
 
 ---

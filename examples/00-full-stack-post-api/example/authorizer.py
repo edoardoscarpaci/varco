@@ -25,10 +25,11 @@ Application-level authorization rules for the Post API.
 
 Registration
 ------------
-``PostAuthorizer`` is registered with the DI container via ``@Singleton`` at
-normal priority (0), which shadows the default ``BaseAuthorizer`` at priority
-``-(2**31)``.  No explicit ``container.bind()`` is needed — the scanner picks
-it up automatically.
+``PostAuthorizer`` is registered with the DI container via ``@Singleton`` — a
+non-fallback binding, so it wins over varco's ``@Fallback`` ``BaseAuthorizer`` in
+every environment (and since 4.0 ``BaseAuthorizer`` binds only under
+``VARCO_SECURITY_ENV=development`` anyway).  No explicit ``container.bind()`` is
+needed — the scanner picks it up automatically.
 
 DESIGN: role-based + ownership checks over pure grant-based authorization
     ✅ Roles (``"admin"``, ``"editor"``) are embedded in the JWT ``roles`` claim
@@ -93,8 +94,9 @@ class PostAuthorizer(AbstractAuthorizer):
         - If the entity has ``author_id=None`` (should never happen after a
           correct ``_prepare_for_create``), ownership checks fail safely — an
           unidentifiable owner is not the same as a matching owner.
-        - This authorizer is registered at the default priority (0) and
-          shadows ``BaseAuthorizer`` (priority ``-(2**31)``).  If another
+        - This authorizer is a non-fallback ``@Singleton`` and always wins
+          over the ``@Fallback`` ``BaseAuthorizer`` (which, since 4.0, binds
+          only under ``VARCO_SECURITY_ENV=development``).  If another
           authorizer at priority > 0 is registered, it will shadow THIS
           class — intentional for overriding in tests.
     """

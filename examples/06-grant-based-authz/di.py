@@ -17,8 +17,10 @@ What this module does NOT register
     ``AbstractDTOAssembler``  — ``DocumentAssembler`` self-registers via ``@Singleton``.
     ``AsyncService``          — ``DocumentService`` self-registers via ``@Singleton``.
     ``AbstractAuthorizer``    — ``DocumentAuthorizer`` self-registers via ``@Singleton``
-                               at priority 0, shadowing ``BaseAuthorizer`` at
-                               priority ``-(2**31)``.
+                               — a non-fallback binding that wins over the
+                               ``@Fallback`` ``BaseAuthorizer`` in every
+                               environment (which, since 4.0, binds only under
+                               ``VARCO_SECURITY_ENV=development``).
 
 DESIGN: explicit @Provider for IUoWProvider over @Singleton on the class
     ``InMemoryUoWProvider`` is declared in ``repo.py`` which intentionally has

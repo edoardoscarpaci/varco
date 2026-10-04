@@ -4,11 +4,10 @@ varco_core.redaction.posture
 ``inspect_redaction_posture()`` — a pure, never-raising posture read over
 the redaction seam (Plan 040 / S21, §D-S21-posture).
 
-⛔ **Not** wired into ``varco_fastapi.posture.SecurityPosture`` (Plan 036's
-harness) — see the Non-goals section of the plan. It is defined and
-exported so the 4.0 audit-default flip has somewhere to land, and a future
-collector can be written against the stable ``check``-id table below without
-reading this module's implementation.
+Wired into ``varco_fastapi.posture.SecurityPosture`` by Plan 057
+(``RedactionPostureCollector``, a default collector); the four ids are stable — see the table in
+``technical_docs/features/redaction.md``. Since 4.0 every finding means
+"opted out" of a default (FLIP-040-1 / FLIP-040-2): a default app emits none.
 
 Thread safety:  ✅ Pure function, no shared state beyond the module-level
                    default-redactor cell it reads (``redaction.redactor``).
@@ -81,14 +80,23 @@ def inspect_redaction_posture(
         ``check`` ids:
 
         - ``redaction.audit.disabled`` (``warn``): an inspected
-          ``AuditLogMixin`` subclass has ``_audit_redactor is None`` and
-          has not overridden ``_audit_diff``.
+          ``AuditLogMixin`` subclass **opted out** of the 4.0 default —
+          ``_audit_redactor = None`` and no ``_audit_diff`` override.
         - ``redaction.error_params.disabled`` (``warn``):
           ``ErrorEnvelopeSettings.redact_params is False``.
         - ``redaction.default.custom`` (``info``): ``default_redactor()``
           is not a ``PolicyRedactor``.
-        - ``redaction.patterns.substring_mode`` (``info``): the effective
-          policy uses ``match_mode="substring"``.
+        - ``redaction.patterns.substring_mode`` (``info``): the process
+          default **opted out** of word-boundary matching
+          (``match_mode="substring"``).
+
+    Edge cases:
+        - The *class* attribute ``_audit_redactor`` is read — an opt-out
+          made on the instance (``self._audit_redactor = None`` in
+          ``__init__``) is invisible here. Pre-existing limitation.
+        - A per-service ``replace(AUDIT_REDACTION_POLICY,
+          match_mode="substring")`` is the caller's explicit choice and is
+          not reported — only ``default_redactor()`` is inspected.
     """
     findings: list[RedactionFinding] = []
 
@@ -130,9 +138,9 @@ def _inspect_service_class(service_class: type, findings: list[RedactionFinding]
                 check="redaction.audit.disabled",
                 severity="warn",
                 detail=(
-                    f"{service_class.__name__}._audit_redactor is None and "
-                    f"_audit_diff is not overridden — audit diffs are "
-                    f"written unredacted."
+                    f"{service_class.__name__} opted out of audit redaction "
+                    f"(_audit_redactor = None, _audit_diff not overridden) — "
+                    f"audit diffs are written unredacted."
                 ),
             )
         )
@@ -171,8 +179,8 @@ def _inspect_default_redactor(findings: list[RedactionFinding]) -> None:
             RedactionFinding(
                 check="redaction.patterns.substring_mode",
                 severity="info",
-                detail="The effective policy uses match_mode='substring' "
-                "— known false positives apply (e.g. 'pin' in "
-                "'shipping_address').",
+                detail="The process default redactor opted out of word-boundary "
+                "matching (match_mode='substring') — 040's known false positives "
+                "apply (e.g. 'pin' redacts 'shipping_address').",
             )
         )

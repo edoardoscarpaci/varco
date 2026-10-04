@@ -81,7 +81,7 @@ from service import PostService  # noqa: F401 — registers PostService
 from varco_beanie.config import BeanieSettings
 from varco_beanie.provider import BeanieRepositoryProvider
 from varco_core.service.base import IUoWProvider
-from varco_fastapi.di import VarcoFastAPIModule
+from varco_fastapi.di import bootstrap as fastapi_bootstrap
 
 from varco_fastapi import create_varco_app
 
@@ -153,7 +153,7 @@ def _build_container(
     Registration order:
     1. Build (or reuse) ``BeanieRepositoryProvider`` from settings.
     2. Bind ``IUoWProvider`` → the pre-built provider.
-    3. Install ``VarcoFastAPIModule`` for framework defaults.
+    3. Run ``varco_fastapi.di.bootstrap()`` for framework defaults.
     4. Bind permissive ``BaseAuthorizer`` (no auth for this example).
     5. Register local ``@Singleton`` classes (``PostAssembler``, ``PostService``).
 
@@ -196,8 +196,11 @@ def _build_container(
 
     container.provide(_uow_provider)
 
-    # ── Install varco_fastapi module ───────────────────────────────────────────
-    container.install(VarcoFastAPIModule)
+    # ── Bootstrap varco_fastapi ─────────────────────────────────────────────────
+    # 4.0 (Plan 049): the framework @Configuration is VarcoFastAPIConfiguration; the
+    # 4.0 hand-wired form is the package bootstrap() (scan-installs it, idempotent,
+    # so create_varco_app's FastAPIModule re-running it later is safe).
+    fastapi_bootstrap(container)
 
     # ── Permissive authorizer ──────────────────────────────────────────────────
     # AsyncService injects AbstractAuthorizer; bind BaseAuthorizer (permissive)
@@ -205,6 +208,9 @@ def _build_container(
     from varco_core.auth.authorizer import BaseAuthorizer  # noqa: PLC0415
     from varco_core.auth.base import AbstractAuthorizer  # noqa: PLC0415
 
+    # 4.0 (Plan 053 / FLIP-5): a class-keyed bind of BaseAuthorizer is gated
+    # exactly like the scanned fallback — run with VARCO_SECURITY_ENV=development
+    # (see README). A production app registers a real AbstractAuthorizer.
     container.bind(AbstractAuthorizer, BaseAuthorizer)
 
     # ── Register local @Singleton classes ──────────────────────────────────────

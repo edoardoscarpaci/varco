@@ -10,6 +10,7 @@ Public surface (all re-exported at this package's top level)::
         Redactor,                  # the one-method Protocol
         PolicyRedactor,            # the default implementation
         RedactionPolicy,           # frozen config (patterns, match_mode, ...)
+        AUDIT_REDACTION_POLICY,    # the AuditLogMixin default (render_non_json=False)
         is_sensitive_key,          # the leaf predicate
         redact_mapping,            # depth/cycle/item-safe nested walk
         redact_query_string,       # URL query-string helper
@@ -17,7 +18,7 @@ Public surface (all re-exported at this package's top level)::
         default_redactor,          # process-wide default (getter)
         set_default_redactor,      # process-wide default (setter)
         reset_redaction_state,     # test helper
-        DEFAULT_REDACT_PATTERNS,   # the incumbent 15 patterns (byte-identical)
+        DEFAULT_REDACT_PATTERNS,   # the 15 patterns (word-boundary matched since 4.0)
         EXTENDED_REDACT_PATTERNS,  # opt-in — signature/bearer/jwt/...
         PII_REDACT_PATTERNS,       # opt-in, never a default
     )
@@ -49,7 +50,7 @@ from varco_core.redaction.patterns import (
     EXTENDED_REDACT_PATTERNS,
     PII_REDACT_PATTERNS,
 )
-from varco_core.redaction.policy import RedactionPolicy, is_sensitive_key
+from varco_core.redaction.policy import AUDIT_REDACTION_POLICY, RedactionPolicy, is_sensitive_key
 from varco_core.redaction.redactor import (
     PolicyRedactor,
     Redactor,
@@ -65,6 +66,7 @@ __all__ = [
     "Redactor",
     "PolicyRedactor",
     "RedactionPolicy",
+    "AUDIT_REDACTION_POLICY",
     "is_sensitive_key",
     "redact_mapping",
     "redact_query_string",

@@ -146,7 +146,8 @@ varco_sa/                — SQLAlchemy async ORM backend
   ├── audit.py           — SAAuditRepository (AuditEntryModel; table: varco_audit_log;
   │                        Postgres ON CONFLICT DO NOTHING on entry_id, plain INSERT elsewhere)
   ├── webhook.py         — SAWebhookSubscriptionRepository (table: webhook_subscriptions;
-  │                        Plan 031 / D4a, the twelfth framework table)
+  │                        Plan 031 / D4a, the twelfth framework table; encryptor required,
+  │                        Plan 056 / FLIP-13)
   ├── schedule.py        — SAScheduleRepository (table: schedules; UNIQUE(schedule_id);
   │                        Plan 032 / D6, the thirteenth framework table, migration
   │                        0007_schedules_table; task_name column added by migration
@@ -626,7 +627,9 @@ AbstractTokenRevocationStore (ABC)
 ```
 
 Four independent `RevocationScope` members (`TOKEN`/`SUBJECT`/`TENANT`/`ISSUER`) so a kill switch
-never depends on a `jti` claim some issuers (Auth0, Keycloak, Cognito) do not emit.
+never depends on a `jti` claim some issuers (Auth0, Keycloak, Cognito) do not emit; a wired
+non-Null store derives `revocation_require_jti=True` (4.0, Plan 053), and `JwtAuthority.token()`
+mints a uuid4 `jti` by default (`mint_jti=False` opts out).
 `TrustedIssuerRegistry.verify()` is the single hook point — it consults
 `self._revocation_store` (default `None`, zero cost) *after* `iss` enforcement and *before*
 returning the parsed token. Binding a store via DI (`enable_token_revocation()` /
@@ -641,7 +644,7 @@ functions Plan 036 aggregates — no warning/raise/lifespan hook lives in either
 
 ```
 AbstractAuthorizer (ABC)                         — service-layer gate; authorize(ctx, action, resource)
-  ├── BaseAuthorizer            (permissive fallback, @Fallback @Singleton — no priority)
+  ├── BaseAuthorizer            (permissive fallback, @Fallback @Requires(env=VARCO_SECURITY_ENV, value=development) — a binding only in development, Plan 053)
   ├── GrantBasedAuthorizer / RoleBasedAuthorizer / OwnershipAuthorizer  (static, token-derived)
   └── PolicyEngineAuthorizer    (dynamic — bridges to a PolicyEngine; opt-in)
 
@@ -776,9 +779,12 @@ PolicyRedactor (@dataclass(frozen=True))  — the default implementation
   └── policy: RedactionPolicy = RedactionPolicy()
 
 RedactionPolicy (@dataclass(frozen=True))
-  ├── patterns: tuple[str, ...] = DEFAULT_REDACT_PATTERNS   (the incumbent 15, byte-identical)
-  ├── match_mode: "substring" (default) | "word"            (§D-S21-falsepos)
+  ├── patterns: tuple[str, ...] = DEFAULT_REDACT_PATTERNS   (the 15 literals, unchanged)
+  ├── match_mode: "word" (default since 4.0, Plan 057) | "substring" (3.2 escape hatch)
   └── max_depth: int = 6, max_items: int = 1000, render_non_json: bool = True
+
+AUDIT_REDACTION_POLICY = RedactionPolicy(render_non_json=False)   (Plan 057 / FLIP-040-2)
+  — the AuditLogMixin default; non-sensitive datetime/UUID/Decimal leaves stay native objects
 
 Free functions (varco_core.redaction, NOT on the Redactor Protocol)
   ├── is_sensitive_key(key, policy) -> bool          — the leaf predicate, functools.lru_cache'd
@@ -796,15 +802,17 @@ DEFAULT_REDACT_PATTERNS / EXTENDED_REDACT_PATTERNS / PII_REDACT_PATTERNS (varco_
 
 varco_core.redaction.posture
   └── inspect_redaction_posture(*, service_classes=(), envelope_settings=None) -> RedactionPosture
-        — pure, never-raising; check ids: redaction.audit.disabled (warn),
+        — pure, never-raising; check ids: redaction.audit.disabled (warn, opted out),
           redaction.error_params.disabled (warn), redaction.default.custom (info),
-          redaction.patterns.substring_mode (info)
-        — ⛔ NOT wired into varco_fastapi.posture.SecurityPosture (Plan 036's harness)
+          redaction.patterns.substring_mode (info, opted out)
+        — wired into SecurityPosture via varco_fastapi.posture.RedactionPostureCollector
+          (Plan 057; a default collector, fed by SecurityPostureModule(audited_services=...))
 
-Consumers, all opt-in except error_params:
+Consumers (error_params and the audit trail redact by default):
   ├── varco_core.observability.params        — DEFAULT_REDACT_PATTERNS re-exported, same object
   ├── varco_core.exception.http.error_message_for — ErrorEnvelopeSettings.redact_params=True (default)
-  ├── varco_core.service.audit.AuditLogMixin  — _audit_redactor: Redactor | None = None (opt-in),
+  ├── varco_core.service.audit.AuditLogMixin  — _audit_redactor: Redactor | None =
+  │                                             PolicyRedactor(AUDIT_REDACTION_POLICY) (opt-out: None),
   │                                             _audit_diff(action, diff) hook, called pre-_produce
   └── varco_fastapi.middleware.logging.RequestLoggingMiddleware — redactor=None (opt-in)
 ```
@@ -1201,13 +1209,15 @@ varco_sa.tenancy                        varco_beanie.tenancy
   SAEngineRegistry (per-tenant AsyncEngine) (per-tenant Document clones + init_beanie)
   SASchemaProvisioner · SADatabaseProvisioner  BeanieDatabaseProvisioner (dropDatabase)
   SATenantCatalog (varco_tenants, 10th table)  BeanieTenantCatalog
-  rls_check.assert_rls_enabled (skips GLOBAL)
+  rls_check.assert_rls_enabled (skips GLOBAL) · inspect_rls_posture
+  rls_posture.RlsPostureCollector / rls_findings (data.*, contributed by SAModule — Plan 056)
   global_scope (42501 → GlobalScopeReadOnlyError)
   admin/  → SAAdminEngine, SADatabaseProvisioner    (control plane ONLY, RD-4)
         ▲                                      ▲
         └────────────── varco_fastapi.tenancy ─┘
               TenancyLifecycle (stops supervisor before pool.aclose())
-              TenantResolutionMiddleware (checks status BEFORE pool.ensure())
+              TenantResolutionMiddleware (checks status BEFORE pool.ensure();
+                EdgeSlot.TENANT_RESOLUTION, via TenancyModule — Plan 055)
               build_tenant_router() · mount_tenant_admin() (RD-9, no env-var path)
 ```
 
@@ -1230,8 +1240,9 @@ WebhookSubscriptionRepository (ABC) — varco_core.webhook.base
 
 Implementations (framework-table shape, same convention as the DLQ/idempotency/outbox tables):
   ├── InMemoryWebhookSubscriptionRepository (varco_core) — single-process, lazily-created lock
-  ├── SAWebhookSubscriptionRepository (varco_sa)          — own Table/MetaData, manual mapping
-  └── BeanieWebhookSubscriptionRepository (varco_beanie)  — self-managed Motor client + init_beanie
+  ├── SAWebhookSubscriptionRepository (varco_sa)          — own Table/MetaData, manual mapping (encryptor required)
+  └── BeanieWebhookSubscriptionRepository (varco_beanie)  — self-managed Motor client + init_beanie (encryptor required)
+  (dev/test hatch for both: varco_core.encryption.PlaintextFieldEncryptor(acknowledge_plaintext=True))
 
 Conformance suite: testkit/varco_conformance/webhook_subscription.py's
 WebhookSubscriptionRepositoryConformance, subclassed by all three (COVERAGE.md).
@@ -1261,10 +1272,10 @@ WebhookSubscription / WebhookDelivery (DomainModel) — varco_core.webhook.model
   hand-rolled framework tables (webhook_subscriptions / webhook_deliveries), not the generic
   @register + AsyncRepository[T] translation layer — same reasoning as the idempotency/DLQ tables.
 
-Admin: varco_fastapi.webhook.mount_webhook_admin(app, *, repository=, redriver=None,
-acknowledge_bundled_admin=True, server_auth=..., admin_role="webhook-admin", prefix="/webhooks")
-— same acknowledge-gated shape as mount_reliability_admin/mount_tenant_admin (RD-9); replay goes
-through the existing DlqRedriver.
+Admin: varco_fastapi.webhook.mount_webhook_admin(app, *, repository=, server_auth=, redriver=None,
+acknowledge_bundled_admin=True, admin_role="webhook-admin", prefix="/webhooks")
+— same acknowledge-gated shape as mount_reliability_admin/mount_tenant_admin (RD-9); server_auth
+is required (None -> ValueError, Plan 054 / FLIP-4); replay goes through the existing DlqRedriver.
 
 Full design (signing-scheme decision, the SSRF model, retry-schedule convention, a Pitfalls
 table): `technical_docs/features/outbound-webhooks.md`. Usage: README's "Outbound webhooks"
@@ -1705,7 +1716,7 @@ phases.
 | `RetentionModule` | `varco_fastapi.modules` | `SCHEDULERS` | opt-in | `CoreModule` |
 | `JwksRefreshModule` | `varco_fastapi.modules` | `SCHEDULERS` | opt-in | `CoreModule` |
 | `MiddlewareModule` (adapter) | `varco_fastapi.modules.base` | `INFRA` | — | per-instance |
-| `SAModule` | `varco_sa.modules` | `INFRA` | opt-in | `CoreModule` |
+| `SAModule` | `varco_sa.modules` | `INFRA` (+ `sa.rls_posture` at `RLS_POSTURE_PHASE` = `INFRA + 50`) | opt-in | `CoreModule` |
 | `BeanieModule` | `varco_beanie.modules` | `INFRA` | opt-in | `CoreModule` |
 | `RedisModule` | `varco_redis.modules` | `INFRA` | opt-in | `CoreModule` |
 | `KafkaModule` | `varco_kafka.modules` | `INFRA` | opt-in | `CoreModule` |
@@ -1807,8 +1818,8 @@ Pitfalls table: `technical_docs/features/dependency-injection.md`'s §Lifecycle 
 | `retention/` | S20 (Plan 039) — a `RetentionPolicy` registry materialized onto the shipped cron→`Job` path; adapters over shipped bulk-delete verbs, no new abstract methods. `RetentionPolicy` is `@Multibound` as of Plan 051 / DI-5; `retention/di.py`/`bind_retention_registry()` are gone | `RetentionPolicy`, `RetentionRegistry`, `RetentionOutcome`, `RetentionResult`, `RetentionTarget`, `CallableRetentionTarget`, `DlqRetentionTarget`, `AuditRetentionTarget`, `IdempotencyRetentionTarget`, `RevocationRetentionTarget`, `JobRetentionTarget`, `RetentionScheduler`, `execute_policy()`, `RetentionPolicyNotFoundError`, `inspect_retention_posture()` |
 | `revocation/` | S13 (Plan 034) — invalidate a JWT before its `exp`, per token/subject/tenant/issuer | `AbstractTokenRevocationStore`, `RevocationScope`, `RevocationEntry`, `RevocationVerdict`, `RevocationFailureMode`, `NullTokenRevocationStore`, `InMemoryTokenRevocationStore`, `enable_token_revocation()`, `inspect_revocation_posture()` |
 | `auth/api_key.py` | S14 (Plan 034) — stdlib-only (`hashlib`/`hmac`) offline API-key hashing behind `ApiKeyAuth`'s `hashed_keys=` path | `hash_api_key()`, `verify_api_key()` |
-| `redaction/` | S21 (Plan 040) — the unified, key-name-based redaction seam behind spans, `error_params()`, the audit trail, and request logging | `Redactor`, `PolicyRedactor`, `RedactionPolicy`, `is_sensitive_key()`, `redact_mapping()`, `redact_query_string()`, `json_safe()`, `default_redactor()`, `set_default_redactor()`, `reset_redaction_state()`, `DEFAULT_REDACT_PATTERNS`, `EXTENDED_REDACT_PATTERNS`, `PII_REDACT_PATTERNS` |
-| `redaction/posture.py` | S21 (Plan 040) — pure, never-raising posture read; not wired into `SecurityPosture` | `RedactionFinding`, `RedactionPosture`, `inspect_redaction_posture()` |
+| `redaction/` | S21 (Plan 040) — the unified, key-name-based redaction seam behind spans, `error_params()`, the audit trail, and request logging | `Redactor`, `PolicyRedactor`, `RedactionPolicy`, `AUDIT_REDACTION_POLICY`, `is_sensitive_key()`, `redact_mapping()`, `redact_query_string()`, `json_safe()`, `default_redactor()`, `set_default_redactor()`, `reset_redaction_state()`, `DEFAULT_REDACT_PATTERNS`, `EXTENDED_REDACT_PATTERNS`, `PII_REDACT_PATTERNS` |
+| `redaction/posture.py` | S21 (Plan 040) — pure, never-raising posture read; wired via `varco_fastapi.posture.RedactionPostureCollector` (Plan 057; default collector) | `RedactionFinding`, `RedactionPosture`, `inspect_redaction_posture()` |
 
 ---
 
@@ -2012,14 +2023,15 @@ filtered_query = transformer.transform(base_query, params, User)
   see `technical_docs/features/token-profiles.md`) between the role check and the
   grant check.  Evaluated against `AuthContext` before the handler runs; denial → HTTP 403.
 - **Auth middleware**: `AuthMiddleware` validates JWT bearer tokens using `TrustedIssuerRegistry`.
-- **`ApiKeyAuth`** (`varco_fastapi.auth.server_auth`) hashes plaintext `keys=` at construction via
-  `varco_core.auth.api_key.hash_api_key()` and accepts pre-hashed `hashed_keys=` directly (Plan
-  034 / S14); its `?api_key=` query-parameter fallback (and `WebSocketAuth`'s `?token=` fallback)
+- **`ApiKeyAuth`** (`varco_fastapi.auth.server_auth`) accepts pre-hashed `hashed_keys=` (the
+  documented path, Plan 034 / S14); plaintext `keys=` is still hashed at construction via
+  `varco_core.auth.api_key.hash_api_key()` but is **deprecated 4.0.0 → 5.0.0** (Plan 053); its `?api_key=` query-parameter fallback (and `WebSocketAuth`'s `?token=` fallback)
   are off by default — name `param=`/`token_query_param=` explicitly to re-enable either.
 - **`inspect_auth_posture()`** (`varco_fastapi.auth.posture`, Plan 034 / Phase 4) is a pure,
   read-only introspection function walking an `AbstractServerAuth` tree (including nested
   `CompositeServerAuth`/`WebSocketAuth` wrappers) to report facts — API-key query-fallback state,
-  plaintext-vs-hashed key source, `PassthroughAuth` presence. Reports facts only; Plan 036 owns
+  plaintext-vs-hashed key source, `PassthroughAuth` presence (`PassthroughAuth` itself requires
+  `acknowledge_unverified=True` since 4.0, Plan 053). Reports facts only; Plan 036 owns
   any judgement built on top.
 - **Lifecycle, since Plan 049**: no more hidden discovery. `CoreModule.start()`/`stop()` starts
   the resolved `AbstractEventBus`/`AbstractJobRunner` (if any); `WsModule.start()`/`stop()` does
@@ -2413,8 +2425,9 @@ default settings. `I18nLifecycle` (`varco_fastapi.i18n`, started/stopped by
 `LocalizationModule.start()`/`.stop()`) starts/stops the DI-resolved `MessageCatalog` around the
 lifespan, only when i18n is enabled and a non-`None` catalog is found.
 `LocalizationMiddleware` is the innermost built-in layer (added earliest, dispatches last),
-so any app-supplied `TenantResolutionMiddleware` via `MiddlewareModule` always dispatches
-before it — see `technical_docs/features/timezone-handling.md`'s "Wiring" section for the
+so `TenantResolutionMiddleware` — contributed by `TenancyModule` at
+`EdgeSlot.TENANT_RESOLUTION` (inside `ErrorMiddleware`, before `RequestContextMiddleware`,
+Plan 055), or hand-placed via `MiddlewareModule` — always dispatches before it — see `technical_docs/features/timezone-handling.md`'s "Wiring" section for the
 full verified request-order diagram and the `request.state` mirror's current (unread)
 status on the error path.
 

@@ -13,6 +13,13 @@ from fastapi.testclient import TestClient
 from varco_core.service.audit import AuditEntry, AuditRepository
 from varco_core.service.tenant import tenant_context
 
+from tests._admin_auth import HeaderAuth, ctx_auth
+
+# Plan 054 / FLIP-3: server_auth is required (and admin_role enforced on every
+# route); the pre-054 tests below use this stub. No cross-tenant role, so the
+# tenant-scoping behaviour they pin is unchanged.
+_ADMIN_AUTH = ctx_auth(["reliability-admin"])
+
 
 class InMemoryAuditRepository(AuditRepository):
     def __init__(self) -> None:
@@ -38,7 +45,7 @@ class TestAuditRouterFilters:
         from varco_fastapi.admin.audit_router import build_audit_router
 
         repo = InMemoryAuditRepository()
-        router = build_audit_router(repo)
+        router = build_audit_router(repo, server_auth=_ADMIN_AUTH)
         app = FastAPI()
         app.include_router(router)
         client = TestClient(app)
@@ -57,7 +64,7 @@ class TestAuditRouterFilters:
         from varco_fastapi.admin.audit_router import build_audit_router
 
         repo = InMemoryAuditRepository()
-        router = build_audit_router(repo)
+        router = build_audit_router(repo, server_auth=_ADMIN_AUTH)
         app = FastAPI()
         app.include_router(router)
         client = TestClient(app)
@@ -72,7 +79,7 @@ class TestAuditRouterFilters:
         from varco_fastapi.admin.audit_router import build_audit_router
 
         repo = InMemoryAuditRepository()
-        router = build_audit_router(repo)
+        router = build_audit_router(repo, server_auth=_ADMIN_AUTH)
         app = FastAPI()
         app.include_router(router)
         client = TestClient(app)
@@ -89,7 +96,7 @@ class TestAuditRouterAllowDelete:
         from varco_fastapi.admin.audit_router import build_audit_router
 
         repo = InMemoryAuditRepository()
-        router = build_audit_router(repo, allow_delete=False)
+        router = build_audit_router(repo, allow_delete=False, server_auth=_ADMIN_AUTH)
         app = FastAPI()
         app.include_router(router)
         client = TestClient(app)
@@ -106,10 +113,117 @@ class TestAuditRouterAllowDelete:
         from varco_fastapi.admin.audit_router import build_audit_router
 
         repo = InMemoryAuditRepository()
-        router = build_audit_router(repo, allow_delete=True)
+        router = build_audit_router(repo, allow_delete=True, server_auth=_ADMIN_AUTH)
         app = FastAPI()
         app.include_router(router)
         client = TestClient(app)
 
         resp = client.request("DELETE", "/audit/entries", params={"entity_type": "Order"})
         assert resp.status_code != 404
+
+
+# ── Plan 054 / FLIP-3 (§D-flip3, §D-flip3-enforce) — required server_auth + per-route admin_role ──
+
+
+# The Request-taking stub lives in the shared helper (Plan 054 Step 8).
+_HeaderAuth = HeaderAuth
+
+
+def _route_cases(router) -> list[tuple[str, str]]:
+    """Every (method, concrete path) of *router* — built from ``router.routes``
+    so a newly added route cannot dodge the guard."""
+    import re as _re
+    import uuid as _uuid
+
+    from fastapi.routing import APIRoute
+
+    cases: list[tuple[str, str]] = []
+    for route in router.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        path = _re.sub(
+            r"\{([a-z_]+)\}",
+            lambda m: str(_uuid.UUID(int=1)) if m.group(1).endswith("id") else "x",
+            route.path,
+        )
+        for method in sorted(route.methods):
+            cases.append((method, path))
+    return cases
+
+
+_ADMIN_HEADERS = {"X-Test-Auth": "reliability-admin,cross-tenant-admin"}
+
+
+import pytest  # noqa: E402
+
+
+def _full_audit_router(server_auth):
+    from varco_fastapi.admin.audit_router import build_audit_router
+
+    return build_audit_router(InMemoryAuditRepository(), server_auth=server_auth, allow_delete=True)
+
+
+def _audit_cases() -> list[tuple[str, str]]:
+    return _route_cases(_full_audit_router(_HeaderAuth()))
+
+
+class TestFlip3AuditRouterServerAuthRequired:
+    def test_build_audit_router_refuses_server_auth_none(self) -> None:
+        from varco_fastapi.admin.audit_router import build_audit_router
+
+        with pytest.raises(ValueError, match="requires server_auth") as exc:
+            build_audit_router(InMemoryAuditRepository(), server_auth=None)
+        assert "build_audit_router" in str(exc.value)
+
+    def test_build_audit_router_requires_server_auth_keyword(self) -> None:
+        import inspect
+
+        from varco_fastapi.admin.audit_router import build_audit_router
+
+        param = inspect.signature(build_audit_router).parameters["server_auth"]
+        assert param.default is inspect.Parameter.empty
+        assert param.kind is inspect.Parameter.KEYWORD_ONLY
+        with pytest.raises(TypeError, match="server_auth"):
+            build_audit_router(InMemoryAuditRepository())
+
+
+class TestFlip3AuditRouterEnforcesAdminRoleOnEveryRoute:
+    @pytest.mark.parametrize(("method", "path"), _audit_cases())
+    def test_no_credentials_is_server_auth_401(self, method: str, path: str) -> None:
+        app = FastAPI()
+        app.include_router(_full_audit_router(_HeaderAuth()))
+
+        resp = TestClient(app).request(method, path)
+
+        assert resp.status_code == 401
+
+    @pytest.mark.parametrize(("method", "path"), _audit_cases())
+    def test_credentials_without_role_is_403(self, method: str, path: str) -> None:
+        app = FastAPI()
+        app.include_router(_full_audit_router(_HeaderAuth()))
+
+        resp = TestClient(app).request(method, path, headers={"X-Test-Auth": "someone"})
+
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == "'reliability-admin' role required."
+
+    @pytest.mark.parametrize(("method", "path"), _audit_cases())
+    def test_with_role_passes_the_guard(self, method: str, path: str) -> None:
+        app = FastAPI()
+        app.include_router(_full_audit_router(_HeaderAuth()))
+
+        with tenant_context("t1"):
+            resp = TestClient(app).request(method, path, headers=_ADMIN_HEADERS)
+
+        assert resp.status_code not in (401, 403)
+
+    def test_server_auth_resolved_once_per_request(self) -> None:
+        auth = _HeaderAuth()
+        app = FastAPI()
+        app.include_router(_full_audit_router(auth))
+
+        with tenant_context("t1"):
+            resp = TestClient(app).get("/audit/entries", headers=_ADMIN_HEADERS)
+
+        assert resp.status_code == 200
+        assert auth.calls == 1

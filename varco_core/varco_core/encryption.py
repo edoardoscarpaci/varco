@@ -77,7 +77,7 @@ import base64
 import dataclasses
 import struct
 from datetime import datetime
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from varco_core.jwk.model import JsonWebKey
@@ -368,6 +368,101 @@ class FernetFieldEncryptor:
                 operation="decrypt",
                 context=context,
             ) from exc
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# PlaintextFieldEncryptor — the acknowledged dev/test identity encryptor (Plan 056)
+# ════════════════════════════════════════════════════════════════════════════════
+
+
+class PlaintextFieldEncryptor:
+    """
+    ⛔ DEV/TEST ONLY. Identity ``FieldEncryptor`` — ``encrypt()`` and
+    ``decrypt()`` return their input unchanged.
+
+    Exists so a durable ``WebhookSubscriptionRepository`` (whose
+    ``encryptor`` is required since 4.0, Plan 056 / FLIP-13) can be
+    constructed without a real key in a local run — through the hand path
+    *or* the DI path (``bind_instance(container, FieldEncryptor,
+    PlaintextFieldEncryptor(acknowledge_plaintext=True))``) — and so that
+    choice is greppable (``rg -n PlaintextFieldEncryptor``) and reported by
+    ``SecurityPosture`` as ``posture.webhook_secrets_plaintext`` (WARN —
+    blocks a production start unless suppressed) — automatically in a default
+    app, whose ``LocalPostureCollector`` resolves the bound
+    ``WebhookSubscriptionRepository`` from the container.
+
+    Args:
+        acknowledge_plaintext: Must be literally ``True`` — an explicit,
+            in-source statement that the values it "protects" are stored
+            in plaintext.
+
+    Raises:
+        TypeError: ``acknowledge_plaintext`` is omitted, or anything other
+            than the ``True`` singleton (``False``, ``1``, ``"yes"``).
+
+    DESIGN: ``Literal[True]`` + ``TypeError`` — Plan 053's
+        ``acknowledge_unverified`` shape
+        ✅ A ``bool`` whose only legal value is ``True`` says so in the
+           annotation (mypy rejects ``False``) and at runtime (identity
+           check, so ``1`` is refused too).
+        ✅ A real ``FieldEncryptor``: the repositories keep one constructor
+           contract and the wire format stays the hex-of-bytes envelope every
+           real encryptor uses, so switching to Fernet later needs only
+           ``reencrypt_legacy_plaintext(legacy_hex=True)``.
+        ❌ A class named ``…Encryptor`` that encrypts nothing — mitigated by
+           the name, this ⛔ line, the shouting ``__repr__``, the
+           acknowledgement, and the posture finding.
+        Rejected: a silent ``NullFieldEncryptor`` (no acknowledgement — the
+        three-word name is the point); placing it in ``varco_core.webhook``
+        (it is a ``FieldEncryptor``; implementations live here).
+
+    Thread safety:  ✅ Stateless.
+    Async safety:   ✅ No I/O.
+
+    Example::
+
+        repo = SAWebhookSubscriptionRepository(
+            url="sqlite+aiosqlite:///dev.db",
+            encryptor=PlaintextFieldEncryptor(acknowledge_plaintext=True),
+        )
+    """
+
+    def __init__(self, *, acknowledge_plaintext: Literal[True]) -> None:
+        if acknowledge_plaintext is not True:
+            raise TypeError(
+                "PlaintextFieldEncryptor: acknowledge_plaintext must be literally True — "
+                "this encryptor stores plaintext (dev/test only; use FernetFieldEncryptor(key) "
+                "in production)."
+            )
+
+    def __repr__(self) -> str:
+        return "PlaintextFieldEncryptor(<PLAINTEXT — dev/test only>)"
+
+    def encrypt(self, plaintext: bytes, *, context: str | None = None) -> bytes:
+        """
+        Return ``plaintext`` unchanged.
+
+        Args:
+            plaintext: Bytes to "encrypt".
+            context:   Ignored.
+
+        Returns:
+            ``plaintext``.
+        """
+        return plaintext
+
+    def decrypt(self, ciphertext: bytes, *, context: str | None = None) -> bytes:
+        """
+        Return ``ciphertext`` unchanged.
+
+        Args:
+            ciphertext: Bytes to "decrypt".
+            context:    Ignored.
+
+        Returns:
+            ``ciphertext``.
+        """
+        return ciphertext
 
 
 # ════════════════════════════════════════════════════════════════════════════════

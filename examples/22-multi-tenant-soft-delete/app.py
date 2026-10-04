@@ -16,7 +16,7 @@ Demonstrates:
 Bootstrap sequence
 ------------------
 1. ``SAConfig`` is registered with the DI container.
-2. ``VarcoFastAPIModule`` is installed for framework defaults.
+2. ``varco_fastapi.di.bootstrap()`` installs the framework defaults.
 3. ``sa_bootstrap(container, Note)`` scans varco_sa and registers
    ``AsyncRepository[Note]`` + ``IUoWProvider`` bindings.
 4. On FastAPI startup, ``create_tables(container)`` runs DDL (idempotent).
@@ -67,7 +67,7 @@ from varco_core.auth.authorizer import BaseAuthorizer
 from varco_core.auth.base import AbstractAuthorizer
 from varco_core.query.params import QueryParams
 from varco_core.service.base import IUoWProvider
-from varco_fastapi.di import VarcoFastAPIModule
+from varco_fastapi.di import bootstrap as fastapi_bootstrap
 from varco_sa.provider import SQLAlchemyRepositoryProvider
 
 # ── Shared SQLAlchemy declarative base ────────────────────────────────────────
@@ -98,7 +98,7 @@ def _build_container(db_url: str) -> tuple[DIContainer, object]:
     Registration order:
     1. Build ``SQLAlchemyRepositoryProvider`` from the engine.
     2. Bind ``IUoWProvider`` → the pre-built provider.
-    3. Install ``VarcoFastAPIModule`` for framework defaults.
+    3. Run ``varco_fastapi.di.bootstrap()`` for framework defaults.
     4. Bind ``AbstractAuthorizer`` → ``BaseAuthorizer`` (permissive).
     5. Bind example-local ``@Singleton`` classes.
 
@@ -130,9 +130,15 @@ def _build_container(db_url: str) -> tuple[DIContainer, object]:
     container.provide(_uow_provider)
 
     # ── 3. VarcoFastAPI defaults ──────────────────────────────────────────────
-    container.install(VarcoFastAPIModule)
+    # 4.0 (Plan 049): the framework @Configuration is VarcoFastAPIConfiguration; the
+    # 4.0 hand-wired form is the package bootstrap() (scan-installs it, idempotent,
+    # so create_varco_app's FastAPIModule re-running it later is safe).
+    fastapi_bootstrap(container)
 
     # ── 4. Permissive authorizer ──────────────────────────────────────────────
+    # 4.0 (Plan 053 / FLIP-5): a class-keyed bind of BaseAuthorizer is gated
+    # exactly like the scanned fallback — run with VARCO_SECURITY_ENV=development
+    # (see README). A production app registers a real AbstractAuthorizer.
     container.bind(AbstractAuthorizer, BaseAuthorizer)
 
     # ── 5. Example-local @Singleton classes ───────────────────────────────────
@@ -333,7 +339,7 @@ def create_app(db_url: str | None = None) -> tuple[FastAPI, DIContainer]:
 
     Steps:
     1. Resolve the database URL from the argument or ``DATABASE_URL`` env var.
-    2. Build the DI container (SAConfig, VarcoFastAPIModule, varco_sa, authorizer).
+    2. Build the DI container (SAConfig, varco_fastapi bootstrap, varco_sa, authorizer).
     3. Resolve ``NoteService`` from the container (singleton).
     4. Build the HTTP router around the resolved service.
     5. Register service-layer exception handlers.

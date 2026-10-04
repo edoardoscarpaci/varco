@@ -50,7 +50,8 @@ class ProductService(
     the injected ``IUoWProvider`` (resolved to ``InMemoryUoWProvider`` via DI).
 
     Authorization uses the default ``BaseAuthorizer`` (permissive) — no auth
-    is required for any operation in this minimal example.
+    is required for any operation in this minimal example. Since 4.0 it binds
+    only under ``VARCO_SECURITY_ENV=development`` (Plan 053 / FLIP-5).
 
     Class injection (via providify):
         - ``uow_provider``  → ``IUoWProvider`` (``InMemoryUoWProvider``)

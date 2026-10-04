@@ -832,7 +832,7 @@ def build_wiring_report(
     extra_deprecations: Sequence[DeprecationRecord] = (),
     environment: str = "unknown",
     enforce: str = "unknown",
-    enforce_source: Literal["code", "env", "default"] = "default",
+    enforce_source: Literal["code", "env", "default", "derived"] = "default",
 ) -> WiringReport:
     """
     Assemble a ``WiringReport`` from public reads over *container*
@@ -866,6 +866,9 @@ def build_wiring_report(
             ``SecurityPostureSettings`` facts. Supplied by a
             ``varco_fastapi``-aware caller because ``varco_core`` must not
             import that class; default to the honest ``"unknown"``.
+            ``enforce_source="derived"`` (Plan 054 / §D-compose) means
+            ``enforce`` was unset and derived from ``environment`` — the
+            renderer prints ``(derived from VARCO_SECURITY_ENV=<env>)``.
 
     Returns:
         A frozen ``WiringReport``.
@@ -962,7 +965,7 @@ class WiringReport:
     providify_version: str
     environment: str
     enforce: str
-    enforce_source: Literal["code", "env", "default"]
+    enforce_source: Literal["code", "env", "default", "derived"]
     modules: tuple[ModuleStatus, ...]
     seams: tuple[SeamStatus, ...]
     features: tuple[SeamStatus, ...]
@@ -1008,9 +1011,17 @@ class WiringReport:
     def render(self) -> str:
         """The text form ``varco diagnose`` and the startup log print."""
         lines: list[str] = []
+        # Plan 054 / §D-compose: a derived mode names what it was derived
+        # from, so an operator reading the report before deploy knows the
+        # consequence (e.g. `refuse` because VARCO_SECURITY_ENV is unset).
+        enforce_origin = (
+            f"derived from VARCO_SECURITY_ENV={self.environment}"
+            if self.enforce_source == "derived"
+            else self.enforce_source
+        )
         lines.append(
             f"varco {self.varco_version} · providify {self.providify_version} · "
-            f"environment={self.environment} · enforce={self.enforce} ({self.enforce_source})"
+            f"environment={self.environment} · enforce={self.enforce} ({enforce_origin})"
         )
         if self.static:
             lines.append(

@@ -18,14 +18,15 @@ DESIGN: ``apply_update`` uses ``domain_replace()`` not ``dataclasses.replace()``
     ✅ No manual ``object.__setattr__`` in the assembler.
     ❌ Requires ``varco_core.model.domain_replace`` instead of stdlib.
 
-DESIGN: ``created_at`` stamped in assembler fallback, primary stamp in service
-    The service ``_prepare_for_create`` hook stamps both timestamps before
-    ``save()``.  The assembler's ``to_read_dto()`` falls back to ``now()``
-    only as defence-in-depth for malformed data — it should never be needed.
+DESIGN: timestamps are owned by the mapper; assembler only falls back
+    The varco mapper stamps ``created_at``/``updated_at`` (``to_orm`` on
+    INSERT, ``sync_to_orm`` refreshes ``updated_at`` on UPDATE).  The
+    assembler's ``to_read_dto()`` falls back to ``now()`` only as
+    defence-in-depth for malformed data — it should never be needed.
 
     ✅ Assembler stays mostly pure (no control flow on "has this been saved?").
-    ✅ Service hook is the authoritative timestamp source.
-    ❌ Dual stamping is a minor code smell — acceptable for clarity.
+    ✅ The mapper is the single authoritative timestamp source.
+    ❌ The ``now()`` fallback can mask a missing stamp — acceptable for clarity.
 
 Thread safety:  ✅ Stateless — all methods are pure transformations.
 Async safety:   ✅ No I/O — all methods are synchronous.
@@ -62,8 +63,8 @@ class PostAssembler(AbstractDTOAssembler[Post, PostCreate, PostRead, PostUpdate]
         generates a UUID via ``default_factory=uuid4`` on INSERT.
 
         ``created_at`` and ``updated_at`` are inherited from ``AuditedDomainModel``
-        and default to ``None`` (``init=False``).  They are stamped by
-        ``PostService._prepare_for_create()`` before ``save()``.
+        and default to ``None`` (``init=False``).  They are stamped by the
+        varco mapper (``to_orm``) when the repository INSERTs the entity.
 
         Args:
             dto: Validated ``PostCreate`` payload from the HTTP layer.
@@ -93,11 +94,11 @@ class PostAssembler(AbstractDTOAssembler[Post, PostCreate, PostRead, PostUpdate]
         Edge cases:
             - ``entity.created_at`` should never be ``None`` for a persisted entity.
               The fallback to ``now()`` is defence-in-depth — it surfaces a real
-              service-layer bug (missed ``_prepare_for_create``) as a wrong timestamp
+              mapper/persistence bug (missing stamp) as a wrong timestamp
               rather than a 500 ValidationError.
         """
         # Fallback to now() only as safety net — properly stamped entities always
-        # have real timestamps populated by _prepare_for_create or the mapper.
+        # have real timestamps populated by the mapper.
         now = datetime.now(UTC)
         return PostRead(
             pk=entity.pk,
@@ -117,7 +118,9 @@ class PostAssembler(AbstractDTOAssembler[Post, PostCreate, PostRead, PostUpdate]
         from the original.  Preserving ``_raw_orm`` is critical — it tells the
         repository to perform an UPDATE, not an INSERT.
 
-        ``updated_at`` is reset to now() so the PUT always refreshes the timestamp.
+        ``updated_at`` is NOT set here — it is an ``init=False`` field, which
+        ``domain_replace()`` (like ``dataclasses.replace()``) rejects with a
+        ``ValueError``; the mapper's ``sync_to_orm`` refreshes it on UPDATE.
         ``created_at`` is preserved from the original — it is write-once.
 
         Args:
@@ -135,17 +138,14 @@ class PostAssembler(AbstractDTOAssembler[Post, PostCreate, PostRead, PostUpdate]
             - ``created_at`` is write-once — ``domain_replace`` copies it from the
               original automatically because it is an ``init=False`` field.
         """
-        # Reset updated_at to now — every PUT refreshes the modification timestamp.
-        now = datetime.now(UTC)
+        # Business fields only — created_at/updated_at are init=False, so
+        # domain_replace() copies them from the original and the mapper's
+        # sync_to_orm() refreshes updated_at on the UPDATE.
         return domain_replace(
             entity,
             title=dto.title,
             content=dto.content,
             author=dto.author,
-            # Only updated_at is overwritten — created_at is write-once and
-            # preserved by domain_replace() copying init=False fields from the
-            # original.
-            updated_at=now,
         )
 
 

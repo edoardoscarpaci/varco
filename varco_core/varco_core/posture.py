@@ -31,10 +31,11 @@ callable protocol (§D-posture, rejected candidates)
        is the one sanctioned read — zero contributions is a legal, empty
        ``()`` (never a ``LookupError``).
     ❌ Small classes where functions used to live in ``varco_fastapi``
-       (currently five: ``HttpEdgeCollector``/``LocalPostureCollector``/
+       (seven: ``HttpEdgeCollector``/``LocalPostureCollector``/
        ``AuthPostureCollector``/``TenantPostureCollector``/
-       ``DataPostureCollector`` — Plan 057 / `RO-5` is expected to add a
-       sixth, ``RedactionPostureCollector``, once it lands). Accepted —
+       ``DataPostureCollector``/``RedactionPostureCollector`` (Plan 057 /
+       RO-5) and the opt-in ``DIPostureCollector`` (Plan 047/054)).
+       Accepted —
        §D-posture's own trade-off record.
 
 Thread safety:  ✅ ``PostureFinding``/``PostureSeverity`` are frozen/enum.

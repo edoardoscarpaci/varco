@@ -83,6 +83,7 @@ from varco_sa.rls_autogen import (
     RlsTablePlan,
     plan_tenant_rls,
     render_tenant_rls_ddl,
+    rls_candidate_tables,
     tenant_rls_downgrade,
     tenant_rls_upgrade,
 )
@@ -90,7 +91,8 @@ from varco_sa.rls_framework import framework_rls_tables
 from varco_sa.saga import SASagaRepository, sagas_metadata
 from varco_sa.schema_guard import SchemaDrift, SchemaDriftReport, SchemaGuard
 from varco_sa.tenancy.rls_check import RlsPosture, inspect_rls_posture
-from varco_sa.tenancy.rls_session import install_rls_tenant_hook
+from varco_sa.tenancy.rls_posture import RlsPostureCollector, rls_findings
+from varco_sa.tenancy.rls_session import hook_installed, install_rls_tenant_hook
 from varco_sa.type_coercion import registry_from_sa_model
 from varco_sa.uow import SQLAlchemyUnitOfWork
 
@@ -168,8 +170,12 @@ __all__ = [
     "framework_rls_tables",
     "inspect_rls_posture",
     "install_rls_tenant_hook",
+    "hook_installed",
+    "RlsPostureCollector",
+    "rls_findings",
     "plan_tenant_rls",
     "render_tenant_rls_ddl",
+    "rls_candidate_tables",
     "tenant_rls_downgrade",
     "tenant_rls_upgrade",
 ]

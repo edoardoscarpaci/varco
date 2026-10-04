@@ -23,7 +23,7 @@ the rejected-in-3.2 "require_jti=True when a store is bound" alternative at `:38
 `design/research/009-token-revocation-and-credential-storage.md` §2 (jti availability per IdP —
 Auth0/Keycloak/Cognito ship none by default), §5 (skew); `design/research/010-default-implementation-di-conventions.md`
 §3 (*"for authorization, the default should refuse to start if no authorizer is configured"*);
-`CONTRIBUTING.md:91-105` (removal window, 12-month floor). providify **2.1.0** semantics cited from
+`CONTRIBUTING.md:91-105` (removal window, 12-month floor). providify **2.1.1** semantics cited from
 `/home/edoardo/projects/providify` (`pyproject.toml:3`), never from its README.
 
 > ⚠️ **Five premises corrected from source while writing this plan; each reshapes a §D block.**
@@ -129,7 +129,7 @@ escape hatch, and posture.
 class BaseAuthorizer(AbstractAuthorizer): ...
 ```
 
-Semantics, all from providify 2.1.0 source: `RequiresMarker.is_satisfied()` reads `os.environ`
+Semantics, all from providify 2.1.1 source: `RequiresMarker.is_satisfied()` reads `os.environ`
 on every `_filter()` call (`metadata.py:320-331`, `scope.py:849-857`) — unset, `""`, `production`,
 `dev`, `Development` all → `False`; `_binding_is_active()` returns `False` at `container.py:2005`;
 the binding never enters the candidate set, so for a request `AbstractAuthorizer`:
@@ -143,7 +143,7 @@ the binding never enters the candidate set, so for a request `AbstractAuthorizer
 
 | Candidate | ✅ | ❌ |
 |---|---|---|
-| **(a) chosen: `@Requires` on the `@Fallback` class** | *Literally* "refuses to bind": outside development the binding does not exist, for every consumer at once (`get`/`aget`/`get_all`/`is_resolvable`/`validate`); zero container state, no varco predicate code, lazy (a test's `monkeypatch.setenv` is honoured on the next `get()`); providify's own `validate()` explains it (`CONDITION_INACTIVE` renders the variable's current value) and 052's report/`varco diagnose` show it as *inactive: condition* without any 053 code; the escape hatch is the variable 036 already defined; independent of 054 (refusal does not depend on `enforce`) and of 049 (does not depend on the posture module being on); brief 010 §3's varco implication made mechanical | The runtime `LookupError` text (`:2848-2851`) says "Did you forget container.bind()" — providify cannot know a gated binding was the intended one; mitigated by quoting the text in §Migration/CHANGELOG and by `posture.authorizer_unbound`'s remediation. A code-configured `SecurityPostureSettings(environment="development")` does **not** open the gate (§D-flip5-escape). A `BaseAuthorizer` singleton cached in `development` survives an env flip (`scope.py:872-876`) — irrelevant to a real process, named in §Edge cases |
+| **(a) chosen: `@Requires` on the `@Fallback` class** | *Literally* "refuses to bind": outside development the binding does not exist, for every consumer at once (`get`/`aget`/`get_all`/`is_resolvable`/`validate`); zero container state, no varco predicate code, lazy (a test's `monkeypatch.setenv` is honoured on the next `get()`); providify's own `validate()` explains it (`CONDITION_INACTIVE` renders the variable's current value) and 052's report/`varco diagnose` show it as *inactive: condition* without any 053 code; the escape hatch is the variable 036 already defined; independent of 054 (refusal does not depend on `enforce`) and of 049 (does not depend on the posture module being on); brief 010 §3's varco implication made mechanical | The runtime `LookupError` text (`:2848-2851`) says "Did you forget container.bind()" — providify cannot know a gated binding was the intended one; mitigated by quoting the text in §Migration/CHANGELOG and by `posture.authorizer_unbound`'s remediation. A code-configured `SecurityPostureSettings(environment="development")` does **not** open the gate (§D-flip5-escape). A `BaseAuthorizer` singleton cached in `development` is not evicted by an env flip (`scope.py:872-876`), but the gate is re-checked on every lookup, so after a flip away from `development` it is invisible (`LookupError` — fails closed) and flipping back returns the same cached instance — irrelevant to a real process, named in §Edge cases |
 | (b) provider stays unconditional; the posture collector escalates `posture.base_authorizer_bound` to `ERROR`/`HIGH` outside development and 054's `refuse` blocks | No DI change; one finding | Does **not** refuse to bind — under `enforce="warn"` (any app that took 054's escape hatch, or `VARCO_SECURITY_POSTURE_ENABLED=false`, or a hand-wired container with no posture module) the permissive authorizer silently serves production: the exact 3.2 state the row exists to end. Makes FLIP-5 a presentation change hostage to 054 **and** 049 both being on; the slice map says 053–057 are independently mergeable. Rejected |
 | (c) unconditional binding whose `__init__` raises outside development | Refuses for bare-container users with a varco-authored message | `validate()` is clean while construction is guaranteed to fail — breaks providify's own `ERROR` contract (*"guaranteed to fail at resolution time"*, `validation.py:44-45`); 052's report names `BaseAuthorizer` as the live implementation — a lie; the posture collector's `try/except Exception` swallows it into `NOT_ASSESSED`; providify has the exact primitive for "this binding does not exist here". Rejected |
 | (d) `@Requires(condition=lambda: SecurityPostureSettings().environment == "development")` | Reads through pydantic | A pydantic model construction on **every** `_filter()` call for `AbstractAuthorizer` (providify never caches, `scope.py:849-854`); still env-only (a zero-arg predicate cannot see a container-bound settings instance — 047 §D-features row 3's reason); `CONDITION_INACTIVE` renders `condition=<lambda>` instead of the variable name. Rejected — `env=`/`value=` is the same truth with a better message and no per-lookup cost |
@@ -399,10 +399,10 @@ blast radius.
 
 ### Phase A — FLIP-5
 
-1. [ ] **Preflight.** Confirm 045 landed: `rg -n '@Fallback' varco_core/varco_core/auth/authorizer.py`
+1. [x] **Preflight.** Confirm 045 landed: `rg -n '@Fallback' varco_core/varco_core/auth/authorizer.py`
        → 1 hit and `rg -n '_FALLBACK_PRIORITY' varco_*/` → 0 hits (if either fails, stop — this plan
        builds on 045). Confirm providify: `uv run python -c "import importlib.metadata as m;
-       print(m.version('providify'))"` → `2.1.0`; re-read and record in
+       print(m.version('providify'))"` → `2.1.1`; re-read and record in
        `/tmp/claude-1000/-home-edoardo-projects-varco/625af1a2-0cf8-4199-b924-0b3f986861e6/scratchpad/053-preflight.txt`
        every providify `file:line` in §Context (`scope.py:818-967,976-1005`,
        `metadata.py:265-334`, `container.py:1904-2005,2814-2853,6006-6065,6193-6209,6653-6697,7422`,
@@ -415,7 +415,7 @@ blast radius.
        → `True` today (records the pre-flip state). **Verify**: the scratchpad file exists with
        ≥ 12 confirmations and the pre-flip `True`.
 
-2. [ ] `varco_core/tests/test_base_authorizer.py` (red) — (a) `fresh_container` fixture (`:65-77`)
+2. [x] `varco_core/tests/test_base_authorizer.py` (red) — (a) `fresh_container` fixture (`:65-77`)
        gains `monkeypatch.setenv("VARCO_SECURITY_ENV", "development")` with a comment naming FLIP-5;
        `TestBaseAuthorizerDI` (`:236-260`) otherwise unchanged. (b) New `class TestBaseAuthorizerGate`
        (all `async def`, a fresh container per test via `container.scan("varco_core.auth.authorizer")`):
@@ -426,9 +426,11 @@ blast radius.
        `test_empty_string_is_strict` (`=""`); `test_development_binds` (`=development` →
        `isinstance(get(AbstractAuthorizer), BaseAuthorizer)`, same instance twice);
        `test_gate_is_lazy` — unset → `LookupError`; `setenv(development)` → resolves on the very next
-       `get()` with no re-scan (cites `scope.py:849-857`); `test_cached_singleton_survives_flip` —
-       `development` → `get()`; `setenv(production)` → `get()` still returns the cached instance
-       (cites `scope.py:872-876`; documents the no-eviction caveat rather than pretending it away);
+       `get()` with no re-scan (cites `scope.py:849-857`); `test_flip_hides_cached_singleton_without_evicting` —
+       `development` → `get()`; `setenv(production)` → `get()` raises `LookupError` (the gate is
+       re-checked per lookup — fails closed); `setenv(development)` → `get()` returns the **same**
+       cached instance (cites `scope.py:872-876`; documents the no-eviction caveat rather than
+       pretending it away — measured against providify 2.1.1);
        `test_class_keyed_bind_is_gated` — production; `container.bind(AbstractAuthorizer, BaseAuthorizer)`
        → still `LookupError` (premise (3)); `test_instance_binding_is_not_gated` — production;
        a `Provider(singleton=True)` closure returning `BaseAuthorizer()` with `returns=AbstractAuthorizer`
@@ -447,7 +449,7 @@ blast radius.
        `test_app_authorizer_wins_in_every_environment`, `test_instance_binding_is_not_gated`,
        `test_subclass_is_not_gated` (which pass today and are the controls).
 
-3. [ ] `varco_core/varco_core/auth/authorizer.py` — add `from providify import Requires` (beside
+3. [x] `varco_core/varco_core/auth/authorizer.py` — add `from providify import Requires` (beside
        045's `Fallback`); stack `@Requires(env="VARCO_SECURITY_ENV", value="development")` on the
        class (order relative to `@Fallback`/`@Singleton` is irrelevant, `scope.py:1001-1005`).
        Rewrite the module docstring `:1-49`: the "permissive by default" DESIGN block becomes
@@ -465,7 +467,7 @@ blast radius.
        `uv run pytest varco_core/tests/test_service.py -q` — `:981-1007` now red (fixed in Step 4);
        the Step 1 one-liner prints `False`.
 
-4. [ ] In-repo sweep, explicit per test (§D-flip5-tests): `varco_core/tests/test_service.py:981-1007`
+4. [x] In-repo sweep, explicit per test (§D-flip5-tests): `varco_core/tests/test_service.py:981-1007`
        (`monkeypatch.setenv(... "development")` before the scan, one-line comment "FLIP-5");
        `varco_casbin/tests/test_di.py:20-55` — the fixture sets `development`; **add**
        `test_policy_authorizer_needs_no_development_env`: `monkeypatch.delenv("VARCO_SECURITY_ENV",
@@ -477,7 +479,7 @@ blast radius.
        (documents §Edge cases; the existing tests set `development` or bind their own).
        **Verify**: `make test PKG=varco_core`, `make test PKG=varco_casbin` green.
 
-5. [ ] `varco_fastapi/tests/test_posture_collectors.py` (red first): `:103-116` sets
+5. [x] `varco_fastapi/tests/test_posture_collectors.py` (red first): `:103-116` sets
        `development` and keeps asserting `posture.base_authorizer_bound` present (severity now
        `INFO` after demotion — assert the pre-demotion severity through the collector directly,
        `LocalPostureCollector(container=…).collect()` / `_collect_local(container=…)`, is `WARN`);
@@ -508,7 +510,7 @@ blast radius.
 
 ### Phase B — FLIP-034-2 and FLIP-034-3
 
-6. [ ] `varco_core/tests/test_jwt_authority.py` (locate: `rg -l 'JwtAuthority' varco_core/tests`;
+6. [x] `varco_core/tests/test_jwt_authority.py` (locate: `rg -l 'JwtAuthority' varco_core/tests`;
        add a `TestMintJti` class, red): `test_token_carries_uuid4_jti_by_default` — `authority.token()
        .build().jti` parses as `uuid.UUID(jti, version=4)`; `test_two_tokens_differ`;
        `test_signed_token_carries_jti` — `authority.verify(authority.sign(...))`'s raw claims contain
@@ -522,7 +524,7 @@ blast radius.
        `KEYWORD_ONLY` (the §D-034-gate-style guard for a class the api-surface check cannot see).
        **Verify**: red on all but `test_hand_built_builder_is_not_minted`.
 
-7. [ ] `varco_core/varco_core/authority/jwt_authority.py` — `__init__` (`:125-160`) and `from_pem()`
+7. [x] `varco_core/varco_core/authority/jwt_authority.py` — `__init__` (`:125-160`) and `from_pem()`
        (`:164-246`) gain `mint_jti: bool = True` (keyword-only; `__slots__` `:120-123` gains
        `"_mint_jti"`); `token()` (`:267-287`) seeds `with_random_jti()` when set; docstrings: `Args`
        for both constructors, `token()`'s `Returns` ("… with `iss` and, unless `mint_jti=False`, a
@@ -533,7 +535,7 @@ blast radius.
        **Verify**: Step 6 green; the rest of the authority/JWT suites unmodified and green
        (`uv run pytest varco_core/tests -q -k "jwt or authority or registry"`).
 
-8. [ ] `varco_core/tests/test_registry_revocation.py` (locate: `rg -l '_check_revocation\|revocation_require_jti' varco_core/tests`;
+8. [x] `varco_core/tests/test_registry_revocation.py` (locate: `rg -l '_check_revocation\|revocation_require_jti' varco_core/tests`;
        add `TestDerivedRequireJti`, red) — a registry whose `verify()` reaches `_check_revocation`
        (reuse the file's existing HS/RS fixture and a `jti`-less token built with `JwtBuilder()`
        directly): `test_settings_default_is_none` — `JwtVerificationSettings().revocation_require_jti is None`
@@ -556,7 +558,7 @@ blast radius.
        require_jti_derived True` (no store: derived `False`). **Verify**: red on the derivation and
        posture tests.
 
-9. [ ] Implementation: `varco_core/varco_core/jwt/config.py:111` → `revocation_require_jti: bool |
+9. [x] Implementation: `varco_core/varco_core/jwt/config.py:111` → `revocation_require_jti: bool |
        None = None`; docstring `:69-76` → "``None`` (the 4.0 default, Plan 053 / FLIP-034-3): derived
        at check time — ``True`` iff the registry's wired store is not a ``NullTokenRevocationStore``.
        ``true``/``false`` (env or instance) override the derivation in either direction. Auth0,
@@ -580,7 +582,7 @@ blast radius.
 
 ### Phase C — FLIP-034-1
 
-10. [ ] `varco_core/tests/test_deprecation.py` (locate; add, red): `test_warn_deprecated_message_shape`
+10. [x] `varco_core/tests/test_deprecation.py` (locate; add, red): `test_warn_deprecated_message_shape`
         — `pytest.warns(DeprecationWarning, match=r"^Thing\(x=\.\.\.\) is deprecated since 4\.0\.0 and will be removed in 5\.0\.0\. Use Other instead\.$")`;
         `test_warn_deprecated_blames_caller` — `warnings.catch_warnings(record=True)` → `w.filename`
         is the test file; `test_warn_deprecated_stacklevel_passthrough` — `stacklevel=3` from a
@@ -594,7 +596,7 @@ blast radius.
         `uv run python scripts/api_surface.py` (regenerate; one addition). **Verify**: green;
         `uv run python scripts/api_surface.py --check` clean.
 
-11. [ ] `varco_fastapi/tests/milestone_a/test_server_auth.py` — the tests *about* `keys=`
+11. [x] `varco_fastapi/tests/milestone_a/test_server_auth.py` — the tests *about* `keys=`
         (`:76-102`, `:493`, `:536-537`) wrap construction in `pytest.warns(DeprecationWarning,
         match=r"ApiKeyAuth\(keys=")`; **add** `test_keys_path_warns_once_with_since_and_removed_in`
         (exact message, `w.filename` is the test file — proves `stacklevel=3`) and
@@ -616,7 +618,7 @@ blast radius.
 
 ### Phase D — FLIP-034-4
 
-12. [ ] `varco_fastapi/tests/milestone_a/test_server_auth.py` (red): `test_passthrough_requires_acknowledgement`
+12. [x] `varco_fastapi/tests/milestone_a/test_server_auth.py` (red): `test_passthrough_requires_acknowledgement`
         — `PassthroughAuth()` → `pytest.raises(TypeError, match="acknowledge_unverified")`;
         `test_passthrough_false_is_a_type_error` — `PassthroughAuth(acknowledge_unverified=False)`  # type: ignore[arg-type]
         → `TypeError` whose message contains "literally True"; `test_passthrough_signature_is_required_keyword_only`
@@ -629,7 +631,7 @@ blast radius.
         is True`). `test_posture_collectors.py`: an acknowledged instance → `auth.passthrough_bound`
         WARN unchanged. **Verify**: red on the first three.
 
-13. [ ] `varco_fastapi/varco_fastapi/auth/server_auth.py:547-548` — §D-passthrough's `__init__`
+13. [x] `varco_fastapi/varco_fastapi/auth/server_auth.py:547-548` — §D-passthrough's `__init__`
         (`from typing import Literal`); docstring `:533-541`: `Args: acknowledge_unverified` ("must
         be literally ``True``; the parameter *is* the warning that used to live in this docstring"),
         `Raises: TypeError` (both shapes), a "DESIGN: ``Literal[True]`` + ``TypeError``, not the
@@ -642,7 +644,7 @@ blast radius.
 
 ### Docs (same commit as the code — feedback memory)
 
-14. [ ] `technical_docs/features/credential-and-token-lifecycle.md` — §"S2 / S14" (`:20`): `keys=`
+14. [x] `technical_docs/features/credential-and-token-lifecycle.md` — §"S2 / S14" (`:20`): `keys=`
         deprecated 4.0.0 → 5.0.0, `hashed_keys=` the only documented path, the `warn_deprecated`
         shape; §"varco does not mint `jti` automatically" (`:155-161`) → "varco mints `jti` by
         default (4.0)": `mint_jti=False`, per-token override/opt-out, the 3.x-token bridge;
@@ -715,7 +717,7 @@ blast radius.
       `rg -n 'PassthroughAuth\(\)' README.md technical_docs/ examples/ varco_*/varco_*` → 0;
       `rg -n 'does not mint' technical_docs/ README.md` → 0.
 
-15. [ ] `CHANGELOG.md` — under `## [Unreleased]` (`:10`), above the existing blocks:
+15. [x] `CHANGELOG.md` — under `## [Unreleased]` (`:10`), above the existing blocks:
         `### BREAKING — credential and authorization default flips (Plan 053, FLIP-5 / FLIP-034-1 / FLIP-034-2 / FLIP-034-3 / FLIP-034-4)`
         with five bullets, each naming default-before, default-after, the escape hatch, and the
         posture id: FLIP-5 (quote providify's `LookupError` text and the `ConfigurationError`
@@ -731,7 +733,7 @@ blast radius.
 
 ### Verification
 
-16. [ ] `make test` (all eleven suites); `make lint` (no-`PKG` path: `api-check` clean **with the
+16. [x] `make test` (all eleven suites); `make lint` (no-`PKG` path: `api-check` clean **with the
         regenerated snapshot**, `asyncapi-check` **unchanged**, `import-budget --warn-only` no
         breach); `make type-check` clean (one new `# type: ignore[arg-type]` in a test);
         `rg -n 'VARCO_SECURITY_ENV' varco_*/tests examples/` lists only the explicit per-test
@@ -752,9 +754,12 @@ blast radius.
   env var unset** → posture demotes, `BaseAuthorizer` still absent → `posture.authorizer_unbound`
   HIGH (never demoted) is emitted and 052's preflight refuses. The Pitfalls row says "export the
   variable".
-- **`BaseAuthorizer` resolved in development, then the variable flipped in-process** → the cached
-  singleton keeps serving (`scope.py:872-876`); pinned by `test_cached_singleton_survives_flip`.
-  A real process never flips its own environment; a test that must uses a fresh container.
+- **`BaseAuthorizer` resolved in development, then the variable flipped in-process** → the gate
+  is re-checked on every lookup (providify 2.1.1), so the next `get()` raises `LookupError` (fails
+  closed); the cached singleton is not evicted (`scope.py:872-876`) — flipping back to
+  `development` returns the same instance. Pinned by
+  `test_flip_hides_cached_singleton_without_evicting`. A real process never flips its own
+  environment; a test that must uses a fresh container.
 - **`container.bind(AbstractAuthorizer, BaseAuthorizer)` in production** → still gated (premise
   (3)) — pinned. An operator who copied 3.2's README snippet gets the same `LookupError`, and the
   §Migration row points at `bind_instance`.
@@ -848,27 +853,27 @@ git diff --stat -- design/api-freeze-and-standards/measurements/asyncapi-example
 
 ## Done
 
-- [ ] `BaseAuthorizer` carries `@Requires(env="VARCO_SECURITY_ENV", value="development")`;
+- [x] `BaseAuthorizer` carries `@Requires(env="VARCO_SECURITY_ENV", value="development")`;
       `is_resolvable(AbstractAuthorizer)` is `False` with the variable unset and `True` with it;
       the eleven `TestBaseAuthorizerGate` tests pass; `validate()` in production shows one
       `MISSING_BINDING` ERROR per injecting service + one `CONDITION_INACTIVE` INFO.
-- [ ] `posture.authorizer_unbound` (HIGH) and the narrowed `posture.base_authorizer_bound` (WARN)
+- [x] `posture.authorizer_unbound` (HIGH) and the narrowed `posture.base_authorizer_bound` (WARN)
       exist with tests, remediation texts, and doc rows; `refuse` blocks on the former in every
       environment.
-- [ ] `JwtAuthority(mint_jti=True)`: `token()` mints a uuid4 `jti`; `from_pem(..., mint_jti=False)`
+- [x] `JwtAuthority(mint_jti=True)`: `token()` mints a uuid4 `jti`; `from_pem(..., mint_jti=False)`
       opts out; `sign()` untouched; signature guard test in place.
-- [ ] `JwtVerificationSettings.revocation_require_jti: bool | None = None`; derived in
+- [x] `JwtVerificationSettings.revocation_require_jti: bool | None = None`; derived in
       `_check_revocation()` via `is_null_revocation_store()`; `RevocationPostureReport.require_jti_derived`;
       `auth.revocation_jti_not_required` INFO; nine registry/posture tests green.
-- [ ] `warn_deprecated()` in `varco_core.deprecation`; `ApiKeyAuth(keys=)` warns
+- [x] `warn_deprecated()` in `varco_core.deprecation`; `ApiKeyAuth(keys=)` warns
       `since="4.0.0", removed_in="5.0.0"` at the caller; the `error:` pytest rule is in place and
       the suite is green under it; api-surface snapshot regenerated.
-- [ ] `PassthroughAuth(*, acknowledge_unverified: Literal[True], required=False)`; both
+- [x] `PassthroughAuth(*, acknowledge_unverified: Literal[True], required=False)`; both
       `TypeError` shapes tested; signature guard test in place; in-repo sites updated.
-- [ ] No autouse `VARCO_SECURITY_ENV` fixture anywhere; the 052 profile (if present) binds the
+- [x] No autouse `VARCO_SECURITY_ENV` fixture anywhere; the 052 profile (if present) binds the
       permissive authorizer explicitly.
-- [ ] Docs per Step 14; CHANGELOG per Step 15; BACKLOG rows `FLIP-5`, `FLIP-034-1..4` → `done (Plan 053)`.
-- [ ] `make test`, `make lint`, `make type-check` green; AsyncAPI snapshot untouched.
+- [x] Docs per Step 14; CHANGELOG per Step 15; BACKLOG rows `FLIP-5`, `FLIP-034-1..4` → `done (Plan 053)`.
+- [x] `make test`, `make lint`, `make type-check` green; AsyncAPI snapshot untouched.
 
 ## Out of scope / Parked
 

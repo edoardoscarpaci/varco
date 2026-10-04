@@ -120,6 +120,7 @@ class JwtAuthority:
         "_kid",
         "_issuer",
         "_algorithm",
+        "_mint_jti",
     )
 
     def __init__(
@@ -131,6 +132,7 @@ class JwtAuthority:
         kid: str,
         issuer: str,
         algorithm: str,
+        mint_jti: bool = True,
     ) -> None:
         """
         Construct a ``JwtAuthority`` from pre-loaded key material.
@@ -147,6 +149,10 @@ class JwtAuthority:
             issuer:      Issuer string pre-seeded into ``JwtBuilder`` on
                          ``token()``.
             algorithm:   JWT signing algorithm (e.g. ``"RS256"``).
+            mint_jti:    When ``True`` (the 4.0 default, Plan 053 /
+                         FLIP-034-2), every ``token()`` builder is seeded
+                         with a fresh uuid4 ``jti``. ``False`` restores the
+                         3.x behaviour (no ``jti`` unless the caller sets one).
 
         Raises:
             TypeError: Never raised here — callers are responsible for passing
@@ -158,6 +164,7 @@ class JwtAuthority:
         self._kid = kid
         self._issuer = issuer
         self._algorithm = algorithm
+        self._mint_jti = mint_jti
 
     # ── Construction ──────────────────────────────────────────────────────────
 
@@ -170,6 +177,7 @@ class JwtAuthority:
         issuer: str,
         algorithm: str,
         password: bytes | None = None,
+        mint_jti: bool = True,
     ) -> JwtAuthority:
         """
         Construct a ``JwtAuthority`` from PEM-encoded private key bytes.
@@ -192,6 +200,10 @@ class JwtAuthority:
                                  ``"ES512"`` (P-521)
             password:  Passphrase for encrypted PEM files.  ``None`` for
                        unencrypted keys.
+            mint_jti:  When ``True`` (the 4.0 default, Plan 053 /
+                       FLIP-034-2), ``token()`` seeds a fresh uuid4 ``jti``
+                       on every builder. ``False`` is the per-authority
+                       opt-out (the 3.x behaviour).
 
         Returns:
             Fully initialised ``JwtAuthority``.
@@ -243,6 +255,7 @@ class JwtAuthority:
             kid=kid,
             issuer=issuer,
             algorithm=algorithm,
+            mint_jti=mint_jti,
         )
 
     # ── Read-only properties ───────────────────────────────────────────────────
@@ -266,14 +279,34 @@ class JwtAuthority:
 
     def token(self) -> JwtBuilder:
         """
-        Return a ``JwtBuilder`` pre-seeded with this authority's issuer.
+        Return a ``JwtBuilder`` pre-seeded with this authority's issuer
+        and, unless ``mint_jti=False``, a fresh uuid4 ``jti``.
 
         The returned builder is independent — call ``sign()`` to produce the
         final JWT string.  The ``kid`` header is injected automatically in
         ``sign()``, not here.
 
+        DESIGN: jti minted in ``token()``, not ``sign()`` (Plan 053 / FLIP-034-2)
+            ✅ ``token()`` is already the seeding point (``iss``); the
+               ``jti`` is visible on the builder before signing, so a later
+               ``.token_id("x")`` overrides it (last write wins) — the
+               per-token override.
+            ✅ ``sign()`` keeps its "builder used as-is" contract; passing a
+               hand-built ``JwtBuilder()`` to ``sign()`` is the per-token
+               opt-out — no new API.
+            ✅ A ``jti`` makes TOKEN-scope revocation work with zero config,
+               and never trips the derived ``revocation_require_jti=True``.
+            ❌ A caller that never calls ``token()`` gets no ``jti`` — that
+               caller is not using the authority's minting path.
+            Rejected: injecting in ``sign()`` when ``builder._jti is None``
+            (mutates another object's private state, breaks the as-is
+            contract); minting in ``JwtBuilder.__init__`` (changes the bytes
+            of every non-authority ``JwtBuilder().encode()`` user).
+
         Returns:
-            Fresh ``JwtBuilder`` with ``iss`` already set.
+            Fresh ``JwtBuilder`` with ``iss`` already set and — unless this
+            authority was constructed with ``mint_jti=False`` — a fresh
+            uuid4 ``jti``.
 
         Example::
 
@@ -284,7 +317,8 @@ class JwtAuthority:
             )
         """
         # Pre-seed issuer — caller only needs to set sub, exp, type, etc.
-        return JwtBuilder().issuer(self._issuer)
+        builder = JwtBuilder().issuer(self._issuer)
+        return builder.with_random_jti() if self._mint_jti else builder
 
     def sign(self, builder: JwtBuilder) -> str:
         """

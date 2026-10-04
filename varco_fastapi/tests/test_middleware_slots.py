@@ -26,6 +26,7 @@ EXPECTED_SLOT_NAMES = (
     "TRACING",
     "METRICS",
     "RATE_LIMIT_PRE_AUTH",
+    "TENANT_RESOLUTION",  # Plan 055 §D-flip6-slot
     "REQUEST_CONTEXT",
     "RATE_LIMIT_POST_AUTH",
     "LOCALIZATION",
@@ -45,6 +46,13 @@ class TestEdgeSlotOrdering:
 
         assert values == sorted(values)
         assert len(values) == len(set(values))
+
+    async def test_tenant_resolution_slot_position(self) -> None:
+        # Plan 055 §D-flip6-slot: inside ERROR and pre-auth rate limiting,
+        # outside REQUEST_CONTEXT (the provenance-deferral contract).
+        assert EdgeSlot.TENANT_RESOLUTION == 95
+        assert EdgeSlot.RATE_LIMIT_PRE_AUTH < EdgeSlot.TENANT_RESOLUTION < EdgeSlot.REQUEST_CONTEXT
+        assert EdgeSlot.ERROR < EdgeSlot.TENANT_RESOLUTION
 
 
 class TestMiddlewareSpec:

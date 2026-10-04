@@ -28,7 +28,9 @@ def test_check_id_set_matches_the_literal_table() -> None:
     assert check_ids <= _EXPECTED_CHECK_IDS
 
 
-def test_service_class_without_audit_redactor_emits_disabled_finding() -> None:
+def test_default_service_class_emits_no_disabled_finding() -> None:
+    # Plan 057 / FLIP-040-2: the 4.0 default redacts, so a plain subclass
+    # has nothing to report.
     from varco_core.redaction.posture import inspect_redaction_posture
     from varco_core.service.audit import AuditLogMixin
 
@@ -37,7 +39,21 @@ def test_service_class_without_audit_redactor_emits_disabled_finding() -> None:
 
     posture = inspect_redaction_posture(service_classes=(_NoRedactorService,))
     checks = {f.check for f in posture.findings}
-    assert "redaction.audit.disabled" in checks
+    assert "redaction.audit.disabled" not in checks
+
+
+def test_opted_out_service_class_emits_disabled_finding() -> None:
+    # The id is stable; its meaning is now "opted out".
+    from varco_core.redaction.posture import inspect_redaction_posture
+    from varco_core.service.audit import AuditLogMixin
+
+    class _OptedOutService(AuditLogMixin):
+        _audit_redactor = None
+
+    posture = inspect_redaction_posture(service_classes=(_OptedOutService,))
+    matches = [f for f in posture.findings if f.check == "redaction.audit.disabled"]
+    assert len(matches) == 1
+    assert "opted out" in matches[0].detail
 
 
 def test_service_class_with_audit_redactor_does_not_emit_disabled_finding() -> None:
@@ -115,3 +131,34 @@ def test_never_raises_on_nonsense_input() -> None:
 
     posture = inspect_redaction_posture(service_classes=(_NotAService,))  # type: ignore[arg-type]
     assert posture is not None
+
+
+def test_default_process_redactor_emits_no_substring_finding() -> None:
+    # Plan 057 / FLIP-040-1: the default policy is word mode.
+    from varco_core.redaction import reset_redaction_state
+    from varco_core.redaction.posture import inspect_redaction_posture
+
+    reset_redaction_state()
+    posture = inspect_redaction_posture()
+    checks = {f.check for f in posture.findings}
+    assert "redaction.patterns.substring_mode" not in checks
+
+
+def test_substring_default_redactor_emits_opted_out_finding() -> None:
+    from varco_core.redaction import (
+        PolicyRedactor,
+        RedactionPolicy,
+        reset_redaction_state,
+        set_default_redactor,
+    )
+    from varco_core.redaction.posture import inspect_redaction_posture
+
+    reset_redaction_state()
+    set_default_redactor(PolicyRedactor(RedactionPolicy(match_mode="substring")))
+    try:
+        posture = inspect_redaction_posture()
+        matches = [f for f in posture.findings if f.check == "redaction.patterns.substring_mode"]
+        assert len(matches) == 1
+        assert "opted out" in matches[0].detail
+    finally:
+        reset_redaction_state()

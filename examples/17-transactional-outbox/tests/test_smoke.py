@@ -26,9 +26,8 @@ DESIGN: session-scoped app and Postgres container
     ✅ One container + one ``create_app()`` call shared across all tests.
     ✅ Tests are additive — each creates its own records and asserts only on
        those records; empty-DB assumption is avoided.
-    ✅ The FastAPI lifespan (DDL + relay start/stop) is invoked explicitly via
-       ``httpx.AsyncClient(lifespan="auto")`` which DOES trigger lifespan in
-       httpx 0.25+.  This avoids the ``ASGITransport`` no-lifespan problem.
+    ✅ The FastAPI lifespan (DDL + relay start/stop) is entered explicitly via
+       ``app.router.lifespan_context`` — ``ASGITransport`` never triggers it.
     ❌ The relay runs with ``poll_interval=0.1`` s — tests wait up to 2 s for
        delivery.  Very fast but not instant.
 
@@ -88,9 +87,16 @@ async def app_client(db_url):
     """
     Create the FastAPI app and yield a session-scoped ``httpx.AsyncClient``.
 
-    Uses ``httpx.AsyncClient`` with the app directly (not via ``ASGITransport``)
-    so that the FastAPI ``lifespan`` IS triggered — DDL is created and the
-    ``OutboxRelay`` background task is started before any test runs.
+    ``httpx.ASGITransport`` never sends ASGI ``lifespan`` events (httpx
+    0.28), so the app's lifespan — DDL for ``orders``/``varco_outbox``/
+    ``varco_dedup_log`` and the ``OutboxRelay`` start/stop — is entered
+    explicitly via ``app.router.lifespan_context``.  Without it the first
+    INSERT fails with ``relation "orders" does not exist``.
+
+    DESIGN: drive the app's own lifespan rather than duplicating its DDL here
+        ✅ Exercises exactly the startup/shutdown code production runs.
+        ✅ No extra dependency (``asgi-lifespan``'s ``LifespanManager``).
+        ❌ Relies on Starlette's ``router.lifespan_context`` attribute.
 
     Yields:
         An ``httpx.AsyncClient`` connected to the in-process FastAPI app.
@@ -105,45 +111,51 @@ async def app_client(db_url):
 
     fastapi_app, _container = create_app(db_url)
 
-    async with httpx.AsyncClient(
-        transport=ASGITransport(app=fastapi_app),
-        base_url="http://test",
-    ) as client:
-        # Manually trigger lifespan by sending a request — ASGITransport now
-        # calls lifespan startup before the first request in modern httpx.
-        # We prime it with a health check to ensure DDL + relay are ready.
-        await client.get("/health")
+    async with (
+        fastapi_app.router.lifespan_context(fastapi_app),
+        httpx.AsyncClient(
+            transport=ASGITransport(app=fastapi_app),
+            base_url="http://test",
+        ) as client,
+    ):
         yield client
 
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
 
 
-async def _wait_for_events(
-    client: httpx.AsyncClient, *, min_count: int = 1, timeout: float = 5.0
+async def _wait_for_order_event(
+    client: httpx.AsyncClient, order_id: str, *, timeout: float = 5.0
 ) -> list[dict]:
     """
-    Poll ``GET /v1/events`` until at least ``min_count`` events are present.
+    Poll ``GET /v1/events`` until an event for ``order_id`` has been delivered.
+
+    DESIGN: wait on the specific order, never on an event *count*
+        The tests share one app, and the relay delivers earlier tests' events
+        asynchronously — a "count_before + 1" condition is satisfied by a
+        straggler from a previous test, returning before this test's event
+        lands (an observed flake).
+        ✅ Deterministic regardless of what other tests left in flight.
+        ❌ None worth naming — the order id is always known to the caller.
 
     Args:
-        client:    Test HTTP client.
-        min_count: Minimum number of events required before returning.
-        timeout:   Maximum seconds to wait before raising ``TimeoutError``.
+        client:   Test HTTP client.
+        order_id: The ``pk`` of the order whose ``OrderCreatedEvent`` to await.
+        timeout:  Maximum seconds to wait before raising ``TimeoutError``.
 
     Returns:
-        The list of event dicts from the response body.
+        The full list of event dicts from the response that contained it.
 
     Raises:
-        TimeoutError: No events appeared within ``timeout`` seconds.
+        TimeoutError: No event for ``order_id`` appeared within ``timeout`` seconds.
     """
-    deadline = asyncio.get_event_loop().time() + timeout
+    deadline = asyncio.get_running_loop().time() + timeout
     while True:
-        resp = await client.get("/v1/events")
-        events = resp.json()
-        if len(events) >= min_count:
+        events = (await client.get("/v1/events")).json()
+        if any(e["order_id"] == order_id for e in events):
             return events
-        if asyncio.get_event_loop().time() >= deadline:
-            raise TimeoutError(f"Timed out waiting for {min_count} event(s); got {len(events)}")
+        if asyncio.get_running_loop().time() >= deadline:
+            raise TimeoutError(f"Timed out waiting for the event of order {order_id!r}")
         await asyncio.sleep(0.1)
 
 
@@ -202,20 +214,15 @@ class TestOutboxRelay:
         to the consumer within a few seconds.
 
         Steps:
-        1. Record current event count (tests share an app instance).
-        2. POST a new order.
-        3. Poll until the new event appears in ``GET /v1/events``.
-        4. Verify ``order_id`` and ``amount`` match the created order.
+        1. POST a new order.
+        2. Poll until that order's event appears in ``GET /v1/events``.
+        3. Verify ``order_id`` and ``amount`` match the created order.
         """
-        # Snapshot current count — this test must create exactly +1 event.
-        before = await app_client.get("/v1/events")
-        count_before = len(before.json())
-
         resp = await app_client.post("/v1/orders", json={"amount": 99.99})
         order_pk = resp.json()["pk"]
 
-        # Poll until at least one new event appears.
-        events = await _wait_for_events(app_client, min_count=count_before + 1)
+        # Poll until this order's event appears.
+        events = await _wait_for_order_event(app_client, order_pk)
 
         # Find our specific event by order_id.
         matching = [e for e in events if e["order_id"] == order_pk]
@@ -234,10 +241,7 @@ class TestOutboxRelay:
         resp = await app_client.post("/v1/orders", json={"amount": 5.0})
         order_pk = resp.json()["pk"]
 
-        before = await app_client.get("/v1/events")
-        count_before = len(before.json())
-
-        await _wait_for_events(app_client, min_count=count_before + 1)
+        await _wait_for_order_event(app_client, order_pk)
 
         # Wait an extra relay cycle to let any duplicate tick run.
         await asyncio.sleep(0.5)

@@ -152,13 +152,19 @@ async def _create_post(client: httpx.AsyncClient, *, title: str, content: str, a
 
 
 class TestHealthCheck:
-    """GET /health returns 200."""
+    """GET /health/live returns 200."""
 
     async def test_health_returns_ok(self, app_client) -> None:
-        """Health probe must return 200 with ``{"status": "ok"}``."""
-        resp = await app_client.get("/health")
+        """Liveness probe must return 200 with ``{"status": "healthy"}``.
+
+        The app defines no ``/health`` route of its own: ``create_varco_app``
+        mounts varco's ``HealthRouter`` under ``/health`` (aggregate at
+        ``/health/``, so a bare ``/health`` is a 307 redirect).  ``/health/live``
+        is the dependency-free probe, so its body is stable.
+        """
+        resp = await app_client.get("/health/live")
         assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
+        assert resp.json() == {"status": "healthy"}
 
 
 class TestCreateAndRead:

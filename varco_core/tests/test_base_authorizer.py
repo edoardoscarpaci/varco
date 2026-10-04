@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import Annotated
 
 import pytest
-from providify import DIContainer, Singleton
+from providify import DIContainer, Inject, Provider, Singleton
 from providify.metadata import _is_fallback
 from varco_core.auth import (
     AbstractAuthorizer,
@@ -62,7 +62,7 @@ class Post(DomainModel):
 
 
 @pytest.fixture()
-def fresh_container() -> DIContainer:
+def fresh_container(monkeypatch: pytest.MonkeyPatch) -> DIContainer:
     """
     Return a brand-new DIContainer with only BaseAuthorizer scanned.
 
@@ -73,6 +73,10 @@ def fresh_container() -> DIContainer:
     Returns:
         Empty ``DIContainer`` pre-scanned for ``base_authorizer`` module.
     """
+    # FLIP-5 (Plan 053): BaseAuthorizer is a binding only under
+    # VARCO_SECURITY_ENV=development — set explicitly, never via an autouse
+    # fixture, so `rg VARCO_SECURITY_ENV varco_*/tests` lists every dependent.
+    monkeypatch.setenv("VARCO_SECURITY_ENV", "development")
     # Scan the module so the @Fallback @Singleton metadata is registered —
     # this is the path we actually want to test.
     container = DIContainer()
@@ -268,9 +272,11 @@ class TestBaseAuthorizerDI:
         assert isinstance(resolved, AppAuthorizer)
         assert not isinstance(resolved, BaseAuthorizer)
 
-    def test_base_authorizer_used_when_no_other_authorizer(self):
+    def test_base_authorizer_used_when_no_other_authorizer(self, monkeypatch: pytest.MonkeyPatch):
         # Explicitly verify the fallback path: a container with ONLY the
         # base_authorizer module scanned must resolve to BaseAuthorizer.
+        # FLIP-5 (Plan 053): only under VARCO_SECURITY_ENV=development.
+        monkeypatch.setenv("VARCO_SECURITY_ENV", "development")
         container = DIContainer()
         container.scan("varco_core.auth.authorizer")
         resolved = container.get(AbstractAuthorizer)
@@ -286,3 +292,158 @@ class TestBaseAuthorizerDI:
 
         # Must not raise — BaseAuthorizer allows unconditionally.
         await authorizer.authorize(ctx, Action.CREATE, resource)
+
+
+# ── Plan 053 / FLIP-5: BaseAuthorizer binds only under VARCO_SECURITY_ENV=development ────
+
+
+_ENV = "VARCO_SECURITY_ENV"
+
+
+def _scanned() -> DIContainer:
+    container = DIContainer()
+    container.scan("varco_core.auth.authorizer")
+    return container
+
+
+class TestBaseAuthorizerGate:
+    async def test_unset_env_is_not_a_binding(self, monkeypatch):
+        monkeypatch.delenv(_ENV, raising=False)
+        container = _scanned()
+        assert container.is_resolvable(AbstractAuthorizer) is False
+        with pytest.raises(LookupError, match="No binding found for 'AbstractAuthorizer'"):
+            container.get(AbstractAuthorizer)
+
+    async def test_production_is_not_a_binding(self, monkeypatch):
+        monkeypatch.setenv(_ENV, "production")
+        with pytest.raises(LookupError):
+            _scanned().get(AbstractAuthorizer)
+
+    async def test_case_sensitive(self, monkeypatch):
+        # providify metadata.py:328-331 compares the exact string.
+        monkeypatch.setenv(_ENV, "Development")
+        with pytest.raises(LookupError):
+            _scanned().get(AbstractAuthorizer)
+
+    async def test_empty_string_is_strict(self, monkeypatch):
+        monkeypatch.setenv(_ENV, "")
+        with pytest.raises(LookupError):
+            _scanned().get(AbstractAuthorizer)
+
+    async def test_development_binds(self, monkeypatch):
+        # Control: passes today.
+        monkeypatch.setenv(_ENV, "development")
+        container = _scanned()
+        first = container.get(AbstractAuthorizer)
+        assert isinstance(first, BaseAuthorizer)
+        assert container.get(AbstractAuthorizer) is first
+
+    async def test_gate_is_lazy(self, monkeypatch):
+        # scope.py:849-857 — the marker is re-read on every _filter().
+        monkeypatch.delenv(_ENV, raising=False)
+        container = _scanned()
+        with pytest.raises(LookupError):
+            container.get(AbstractAuthorizer)
+        monkeypatch.setenv(_ENV, "development")
+        assert isinstance(container.get(AbstractAuthorizer), BaseAuthorizer)
+
+    async def test_flip_hides_cached_singleton_without_evicting(self, monkeypatch):
+        # scope.py:872-876 — no singleton eviction on an env flip. Measured
+        # against providify 2.1.1 (Plan 053 premise corrected): the cached
+        # instance is NOT evicted, but the gate is re-evaluated on every
+        # _filter(), so after a flip to production the binding is invisible
+        # (LookupError, fail-closed) and flipping back yields the SAME cached
+        # instance — proof it was never evicted.
+        monkeypatch.setenv(_ENV, "development")
+        container = _scanned()
+        first = container.get(AbstractAuthorizer)
+        monkeypatch.setenv(_ENV, "production")
+        with pytest.raises(LookupError):
+            _scanned().get(AbstractAuthorizer)
+        with pytest.raises(LookupError):
+            container.get(AbstractAuthorizer)
+        monkeypatch.setenv(_ENV, "development")
+        assert container.get(AbstractAuthorizer) is first
+
+    async def test_class_keyed_bind_is_gated(self, monkeypatch):
+        # Premise (3): ClassBinding reads @Requires off the implementation.
+        monkeypatch.setenv(_ENV, "production")
+        container = DIContainer()
+        container.bind(AbstractAuthorizer, BaseAuthorizer)
+        with pytest.raises(LookupError):
+            container.get(AbstractAuthorizer)
+
+    async def test_instance_binding_is_not_gated(self, monkeypatch):
+        # Control: the deliberate explicit-instance escape hatch.
+        monkeypatch.setenv(_ENV, "production")
+        container = DIContainer()
+
+        def _make() -> AbstractAuthorizer:
+            return BaseAuthorizer()
+
+        container.provide(Provider(singleton=True)(_make), returns=AbstractAuthorizer)
+        assert isinstance(container.get(AbstractAuthorizer), BaseAuthorizer)
+
+    async def test_subclass_is_not_gated(self, monkeypatch):
+        # Control: @Requires is __dict__-only (scope.py:868-870).
+        monkeypatch.setenv(_ENV, "production")
+
+        @Singleton
+        class Permissive(BaseAuthorizer):
+            pass
+
+        container = DIContainer()
+        container.bind(AbstractAuthorizer, Permissive)
+        assert type(container.get(AbstractAuthorizer)) is Permissive
+
+    @pytest.mark.parametrize("env", [None, "production", "development"])
+    async def test_app_authorizer_wins_in_every_environment(self, monkeypatch, env):
+        # Control.
+        if env is None:
+            monkeypatch.delenv(_ENV, raising=False)
+        else:
+            monkeypatch.setenv(_ENV, env)
+
+        @Singleton
+        class Deny(AbstractAuthorizer):
+            async def authorize(self, ctx, action, resource) -> None:
+                raise PermissionError
+
+        container = _scanned()
+        container.bind(AbstractAuthorizer, Deny)
+        assert type(container.get(AbstractAuthorizer)) is Deny
+
+    async def test_validate_explains_the_gate(self, monkeypatch):
+        from providify.validation import IssueKind, Severity
+
+        @Singleton
+        class Svc:
+            def __init__(self, authorizer: Inject[AbstractAuthorizer]) -> None:
+                self.authorizer = authorizer
+
+        monkeypatch.delenv(_ENV, raising=False)
+        container = _scanned()
+        container.bind(Svc, Svc)
+        report = container.validate(raise_on_error=False)
+        missing = [
+            i
+            for i in report.issues
+            if i.kind is IssueKind.MISSING_BINDING
+            and i.severity is Severity.ERROR
+            and "AbstractAuthorizer" in (i.requested or "")
+        ]
+        inactive = [
+            i
+            for i in report.issues
+            if i.kind is IssueKind.CONDITION_INACTIVE and i.severity is Severity.INFO
+        ]
+        assert len(missing) == 1
+        assert len(inactive) == 1
+        assert "VARCO_SECURITY_ENV" in inactive[0].message
+        assert "is unset" in inactive[0].message
+
+        monkeypatch.setenv(_ENV, "development")
+        report = container.validate(raise_on_error=False)
+        kinds = {i.kind for i in report.issues}
+        assert IssueKind.MISSING_BINDING not in kinds
+        assert IssueKind.CONDITION_INACTIVE not in kinds

@@ -7,24 +7,18 @@ Business logic for the blog post entity backed by MongoDB.
 and overrides ``_get_repo()`` (the only required abstract method) to return the
 ``posts``-keyed repository from the active unit-of-work.
 
-The service also overrides ``_prepare_for_create()`` to stamp ``created_at``
-and ``updated_at`` timestamps before the entity is saved.  Without this, both
-fields would be ``None`` in MongoDB — the ``PostRead`` DTO expects real datetimes.
+``created_at`` / ``updated_at`` are NOT stamped here.  ``Post`` inherits them
+from ``AuditedDomainModel`` as ``init=False`` fields, and the varco mapper owns
+them exclusively: ``to_orm`` stamps both on INSERT, ``sync_to_orm`` refreshes
+``updated_at`` on every UPDATE.
 
-DESIGN: timestamp stamping in the service layer, not the assembler
-    ✅ The assembler stays pure (no ``datetime.now()`` calls, no UTC imports).
-    ✅ Timestamps are available immediately after ``save()`` returns — no
-       extra read needed to retrieve server-side timestamps.
-    ✅ ``_prepare_for_create`` is called by ``AsyncService.create()`` inside
-       the UoW, so timestamps are consistent with the write time.
-    ❌ Timestamps are set in Python, not the DB — millisecond precision
-       matches Python's ``datetime.now(UTC)`` resolution (adequate here).
-
-DESIGN: ``domain_replace()`` for timestamp stamping
-    ``_prepare_for_create`` uses ``dataclasses.replace()`` (safe here because
-    the entity is fresh and has no ``_raw_orm`` yet) rather than ``domain_replace()``.
-    Either works for stamping; ``domain_replace()`` is required in assembler's
-    ``apply_update`` where ``_raw_orm`` must be preserved.
+DESIGN: let the mapper own the audit timestamps (no ``_prepare_for_create``)
+    ✅ One authoritative source — no service/mapper double stamping.
+    ✅ ``init=False`` fields cannot be passed to ``dataclasses.replace()`` /
+       ``domain_replace()`` at all (``ValueError``), so a service-side stamp
+       would need ``object.__setattr__`` — exactly what the mapper already does.
+    ❌ The timestamps are only visible on the entity ``save()`` returns, not on
+       the freshly assembled one — fine, the router reads the saved entity.
 
 Thread safety:  ⚠️ Singleton — methods must be stateless; each call opens
                    its own unit-of-work via ``self._uow_provider.make_uow()``.
@@ -33,7 +27,6 @@ Async safety:   ✅ All public methods are ``async def``.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -45,7 +38,6 @@ from varco_core.auth.base import AbstractAuthorizer
 from varco_core.service.base import AsyncService, IUoWProvider
 
 if TYPE_CHECKING:
-    from varco_core.auth import AuthContext
     from varco_core.uow import AsyncUnitOfWork
 
 
@@ -104,48 +96,6 @@ class PostService(AsyncService[Post, UUID, PostCreate, PostRead, PostUpdate]):
             ``AsyncRepository[Post]`` backed by Beanie/Motor.
         """
         return uow.posts  # type: ignore[attr-defined]
-
-    def _prepare_for_create(self, entity: Post, ctx: AuthContext) -> Post:
-        """
-        Stamp ``created_at`` and ``updated_at`` before the first INSERT.
-
-        Called by ``AsyncService.create()`` after ``assembler.to_domain()``
-        and BEFORE ``repo.save()``.  The entity is assembled but not yet
-        persisted when this hook fires.
-
-        Args:
-            entity: Freshly assembled ``Post`` (timestamps are ``None``).
-            ctx:    Caller's auth context — not used in this example (no auth).
-
-        Returns:
-            A new ``Post`` with ``created_at`` and ``updated_at`` both set to now.
-
-        Edge cases:
-            - Always calls ``super()._prepare_for_create(entity, ctx)`` so that
-              other mixins in the MRO (e.g. ``TenantAwareService``) can also
-              stamp their fields after this hook runs.
-            - Uses ``dataclasses.replace()`` (not ``domain_replace()``) because
-              the entity is fresh — it has no ``_raw_orm`` or ``pk`` to preserve.
-              Both approaches are equivalent here; ``dataclasses.replace()`` is
-              used for clarity.
-            - The returned entity still has ``_raw_orm is None`` — it is
-              unpersisted and the repository will INSERT it.
-        """
-        entity = super()._prepare_for_create(entity, ctx)
-
-        # Stamp both timestamps to the same instant for consistency.
-        # Using UTC explicitly so the stored datetime is timezone-aware and
-        # readable without ambiguity across deployments in different time zones.
-        now = datetime.now(UTC)
-
-        # dataclasses.replace() is safe here — entity is fresh with _raw_orm=None.
-        # init=False fields (pk, created_at, updated_at) are NOT copied by
-        # dataclasses.replace(); use object.__setattr__ to stamp them.
-        # domain_replace() handles this automatically but is required only when
-        # _raw_orm must be preserved (UPDATE path, not here).
-        from varco_core.model import domain_replace as _domain_replace  # noqa: PLC0415
-
-        return _domain_replace(entity, created_at=now, updated_at=now)
 
 
 __all__ = ["PostService"]

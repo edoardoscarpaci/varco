@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from providify import DIContainer
+from varco_core.auth.api_key import hash_api_key
 from varco_core.auth.base import AuthContext
 from varco_fastapi.app import create_varco_app
 from varco_fastapi.auth import ApiKeyAuth
@@ -35,10 +36,10 @@ def _make_app():
     no_profile_ctx = AuthContext(user_id="usr_plain")  # metadata has no key at all
 
     auth = ApiKeyAuth(
-        keys={
-            "internal-key": internal_ctx,
-            "partner-key": other_profile_ctx,
-            "plain-key": no_profile_ctx,
+        hashed_keys={
+            hash_api_key("internal-key"): internal_ctx,
+            hash_api_key("partner-key"): other_profile_ctx,
+            hash_api_key("plain-key"): no_profile_ctx,
         },
         required=False,  # falls through to anonymous when no key given
     )
@@ -82,9 +83,12 @@ def test_missing_token_profile_key_returns_403_with_actionable_message():
     resp = client.get("/internal/data", headers={"X-API-Key": "plain-key"})
     assert resp.status_code == 403
     body = resp.json()
-    detail = str(body.get("detail", body))
-    assert "internal" in detail  # names the required profile
-    assert "profile" in detail.lower()
+    # Plan 054 / FLIP-10: `detail` is off by default; the RouteGuard denial
+    # text is carried structurally in `params.operation`.
+    assert "detail" not in body
+    operation = body["params"]["operation"]
+    assert "internal" in operation  # names the required profile
+    assert "profile" in operation.lower()
 
 
 # ── Unit-level RouteGuard.check() tests (no HTTP) ───────────────────────────────

@@ -12,16 +12,21 @@ dataclass↔row mapping — never the ``@register`` ORM generator (see
 Secrets encryption
 ------------------
 ``active_secrets`` are encrypted at rest via the existing ``FieldEncryptor``
-(§D-D4-signing: "no new crypto path") when ``encryptor=`` is supplied.
-⚠️ ``encryptor=None`` (the default) stores secrets in plaintext — this is a
-deliberate, documented escape hatch for local dev/tests, never the intended
-production configuration; wire a real ``FieldEncryptor`` in production.
+(§D-D4-signing: "no new crypto path"). ``encryptor`` is required since 4.0
+(Plan 056 / FLIP-13) — ``None`` or a non-``FieldEncryptor`` is a
+``TypeError``. Dev/test: ``PlaintextFieldEncryptor(acknowledge_plaintext=True)``
+(reported as ``posture.webhook_secrets_plaintext``). A 3.x deployment with
+rows written by 3.x without an encryptor runs
+``await repo.reencrypt_legacy_plaintext()`` once after upgrading.
 
 Usage::
 
+    from varco_core.encryption import FernetFieldEncryptor
     from varco_sa.webhook import SAWebhookSubscriptionRepository
 
-    repo = SAWebhookSubscriptionRepository(url="postgresql+asyncpg://...")
+    repo = SAWebhookSubscriptionRepository(
+        url="postgresql+asyncpg://...", encryptor=FernetFieldEncryptor(key)
+    )
     await repo.start()
     ...
     await repo.stop()
@@ -40,7 +45,11 @@ import sqlalchemy as sa
 from sqlalchemy import JSON, Column, DateTime, Integer, MetaData, String, Table
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from varco_core.webhook.base import WebhookSubscriptionRepository
+from varco_core.webhook.base import (
+    WebhookSubscriptionRepository,
+    plan_legacy_reencryption,
+    require_field_encryptor,
+)
 from varco_core.webhook.models import WebhookSubscription
 
 from varco_sa.metadata import register_framework_metadata as _register_fw_metadata
@@ -61,8 +70,8 @@ _subscriptions_table = Table(
     Column("tenant_id", String(255), nullable=False, index=True),
     Column("target_url", String(2048), nullable=False),
     Column("event_patterns", JSON, nullable=False),
-    # Stored as a JSON list of strings — each entry is ciphertext when an
-    # encryptor is supplied, plaintext otherwise (see module docstring).
+    # Stored as a JSON list of strings — each entry is the hex of the
+    # encryptor's output (see module docstring).
     Column("active_secrets", JSON, nullable=False),
     Column("status", String(16), nullable=False),
     Column("consecutive_failures", Integer, nullable=False, default=0),
@@ -96,14 +105,17 @@ class SAWebhookSubscriptionRepository(WebhookSubscriptionRepository):
                        ``url``. ``stop()`` never disposes an engine it did
                        not create — same ``_owns_engine`` convention as
                        ``SAIdempotencyStore``.
-        encryptor:     Optional ``FieldEncryptor`` applied to each entry of
-                       ``active_secrets`` before it is persisted, and to
-                       decrypt on read. ``None`` stores plaintext — see the
-                       module docstring's warning.
+        encryptor:     **Required.** The ``FieldEncryptor`` applied to each
+                       entry of ``active_secrets`` before it is persisted, and
+                       to decrypt on read (Plan 056 / FLIP-13). Dev/test:
+                       ``PlaintextFieldEncryptor(acknowledge_plaintext=True)``.
         engine_kwargs: Extra kwargs forwarded to ``create_async_engine()`` —
                        only meaningful with ``url=``.
 
     Raises:
+        TypeError: ``encryptor`` is omitted, ``None``, or not a
+            ``FieldEncryptor`` (e.g. the Fernet key ``bytes`` itself) — the
+            message names the Fernet one-liner, the DI path, and the dev hatch.
         ValueError: Neither or both of ``url``/``engine`` were given.
 
     Edge cases:
@@ -117,9 +129,11 @@ class SAWebhookSubscriptionRepository(WebhookSubscriptionRepository):
         *,
         url: str | None = None,
         engine: AsyncEngine | None = None,
-        encryptor: FieldEncryptor | None = None,
+        encryptor: FieldEncryptor,
         **engine_kwargs: Any,
     ) -> None:
+        # Guard first: a plaintext store must never get as far as a URL check.
+        encryptor = require_field_encryptor(encryptor, cls_name=type(self).__name__)
         if (url is None) == (engine is None):
             raise ValueError(
                 "SAWebhookSubscriptionRepository requires exactly one of url= "
@@ -158,14 +172,79 @@ class SAWebhookSubscriptionRepository(WebhookSubscriptionRepository):
             self._engine = None
 
     def _encrypt_secret(self, secret: str) -> str:
-        if self._encryptor is None:
-            return secret
         return self._encryptor.encrypt(secret.encode("utf-8")).hex()
 
     def _decrypt_secret(self, stored: str) -> str:
-        if self._encryptor is None:
-            return stored
         return self._encryptor.decrypt(bytes.fromhex(stored)).decode("utf-8")
+
+    async def reencrypt_legacy_plaintext(self, *, legacy_hex: bool | None = None) -> int:
+        """
+        Rewrite every legacy plaintext ``active_secrets`` entry as ciphertext
+        under this repository's encryptor — the one-shot 3.x → 4.0 upgrade
+        step (Plan 056 / §D-flip13-reencrypt). Not called automatically: a
+        data rewrite belongs to the operator's deploy, not to ``start()``.
+
+        An entry that decrypts cleanly is left alone; only a decrypt failure
+        marks an entry as plaintext (``reencrypt_legacy_secret``'s rule).
+        Plaintext → Fernet switch: run this on the **Fernet** repository
+        with ``legacy_hex=True`` — the ``PlaintextFieldEncryptor`` rows fail
+        Fernet decryption and are hex of the secret.
+
+        Args:
+            legacy_hex: How to read a legacy entry — see
+                ``varco_core.webhook.base.reencrypt_legacy_secret``. ``None``
+                (default) upgrades only unambiguous entries and refuses the
+                batch if any entry is ambiguous; ``True`` — hex of the secret
+                (``PlaintextFieldEncryptor`` rows); ``False`` — raw 3.x
+                secrets.
+
+        Returns:
+            The number of rows rewritten. ``0`` on a second run (idempotent).
+
+        Raises:
+            RuntimeError: Called before ``start()``.
+            AmbiguousLegacySecretError: ``legacy_hex=None`` and some entry
+                is valid hex of printable UTF-8 — names every such
+                subscription id; **nothing is written** (the whole table is
+                planned before the first update).
+
+        Edge cases:
+            - Rows are read and planned in one pass; each changed row is then
+              updated in its own transaction, so a crash mid-write leaves a
+              mix of upgraded and legacy rows, which a re-run (same
+              ``legacy_hex``) finishes.
+            - ⚠️ Run it with the encryptor that wrote any existing
+              ciphertext: under ``legacy_hex=None`` a wrong key (or a
+              destroyed ``kid``) refuses, but under an explicit
+              ``True``/``False`` real ciphertext is re-encrypted as the
+              "secret" — see ``reencrypt_legacy_secret``'s Edge cases.
+
+        Async safety:   ⚠️ Run once, from a maintenance script
+                        (``asyncio.run(repo.reencrypt_legacy_plaintext())``),
+                        not concurrently with writers.
+        """
+        engine = self._require_engine()
+        async with engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    sa.select(_subscriptions_table.c.pk, _subscriptions_table.c.active_secrets)
+                )
+            ).fetchall()
+
+        # Plan first (raises AmbiguousLegacySecretError before any write).
+        plan = plan_legacy_reencryption(
+            ((row.pk, row.active_secrets) for row in rows),
+            self._encryptor,
+            legacy_hex=legacy_hex,
+        )
+        for pk, new_secrets in plan:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    sa.update(_subscriptions_table)
+                    .where(_subscriptions_table.c.pk == pk)
+                    .values(active_secrets=new_secrets, updated_at=datetime.now(UTC))
+                )
+        return len(plan)
 
     def _row_to_entity(self, row: Any) -> WebhookSubscription:
         entity = WebhookSubscription(

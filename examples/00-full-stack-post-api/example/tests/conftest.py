@@ -73,6 +73,31 @@ from example.backends import IN_PROCESS_BACKENDS as _IN_PROCESS_BACKENDS
 _logger = logging.getLogger(__name__)
 
 
+# ── Plan 054 / FLIP-2 — posture enforcement pinned to warn ────────────────────
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _posture_warn_only() -> Iterator[None]:
+    """
+    Plan 054 / FLIP-2 (§D-flip2-tests): pin ``VARCO_SECURITY_ENFORCE=warn``.
+
+    Since 4.0 the posture preflight derives ``enforce="refuse"`` unless
+    ``VARCO_SECURITY_ENV=development``; the example app's default posture
+    collectors report production-blocking WARNs unrelated to what these tests
+    check (e.g. the ``tenant.*`` findings emitted with no
+    ``TenantSourceChain`` bound).
+
+    Session-scoped (unlike ``varco_fastapi/tests/conftest.py``'s
+    function-scoped twin) because ``running_server`` is session-scoped and
+    starts the app's lifespan before any function-scoped fixture runs; as an
+    autouse session fixture this one is set up first. A test about FLIP-2
+    itself must ``monkeypatch.delenv("VARCO_SECURITY_ENFORCE")`` first.
+    """
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("VARCO_SECURITY_ENFORCE", "warn")
+        yield
+
+
 # ── Port helper ────────────────────────────────────────────────────────────────
 
 

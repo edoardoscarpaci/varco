@@ -386,4 +386,5 @@ consumer (BACKLOG row filed, not yet wired).
 
 | Pitfall | Symptom | Root Cause | Fix |
 |---|---|---|---|
+| **Valid, correctly-signed foreign token → 401 after wiring a revocation store** | `TokenRevokedError` (reason `revocation_require_jti=True and token has no jti claim`) for every token from the issuer | The issuer emits no `jti` (Auth0/Keycloak/Cognito by default, brief 009 §2) and 4.0 derives `require_jti=True` from a wired non-Null store (Plan 053 / FLIP-034-3) | `VARCO_JWT_REVOCATION_REQUIRE_JTI=false`, or map/enable `jti` at the IdP (see `credential-and-token-lifecycle.md`) |
 | **Roles empty although the JWT has them** | `AuthContext.roles` is empty for a valid, correctly-signed token | The claim is named `sofy-roles`/`realm_access.roles`, not `roles` — the default mapping never looked there | Set `VARCO_JWT_TRANSFORM_ROLES_FIELD` (see `technical_docs/features/jwt-claim-transformer.md`) |

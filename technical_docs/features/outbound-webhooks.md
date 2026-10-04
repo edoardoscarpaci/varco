@@ -112,20 +112,38 @@ sized in real seconds.
 
 ## Secrets at rest
 
-`active_secrets` are encrypted via the existing `FieldEncryptor`/`EncryptionKeyManager` when a
-repository is constructed with `encryptor=` — no new crypto path. ⚠️ `encryptor=None` (the
-default on both `SAWebhookSubscriptionRepository` and `BeanieWebhookSubscriptionRepository`)
-stores secrets in plaintext — a documented dev/test-only escape hatch, never the intended
-production configuration. The admin surface never returns `active_secrets` on a read — only the
+`active_secrets` are encrypted via the existing `FieldEncryptor`/`EncryptionKeyManager` — no new
+crypto path. Since 4.0 (Plan 056 / FLIP-13) `encryptor` is a **required** keyword on both
+`SAWebhookSubscriptionRepository` and `BeanieWebhookSubscriptionRepository`: omitted, `None`, or
+a non-`FieldEncryptor` (e.g. the Fernet key itself) is a `TypeError` naming the fixes. Production:
+`encryptor=FernetFieldEncryptor(key)` (or bind `FieldEncryptor` for the Plan 050 provider).
+Dev/test: `PlaintextFieldEncryptor(acknowledge_plaintext=True)` — detected as
+`posture.webhook_secrets_plaintext` (WARN, blocks a production start unless suppressed) — the
+default `LocalPostureCollector` resolves the bound `WebhookSubscriptionRepository` from the
+container, so a stock `create_varco_app()` app is assessed. A 3.x deployment with rows written without an encryptor
+runs `await repo.reencrypt_legacy_plaintext()` once, with the new encryptor, after upgrading
+(idempotent; returns the row count). The only plaintext signal is "this encryptor failed to
+decrypt the entry", so run it with the key that wrote any existing ciphertext. Under the
+default `legacy_hex=None` an unambiguous entry (`whsec_…`, anything that is not valid hex of
+printable text) is upgraded as-is, and an **ambiguous** one — valid hex decoding to printable
+UTF-8, which is a `PlaintextFieldEncryptor` row, a raw 3.x hex secret, *or* real ciphertext read
+with the wrong key — is never guessed: the whole batch refuses with `AmbiguousLegacySecretError`
+naming every such subscription id, **before anything is written**. Re-run with
+`legacy_hex=True` (rows written by `PlaintextFieldEncryptor` — the Plaintext → Fernet switch) or
+`legacy_hex=False` (raw 3.x secrets, e.g. `secrets.token_hex()`). The in-memory
+repository takes no encryptor — its secrets are never at rest. The admin surface never returns `active_secrets` on a read — only the
 create and rotate-secret responses reveal a secret, and only once.
 
 ## Admin surface
 
-`varco_fastapi.webhook.mount_webhook_admin(app, *, repository=, redriver=None,
-acknowledge_bundled_admin=True, server_auth=..., admin_role="webhook-admin",
-prefix="/webhooks")` — same gated shape as `mount_reliability_admin`/`mount_tenant_admin`
-(RD-9): raises `ValueError` unless `acknowledge_bundled_admin=True`, and there is deliberately
-**no** env var and **no** `create_varco_app()` kwarg for it.
+`varco_fastapi.webhook.mount_webhook_admin(app, *, repository=, server_auth=, redriver=None,
+acknowledge_bundled_admin=True, admin_role="webhook-admin", prefix="/webhooks")` — same gated
+shape as `mount_reliability_admin`/`mount_tenant_admin` (RD-9): raises `ValueError` unless
+`acknowledge_bundled_admin=True`, and there is deliberately **no** env var and **no**
+`create_varco_app()` kwarg for it. `server_auth` is **required** since 4.0 (Plan 054 / FLIP-4):
+`None` raises `ValueError` (omitting it is a `TypeError`), at the mount and in
+`build_webhook_router` alike; `admin_role` is enforced on every route. Behind a gateway that
+already verified the caller, pass `PassthroughAuth(acknowledge_unverified=True)`.
 
 Routes: CRUD on `{prefix}/subscriptions`, `PATCH .../disable` / `.../enable`, `POST
 .../rotate-secret`, and — only when `redriver=` is given — `POST
@@ -145,9 +163,14 @@ two features.
 | Pitfall | Why | Fix |
 |---|---|---|
 | Constructing `WebhookDispatcher()` on the shipped retry defaults in production | The defaults are fast-but-Svix-*shaped* (8 attempts, sub-second delays), not Svix's real seconds schedule — see "Delivery and retry" above | Raise `VARCO_WEBHOOK_RETRY_BASE_DELAY_SECONDS`/`_RETRY_MAX_DELAY_SECONDS` to real seconds, or pass an explicit `RetryPolicy` |
-| Expecting `active_secrets` to be encrypted with no extra setup | `encryptor=None` is the constructor default — the plaintext path exists **only by hand** (`SAWebhookSubscriptionRepository(url=..., encryptor=None)`/`BeanieWebhookSubscriptionRepository(...)`). The DI path (`VARCO_WEBHOOK_BACKEND=sa`/`beanie`, Plan 050 / DI-10, §D-webhook row 4-5) requires a bound `FieldEncryptor` — no default — so a durable backend selected without one fails `validate()`/first resolution with `MISSING_BINDING` rather than silently persisting plaintext | Bind a real `FieldEncryptor` before selecting a durable `VARCO_WEBHOOK_BACKEND`; Plan 056 will additionally make the *hand* path's `encryptor=None` refuse outright at the constructor |
+| `TypeError: … encryptor must be a FieldEncryptor` on construction | Since 4.0 (Plan 056 / FLIP-13) `encryptor` is required on both durable repositories; the DI path (`VARCO_WEBHOOK_BACKEND=sa`/`beanie`) already required a bound `FieldEncryptor` (`MISSING_BINDING`) | `FernetFieldEncryptor(key)`; dev: `PlaintextFieldEncryptor(acknowledge_plaintext=True)` (hand or bound) |
+| `ValueError`/`EncryptionError` on the first read after upgrading from 3.x | Rows written without an encryptor are plaintext; a real encryptor cannot decrypt them | Run `await repo.reencrypt_legacy_plaintext()` once |
+| `AmbiguousLegacySecretError` from `reencrypt_legacy_plaintext()` | Under the default `legacy_hex=None`, an entry that fails to decrypt and is valid hex of printable UTF-8 (`"41424344"`, every `PlaintextFieldEncryptor` row, a wrong-key Fernet token) has two readings — it is never guessed, and nothing was written | Verify the encryptor decrypts a known-good row (a wrong key lands here too); then re-run with `legacy_hex=True` (rows written by `PlaintextFieldEncryptor`) or `legacy_hex=False` (raw 3.x hex secrets) |
+| `reencrypt_legacy_plaintext(legacy_hex=True/False)` run with the wrong key rewrites already-encrypted rows | Only a decrypt failure marks an entry as plaintext; a wrong key, or a destroyed `kid` under `MultiKeyEncryptorRegistry`, fails on real ciphertext too — the default refuses that shape, but an explicit `legacy_hex` re-encrypts the Fernet token as the "secret" | Check that the repository's encryptor reads a known-good row before passing `legacy_hex`; recovery is decrypting twice, by hand |
+| `posture.webhook_secrets_plaintext` blocks a production start | A `PlaintextFieldEncryptor` is bound (or an out-of-tree repository has no encryptor) | Bind a real `FieldEncryptor`; for a deliberate dev run, `VARCO_SECURITY_SUPPRESS=posture.webhook_secrets_plaintext` |
 | Passing both `settings=` and an explicit `retry_policy=`/`request_timeout_seconds=`/`disable_after_failures=` and expecting the settings value | An explicit constructor keyword is an **override** — it always wins over the settings field | Set the value in one place: the settings object for a deployment-wide value, the keyword for a one-off instance |
 | Constructing `WebhookDispatcher` in a test and being surprised by ambient config | `settings=None` constructs `WebhookSettings()`, which reads `VARCO_WEBHOOK_*` from the process environment | Pass an explicit `WebhookSettings(...)` in any test that must not see the ambient environment |
 | Assuming a per-subscription `allow_insecure_http` override exists | Deployment-wide only, by design — a tenant must never downgrade its own delivery to plaintext | Set `VARCO_WEBHOOK_ALLOW_INSECURE_HTTP` (or the settings field) for the whole deployment, never per-subscription |
 | Expecting a redirected webhook target to be followed | §D-D4-ssrf layer 4 treats any 3xx as a delivery failure | Point the subscription at the final URL directly |
 | Calling `mount_webhook_admin()` from `create_varco_app()` or via an env var | Neither exists, deliberately (RD-9) | Call `mount_webhook_admin()` explicitly after app construction |
+| `mount_webhook_admin(..., server_auth=None)` | `ValueError` since 4.0 (Plan 054 / FLIP-4) — the 3.x behaviour (mount unauthenticated with a WARNING) is gone, no escape hatch | Pass a strategy; `PassthroughAuth(acknowledge_unverified=True)` behind a verifying gateway |

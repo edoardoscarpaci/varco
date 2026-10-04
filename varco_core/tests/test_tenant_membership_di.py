@@ -41,10 +41,15 @@ class TestEnableTenantMembershipSettingsSignature:
     keyword form.
     """
 
-    async def test_settings_none_uses_env_backed_defaults(self) -> None:
+    async def test_settings_none_uses_env_backed_defaults(self, monkeypatch) -> None:
         from varco_core.tenancy.di import enable_tenant_membership
-        from varco_core.tenancy.membership import AbstractTenantMembership, ClaimTenantMembership
+        from varco_core.tenancy.membership import (
+            AbstractTenantMembership,
+            ClaimTenantMembership,
+            MissingClaimPolicy,
+        )
 
+        monkeypatch.delenv("VARCO_TENANT_MEMBERSHIP_ON_MISSING", raising=False)
         container = DIContainer()
         container.scan("varco_core", recursive=True)
         enable_tenant_membership(container, settings=None)
@@ -53,6 +58,22 @@ class TestEnableTenantMembershipSettingsSignature:
 
         assert isinstance(provider, ClaimTenantMembership)
         assert provider.claim_key == "tenants"
+        # Plan 055 / FLIP-7: the env-backed default is fail-closed.
+        assert provider.on_missing_claim is MissingClaimPolicy.DENY
+
+    async def test_env_allow_is_the_escape_hatch(self, monkeypatch) -> None:
+        # Plan 055 / FLIP-7: the one greppable opt-out restores 3.2 behaviour.
+        from varco_core.tenancy.di import enable_tenant_membership
+        from varco_core.tenancy.membership import AbstractTenantMembership, MissingClaimPolicy
+
+        monkeypatch.setenv("VARCO_TENANT_MEMBERSHIP_ON_MISSING", "allow")
+        container = DIContainer()
+        container.scan("varco_core", recursive=True)
+        enable_tenant_membership(container, settings=None)
+
+        provider = await container.aget(AbstractTenantMembership)
+
+        assert provider.on_missing_claim is MissingClaimPolicy.ALLOW
 
     async def test_explicit_settings_object_is_honoured(self) -> None:
         from varco_core.tenancy.di import enable_tenant_membership
@@ -103,7 +124,8 @@ class TestTenantMembershipSettingsFromEnv:
         settings = TenantMembershipSettings.from_env()
 
         assert settings.claim_key == "tenants"
-        assert settings.on_missing_claim is MissingClaimPolicy.ALLOW
+        # Plan 055 / FLIP-7: default flipped ALLOW -> DENY.
+        assert settings.on_missing_claim is MissingClaimPolicy.DENY
 
     def test_round_trips_both_vars(self, monkeypatch) -> None:
         from varco_core.tenancy.membership import MissingClaimPolicy, TenantMembershipSettings

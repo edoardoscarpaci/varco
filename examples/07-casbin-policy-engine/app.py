@@ -11,7 +11,7 @@ Bootstrap sequence
 ------------------
 1.  Create a fresh ``DIContainer``.
 2.  Scan ``varco_core`` — registers ``BaseAuthorizer`` and defaults.
-3.  Scan ``varco_fastapi`` — discovers ``VarcoFastAPIModule`` and framework defaults.
+3.  Scan ``varco_fastapi`` — discovers ``VarcoFastAPIConfiguration`` and framework defaults.
 4.  Install ``DocumentModule`` — registers ``IUoWProvider``.
 5.  Scan ``assembler``, ``service`` — discovers ``DocumentAssembler``,
     ``DocumentService``.
@@ -139,11 +139,11 @@ def create_app(
     # ── 3. DI container bootstrap ─────────────────────────────────────────────
     container = DIContainer()
 
-    # Scan varco_core — registers ``BaseAuthorizer`` (lowest-priority fallback)
+    # Scan varco_core — registers ``BaseAuthorizer`` (@Fallback; development-only since 4.0)
     # and other @Singleton defaults (InMemoryEventBus, etc.).
     container.scan("varco_core", recursive=True)
 
-    # Scan varco_fastapi — discovers VarcoFastAPIModule (@Configuration)
+    # Scan varco_fastapi — discovers VarcoFastAPIConfiguration (@Configuration)
     # and all framework @Singleton defaults.
     container.scan("varco_fastapi", recursive=True)
 

@@ -25,7 +25,7 @@ one coherent change:
 
 ```python
 ApiKeyAuth(
-    keys: Mapping[str, AuthContext] | None = None,       # plaintext, hashed at construction
+    keys: Mapping[str, AuthContext] | None = None,       # DEPRECATED 4.0.0 -> removed 5.0.0
     *,
     hashed_keys: Mapping[str, AuthContext] | None = None, # digest -> ctx, the production path
     pepper: bytes | str | None = None,                    # or VARCO_API_KEY_PEPPER
@@ -42,10 +42,15 @@ ApiKeyAuth(
   identical treatment (`None` by default; naming a value re-enables it and now logs at
   `warning`, not the `debug` level it used before — a since-corrected `BACKLOG.md` claim that the
   fallback "at least warns").
-- **`keys=` is hashed immediately at construction**, into the same internal
-  `dict[digest, AuthContext]` that `hashed_keys=` populates directly — no code change needed for
-  any of the 21 existing in-repo `ApiKeyAuth(keys=...)` call sites; they get constant-time digest
-  comparison for free. `varco_core.auth.api_key.hash_api_key()`/`verify_api_key()` are the
+- **`hashed_keys=` is the only documented path (4.0, Plan 053 / FLIP-034-1).** `keys=` is
+  **deprecated since 4.0.0 and removed in 5.0.0**: it still hashes immediately at construction,
+  into the same internal `dict[digest, AuthContext]` that `hashed_keys=` populates directly, but
+  emits one `DeprecationWarning` attributed to the caller —
+  `ApiKeyAuth(keys=...) is deprecated since 4.0.0 and will be removed in 5.0.0. Use
+  ApiKeyAuth(hashed_keys=...) with varco_core.auth.api_key.hash_api_key() instead.` The warning
+  is emitted by `varco_core.deprecation.warn_deprecated()` (the parameter-path sibling of
+  `deprecated()`/`deprecated_alias()`) and recorded in the deprecation ledger even under
+  `-W ignore::DeprecationWarning`. `auth.api_key_plaintext` (WARN) is unchanged. `varco_core.auth.api_key.hash_api_key()`/`verify_api_key()` are the
   stdlib-only (`hashlib`, `hmac`) primitives behind this — SHA-256, or HMAC-SHA-256 under a
   process-wide pepper, never argon2/bcrypt/scrypt (NIST SP 800-63B Rev 4 only requires a KDF for
   *low*-entropy look-up secrets; a varco-issued API key is high-entropy, so a KDF is a liability
@@ -152,13 +157,36 @@ is an object with a connection, not a string). `inspect_revocation_posture()`'s 
 `RevocationStoreUnavailableError` → 503 with a fixed detail (never the underlying exception
 message, which may carry connection strings or stack traces).
 
-### `varco does not mint `jti` automatically
+### varco mints `jti` by default (4.0, Plan 053 / FLIP-034-2)
 
-`JwtAuthority`/`JwtBuilder` are unchanged; `with_random_jti()` already exists and remains
-opt-in. `revocation_require_jti` defaults `False` — requiring one by default would break every
-Auth0/Keycloak/Cognito deployment the moment a store is wired, punishing the app for doing the
-right thing. Automatic minting is on the 4.0 flip list, reported warn-only by Plan 036's
-`inspect_revocation_posture()`.
+`JwtAuthority.token()` seeds every builder with a fresh uuid4 `jti` (beside the `iss` it already
+seeded). `sign()` is unchanged — it still uses the builder as-is. Three knobs:
+
+- **Per authority:** `JwtAuthority.from_pem(..., mint_jti=False)` (or the direct constructor) —
+  the 3.x behaviour.
+- **Per token, fixed id:** `authority.token().token_id("…")` — last write wins.
+- **Per token, no id:** pass a hand-built `JwtBuilder()` to `authority.sign()`.
+
+`MultiKeyAuthority` follows the *active* authority's flag. A bare `JwtBuilder().encode()` (no
+authority) never mints. **3.x-minted tokens still in flight at upgrade carry no `jti`** — see the
+bridge in Pitfalls below.
+
+### `require_jti` is derived from the wired store (4.0, Plan 053 / FLIP-034-3)
+
+`JwtVerificationSettings.revocation_require_jti` is `bool | None = None`. Inside
+`TrustedIssuerRegistry._check_revocation()` the effective value is a three-valued merge:
+
+1. the per-call `verify(..., revocation_require_jti=…)` kwarg, if not `None`;
+2. else the setting (`VARCO_JWT_REVOCATION_REQUIRE_JTI=true|false`), if not `None`;
+3. else **derived**: `True` iff the registry's wired store is not a `NullTokenRevocationStore`.
+
+"Null" is `varco_core.revocation.null.is_null_revocation_store()` — `None` or an `isinstance` of
+the Null class, so a **subclass** of `NullTokenRevocationStore` is Null, but a **wrapper** around
+one (a logging decorator implementing the ABC) is non-Null and derives `True`. A wired Null store
+(the DI default) keeps accepting `jti`-less tokens — binding the default never causes an outage.
+`inspect_revocation_posture()` performs the same derivation and reports
+`require_jti_derived=True` when it did; an explicit opt-out with a real store wired is reported as
+`auth.revocation_jti_not_required` (INFO).
 
 ## Selecting/enabling revocation via env (Plan 047)
 
@@ -178,7 +206,11 @@ backend" section for the code > env precedence rule.
 | Store bound in DI but registry not wired | Revocation silently never runs — no error, no log | Pass the DI-resolved store to `TrustedIssuerRegistry(revocation_store=...)` explicitly (§D-S13-di) |
 | Redis without persistence | A restart resurrects revoked tokens (including kill switches) until their own `exp` | Enable AOF/RDB persistence on the revocation Redis instance, or accept the bounded exposure window for `TOKEN`-scope entries |
 | `FAIL_CLOSED` + a Redis outage | Every request gets a 503 | Either fix the outage, or set `VARCO_JWT_REVOCATION_FAILURE_MODE=fail_open` for an availability-first posture (pair with short-lived tokens) |
-| No `jti` from Auth0/Keycloak/Cognito | `TOKEN`-scope revocation silently never matches | Use `SUBJECT`/`TENANT`/`ISSUER` scope instead, or call `JwtBuilder.with_random_jti()` when minting |
+| No `jti` from Auth0/Keycloak/Cognito | Every token 401s (`TokenRevokedError`, reason `revocation_require_jti=True and token has no jti claim`) the moment a real store is wired — 4.0 derives `require_jti=True` | `VARCO_JWT_REVOCATION_REQUIRE_JTI=false` (reported as `auth.revocation_jti_not_required`, INFO; `SUBJECT`/`TENANT`/`ISSUER` scopes still work), or enable `jti` at the IdP |
+| 3.x-minted tokens still valid at upgrade, real store wired | They 401 until they expire | Set `VARCO_JWT_REVOCATION_REQUIRE_JTI=false` for one token lifetime, then unset it |
+| A logging wrapper around `NullTokenRevocationStore` | `require_jti` derives `True`; `jti`-less tokens 401 | Subclass the Null class instead of wrapping it, or set the env var `false` |
+| `PassthroughAuth` constructed without the acknowledgement after upgrading to 4.0 | `TypeError: … missing 1 required keyword-only argument: 'acknowledge_unverified'` | `PassthroughAuth(acknowledge_unverified=True, …)` — and expect `auth.passthrough_bound` (WARN) in `SecurityPosture`; suppress by id if the gateway deployment is deliberate |
+| `ApiKeyAuth(keys=...)` after upgrading to 4.0 | `DeprecationWarning` at every construction | Pre-hash with `hash_api_key()` and pass `hashed_keys=`; `keys=` is removed in 5.0.0 |
 | `param="api_key"` restored "for convenience" | The key is back in every access log, proxy log, and `Referer` header | Prefer the `X-API-Key` header; only re-enable the query param for a client that genuinely cannot set headers |
 | The api-surface gate (`scripts/api_surface.py --check`) does not see either S1/S2 flip | A narrowed method/`__init__` signature ships without warning from `--check` | Rely on the dedicated `inspect.signature()` regression tests in `varco_core`/`varco_fastapi`'s own test suites instead — they are the real guard here (§D-034-gate) |
 

@@ -222,9 +222,18 @@ class DIWiringConformance:
             assert len(c.get_all_bindings(cls)) == 1, f"{cls!r} bound more than once"
 
     async def test_declared_defaults_are_fallbacks(self, container: DIContainer) -> None:
+        # Read the raw registry, not get_binding(): a conditional default
+        # (BaseAuthorizer's @Requires(VARCO_SECURITY_ENV=development), Plan
+        # 053 / FLIP-5) is still a registered fallback when its condition is
+        # false, but get_binding() is activation-aware and would raise.
+        registered = {(b.interface, b.qualifier) for b in fallback_bindings(container)}
         for interface, qualifier in self.expected_defaults:
-            binding = container.get_binding(interface, qualifier=qualifier)
-            assert binding.fallback is True, f"{interface!r}@{qualifier!r} is not a fallback"
+            assert (interface, qualifier) in registered, (
+                f"{interface!r}@{qualifier!r} is not a fallback"
+            )
+            if container.is_resolvable(interface, qualifier=qualifier):
+                binding = container.get_binding(interface, qualifier=qualifier)
+                assert binding.fallback is True, f"{interface!r}@{qualifier!r} is not a fallback"
 
     async def test_every_default_is_overridable_after_bootstrap(
         self, bootstrap: Callable[[DIContainer], DIContainer]

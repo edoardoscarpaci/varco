@@ -58,7 +58,16 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import parse_qsl, urlencode
 
-from varco_core.redaction.policy import RedactionPolicy, is_sensitive_key
+# The two private caches are imported at module scope (not inside
+# `reset_redaction_state()`): this module already depends on `policy`, and a
+# function-local import would re-enter `builtins.__import__` at teardown —
+# which a test that simulates an absent `varco_core.redaction` patches.
+from varco_core.redaction.policy import (
+    RedactionPolicy,
+    _is_sensitive_key_cached,
+    _pattern_tokens,
+    is_sensitive_key,
+)
 
 __all__ = [
     "Redactor",
@@ -384,7 +393,8 @@ def set_default_redactor(redactor: Redactor) -> None:
 def reset_redaction_state() -> None:
     """
     Test helper: restore ``default_redactor()`` to a fresh ``PolicyRedactor()``
-    and clear the ``is_sensitive_key`` cache.
+    and clear the ``is_sensitive_key`` caches (the key-decision cache and
+    Plan 057's per-policy pattern-token memo).
 
     Global mutable state hygiene, the same shape as
     ``varco_core.observability.params.reset_param_capture_state()`` — call
@@ -393,6 +403,5 @@ def reset_redaction_state() -> None:
     """
     global _default_redactor
     _default_redactor = PolicyRedactor()
-    from varco_core.redaction.policy import _is_sensitive_key_cached
-
     _is_sensitive_key_cached.cache_clear()
+    _pattern_tokens.cache_clear()

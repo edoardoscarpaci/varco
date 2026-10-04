@@ -2,9 +2,9 @@
 Failing-first tests for TenantResolutionMiddleware's new chain= / server_auth=
 / membership= keywords (Plan 033, Phase 2 Step 15/17, Phase 3 Step 26).
 
-⛔ This file is NEW — it never edits test_tenant_resolution_middleware.py or
-test_tenant_event_path_middleware.py, which remain the byte-identical proof
-for chain=None and must stay untouched.
+Plan 055 / FLIP-6: ``_build_app`` defaults to the explicit legacy chain, so
+incidental tests no longer exercise the deprecated ``chain=None`` path — the
+tests *about* that path pass ``chain=None`` explicitly.
 """
 
 from __future__ import annotations
@@ -13,6 +13,8 @@ import inspect
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+
+from tests._tenant_fixtures import legacy_chain as _legacy_chain
 
 
 class _FakeCatalog:
@@ -61,14 +63,12 @@ def _auth_ctx(**metadata):
     return AuthContext(user_id="u1", metadata=metadata)
 
 
-def _legacy_chain():
-    from varco_core.tenancy.source import TenantSourceChain
-    from varco_core.tenancy.sources import LegacyTenantSource
-
-    return TenantSourceChain(sources=(LegacyTenantSource(),))
+# Sentinel: "the caller did not pass chain=" — distinct from an explicit None,
+# which the deprecation tests need to reach the implicit fallback.
+_UNSET: object = object()
 
 
-def _build_app(*, catalog=None, pool=None, chain=None, server_auth=None, membership=None):
+def _build_app(*, catalog=None, pool=None, chain=_UNSET, server_auth=None, membership=None):
     from varco_fastapi.middleware.tenant_resolution import TenantResolutionMiddleware
 
     app = FastAPI()
@@ -76,7 +76,7 @@ def _build_app(*, catalog=None, pool=None, chain=None, server_auth=None, members
         TenantResolutionMiddleware,
         catalog=catalog or _FakeCatalog(),
         pool=pool or _CountingPool(),
-        chain=chain,
+        chain=_legacy_chain() if chain is _UNSET else chain,
         server_auth=server_auth,
         membership=membership,
     )
@@ -96,7 +96,10 @@ def _build_app(*, catalog=None, pool=None, chain=None, server_auth=None, members
 
 
 class TestChainNoneDeprecationWarning:
-    def test_chain_none_warns_once_at_construction_not_per_request(self) -> None:
+    def test_chain_none_warns_once_at_construction_not_per_request(self, monkeypatch) -> None:
+        # Plan 055 / FLIP-6: the implicit path only exists with no configured
+        # sources; the warning is now `warn_deprecated(..., removed_in="5.0.0")`.
+        monkeypatch.delenv("VARCO_TENANT_SOURCES", raising=False)
         # NOTE: FastAPI/Starlette's `add_middleware()` only *registers* a
         # middleware spec — it does not instantiate the class. The
         # middleware stack (and therefore `TenantResolutionMiddleware.
@@ -106,7 +109,7 @@ class TestChainNoneDeprecationWarning:
         # wrapping `_build_app()` (which never triggers `__init__` at all —
         # confirmed against plain Starlette, unrelated to this plan).
         pool = _CountingPool()
-        app = _build_app(pool=pool)
+        app = _build_app(pool=pool, chain=None)
         client = TestClient(app)
 
         import warnings
@@ -121,6 +124,12 @@ class TestChainNoneDeprecationWarning:
         # Exactly one — the middleware is constructed once (on the first
         # request) and reused for every subsequent request on this app.
         assert len(dep_warnings) == 1
+        import re
+
+        assert re.search(
+            r"TenantResolutionMiddleware\(chain=None\).*since 3\.2\.0.*removed in 5\.0\.0",
+            str(dep_warnings[0].message),
+        ), str(dep_warnings[0].message)
 
     def test_explicit_legacy_source_in_chain_warns_not_at_all(self) -> None:
         import warnings
@@ -319,6 +328,9 @@ class TestMiddlewareSignaturesPinned:
         ):
             assert kwonly in sig.parameters, kwonly
             assert sig.parameters[kwonly].kind == inspect.Parameter.KEYWORD_ONLY
+        # Plan 055 §D-flip9-shared: catalog/pool optional for SHARED apps.
+        assert sig.parameters["catalog"].default is None
+        assert sig.parameters["pool"].default is None
 
     def test_request_context_middleware_init_signature_unchanged(self) -> None:
         from varco_fastapi.middleware.request_context import RequestContextMiddleware
@@ -326,13 +338,180 @@ class TestMiddlewareSignaturesPinned:
         sig = inspect.signature(RequestContextMiddleware.__init__)
         params = list(sig.parameters)
         assert params[:2] == ["self", "app"]
-        for kwonly in ("server_auth", "tenant_field", "enable_tenant_context"):
-            assert kwonly in sig.parameters
-            assert sig.parameters[kwonly].kind == inspect.Parameter.KEYWORD_ONLY
-        # No new constructor keyword per §D-S6-wiring's "No new constructor
-        # keyword" rule for RequestContextMiddleware.
-        assert set(params) - {"self", "app"} == {
-            "server_auth",
-            "tenant_field",
-            "enable_tenant_context",
-        }
+        assert sig.parameters["server_auth"].kind == inspect.Parameter.KEYWORD_ONLY
+        # Plan 055 / FLIP-9: tenant_field/enable_tenant_context are removed —
+        # RequestContextMiddleware never sets the tenant.
+        assert set(params) - {"self", "app"} == {"server_auth"}
+
+
+# ── Plan 055 / FLIP-6 — chain=None means "the configured chain" ──────────────
+
+
+def _find_middleware(app, cls):
+    """Walk the built ASGI stack (after a first request) to the instance of *cls*."""
+    node = app.middleware_stack
+    while node is not None:
+        if isinstance(node, cls):
+            return node
+        node = getattr(node, "app", None)
+    raise AssertionError(f"{cls.__name__} not found in the built middleware stack")
+
+
+class TestChainNoneResolvesConfiguredChain:
+    def test_chain_none_with_env_sources_builds_the_chain_and_does_not_warn(
+        self, monkeypatch
+    ) -> None:
+        # Hand-wirer with VARCO_TENANT_SOURCES=jwt must not silently stay header-only.
+        import warnings
+
+        monkeypatch.setenv("VARCO_TENANT_SOURCES", "jwt")
+        server_auth = _FakeServerAuth(lambda: _auth_ctx(tenant_id="acme"))
+        app = _build_app(chain=None, server_auth=server_auth)
+        client = TestClient(app)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            response = client.get("/ping")  # no X-Tenant-Id header
+
+        assert response.status_code == 200
+        assert response.json() == {"tenant": "acme", "provenance_tenant": "acme"}
+
+    def test_chain_none_with_env_legacy_is_explicit_not_implicit(self, monkeypatch) -> None:
+        # VARCO_TENANT_SOURCES=legacy is the explicit escape hatch — silent, not implicit.
+        import warnings
+
+        from varco_core.tenancy import inspect_tenant_provenance
+        from varco_fastapi.middleware.tenant_resolution import TenantResolutionMiddleware
+
+        monkeypatch.setenv("VARCO_TENANT_SOURCES", "legacy")
+        app = _build_app(chain=None)
+        client = TestClient(app)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            response = client.get("/ping", headers={"X-Tenant-Id": "acme"})
+
+        assert response.status_code == 200
+        assert response.json()["tenant"] == "acme"
+        mw = _find_middleware(app, TenantResolutionMiddleware)
+        assert mw.chain_implicit is False
+        posture = inspect_tenant_provenance(mw._chain)  # noqa: SLF001
+        assert posture.legacy_source_implicit is False
+
+    def test_env_sources_naming_pool_only_source_fails_closed_when_hand_wired(
+        self, monkeypatch
+    ) -> None:
+        # A hand-wirer cannot see multi-bound plugin sources; fail closed with a pointer.
+        import pytest
+
+        monkeypatch.setenv("VARCO_TENANT_SOURCES", "partner")
+        app = _build_app(chain=None)
+        client = TestClient(app)
+
+        with pytest.raises(ValueError) as exc:
+            client.get("/ping")
+
+        assert "pass chain=" in str(exc.value)
+        assert "TenancyModule" in str(exc.value)
+
+    def test_header_kwarg_still_honoured_on_implicit_path(self, monkeypatch) -> None:
+        # The deprecated implicit path must stay byte-identical to 3.2 (12-month floor).
+        import pytest
+        from varco_fastapi.middleware.tenant_resolution import TenantResolutionMiddleware
+
+        monkeypatch.delenv("VARCO_TENANT_SOURCES", raising=False)
+        app = FastAPI()
+        app.add_middleware(
+            TenantResolutionMiddleware,
+            catalog=_FakeCatalog(),
+            pool=_CountingPool(),
+            header="X-Org",
+            chain=None,
+        )
+
+        @app.get("/ping")
+        async def ping():
+            from varco_core.service.tenant import current_tenant
+
+            return {"tenant": current_tenant()}
+
+        client = TestClient(app)
+        with pytest.warns(DeprecationWarning, match=r"removed in 5\.0\.0"):
+            response = client.get("/ping", headers={"X-Org": "acme"})
+
+        assert response.json()["tenant"] == "acme"
+        assert _find_middleware(app, TenantResolutionMiddleware).chain_implicit is True
+
+
+class _SentinelPool:
+    """Fails the test if ensure() is ever called."""
+
+    async def ensure(self, tenant_id: str):  # pragma: no cover - must not run
+        raise AssertionError("pool.ensure() must not be called")
+
+
+def _build_optional_app(*, catalog, pool, server_auth):
+    from varco_core.tenancy.source import TenantSourceChain
+    from varco_core.tenancy.sources import JwtClaimTenantSource
+    from varco_fastapi.middleware.tenant_resolution import TenantResolutionMiddleware
+
+    app = FastAPI()
+    app.add_middleware(
+        TenantResolutionMiddleware,
+        catalog=catalog,
+        pool=pool,
+        chain=TenantSourceChain(sources=(JwtClaimTenantSource(),)),
+        server_auth=server_auth,
+    )
+
+    @app.get("/ping")
+    async def ping():
+        from varco_core.service.tenant import current_tenant
+
+        return {"tenant": current_tenant()}
+
+    return app
+
+
+class TestOptionalCatalogAndPool:
+    """Plan 055 §D-flip9-shared — a SHARED app with no control plane adopts the chain."""
+
+    def test_no_catalog_no_pool_sets_current_tenant_without_404(self) -> None:
+        server_auth = _FakeServerAuth(lambda: _auth_ctx(tenant_id="unknown-to-any-catalog"))
+        app = _build_optional_app(catalog=None, pool=None, server_auth=server_auth)
+
+        response = TestClient(app).get("/ping")
+
+        assert response.status_code == 200
+        assert response.json()["tenant"] == "unknown-to-any-catalog"
+
+    def test_no_catalog_with_pool_calls_ensure_once(self) -> None:
+        pool = _CountingPool()
+        server_auth = _FakeServerAuth(lambda: _auth_ctx(tenant_id="acme"))
+        app = _build_optional_app(catalog=None, pool=pool, server_auth=server_auth)
+
+        response = TestClient(app).get("/ping")
+
+        assert response.status_code == 200
+        assert pool.ensure_calls == 1
+
+    def test_catalog_without_pool_still_gates_status(self) -> None:
+        # The status gate still runs whenever a catalog is supplied.
+        server_auth = _FakeServerAuth(lambda: _auth_ctx(tenant_id="acme"))
+        app = _build_optional_app(
+            catalog=_FakeCatalog(status="suspended"), pool=None, server_auth=server_auth
+        )
+
+        response = TestClient(app).get("/ping")
+
+        assert response.status_code == 403
+
+    def test_no_catalog_sentinel_pool_never_called_when_no_tenant(self) -> None:
+        # No tenant resolved -> pass through, never touch the pool.
+        server_auth = _FakeServerAuth(lambda: _auth_ctx())
+        app = _build_optional_app(catalog=None, pool=_SentinelPool(), server_auth=server_auth)
+
+        response = TestClient(app).get("/ping")
+
+        assert response.status_code == 200
+        assert response.json()["tenant"] is None

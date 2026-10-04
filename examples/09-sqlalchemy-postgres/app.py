@@ -65,7 +65,7 @@ from service import PostService  # noqa: F401 — registers PostService
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 from varco_core.service.base import IUoWProvider
-from varco_fastapi.di import VarcoFastAPIModule
+from varco_fastapi.di import bootstrap as fastapi_bootstrap
 from varco_sa.provider import SQLAlchemyRepositoryProvider
 
 from varco_fastapi import create_varco_app
@@ -148,7 +148,7 @@ def _build_container(db_url: str) -> tuple[DIContainer, object]:
     Registration order:
     1. Build ``SQLAlchemyRepositoryProvider`` from the engine directly.
     2. Bind ``IUoWProvider`` → the pre-built provider.
-    3. Install ``VarcoFastAPIModule`` for framework defaults.
+    3. Run ``varco_fastapi.di.bootstrap()`` for framework defaults.
     4. Scan local ``@Singleton`` classes (``PostAssembler``, ``PostService``).
 
     Args:
@@ -188,8 +188,11 @@ def _build_container(db_url: str) -> tuple[DIContainer, object]:
 
     container.provide(_uow_provider)
 
-    # ── 3. Install varco_fastapi module ───────────────────────────────────────
-    container.install(VarcoFastAPIModule)
+    # ── 3. Bootstrap varco_fastapi ─────────────────────────────────────────────
+    # 4.0 (Plan 049): the framework @Configuration is VarcoFastAPIConfiguration; the
+    # 4.0 hand-wired form is the package bootstrap() (scan-installs it, idempotent,
+    # so create_varco_app's FastAPIModule re-running it later is safe).
+    fastapi_bootstrap(container)
 
     # ── 3b. Permissive authorizer ─────────────────────────────────────────────
     # AsyncService injects AbstractAuthorizer; bind BaseAuthorizer (permissive)
@@ -197,6 +200,9 @@ def _build_container(db_url: str) -> tuple[DIContainer, object]:
     from varco_core.auth.authorizer import BaseAuthorizer  # noqa: PLC0415
     from varco_core.auth.base import AbstractAuthorizer  # noqa: PLC0415
 
+    # 4.0 (Plan 053 / FLIP-5): a class-keyed bind of BaseAuthorizer is gated
+    # exactly like the scanned fallback — run with VARCO_SECURITY_ENV=development
+    # (see README). A production app registers a real AbstractAuthorizer.
     container.bind(AbstractAuthorizer, BaseAuthorizer)
 
     # ── 4. Register local @Singleton classes ──────────────────────────────────

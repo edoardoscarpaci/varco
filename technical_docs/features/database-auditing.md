@@ -63,6 +63,16 @@ class OrderService(
         return ctx.sub  # JWT subject — override the base "always None"
 ```
 
+### Redaction (on by default since 4.0)
+
+Every create/update diff is passed through `PolicyRedactor(AUDIT_REDACTION_POLICY)` before the
+`AuditEvent` is produced (Plan 057 / FLIP-040-2): secret-named keys (`password_hash`, `api_key`,
+`client_secret`, …) are stored as `"[REDACTED]"`, while every other leaf — including `datetime`/
+`UUID`/`Decimal` values — is stored unchanged. Set `_audit_redactor = None` on a service to opt
+out (reported by posture as `redaction.audit.disabled`), or override `_audit_diff()` for full
+control. Full detail — matching rules, extension idiom, the hash-chain rule:
+[`redaction.md`](redaction.md).
+
 `AuditLogMixin` requires the service's existing injected `AbstractEventProducer`
 (`self._producer`) — no extra constructor parameter. If the service was built
 without a real producer, `AsyncService.__init__` defaults `_producer` to a
@@ -335,13 +345,15 @@ mount_reliability_admin(
     app,
     audit_repo=audit_repo,
     acknowledge_bundled_admin=True,  # required — ValueError without it (RD-9)
-    server_auth=auth,
-    admin_role="reliability-admin",
+    server_auth=auth,  # required — ValueError on None (4.0, Plan 054 / FLIP-3)
+    admin_role="reliability-admin",  # enforced on every route
 )
 ```
 
-No env var mounts this surface — ever. `server_auth=None` mounts
-unauthenticated and logs one WARNING naming the risk. See
+No env var mounts this surface — ever. `server_auth=None` refuses
+(`ValueError`, 4.0); every audit route resolves `server_auth` and enforces
+`admin_role`. Behind a verifying gateway, pass
+`PassthroughAuth(acknowledge_unverified=True)`. See
 `technical_docs/features/dead-letter-queues.md`'s "REST admin surface"
 section for the shared design rationale (RD-9).
 
@@ -441,3 +453,5 @@ SQLite suite (`varco_sa/tests/test_sa_audit_chain.py`), including a
 | `delete_where()` on a chained table | `ValueError` by design | Pruning breaks the hash chain; refuses silently doing so | Pass `allow_chain_break=True` if you accept the chain gap |
 | `hash_chain=True` enabled on a high-throughput audit table | Write latency/serialization bottleneck | Every `save()` is now a serialized read-then-write (RD-8, documented cost) | Only enable where tamper evidence is worth the throughput cap; leave `hash_chain=False` (default) otherwise |
 | `mount_reliability_admin()` without `acknowledge_bundled_admin=True` | `ValueError` — friction is intentional | This surface can replay/delete records, at least as privileged as the tenant admin (RD-9) | Pass it only after confirming a standalone deployment isn't justified |
+| `mount_reliability_admin(server_auth=None)` / `build_audit_router(repo, server_auth=None)` | `ValueError` since 4.0 | An admin surface must never mount unauthenticated (Plan 054 / FLIP-3) | Pass a strategy; `PassthroughAuth(acknowledge_unverified=True)` behind a verifying gateway |
+| A secret-named field is stored as `"[REDACTED]"` after upgrading to 4.0 | Rows written before the upgrade hold the value, rows after do not | Audit redaction is on by default (Plan 057 / FLIP-040-2) | Intended; to keep storing it verbatim set `_audit_redactor = None` on that service (posture `redaction.audit.disabled`, WARN) |

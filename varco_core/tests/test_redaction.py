@@ -52,10 +52,11 @@ class TestRedactionPolicy:
         policy = RedactionPolicy()
         assert policy.patterns == DEFAULT_REDACT_PATTERNS
 
-    def test_default_match_mode_is_substring(self) -> None:
+    def test_default_match_mode_is_word(self) -> None:
+        # Plan 057 / FLIP-040-1: word-boundary matching is the 4.0 default.
         from varco_core.redaction import RedactionPolicy
 
-        assert RedactionPolicy().match_mode == "substring"
+        assert RedactionPolicy().match_mode == "word"
 
 
 # ── DEFAULT_REDACT_PATTERNS — literal, so a future "completeness" edit
@@ -106,14 +107,22 @@ def test_extended_redact_patterns_contains_signature_and_is_opt_in() -> None:
     assert not set(EXTENDED_REDACT_PATTERNS) & set(DEFAULT_REDACT_PATTERNS)
 
 
-def test_hyphenated_api_key_header_not_caught_by_default_alone() -> None:
-    # Open Question 3: DEFAULT_REDACT_PATTERNS is underscore-shaped
-    # ("api_key"), so a hyphenated HTTP header name like "x-api-key" is
-    # NOT a substring match — this documents the incumbent gap rather than
-    # silently changing DEFAULT (which must stay byte-identical).
+def test_hyphenated_api_key_header_caught_by_default_under_word_mode() -> None:
+    # Plan 057 / §D-word: "api_key" tokenises to ("api","key"), a contiguous
+    # subsequence of "x-api-key" — DEFAULT alone now catches the header.
+    from varco_core.redaction import RedactionPolicy, is_sensitive_key
+
+    policy = RedactionPolicy()
+    assert is_sensitive_key("x-api-key", policy) is True
+    assert is_sensitive_key("X-Api-Key", policy) is True
+
+
+def test_hyphenated_api_key_header_not_caught_by_default_under_substring_mode() -> None:
+    # Open Question 3 (040) record survives: under the 3.2 substring escape
+    # hatch, the underscore-shaped "api_key" is NOT a substring of "x-api-key".
     from varco_core.redaction import DEFAULT_REDACT_PATTERNS, RedactionPolicy, is_sensitive_key
 
-    policy = RedactionPolicy(patterns=DEFAULT_REDACT_PATTERNS)
+    policy = RedactionPolicy(patterns=DEFAULT_REDACT_PATTERNS, match_mode="substring")
     assert is_sensitive_key("x-api-key", policy) is False
     assert is_sensitive_key("X-Api-Key", policy) is False
 
@@ -128,6 +137,22 @@ def test_hyphenated_api_key_header_caught_with_extended_patterns() -> None:
     )
 
     policy = RedactionPolicy(patterns=DEFAULT_REDACT_PATTERNS + EXTENDED_REDACT_PATTERNS)
+    assert is_sensitive_key("x-api-key", policy) is True
+    assert is_sensitive_key("X-Api-Key", policy) is True
+
+
+def test_hyphenated_api_key_header_caught_with_extended_patterns_under_substring_mode() -> None:
+    # EXTENDED's "api-key" is what still matters to a substring-mode caller.
+    from varco_core.redaction import (
+        DEFAULT_REDACT_PATTERNS,
+        EXTENDED_REDACT_PATTERNS,
+        RedactionPolicy,
+        is_sensitive_key,
+    )
+
+    policy = RedactionPolicy(
+        patterns=DEFAULT_REDACT_PATTERNS + EXTENDED_REDACT_PATTERNS, match_mode="substring"
+    )
     assert is_sensitive_key("x-api-key", policy) is True
     assert is_sensitive_key("X-Api-Key", policy) is True
 
@@ -158,7 +183,7 @@ def test_pii_redact_patterns_never_in_any_default() -> None:
 
 
 class TestIsSensitiveKey:
-    def test_case_insensitive_substring_match_by_default(self) -> None:
+    def test_case_insensitive_word_match_by_default(self) -> None:
         from varco_core.redaction import RedactionPolicy, is_sensitive_key
 
         policy = RedactionPolicy()

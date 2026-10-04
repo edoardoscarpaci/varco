@@ -66,7 +66,10 @@ class Phase(IntEnum):
 
     Room is left between values (steps of 100) so an app may insert itself
     at ``Phase.BUS + 50`` etc., the same escape hatch Spring's integer phase
-    offers.
+    offers. In-tree example: ``varco_sa.modules.RLS_POSTURE_PHASE``
+    (``INFRA + 50``) — ``SAModule``'s RLS catalog read runs after every
+    ``INFRA`` component (migrations included) without a ``depends_on``
+    edge on a module that may be absent.
     """
 
     #: Migrations, tenancy pools, trust stores, catalogs, stores

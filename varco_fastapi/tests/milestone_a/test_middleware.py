@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from varco_core.auth.api_key import hash_api_key
 from varco_core.auth.base import AuthContext
 from varco_core.exception.query import OperationNotSupported
 from varco_core.exception.service import ServiceNotFoundError
@@ -171,7 +172,7 @@ async def test_error_middleware_maps_query_exception_to_400():
 async def test_request_context_middleware_sets_auth_context():
     """RequestContextMiddleware sets auth_context_var with the auth result."""
     key_ctx = AuthContext(user_id="svc_user", roles=frozenset({"service"}))
-    api_key_auth = ApiKeyAuth(keys={"test-key": key_ctx})
+    api_key_auth = ApiKeyAuth(hashed_keys={hash_api_key("test-key"): key_ctx})
 
     app = FastAPI()
     app.add_middleware(RequestContextMiddleware, server_auth=api_key_auth)

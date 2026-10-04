@@ -18,7 +18,10 @@ Subclass and override the ``repo`` fixture to opt a backend in::
     class TestSAWebhookSubscriptionRepositoryConformance(WebhookSubscriptionRepositoryConformance):
         @pytest.fixture
         async def repo(self, postgres_url):
-            repo = SAWebhookSubscriptionRepository(url=postgres_url)
+            repo = SAWebhookSubscriptionRepository(
+                url=postgres_url,
+                encryptor=PlaintextFieldEncryptor(acknowledge_plaintext=True),
+            )
             await repo.start()
             yield repo
             await repo.stop()

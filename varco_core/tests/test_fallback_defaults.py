@@ -83,7 +83,12 @@ ALL_DEFAULTS = [
 
 
 @pytest.mark.parametrize("interface, default_cls", ALL_DEFAULTS)
-def test_default_resolves_from_a_bare_scan(interface: type, default_cls: type) -> None:
+def test_default_resolves_from_a_bare_scan(
+    interface: type, default_cls: type, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if interface is AbstractAuthorizer:
+        # FLIP-5 (Plan 053): BaseAuthorizer is a binding only in development.
+        monkeypatch.setenv("VARCO_SECURITY_ENV", "development")
     container = DIContainer()
     container.scan("varco_core", recursive=True)
 

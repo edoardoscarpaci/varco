@@ -114,7 +114,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
 from typing import Any
-from weakref import WeakKeyDictionary
+from weakref import WeakKeyDictionary, WeakSet
 
 from varco_core.service.tenant import current_tenant
 
@@ -128,6 +128,26 @@ _MARKER = "_varco_rls_hook_uninstall"
 #: WeakKeyDictionary so an engine that is disposed and garbage collected
 #: does not pin a WARNING-dedup entry forever.
 _dialect_warned: WeakKeyDictionary[Any, bool] = WeakKeyDictionary()
+
+#: Every sync ``Session`` class ``install_rls_tenant_hook()`` has attached a
+#: listener pair to (Plan 056 / §D-flip12-guc) — read by ``hook_installed()``
+#: so the RLS posture collector can tell "something sets the GUC" without
+#: knowing which factory the app used.
+#:
+#: DESIGN: a process-wide registry, not "read the marker on the default class"
+#:     ✅ ``install_rls_tenant_hook(async_sessionmaker(...))`` — the documented,
+#:        recommended form — scopes the hook to a fresh per-factory subclass
+#:        (``_resolve_sync_session_class``), so a read of the default
+#:        ``AsyncSession.sync_session_class`` alone would never see it and
+#:        would report ``data.rls_guc_setter_absent`` for a correctly wired app.
+#:     ✅ ``WeakSet`` — a factory subclass that is garbage collected drops out
+#:        on its own; an uninstalled hook is excluded because the marker is
+#:        re-checked on every read.
+#:     ❌ A hook installed on a factory unrelated to the app's engine still
+#:        counts. Accepted: the finding exists to catch "nothing sets the GUC
+#:        at all", and a per-engine registry is more machinery than that
+#:        false negative costs.
+_installed_session_classes: WeakSet[type] = WeakSet()
 
 
 async def _default_set_tenant_local(
@@ -322,7 +342,72 @@ def install_rls_tenant_hook(
         delattr(session_cls, _MARKER)
 
     setattr(session_cls, _MARKER, _uninstall)
+    _installed_session_classes.add(session_cls)
     return _uninstall
 
 
-__all__ = ["install_rls_tenant_hook"]
+def _peek_sync_session_class(target: Any) -> type | None:
+    """
+    Resolve ``target`` to its sync ``Session`` class **without** mutating it.
+
+    ``_resolve_sync_session_class()`` installs a per-factory subclass onto a
+    ``sessionmaker``'s kwargs the first time it sees one — right for an
+    install, wrong for a read. This is the side-effect-free twin.
+
+    Args:
+        target: Any shape ``install_rls_tenant_hook()`` accepts.
+
+    Returns:
+        The sync ``Session`` class, or ``None`` for an unsupported shape.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker  # noqa: PLC0415
+    from sqlalchemy.orm import Session as SyncSession  # noqa: PLC0415
+    from sqlalchemy.orm import sessionmaker as sync_sessionmaker  # noqa: PLC0415
+
+    if isinstance(target, type):
+        if issubclass(target, AsyncSession):
+            return target.sync_session_class
+        if issubclass(target, SyncSession):
+            return target
+        return None
+    if isinstance(target, async_sessionmaker):
+        return target.kw.get("sync_session_class") or SyncSession
+    if isinstance(target, sync_sessionmaker):
+        return target.kw.get("class_") or SyncSession
+    if isinstance(target, AsyncSession):
+        return type(target.sync_session)
+    if isinstance(target, SyncSession):
+        return type(target)
+    return None
+
+
+def hook_installed(target: Any | None = None) -> bool:
+    """
+    Whether an ``install_rls_tenant_hook()`` listener is currently live.
+
+    Read by ``RlsPostureCollector`` to decide ``data.rls_guc_setter_absent``
+    (Plan 056 / §D-flip12-guc). Never installs anything.
+
+    Args:
+        target: ``None`` (default) — is a hook live on **any** session class
+                in this process (see ``_installed_session_classes``' DESIGN
+                note for why the posture check asks this question). Otherwise
+                any shape ``install_rls_tenant_hook()`` accepts — is a hook
+                live on exactly that target's sync ``Session`` class.
+
+    Returns:
+        ``True`` iff a live (not uninstalled) hook is present.
+
+    Edge cases:
+        - A subclass of a hook-bearing class does not count — the marker is
+          read from ``cls.__dict__``, never inherited, same as the install.
+
+    Thread safety:  ✅ A pure read; call at startup like the install.
+    """
+    if target is None:
+        return any(_MARKER in cls.__dict__ for cls in list(_installed_session_classes))
+    session_cls = _peek_sync_session_class(target)
+    return session_cls is not None and _MARKER in session_cls.__dict__
+
+
+__all__ = ["hook_installed", "install_rls_tenant_hook"]

@@ -22,9 +22,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
-from varco_fastapi.admin._tenant_scope import resolve_ctx, resolve_tenant_scope
+from varco_fastapi.admin._tenant_scope import (
+    admin_guard,
+    require_server_auth,
+    resolve_ctx,
+    resolve_tenant_scope,
+)
 
 if TYPE_CHECKING:
     from varco_core.event.dlq import AbstractDeadLetterQueue
@@ -47,8 +52,8 @@ def _entry_to_dict(entry: Any) -> dict[str, Any]:
 def build_dlq_router(
     dlq: AbstractDeadLetterQueue,
     *,
+    server_auth: Any,
     redriver: DlqRedriver | None = None,
-    server_auth: Any | None = None,
     admin_role: str = "reliability-admin",
     cross_tenant_role: str = "cross-tenant-admin",
     prefix: str = "/dlq",
@@ -62,18 +67,20 @@ def build_dlq_router(
                      — the redrive routes are not registered at all (RD-4/
                      DESIGN: an absent capability should not appear in the
                      OpenAPI schema, not surface as a 501 on every call).
-        server_auth: Auth strategy — ``admin_role`` enforcement is still
-                     left to the caller's own ``dependencies=`` (unchanged),
-                     but ``server_auth`` is now resolved here as well, to
-                     answer §D-S4-scope's cross-tenant question.
-        admin_role:  Documented role requirement (enforced by the caller's
-                     own ``dependencies=`` on ``app.include_router``).
+        server_auth: **Required.** Auth strategy — resolved and enforced on
+                     every route (4.0, Plan 054 / FLIP-3), once per request;
+                     the caller's ``dependencies=`` are additive.
+        admin_role:  Role required on every route (403 otherwise).
         cross_tenant_role: Role required to omit ``tenant_id`` and reach
                      every tenant, or to supply a ``tenant_id`` other than
                      the resolved one (§D-S4-scope). An omitted ``tenant_id``
                      without this role means "my tenant", not "every
                      tenant".
         prefix:      URL prefix. Defaults to ``"/dlq"``.
+
+    Returns:
+        An ``APIRouter`` whose every route runs the ``admin_role`` guard as
+        a router-level dependency.
 
     Routes:
         GET    {prefix}/entries                    list_entries() filters
@@ -83,8 +90,22 @@ def build_dlq_router(
         DELETE {prefix}/entries/{entry_id}          delete()
         DELETE {prefix}/entries                     delete_where(); 501 on Kafka/NATS
         GET    {prefix}/stats                       count() + count_by_channel() when supported
+
+    Raises:
+        ValueError: ``server_auth is None`` — a guard that can never be
+            satisfied is refused at build time (Plan 054 / FLIP-3). Omitting
+            the keyword is Python's own ``TypeError``.
     """
-    router = APIRouter(prefix=prefix, tags=["dlq-admin"])
+    require_server_auth(
+        server_auth,
+        owner="build_dlq_router",
+        surface="replay messages onto the bus and delete dead letters",
+    )
+    router = APIRouter(
+        prefix=prefix,
+        tags=["dlq-admin"],
+        dependencies=[Depends(admin_guard(server_auth, admin_role))],
+    )
 
     @router.get("/entries")
     async def list_entries(

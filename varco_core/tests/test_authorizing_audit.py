@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from providify import DIContainer, Provider
 from varco_core.auth.base import AbstractAuthorizer, Action, AuthContext, Resource
 from varco_core.event.base import Event
 from varco_core.event.producer import AbstractEventProducer
@@ -223,9 +224,13 @@ async def test_collection_resource_payload_has_none_entity_pk_and_is_collection_
     assert payload["entity_pk"] is None
 
 
-async def test_enable_authorization_audit_twice_raises_already_bound_error() -> None:
+async def test_enable_authorization_audit_twice_raises_already_bound_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Plan 046 §D-enable — the double-wrap guard is now AlreadyBoundError
     # (a RuntimeError subclass, so `except RuntimeError` keeps working).
+    # FLIP-5 (Plan 053): the wrapped BaseAuthorizer binds only in development.
+    monkeypatch.setenv("VARCO_SECURITY_ENV", "development")
     from providify import DIContainer
     from varco_core.auth.di import enable_authorization_audit
     from varco_core.di import AlreadyBoundError
@@ -243,3 +248,29 @@ async def test_enable_authorization_audit_twice_raises_already_bound_error() -> 
     enable_authorization_audit(container2)
     with pytest.raises(RuntimeError):
         enable_authorization_audit(container2)
+
+
+# ── Plan 053 / FLIP-5 edge case ──────────────────────────────────────────────────────────
+
+
+async def test_enable_authorization_audit_in_production_without_authorizer_raises(monkeypatch):
+    # §Edge cases: auditing a permissive authorizer is meaningless; with no
+    # active binding the eager resolve raises LookupError at wiring time.
+    from varco_core.auth.di import enable_authorization_audit
+    from varco_core.event.producer import AbstractEventProducer
+
+    monkeypatch.delenv("VARCO_SECURITY_ENV", raising=False)
+    container = DIContainer()
+    container.scan("varco_core.auth.authorizer")
+
+    from unittest.mock import MagicMock
+
+    _producer = MagicMock(spec=AbstractEventProducer)
+
+    def _make_producer() -> AbstractEventProducer:
+        return _producer
+
+    # Bind the producer so the ONLY missing piece is the authorizer.
+    container.provide(Provider(singleton=True)(_make_producer), returns=AbstractEventProducer)
+    with pytest.raises(LookupError, match="AbstractAuthorizer"):
+        enable_authorization_audit(container)

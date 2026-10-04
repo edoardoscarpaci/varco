@@ -211,6 +211,20 @@ class RlsPosture:
                         the requested set — always present, even for a table
                         with no RLS/policy at all (``rls_enabled=False``,
                         ``rls_forced=False``, ``has_policy=False``).
+        dialect:        ``conn.dialect.name`` of the connection the posture
+                        was read on (Plan 056 / §D-flip12-mapping). Trailing
+                        and defaulted to ``"postgresql"`` so positional
+                        construction keeps working; ``rls_findings()`` gates
+                        on it so the degenerate non-Postgres posture never
+                        reads as "RLS disabled".
+        missing_tables: Names, among ``tables``, with no ``pg_class`` row
+                        — not created yet (a fresh database on first
+                        deploy, before migrations). Each is still present in
+                        ``tables`` as ``TablePosture(False, False, False)``
+                        (the "always present" contract above), so a reader
+                        must consult this set before treating an all-``False``
+                        entry as "RLS disabled" — ``rls_findings()`` does.
+                        Trailing and defaulted for positional construction.
     """
 
     current_role: str
@@ -218,6 +232,8 @@ class RlsPosture:
     rolbypassrls: bool
     owned_tables: frozenset[str]
     tables: Mapping[str, TablePosture]
+    dialect: str = "postgresql"
+    missing_tables: frozenset[str] = frozenset()
 
 
 _POSTURE_ROLE_QUERY = """
@@ -279,6 +295,9 @@ async def inspect_rls_posture(
     Edge cases:
         - ``tables=[]`` still queries the role posture (current_role,
           is_superuser, rolbypassrls) — only the per-table walk is skipped.
+        - A requested table with no ``pg_class`` row (not created yet) is
+          reported in ``RlsPosture.missing_tables`` and kept in ``tables``
+          as all-``False`` — absence is a fact distinct from "RLS off".
     """
     import sqlalchemy as sa
 
@@ -298,6 +317,7 @@ async def inspect_rls_posture(
             rolbypassrls=False,
             owned_tables=frozenset(),
             tables={name: TablePosture(False, False, False) for name in table_names},
+            dialect=str(dialect_name),
         )
 
     role_result = await conn.execute(sa.text(_POSTURE_ROLE_QUERY))
@@ -326,6 +346,8 @@ async def inspect_rls_posture(
     table_states: dict[str, TablePosture] = {
         name: TablePosture(False, False, False) for name in table_names
     }
+    # Every requested name starts "missing"; a pg_class row below removes it.
+    missing: set[str] = set(table_names)
 
     if table_names:
         owned_result = await conn.execute(
@@ -349,6 +371,7 @@ async def inspect_rls_posture(
             rls_forced = bool(row.relforcerowsecurity)
             has_policy = bool(row.has_policy)
             table_states[row.relname] = TablePosture(rls_enabled, rls_forced, has_policy)
+            missing.discard(row.relname)
             if rls_enabled and not rls_forced and row.relname in owned_tables:
                 logger.warning(
                     "inspect_rls_posture(): table %r has RLS ENABLED but not "
@@ -365,6 +388,8 @@ async def inspect_rls_posture(
         rolbypassrls=rolbypassrls,
         owned_tables=owned_tables,
         tables=table_states,
+        dialect=dialect_name,
+        missing_tables=frozenset(missing),
     )
 
 

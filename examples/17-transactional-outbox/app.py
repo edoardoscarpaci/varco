@@ -64,7 +64,7 @@ from sqlalchemy.orm import DeclarativeBase
 from varco_core.event import InMemoryEventBus
 from varco_core.service.base import IUoWProvider
 from varco_core.service.outbox import OutboxRelay
-from varco_fastapi.di import VarcoFastAPIModule
+from varco_fastapi.di import bootstrap as fastapi_bootstrap
 from varco_sa.deduplication import SADeduplicator, dedup_metadata
 from varco_sa.outbox import SARelayOutboxRepository, outbox_metadata
 from varco_sa.provider import SQLAlchemyRepositoryProvider
@@ -103,11 +103,17 @@ def _build_container(db_url: str) -> tuple[DIContainer, object]:
         return provider  # type: ignore[return-value]
 
     container.provide(_uow_provider)
-    container.install(VarcoFastAPIModule)
+    # 4.0 (Plan 049): the framework @Configuration is VarcoFastAPIConfiguration; the
+    # 4.0 hand-wired form is the package bootstrap() (scan-installs it, idempotent,
+    # so create_varco_app's FastAPIModule re-running it later is safe).
+    fastapi_bootstrap(container)
 
     from varco_core.auth.authorizer import BaseAuthorizer  # noqa: PLC0415
     from varco_core.auth.base import AbstractAuthorizer  # noqa: PLC0415
 
+    # 4.0 (Plan 053 / FLIP-5): a class-keyed bind of BaseAuthorizer is gated
+    # exactly like the scanned fallback — run with VARCO_SECURITY_ENV=development
+    # (see README). A production app registers a real AbstractAuthorizer.
     container.bind(AbstractAuthorizer, BaseAuthorizer)
     container.bind(OrderAssembler, OrderAssembler)
     container.bind(OrderService, OrderService)

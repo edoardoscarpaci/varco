@@ -45,7 +45,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import HTTPException, Request, status
 from varco_core.auth.base import AuthContext
@@ -338,16 +338,21 @@ class ApiKeyAuth(AbstractServerAuth):
     Verify an API key from the ``X-API-Key`` header, or optionally a query
     parameter.
 
-    Callers may configure either plaintext keys (``keys=``, hashed at
-    construction time) or pre-hashed digests (``hashed_keys=``, the
-    production path — see ``varco_core.auth.api_key.hash_api_key``).
-    Exactly one of the two must be given.
+    ``hashed_keys=`` is the path: pre-hashed digests (see
+    ``varco_core.auth.api_key.hash_api_key``) — the plaintext key never
+    enters this process. ``keys=`` is **deprecated since 4.0.0 and removed
+    in 5.0.0** (Plan 053 / FLIP-034-1) — it still hashes at construction and
+    emits one ``DeprecationWarning`` attributed to the caller. Exactly one
+    of the two must be given.
 
     Args:
-        keys:        Plaintext ``dict``/``Mapping`` of API key string ->
+        keys:        **Deprecated (4.0.0 → 5.0.0).** Plaintext
+                     ``dict``/``Mapping`` of API key string ->
                      ``AuthContext``. Hashed immediately at construction
                      (§D-S14-hash) — no raw key is retained past
-                     ``__init__``. Mutually exclusive with ``hashed_keys``.
+                     ``__init__``; emits a ``DeprecationWarning``. Use
+                     ``hashed_keys=`` instead. Mutually exclusive with
+                     ``hashed_keys``.
         hashed_keys: Pre-hashed ``dict``/``Mapping`` of digest (as produced
                      by ``hash_api_key()``) -> ``AuthContext``. The
                      production path: the plaintext key never enters this
@@ -402,7 +407,7 @@ class ApiKeyAuth(AbstractServerAuth):
         - Header takes priority over query param when both are present and
           ``param=`` is set (unchanged from before this plan).
         - ``keys={}``/``hashed_keys={}`` remains legal — every presented
-          key 401s.
+          key 401s (``keys={}`` still warns: it is still the plaintext path).
     """
 
     def __init__(
@@ -420,6 +425,21 @@ class ApiKeyAuth(AbstractServerAuth):
                 "ApiKeyAuth: exactly one of keys= or hashed_keys= must be given "
                 f"(keys={'given' if keys is not None else 'omitted'}, "
                 f"hashed_keys={'given' if hashed_keys is not None else 'omitted'})"
+            )
+        if keys is not None:
+            # Plan 053 / FLIP-034-1: the plaintext path is deprecated, not
+            # removed (12-month floor, CONTRIBUTING.md). stacklevel=3: the
+            # helper is one frame, this __init__ a second — the warning must
+            # blame the ApiKeyAuth(...) call site.
+            from varco_core.deprecation import warn_deprecated
+
+            warn_deprecated(
+                "ApiKeyAuth(keys=...)",
+                since="4.0.0",
+                removed_in="5.0.0",
+                replacement="ApiKeyAuth(hashed_keys=...) with "
+                "varco_core.auth.api_key.hash_api_key()",
+                stacklevel=3,
             )
         if param == "":
             raise ValueError(
@@ -527,24 +547,57 @@ class PassthroughAuth(AbstractServerAuth):
     verified the token.  The gateway strips the token of its signature or
     forwards it as a trusted header; PassthroughAuth just reads the claims.
 
-    WARNING: Never use this on public-facing endpoints.  It bypasses all
-    cryptographic verification.
+    Never use this on public-facing endpoints — it bypasses all
+    cryptographic verification. Since 4.0 (Plan 053 / FLIP-034-4) that
+    warning is the constructor's contract: ``acknowledge_unverified=True``
+    is required. An acknowledged instance is still reported by
+    ``SecurityPosture`` as ``auth.passthrough_bound`` (WARN).
 
     Args:
+        acknowledge_unverified: Must be literally ``True``; the parameter
+                  *is* the warning that used to live only in this docstring.
         required: Raise 401 if no token is present.  Default: ``False``
                   (internal services often allow requests without tokens for
                   health checks and inter-service calls).
+
+    Raises:
+        TypeError: ``acknowledge_unverified`` omitted (Python's own
+                  missing-keyword-only-argument error) or not literally
+                  ``True`` (e.g. ``False`` or ``1``).
 
     DESIGN: passthrough over re-verification behind gateway
         ✅ Avoids redundant signature verification for internal routes
         ✅ Works when the gateway strips the signature (JWT format preserved)
         ❌ Completely insecure on public endpoints — document the use case clearly
 
+    DESIGN: ``Literal[True]`` + ``TypeError``, not the ``bool = False`` +
+    ``ValueError`` precedent (Plan 053 / FLIP-034-4)
+        ✅ A missing required keyword-only argument is visible to mypy
+           ``--strict`` — a bare, unacknowledged call is a *type* error, not only a
+           runtime one; ``acknowledge_unverified=False`` violates
+           ``Literal[True]`` statically too, so ``TypeError`` is the honest
+           class for both shapes — one exception type, one reason.
+        ✅ No ``bool`` whose only legal value is ``True`` — the annotation
+           does not lie.
+        ❌ Deviates from the four ``acknowledge_*: bool = False`` →
+           ``ValueError`` sites (``install_process_trust``,
+           ``mount_webhook_admin``, ``mount_reliability_admin``,
+           ``mount_tenant_admin``) — deliberate; those are left unchanged.
+        Rejected: deleting ``PassthroughAuth`` (it has a real use behind a
+        verifying gateway).
+
     Thread safety:  ✅ Stateless.
     Async safety:   ✅ ``__call__`` is ``async def``; no I/O.
     """
 
-    def __init__(self, *, required: bool = False) -> None:
+    def __init__(self, *, acknowledge_unverified: Literal[True], required: bool = False) -> None:
+        # Identity, not truthiness: 1 / "yes" are not an acknowledgement.
+        if acknowledge_unverified is not True:
+            raise TypeError(
+                "PassthroughAuth: acknowledge_unverified must be literally True — this "
+                "strategy trusts caller-supplied identity with no signature verification; "
+                "construct it only behind a gateway that already verified the token."
+            )
         self._required = required
 
     async def __call__(self, request: Request) -> AuthContext:

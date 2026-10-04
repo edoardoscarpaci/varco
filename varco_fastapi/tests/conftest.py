@@ -10,6 +10,9 @@ Without this, tests in different files that each ``monkeypatch.setenv`` a
 different ``VARCO_JWT_TRANSFORM_*``/``VARCO_JWT_PROFILE__*`` value would leak
 state into each other via the lazily-built, cached process-global registry —
 whichever test resolves it first "wins" for the rest of the test session.
+
+Autouse fixture (Plan 054 / FLIP-2): ``_posture_warn_only`` pins
+``VARCO_SECURITY_ENFORCE=warn`` — see its docstring for the opt-out rule.
 """
 
 from __future__ import annotations
@@ -17,6 +20,30 @@ from __future__ import annotations
 import os as _os
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _posture_warn_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Plan 054 / FLIP-2 (§D-flip2-tests): pin ``VARCO_SECURITY_ENFORCE=warn``
+    for every test in this package.
+
+    Since 4.0 ``SecurityPostureSettings.enforce`` derives ``"refuse"``
+    unless ``VARCO_SECURITY_ENV=development``, and every
+    ``create_varco_app()`` test that enters lifespan runs the default-on
+    ``SecurityPostureModule`` — whose default collectors report blocking
+    findings (``posture.authorizer_unbound`` HIGH, the ``tenant.*`` WARNs
+    with no ``TenantSourceChain`` bound) that would refuse startup for a
+    reason unrelated to what the test is about.
+    ``ENFORCE`` changes the *consequence* only (presentation — demotion,
+    ids, severities — is untouched), so every posture assertion still sees
+    the real report.
+
+    Opt-out rule: a test *about* FLIP-2 calls
+    ``monkeypatch.delenv("VARCO_SECURITY_ENFORCE", raising=False)`` first
+    (a code ``SecurityPostureSettings(enforce=…)`` also beats this env).
+    """
+    monkeypatch.setenv("VARCO_SECURITY_ENFORCE", "warn")
 
 
 @pytest.fixture(autouse=True)

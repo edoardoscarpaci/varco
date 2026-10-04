@@ -80,3 +80,34 @@ async def test_sa_webhook_repository_resolves_with_encryptor_and_reuses_engine(
     assert isinstance(repo, SAWebhookSubscriptionRepository)
     assert repo._encryptor is encryptor  # type: ignore[attr-defined]
     assert repo._engine is config.engine  # type: ignore[attr-defined]
+
+
+async def test_bound_plaintext_encryptor_is_the_di_path_hatch_and_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Plan 056 / FLIP-13, Step 13 — the DI-path dev hatch end to end: a bound
+    ``PlaintextFieldEncryptor`` satisfies the provider's required injection,
+    and the resolved repository is reported as
+    ``posture.webhook_secrets_plaintext``.
+    """
+    posture = pytest.importorskip("varco_fastapi.posture")
+    from varco_core.di import bind_instance
+    from varco_core.encryption import FieldEncryptor, PlaintextFieldEncryptor
+    from varco_core.webhook.base import WebhookSubscriptionRepository
+    from varco_sa.config import SAConfig
+    from varco_sa.di import bootstrap
+    from varco_sa.webhook import SAWebhookSubscriptionRepository
+
+    monkeypatch.setenv("VARCO_WEBHOOK_BACKEND", "sa")
+
+    container = DIContainer()
+    bootstrap(container)
+    bind_instance(container, SAConfig, _sa_config())
+    bind_instance(container, FieldEncryptor, PlaintextFieldEncryptor(acknowledge_plaintext=True))
+
+    repo = container.get(WebhookSubscriptionRepository)
+    findings = posture.LocalPostureCollector(webhook_repository=repo).collect()
+
+    assert isinstance(repo, SAWebhookSubscriptionRepository)
+    assert "posture.webhook_secrets_plaintext" in {f.check for f in findings}

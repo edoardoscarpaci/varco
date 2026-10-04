@@ -4,10 +4,13 @@ Tests for varco_fastapi.auth.server_auth — server-side auth strategies.
 
 from __future__ import annotations
 
+import inspect
+import warnings
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
+from varco_core.auth.api_key import hash_api_key
 from varco_core.auth.base import AuthContext
 from varco_fastapi.auth.server_auth import (
     AnonymousAuth,
@@ -73,7 +76,8 @@ async def test_anonymous_auth_returns_anonymous_context():
 async def test_api_key_auth_succeeds_with_valid_key():
     """ApiKeyAuth returns the configured AuthContext for a valid key."""
     expected = AuthContext(user_id="svc_1", roles=frozenset({"service"}))
-    auth = ApiKeyAuth(keys={"secret-key": expected})
+    with pytest.warns(DeprecationWarning, match=r"ApiKeyAuth\(keys="):
+        auth = ApiKeyAuth(keys={"secret-key": expected})
     req = _make_request(headers={"X-API-Key": "secret-key"})
     ctx = await auth(req)
     assert ctx is expected
@@ -81,7 +85,8 @@ async def test_api_key_auth_succeeds_with_valid_key():
 
 async def test_api_key_auth_raises_on_invalid_key():
     """ApiKeyAuth raises 401 for an unrecognized key."""
-    auth = ApiKeyAuth(keys={"valid-key": AuthContext()})
+    with pytest.warns(DeprecationWarning, match=r"ApiKeyAuth\(keys="):
+        auth = ApiKeyAuth(keys={"valid-key": AuthContext()})
     req = _make_request(headers={"X-API-Key": "wrong-key"})
     with pytest.raises(HTTPException) as exc_info:
         await auth(req)
@@ -90,7 +95,8 @@ async def test_api_key_auth_raises_on_invalid_key():
 
 async def test_api_key_auth_raises_when_key_missing_and_required():
     """ApiKeyAuth raises 401 when no key is present and required=True."""
-    auth = ApiKeyAuth(keys={})
+    with pytest.warns(DeprecationWarning, match=r"ApiKeyAuth\(keys="):
+        auth = ApiKeyAuth(keys={})
     req = _make_request()
     with pytest.raises(HTTPException) as exc_info:
         await auth(req)
@@ -99,7 +105,8 @@ async def test_api_key_auth_raises_when_key_missing_and_required():
 
 async def test_api_key_auth_returns_anonymous_when_key_missing_and_not_required():
     """ApiKeyAuth returns anonymous when no key is present and required=False."""
-    auth = ApiKeyAuth(keys={}, required=False)
+    with pytest.warns(DeprecationWarning, match=r"ApiKeyAuth\(keys="):
+        auth = ApiKeyAuth(keys={}, required=False)
     req = _make_request()
     ctx = await auth(req)
     assert ctx.is_anonymous()
@@ -178,7 +185,7 @@ async def test_passthrough_auth_decodes_claims_without_verification():
         payload, "unused-secret-passthrough-does-not-verify", algorithm="HS256"
     )
 
-    auth = PassthroughAuth()
+    auth = PassthroughAuth(acknowledge_unverified=True)
     req = _make_request(headers={"Authorization": f"Bearer {fake_token}"})
     ctx = await auth(req)
     assert ctx.user_id == "usr_2"
@@ -187,7 +194,7 @@ async def test_passthrough_auth_decodes_claims_without_verification():
 
 async def test_passthrough_auth_returns_anonymous_when_no_token():
     """PassthroughAuth returns anonymous by default when no token present."""
-    auth = PassthroughAuth(required=False)
+    auth = PassthroughAuth(acknowledge_unverified=True, required=False)
     req = _make_request()
     ctx = await auth(req)
     assert ctx.is_anonymous()
@@ -201,7 +208,7 @@ async def test_composite_auth_first_success_wins():
     api_key_ctx = AuthContext(user_id="svc_via_key")
     _jwt_ctx = AuthContext(user_id="usr_via_jwt")
 
-    api_key = ApiKeyAuth(keys={"key": api_key_ctx})
+    api_key = ApiKeyAuth(hashed_keys={hash_api_key("key"): api_key_ctx})
     jwt = AnonymousAuth()  # Would return anonymous, but api_key wins first
 
     auth = CompositeServerAuth([api_key, jwt])
@@ -212,7 +219,7 @@ async def test_composite_auth_first_success_wins():
 
 async def test_composite_auth_falls_back_to_second():
     """CompositeServerAuth tries next strategy when first raises 401."""
-    failing_auth = ApiKeyAuth(keys={}, required=True)
+    failing_auth = ApiKeyAuth(hashed_keys={}, required=True)
     fallback = AnonymousAuth()
 
     auth = CompositeServerAuth([failing_auth, fallback])
@@ -223,7 +230,7 @@ async def test_composite_auth_falls_back_to_second():
 
 async def test_composite_auth_raises_when_all_fail():
     """CompositeServerAuth raises 401 when all strategies fail."""
-    auth = CompositeServerAuth([ApiKeyAuth(keys={}, required=True)])
+    auth = CompositeServerAuth([ApiKeyAuth(hashed_keys={}, required=True)])
     req = _make_request()
     with pytest.raises(HTTPException) as exc_info:
         await auth(req)
@@ -398,7 +405,7 @@ class TestPassthroughAuthRefactorRegression:
             .claim("custom_meta", "hello")
             .encode("unused-secret-passthrough-does-not-verify")
         )
-        auth = PassthroughAuth(required=True)
+        auth = PassthroughAuth(acknowledge_unverified=True, required=True)
         req = _make_request(headers={"Authorization": f"Bearer {signed}"})
         ctx = await auth(req)
 
@@ -420,7 +427,7 @@ class TestPassthroughAuthRefactorRegression:
             .claim("sofy-roles", ["editor"])
             .encode("unused-secret-passthrough-does-not-verify")
         )
-        auth = PassthroughAuth(required=True)
+        auth = PassthroughAuth(acknowledge_unverified=True, required=True)
         req = _make_request(headers={"Authorization": f"Bearer {signed}"})
         ctx = await auth(req)
 
@@ -440,7 +447,7 @@ class TestApiKeyAuthQueryFallbackOffByDefault:
 
     async def test_query_param_key_rejected_by_default(self):
         # The row's whole point: no toggle, no warning, off by default.
-        auth = ApiKeyAuth(keys={"k": AuthContext(user_id="svc")})
+        auth = ApiKeyAuth(hashed_keys={hash_api_key("k"): AuthContext(user_id="svc")})
         req = _make_request(query_params={"api_key": "k"})
         with pytest.raises(HTTPException) as exc_info:
             await auth(req)
@@ -449,7 +456,7 @@ class TestApiKeyAuthQueryFallbackOffByDefault:
     async def test_param_kwarg_reenables_query_fallback(self):
         # The named escape hatch — self-documenting at the call site.
         expected = AuthContext(user_id="svc")
-        auth = ApiKeyAuth(keys={"k": expected}, param="api_key")
+        auth = ApiKeyAuth(hashed_keys={hash_api_key("k"): expected}, param="api_key")
         req = _make_request(query_params={"api_key": "k"})
         ctx = await auth(req)
         assert ctx is expected
@@ -490,7 +497,8 @@ class TestApiKeyAuthQueryFallbackOffByDefault:
     def test_construction_with_plaintext_keys_never_retains_raw_key(self):
         # No raw configured key may appear anywhere in the instance's
         # __dict__ after construction — S14's core guarantee.
-        auth = ApiKeyAuth(keys={"super-secret-raw-key": AuthContext(user_id="svc")})
+        with pytest.warns(DeprecationWarning, match=r"ApiKeyAuth\(keys="):
+            auth = ApiKeyAuth(keys={"super-secret-raw-key": AuthContext(user_id="svc")})
         for value in vars(auth).values():
             assert "super-secret-raw-key" not in repr(value)
 
@@ -517,13 +525,16 @@ class TestApiKeyAuthQueryFallbackOffByDefault:
     def test_empty_param_string_raises_value_error(self):
         # Edge case: an empty parameter name is a typo, not "disable".
         with pytest.raises(ValueError):
-            ApiKeyAuth(keys={"k": AuthContext()}, param="")
+            ApiKeyAuth(hashed_keys={hash_api_key("k"): AuthContext()}, param="")
 
     async def test_header_wins_over_query_param_when_both_present(self):
         # Edge case: header-vs-query precedence is preserved from today.
         header_ctx = AuthContext(user_id="header")
         query_ctx = AuthContext(user_id="query")
-        auth = ApiKeyAuth(keys={"h-key": header_ctx, "q-key": query_ctx}, param="api_key")
+        auth = ApiKeyAuth(
+            hashed_keys={hash_api_key("h-key"): header_ctx, hash_api_key("q-key"): query_ctx},
+            param="api_key",
+        )
         req = _make_request(headers={"X-API-Key": "h-key"}, query_params={"api_key": "q-key"})
         ctx = await auth(req)
         assert ctx is header_ctx
@@ -533,8 +544,10 @@ class TestApiKeyAuthQueryFallbackOffByDefault:
             ApiKeyAuth(hashed_keys={"bcrypt$deadbeef": AuthContext()})
 
     async def test_empty_keys_dict_still_legal_every_key_401s(self):
-        # Edge case: ApiKeyAuth(keys={}) remains legal.
-        auth = ApiKeyAuth(keys={})
+        # Edge case: ApiKeyAuth(keys={}) remains legal (and still warns —
+        # Plan 053 / FLIP-034-1: an empty mapping is still the plaintext path).
+        with pytest.warns(DeprecationWarning, match=r"ApiKeyAuth\(keys="):
+            auth = ApiKeyAuth(keys={})
         req = _make_request(headers={"X-API-Key": "anything"})
         with pytest.raises(HTTPException) as exc_info:
             await auth(req)
@@ -627,3 +640,81 @@ class TestJwtBearerAuthRevocationErrorMapping:
         req = _make_request(headers={"Authorization": "Bearer my.jwt.token"})
         await auth(req)
         registry.verify.assert_called_once_with("my.jwt.token")
+
+
+# ── Plan 053 / FLIP-034-1 / FLIP-034-4 ───────────────────────────────────────────────────
+
+
+_EXPECTED_KEYS_MSG = (
+    "ApiKeyAuth(keys=...) is deprecated since 4.0.0 and will be removed in 5.0.0. "
+    "Use ApiKeyAuth(hashed_keys=...) with varco_core.auth.api_key.hash_api_key() instead."
+)
+
+
+class _Flip053Headers(dict):
+    def get(self, key, default=""):  # type: ignore[override]
+        return super().get(key.lower(), default)
+
+
+def _flip053_request(headers: dict[str, str] | None = None) -> MagicMock:
+    req = MagicMock()
+    req.headers = _Flip053Headers({k.lower(): v for k, v in (headers or {}).items()})
+    req.query_params = {}
+    return req
+
+
+# ── FLIP-034-1 ────────────────────────────────────────────────────────────────
+
+
+def test_keys_path_warns_once_with_since_and_removed_in():
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ApiKeyAuth(keys={"k": AuthContext()})
+    deps = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert len(deps) == 1
+    assert str(deps[0].message) == _EXPECTED_KEYS_MSG
+    # stacklevel=3: the warning blames the ApiKeyAuth(...) call site.
+    assert deps[0].filename == __file__
+
+
+def test_keys_path_still_authenticates():
+    # Behaviour is otherwise byte-identical — only the warning is new.
+    expected = AuthContext(user_id="u1")
+    with pytest.warns(DeprecationWarning, match=r"ApiKeyAuth\(keys="):
+        auth = ApiKeyAuth(keys={"secret": expected})
+    assert auth._constructed_from_plaintext is True
+
+
+def test_hashed_keys_path_emits_no_warning():
+    # Control (passes today): the documented path is silent.
+    from varco_core.auth.api_key import hash_api_key
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        ApiKeyAuth(hashed_keys={hash_api_key("k"): AuthContext()})
+
+
+# ── FLIP-034-4 ────────────────────────────────────────────────────────────────
+
+
+def test_passthrough_requires_acknowledgement():
+    with pytest.raises(TypeError, match="acknowledge_unverified"):
+        PassthroughAuth()  # type: ignore[call-arg]
+
+
+def test_passthrough_false_is_a_type_error():
+    with pytest.raises(TypeError, match="literally True"):
+        PassthroughAuth(acknowledge_unverified=False)  # type: ignore[arg-type]
+
+
+def test_passthrough_signature_is_required_keyword_only():
+    # Class signatures are invisible to api_surface --check (CLAUDE.md).
+    param = inspect.signature(PassthroughAuth.__init__).parameters["acknowledge_unverified"]
+    assert param.default is inspect.Parameter.empty
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY
+
+
+async def test_passthrough_acknowledged_behaves_as_before():
+    auth = PassthroughAuth(acknowledge_unverified=True, required=False)
+    ctx = await auth(_flip053_request())
+    assert ctx.is_anonymous()

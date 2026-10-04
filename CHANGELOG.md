@@ -9,6 +9,244 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Apps using `create_varco_app` with `VARCO_CACHE_BACKEND=redis`, `layered`, or `memcached` failed
+  to start: `CoreModule`'s `core.stores` (INFRA) component called `start()` on the cache its
+  provider had already started, and `CacheBackend.start()` raises `RuntimeError` when already
+  started ("already-started cache"). `core.stores` now treats that `RuntimeError` as "already
+  started" for the cache seam only; the scanned `InMemoryCache` default is still started, and any
+  other exception still aborts startup (Plan 050 follow-up).
+- `data.rls_not_checked`'s "not run" reason now names what to start — `SAModule`'s
+  `sa.rls_posture` component / `SAModule.start()` (Plan 056 follow-up).
+- Examples 08/09/10/17/22 updated to the 4.0 API: `varco_fastapi.di.bootstrap(container)` replaces
+  the removed `container.install(VarcoFastAPIModule)`; example 10 no longer passes `init=False`
+  `created_at`/`updated_at` to `domain_replace()`/`dataclasses.replace()` (which raise `ValueError`;
+  the mapper stamps both) and its health test
+  targets `/health/live`; example 17's tests enter the app lifespan explicitly. Stale
+  `VarcoFastAPIModule` names in examples 01/06/07 and in `varco_core` docstrings now read
+  `VarcoFastAPIConfiguration`.
+
+### BREAKING — word-boundary redaction, audit redaction on by default, redaction posture collector (Plan 057, FLIP-040-1 / FLIP-040-2 / RO-5)
+
+- **FLIP-040-1 — `RedactionPolicy().match_mode` is `"word"`.** The fifteen
+  `DEFAULT_REDACT_PATTERNS` literals are unchanged; the *matching* changed. A key and each pattern
+  are tokenised by the same tokenizer (separators, camelCase, acronym boundaries, digit runs); a
+  pattern matches as a contiguous token subsequence, its last token also matching a simple plural.
+  `api_key`/`apiKey`/`x-api-key`/`Authorization`/`credentials` are redacted by DEFAULT alone;
+  `shipping_address` (`"pin"`) and `author` (`"auth"`) no longer are; suffix-glued names with no
+  separator (`csrftoken`, `csrfmiddlewaretoken`, `secretkey`, `totp_code`, `oauth`) are no longer
+  matched. This flows into span capture, `error_params()` redaction, and any `PolicyRedactor()`.
+  Escape hatches: `RedactionPolicy(match_mode="substring")` (the 3.2 matcher, byte-identical) or
+  listing the exact token as a pattern. A pattern with no alphanumeric token (e.g. `"-"`) now
+  raises `ValueError` at `RedactionPolicy` construction in word mode.
+- **FLIP-040-2 — `AuditLogMixin._audit_redactor` defaults to `PolicyRedactor(AUDIT_REDACTION_POLICY)`.**
+  New export `AUDIT_REDACTION_POLICY = RedactionPolicy(render_non_json=False)` (on
+  `varco_core.redaction` and `varco_core`): secret-named keys in every audit diff written after the
+  upgrade become `"[REDACTED]"`, while `datetime`/`UUID`/`Decimal` leaves stay the same objects.
+  Rows written before the upgrade are untouched. Opt out per service with
+  `_audit_redactor = None`; extend with `PolicyRedactor(dataclasses.replace(AUDIT_REDACTION_POLICY, patterns=…))`.
+- **RO-5 — `varco_fastapi.posture.RedactionPostureCollector`** wires `inspect_redaction_posture()`
+  into `SecurityPosture` as a **default** collector contributed by `SecurityPostureModule`; the
+  audited services are listed once with the new `SecurityPostureModule(audited_services=(…,))`
+  keyword (explicit input, never discovered). The four ids are unchanged; their meaning is now
+  "opted out" and a default app emits none. `redaction.audit.disabled` is WARN — under
+  `enforce="refuse"` in `production` an opted-out service refuses startup unless
+  `VARCO_SECURITY_SUPPRESS=redaction.audit.disabled`.
+- **Added `ParamCaptureConfig.redact_match_mode`** (`"word"` default, `"substring"` escape hatch)
+  for `@span` parameter capture with custom `redact_patterns`.
+
+Migration: see `plans/057-redaction-flips.md` §Migration (assembled into the 4.0 guide by Plan 058).
+
+### BREAKING — Data-layer default flips (Plan 056, FLIP-12 / FLIP-13)
+
+- **FLIP-12 — `TenancySettings.enforce_rls` defaults `True`, and now has a reader.** In 3.x nothing
+  read the flag (RLS was checked only if the app called `assert_rls_enabled()` itself). Now
+  `SAModule` contributes a `varco_sa.tenancy.rls_posture.RlsPostureCollector` and
+  `SAModule`'s `sa.rls_posture` lifecycle component (`RLS_POSTURE_PHASE` = `Phase.INFRA + 50`,
+  i.e. after `MigrationsModule` runs, with no hard dependency on it) reads the RLS catalog state
+  of every `TenantScope.TENANT`
+  table carrying a tenant column — on Postgres, under `SHARED` isolation only — and
+  `SecurityPosture` reports it. Gates, in order: `isolation` not `SHARED` or a non-Postgres
+  dialect → `data.rls_not_applicable` (INFO, no query); no candidate table (a single-tenant
+  app) → nothing; `enforce_rls=false` → `data.rls_not_enforced` (WARN, no query); database
+  unreachable → `data.rls_not_checked` (NOT_ASSESSED, never a refusal). Ids: `data.rls_disabled`
+  (HIGH), `data.role_bypasses_rls` (HIGH, **narrowed** — superuser, `BYPASSRLS`, or an owned table
+  *without* `FORCE`; an owned, forced table is no longer reported), `data.rls_not_forced` (WARN),
+  new `data.rls_enabled_without_policy` (WARN — default-deny), new `data.rls_guc_setter_absent`
+  (WARN — live policies with neither `rls_set_tenant` nor an `install_rls_tenant_hook()`), new
+  `data.rls_table_absent` (INFO — a candidate table with no `pg_class` row yet, e.g. a fresh
+  database on first deploy; never reported as `data.rls_disabled`).
+  Under Plan 054's derived `refuse`, a production app with unprotected tenant tables **does not
+  start**; `development` logs and starts. Escape hatch: `VARCO_TENANCY_ENFORCE_RLS=false` (+
+  `VARCO_SECURITY_SUPPRESS=data.rls_not_enforced`). **varco still ships no revision that enables
+  RLS.** Additive: `RlsPosture.dialect` (trailing, default `"postgresql"`),
+  `RlsPosture.missing_tables` (trailing, default empty), `varco_sa.modules.RLS_POSTURE_PHASE`,
+  `SAModelRegistry.registered()`, `rls_candidate_tables()`, `rls_findings()`,
+  `hook_installed()`, `SAModule(rls_tenant_column=)`. `SecurityPostureModule` no longer
+  contributes `DataPostureCollector` (it only ever produced `data.rls_not_checked`); the class
+  stays as the hand form and now delegates to `rls_findings()` — which also fixes its 3.2
+  `AttributeError` on a real `RlsPosture` (`.enabled`/`.forced` → `.rls_enabled`/`.rls_forced`)
+  and its false HIGH on SQLite.
+- **FLIP-13 — webhook signing secrets are never stored in plaintext.**
+  `SAWebhookSubscriptionRepository` and `BeanieWebhookSubscriptionRepository` take `encryptor`
+  as a **required** keyword: omitted → Python's missing-keyword `TypeError`; `None` or a
+  non-`FieldEncryptor` (e.g. the Fernet key `bytes`) → a `TypeError` naming
+  `FernetFieldEncryptor(key)`, the Plan 050 DI path, the dev hatch, and the upgrade step. New
+  `varco_core.PlaintextFieldEncryptor(acknowledge_plaintext=True)` — the greppable dev/test hatch
+  for the hand **and** DI paths. `posture.webhook_secrets_plaintext` (WARN, blocks a production
+  start unless suppressed) now fires on a repository holding a `PlaintextFieldEncryptor` or no
+  encryptor (an out-of-tree one), never on `InMemoryWebhookSubscriptionRepository` (unchanged —
+  its secrets are never at rest). The default `LocalPostureCollector` resolves the bound
+  `WebhookSubscriptionRepository` from the container, so a stock app is assessed (a provider
+  that fails to construct is `posture.not_assessed.webhook_secrets_plaintext`, never a crash). New
+  `reencrypt_legacy_plaintext(*, legacy_hex=None) -> int` on both durable repositories:
+  **mandatory, once, for a 3.x deployment with existing rows** — rows written without an
+  encryptor are plaintext and fail to decrypt through a real encryptor (`ValueError`/
+  `EncryptionError` on first read); the method rewrites them in place and is idempotent. Run it
+  with the key that wrote any existing ciphertext. The default `legacy_hex=None` never guesses:
+  an unambiguous entry (`whsec_…`) is upgraded, and if any entry fails to decrypt and is valid hex
+  of printable UTF-8 the whole run refuses with the new `AmbiguousLegacySecretError` (a
+  `ValueError`, naming every ambiguous subscription id) **before writing anything** — re-run with
+  `legacy_hex=True` (`PlaintextFieldEncryptor` rows) or `legacy_hex=False` (raw 3.x hex secrets).
+  `varco_core.webhook.base.plan_legacy_reencryption()` is the shared plan-then-write rule.
+
+Migration: this plan's §Migration (assembled into the 4.0 guide by Plan 058).
+
+### BREAKING — Tenant-provenance default flips (Plan 055, FLIP-6 / FLIP-7 / FLIP-9)
+
+- **FLIP-6 — tenant resolution defaults to the chain.** `TenantResolutionMiddleware(chain=None)`
+  now means *the configured chain*: the env-derived `build_tenant_source_chain()`
+  (`VARCO_TENANT_SOURCES`) when hand-wired, the container-resolved chain when `TenancyModule`
+  builds it. Only with nothing configured does it fall back to the implicit `X-Tenant-Id`
+  `LegacyTenantSource` — **kept**, as the deprecated path:
+  `warn_deprecated(since="3.2.0", removed_in="5.0.0")` replaces the 3.2 ad-hoc `warnings.warn`,
+  and (wired through `TenancyModule`) `tenant.no_chain` + `tenant.legacy_source_implicit` (WARN)
+  refuse a production start under Plan 054's derived `refuse`. The 12-month floor from 3.2.0 (2026-09-12) forbids the `TypeError` the 3.2 warning promised; it
+  moves to 5.0.0. A hand-wired middleware naming a multi-bound plugin source in
+  `VARCO_TENANT_SOURCES` raises `ValueError` (pass `chain=` or use `TenancyModule`).
+  `EdgeSlot.TENANT_RESOLUTION = 95` (inside `ErrorMiddleware` and the pre-auth rate limit,
+  outside `RequestContextMiddleware`). `TenancyModule` gains `catalog=`/`chain=`/`server_auth=`/
+  `membership=`/`header=`/`reject_status=`, `pool` becomes optional (no `TenancyLifecycle`
+  without one), it contributes the middleware and the `TenantPostureCollector`, and `pool=None`
+  under `SCHEMA`/`DATABASE` isolation refuses startup (`ConfigurationError` from
+  `TenancyModule.async_init()`, before any `start()`, regardless of `strict_validation`). `catalog`/`pool` are optional on the
+  middleware (`None` → no status gate / no `ensure()`), which also gains read-only `chain` and
+  `chain_implicit` properties. Posture: `tenant.legacy_source_explicit`
+  (WARN), `tenant.single_source` (INFO), `tenant.subdomain_trusts_forwarded_host` (WARN) are now
+  mapped; new `tenant.no_catalog_gate` (INFO); `tenant.*` findings appear **only** with
+  `TenancyModule` (`SecurityPostureModule` no longer contributes a tenant collector); a bound
+  `NullTenantMembership` counts as no provider (`tenant.no_membership_provider` WARN).
+- **FLIP-7 — membership fails closed.** `ClaimTenantMembership.on_missing_claim`,
+  `TenantMembershipSettings.on_missing_claim` and the `VARCO_TENANT_MEMBERSHIP_ON_MISSING` default
+  are `DENY`: a token with no `tenants` claim is denied (`reason="claim_absent"`, one WARNING per
+  process naming the policy). The self-tenant path is unchanged (no IdP change for a single-tenant
+  fleet). Escape hatch: `VARCO_TENANT_MEMBERSHIP_ON_MISSING=allow` — reported as HIGH
+  `tenant.membership_missing_claim_allows`, which blocks a `refuse` start unless suppressed.
+- **FLIP-9 — `RequestContextMiddleware` never sets the tenant.** `tenant_field=` and
+  `enable_tenant_context=` are removed (passing either → `TypeError`); `_maybe_tenant_context` is
+  gone. `TenantResolutionMiddleware` is the only HTTP writer of `current_tenant()`.
+  `inspect_tenant_provenance(request_context_sets_tenant=...)` defaults to `False`. Replacement:
+  `TenancyModule()` + `VARCO_TENANT_SOURCES=jwt` (+ `VARCO_TENANT_CLAIM_METADATA_KEY=<claim>`
+  where `tenant_field` differed); `catalog`/`pool` are optional under `SHARED` isolation.
+
+### Documentation
+
+- FLIP-14 provisioning-authority model for `mount_tenant_admin` recorded (Plan 055 §D-flip14,
+  `technical_docs/features/admin-surface-tenancy.md`) — design only.
+
+Migration: Plan 055's §Migration (assembled into the 4.0 guide by Plan 058).
+
+### BREAKING — HTTP-edge and admin-surface default flips (Plan 054, FLIP-2 / FLIP-3 / FLIP-4 / FLIP-10)
+
+- **FLIP-2 — the security posture preflight refuses a production start by default.** Before:
+  `SecurityPostureSettings.enforce` defaulted to `"warn"`. After: the field defaults to `None` and
+  `effective_enforce` derives `"refuse"` unless `VARCO_SECURITY_ENV` is exactly `development`
+  (which derives `"warn"`). Under `refuse` one unsuppressed `HIGH` finding (any environment) or
+  `WARN` finding (`production`) aborts startup with
+  `RuntimeError: SecurityPostureLifecycle(enforce='refuse', derived from VARCO_SECURITY_ENV='production'): refusing to start — unsuppressed blocking findings: <ids>. …`
+  — the 3.2 fragment `refusing to start — unsuppressed blocking findings:` is kept verbatim. A
+  stock production app refuses on `posture.authorizer_unbound` without an app authorizer. (As
+  first landed, a stock app also refused on three `tenant.*` WARNs; Plan 055 below re-homes the
+  tenant collector into `TenancyModule`, so an app with no tenancy emits none.) Escape hatch:
+  `VARCO_SECURITY_ENFORCE=warn` (or `SecurityPostureSettings(enforce="warn")`); per finding,
+  `VARCO_SECURITY_SUPPRESS=<id>`. New INFO ids `posture.unrecognised_environment` /
+  `posture.unrecognised_enforce` report a value that is not exactly `production`/`development` /
+  `warn`/`refuse` (never normalised). `SecurityPosture` gains a trailing `enforce` field and
+  `summary()` ends with `· enforce=<mode>`. `WiringReport.enforce_source` gains `"derived"`; the
+  `varco diagnose` header renders `enforce=refuse (derived from VARCO_SECURITY_ENV=production)`.
+- **`http.rate_limit.absent` WARN → INFO.** Rate limiting is a recorded non-flip (Plan 036 row
+  11); at WARN, FLIP-2 would have made its absence a production start-blocker by the back door.
+- **Severity table.** `technical_docs/features/security-posture.md` now lists every shipped
+  posture `check` id, its severity, and whether it blocks a production start under the 4.0
+  default; a test fails when a new id has no row.
+- **`di.in_process_backend` stays opt-in.** In-process backends are a legitimate deployment
+  shape, so `SecurityPostureModule` does not contribute its collector. New public
+  `varco_fastapi.posture.DIPostureCollector(container)`: an app that wants every seam still on
+  its in-process default to block a production start contributes it once —
+  `contribute(container, PostureCollector, DIPostureCollector(container))`.
+- **FLIP-3 / FLIP-4 — admin surfaces require `server_auth`.** Before: `mount_reliability_admin`
+  and `mount_webhook_admin` with `server_auth=None` logged one `UNAUTHENTICATED` warning and
+  mounted; `build_webhook_router`/`build_dlq_router`/`build_audit_router` accepted `None`. After:
+  `server_auth` is a required keyword on all five — omitted → `TypeError`, `None` → `ValueError`
+  (`… requires server_auth …`), checked before anything is mounted; the warning is gone. Every
+  reliability route now resolves `server_auth` (once per request) and enforces `admin_role` (403
+  `'reliability-admin' role required.`) — before, `admin_role` was enforced only by a caller's own
+  `dependencies=`, which are now additive. Behind a gateway that already verified the caller:
+  `server_auth=PassthroughAuth(acknowledge_unverified=True)`.
+- **FLIP-10 — `ErrorEnvelopeSettings.include_detail` defaults `False`.** Every mapped
+  `ServiceException` body omits `detail` (`str(exc)`); the structured content is in `params`
+  (`ServiceValidationError` → `detail`/`field`, `ServiceConflictError` → `detail`,
+  `ServiceNotFoundError` → `entity`/`entity_id`, `ServiceAuthorizationError` and every
+  `RouteGuard` denial → `operation`) and `message_key`. Escape hatch:
+  `VARCO_ERROR_INCLUDE_DETAIL=true` — reported as `http.error.detail_exposed` (WARN, new text),
+  which blocks a production start under FLIP-2 unless suppressed. The `ErrorMiddleware` path now
+  emits `message_key`/`params` like the route-handler path.
+- Migration: plan 054's §Migration (assembled into the 4.0 guide by Plan 058).
+
+### BREAKING — credential and authorization default flips (Plan 053, FLIP-5 / FLIP-034-1 / FLIP-034-2 / FLIP-034-3 / FLIP-034-4)
+
+- **FLIP-5 — `BaseAuthorizer` binds only under `VARCO_SECURITY_ENV=development`.** Before: the
+  permissive `BaseAuthorizer` was the `@Fallback` `AbstractAuthorizer` in every process. After:
+  it carries `@Requires(env="VARCO_SECURITY_ENV", value="development")` (exact, case-sensitive);
+  in any other process it is not a binding — the wiring preflight refuses startup with
+  `ConfigurationError` (`MISSING_BINDING` at every service injecting `AbstractAuthorizer`, plus a
+  `CONDITION_INACTIVE` naming the variable), and an unvalidated container raises
+  `LookupError: No binding found for 'AbstractAuthorizer'. Did you forget container.bind() or
+  container.provide()?` at first construction. New posture id `posture.authorizer_unbound`
+  (HIGH, never demoted); `posture.base_authorizer_bound` (WARN) now fires in production only for
+  an explicit instance binding. Escape hatch: register a real authorizer; development/tests
+  export `VARCO_SECURITY_ENV=development`; a deliberately permissive production app uses
+  `bind_instance(container, AbstractAuthorizer, BaseAuthorizer())` and suppresses
+  `posture.base_authorizer_bound`. `container.bind(AbstractAuthorizer, BaseAuthorizer)` is gated
+  too. `enable_authorization_audit()` with no app authorizer now raises `LookupError` in
+  production. `varco_core.testing.in_memory_modules()` binds its own permissive `@Fallback`
+  authorizer, so the test profile still boots with zero env vars.
+- **FLIP-034-2 — `JwtAuthority`-minted tokens carry a uuid4 `jti` by default.** Before:
+  `token()` seeded only `iss`. After: `token()` also seeds `with_random_jti()`; `sign()` is
+  unchanged. Escape hatch: `JwtAuthority.from_pem(..., mint_jti=False)` (or the constructor);
+  per token, `.token_id("…")` or a hand-built `JwtBuilder()`. 3.x-minted tokens still in flight
+  carry no `jti` — see FLIP-034-3's bridge. No posture id.
+- **FLIP-034-3 — `revocation_require_jti` is derived from the wired store.** Before:
+  `JwtVerificationSettings.revocation_require_jti: bool = False`. After: `bool | None = None`;
+  `None` derives `True` iff the registry's wired store is not a `NullTokenRevocationStore`
+  (`varco_core.revocation.null.is_null_revocation_store()`). Auth0/Keycloak/Cognito tokens (no
+  `jti` by default) are rejected at `TOKEN` scope the moment a real store is wired. Escape hatch:
+  `VARCO_JWT_REVOCATION_REQUIRE_JTI=false` (or the per-call kwarg) — reported as
+  `auth.revocation_jti_not_required` (INFO); set it for one token lifetime to bridge 3.x tokens.
+  `RevocationPostureReport` gains `require_jti_derived`.
+- **FLIP-034-1 — `ApiKeyAuth(keys=...)` is deprecated (`since="4.0.0", removed_in="5.0.0"`).**
+  Behaviour unchanged (still hashed at construction; `auth.api_key_plaintext` WARN unchanged)
+  plus one `DeprecationWarning` attributed to the caller. Use `ApiKeyAuth(hashed_keys=...)` with
+  `hash_api_key()`. Added `varco_core.deprecation.warn_deprecated()` (also on `varco_core`) —
+  the helper for a deprecated *parameter path*; recorded in the deprecation ledger.
+- **FLIP-034-4 — `PassthroughAuth` requires `acknowledge_unverified=True`.** Before:
+  `PassthroughAuth(*, required=False)`. After: `acknowledge_unverified: Literal[True]` is a
+  required keyword-only argument — omitting it, or passing anything but literally `True`, is a
+  `TypeError`. `auth.passthrough_bound` (WARN) still fires for an acknowledged instance.
+
+Migration: Plan 053's §Migration (assembled into the 4.0 guide by Plan 058).
+
 ### BREAKING — runtime validate() in the lifespan (Plan 052)
 
 `create_varco_app(validate=True)` now also runs `container.validate()` inside the lifespan, after
@@ -305,7 +543,9 @@ re-export). `SAIdempotencyStore` gained an additive `engine=` kwarg.
   default-implementation catalogue (`technical_docs/di-catalogue.md`), wired into `make lint`'s
   no-`PKG` path and CI's `lint` job.
 - `varco_fastapi.posture._collect_di()` — the `di.in_process_backend` `SecurityPosture` finding
-  (WARN in production) for a seam still served by its in-process default.
+  (WARN in production) for a seam still served by its in-process default. **Opt-in** (Plan 054):
+  contribute `varco_fastapi.posture.DIPostureCollector(container)` to `PostureCollector`; it is
+  never a default collector, since in-process backends are a legitimate deployment shape.
 - `create_varco_app(container, ...)` now calls `check_backend_selection(container)`, raising
   `BackendSelectionError` on an unknown `VARCO_<SEAM>_BACKEND` value.
 

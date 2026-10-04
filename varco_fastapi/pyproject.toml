@@ -138,4 +138,11 @@ filterwarnings = [
     "ignore::DeprecationWarning:jwt",
     "ignore::DeprecationWarning:starlette",
     "ignore::DeprecationWarning:pydantic",
+    # Plan 053 / FLIP-034-1: no in-repo test may rely on the deprecated
+    # plaintext path silently — tests ABOUT it wrap it in pytest.warns().
+    "error:ApiKeyAuth\\(keys=:DeprecationWarning",
+    # Plan 055 / FLIP-6: same guard for the implicit X-Tenant-Id fallback —
+    # incidental tests pass an explicit LegacyTenantSource chain; the tests
+    # ABOUT the implicit path wrap it in pytest.warns()/catch_warnings().
+    "error:TenantResolutionMiddleware\\(chain=None\\):DeprecationWarning",
 ]

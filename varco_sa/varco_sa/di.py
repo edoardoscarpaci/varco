@@ -425,8 +425,11 @@ class SAConfiguration:
         ``MISSING_BINDING``, or a ``LookupError`` at first resolution without
         052's preflight) rather than silently persist plaintext secrets. This
         is the DI-path half of Plan 056/FLIP-13's constructor-level refusal —
-        that plan makes the *hand* path (``encryptor=None``) refuse too; this
-        provider makes the refusal structurally unreachable through DI.
+        the *hand* path refuses a missing/``None`` encryptor with ``TypeError``
+        too; this provider makes plaintext structurally unreachable through DI
+        (the dev hatch is a bound
+        ``PlaintextFieldEncryptor(acknowledge_plaintext=True)``, reported as
+        ``posture.webhook_secrets_plaintext``).
 
         DESIGN: gate via ``@Requires(env=...)`` directly, not ``selected_by()``
             ✅ ``webhook_repository`` is not one of Plan 047's six registered

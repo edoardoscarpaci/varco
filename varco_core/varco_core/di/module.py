@@ -83,6 +83,7 @@ Async safety:   ✅ ``async_init``/``start``/``stop`` are ``async def``;
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from functools import partial
 from typing import TYPE_CHECKING, Any, final
@@ -95,6 +96,8 @@ if TYPE_CHECKING:
     from providify import DIContainer
 
     from varco_core.di.lifecycle import LifecycleComponent
+
+_logger = logging.getLogger(__name__)
 
 
 class ModuleCycleError(RuntimeError):
@@ -759,6 +762,13 @@ class CoreModule(VarcoModule):
 
         Duck-typed: most backends (e.g. ``InMemoryIdempotencyStore``) have
         no ``start()`` at all and are silently skipped.
+
+        Edge cases:
+            ``CacheBackend.start()`` is contractually *not* idempotent (it
+            raises ``RuntimeError`` when already started) and every shipped
+            cache backend provider returns an already-started instance, so
+            that ``RuntimeError`` is tolerated as "already started" for the
+            cache seam only. Any other exception still aborts startup.
         """
         from varco_core.cache.base import CacheBackend  # noqa: PLC0415
         from varco_core.event.dlq import AbstractDeadLetterQueue  # noqa: PLC0415
@@ -777,8 +787,37 @@ class CoreModule(VarcoModule):
                 continue
             obj: Any = await container.aget(seam)
             start = getattr(obj, "start", None)
-            if callable(start):
+            if not callable(start):
+                continue
+            if seam is not CacheBackend:
+                # The four store seams' start() is idempotent (or absent).
                 await start()
+                continue
+            # DESIGN: tolerate CacheBackend's documented "already started"
+            # RuntimeError instead of assuming start() is idempotent.
+            #   Invariant violated before: this loop treated every seam's
+            #   start() as idempotent (Plan 050 §D-stores' premise), but
+            #   CacheBackend.start()'s contract is "Raises: RuntimeError: If
+            #   already started" — and every shipped cache backend provider
+            #   (redis_cache, layered_cache, memcached_cache) returns an
+            #   instance it already started, so a VARCO_CACHE_BACKEND=<backend>
+            #   app died here at INFRA ("already-started cache").
+            #   ✅ Honours the ABC's own contract, so it also holds for an
+            #      out-of-tree backend; no public-API change; the @Singleton
+            #      InMemoryCache default (nothing started it) is still started.
+            #   ✅ Same pattern LayeredCache.start() already uses for a shared,
+            #      already-started layer.
+            #   ❌ A backend that (against the ABC) raises RuntimeError for a
+            #      genuine start failure is only caught at first use (it
+            #      raises "not started" then). Any other exception type still
+            #      aborts startup here.
+            try:
+                await start()
+            except RuntimeError:
+                _logger.debug(
+                    "core.stores: %r was already started by its provider; not restarting.",
+                    obj,
+                )
 
     async def _stop_stores(self, container: DIContainer) -> None:
         """The exact reverse of ``_start_stores`` — see its docstring."""

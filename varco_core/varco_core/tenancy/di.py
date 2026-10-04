@@ -194,7 +194,8 @@ def enable_tenant_membership(
         settings: A ``TenantMembershipSettings``, or ``None`` (default) to
             build one via ``TenantMembershipSettings.from_env()`` —
             ``VARCO_TENANT_MEMBERSHIP_CLAIM`` (default ``"tenants"``) and
-            ``VARCO_TENANT_MEMBERSHIP_ON_MISSING`` (default ``"allow"``).
+            ``VARCO_TENANT_MEMBERSHIP_ON_MISSING`` (default ``"deny"`` since
+            4.0, Plan 055 / FLIP-7).
 
     Returns:
         The same container, for chaining.

@@ -44,8 +44,10 @@ async def test_settings_resolve_via_provider() -> None:
     await c.ashutdown()
 
 
-async def test_authorizer_is_opt_in() -> None:
+async def test_authorizer_is_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
     """Bootstrap alone must not shadow the fallback; enable_* flips it."""
+    # FLIP-5 (Plan 053): the BaseAuthorizer fallback binds only in development.
+    monkeypatch.setenv("VARCO_SECURITY_ENV", "development")
     c = await _fresh()
 
     # Pre-opt-in: the permissive fallback wins.
@@ -109,4 +111,17 @@ async def test_post_construct_starts_engine() -> None:
     await engine.add_policy("admin", "*", "*")
     await engine.add_role_for_user("alice", "admin")
     assert await engine.enforce(ER("alice", "posts", "read")) is True
+    await c.ashutdown()
+
+
+async def test_policy_authorizer_needs_no_development_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FLIP-5 (Plan 053): enable_policy_authorizer() is a real, non-fallback
+    binding — it resolves with VARCO_SECURITY_ENV unset (production)."""
+    monkeypatch.delenv("VARCO_SECURITY_ENV", raising=False)
+    c = bootstrap(DIContainer())
+    enable_policy_authorizer(c)
+    authorizer = await c.aget(AbstractAuthorizer)
+    assert type(authorizer).__name__ == "PolicyEngineAuthorizer"
     await c.ashutdown()

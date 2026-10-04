@@ -53,7 +53,7 @@ class PatientService(AsyncService[Patient, UUID, PatientCreate, PatientRead, Pat
     CRUD service for ``Patient`` entities backed by PostgreSQL.
 
     Inherits the full ``AsyncService`` contract:
-    - Authorization via injected ``AbstractAuthorizer`` (defaults to permissive).
+    - Authorization via injected ``AbstractAuthorizer`` (permissive, development only).
     - DTO ↔ domain translation via injected ``PatientAssembler``.
     - Unit-of-work management via ``IUoWProvider`` (provided by SAConfiguration).
     - No event publishing in this example — keeps it focused on encryption.
@@ -75,7 +75,9 @@ class PatientService(AsyncService[Patient, UUID, PatientCreate, PatientRead, Pat
         Args:
             uow_provider: Injected ``IUoWProvider`` — provided by ``SAConfiguration``.
             authorizer:   Injected ``AbstractAuthorizer`` — ``BaseAuthorizer``
-                          (permissive) is auto-registered by varco_core.
+                          (permissive), bound in ``app.py``. Since 4.0 that
+                          class-keyed bind is gated: run with
+                          ``VARCO_SECURITY_ENV=development`` (Plan 053 / FLIP-5).
             assembler:    Injected ``PatientAssembler`` — handles DTO ↔ Patient mapping.
         """
         # No producer injection — this example does not publish domain events.

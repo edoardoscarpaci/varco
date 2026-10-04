@@ -2,37 +2,51 @@
 varco_core.tenancy.membership
 ==============================
 Tenant↔subject membership binding (Plan 033 / S5, §D-S5-claim) — a signed
-claim list, no external lookup, fail-open in 3.2.
+claim list, no external lookup, fail-closed by default since 4.0 (Plan 055 /
+FLIP-7).
 
-DESIGN: a Null Object DI default plus an ``enable_*`` opt-in, fail-open in 3.2
+DESIGN: a Null Object DI default plus an ``enable_*`` opt-in
     ✅ Exactly the shape CLAUDE.md already records twice —
        ``NullFeatureFlags`` scanned + ``enable_feature_flags()``, and the
        ``enable_policy_authorizer`` rule that an opt-in must **not** be a
        scanned ``@Configuration`` (scan auto-activates those and would
        silently shadow an app's own binding).
-    ✅ Fail-open-with-a-warning is the locked blast-radius rule applied
-       honestly: adding a ``tenants`` claim to every token in a fleet is
-       real application work at the IdP, so it warns in 3.2 and flips in
-       4.0 (``BACKLOG.md:54``).
     ✅ The self-membership branch means a large class of existing
        single-tenant deployments become *correctly* enforced the moment
        they opt in, with no IdP change at all.
     ✅ Trust stays anchored in the signature — no lookup, no per-request
        query, per the locked membership decision (``BACKLOG.md:57``).
-    ❌ ``ALLOW``-on-missing means an opted-in app whose IdP silently stops
-       emitting ``tenants`` degrades to no enforcement. Mitigated: the
-       WARNING is emitted once per process **and** the decision's ``reason``
-       is ``"claim_absent"``, which lands in ``TenantProvenance.membership``
-       and therefore in 036's S11 audit.
     Rejected — ``ClaimTenantMembership`` as the scanned default: ❌ a
     scanned default that denies is a fleet-wide 403 on upgrade; a scanned
     default that allows is indistinguishable from ``NullTenantMembership``
     while being harder to reason about.
-    Rejected — ``on_missing_claim=DENY`` in 3.2: ❌ needs every token in a
-    fleet reissued; textbook "real application work" under the locked rule.
     Rejected — a ``tenants`` field on ``AuthContext``: ❌ a frozen,
     api-surface-tracked dataclass with many out-of-tree constructors;
     ``metadata`` is the documented home for extra claims.
+
+DESIGN: fail-closed by default since 4.0 (Plan 055 / FLIP-7)
+    ``on_missing_claim`` defaults to ``DENY`` at all three sites (the enum
+    comment, ``TenantMembershipSettings``'s field, ``ClaimTenantMembership``'s
+    constructor). It was ``ALLOW`` + one WARNING in 3.2.
+    ✅ Brief 006 §2 rule 5 — *fail closed on missing tenant*: an opted-in app
+       whose IdP silently stops emitting ``tenants`` now denies instead of
+       degrading to no enforcement.
+    ✅ The self-tenant branch is untouched — a single-tenant token whose
+       ``tenant_id`` equals the resolved tenant is still its own proof, so
+       a single-tenant fleet keeps working with no IdP change.
+    ✅ One greppable opt-out (``VARCO_TENANT_MEMBERSHIP_ON_MISSING=allow``),
+       reported as ``tenant.membership_missing_claim_allows`` (HIGH) — so
+       the opt-out needs its acknowledgement (``VARCO_SECURITY_SUPPRESS``).
+    ❌ A multi-org fleet whose IdP has not yet added the ``tenants`` claim
+       403s every cross-tenant request at upgrade. Mitigated: the decision's
+       ``reason`` is ``"claim_absent"`` and one WARNING per process names
+       the policy, so an operator can find out why.
+    Rejected — flipping only the env default and keeping the constructor
+    default ``ALLOW``: ❌ two defaults for one field; a code caller
+    constructing ``ClaimTenantMembership()`` would stay fail-open silently.
+    Rejected — removing ``MissingClaimPolicy.ALLOW``: ❌ removes a 3.2
+    public enum member with no deprecation window, and a suppressed,
+    time-boxed ``allow`` during an IdP rollout is a legitimate shape.
 
 Thread safety:  ✅ Both shipped implementations are stateless except for a
     module-level "warned once" flag guarded by no lock — a benign race would
@@ -84,8 +98,11 @@ _missing_claim_warned = False
 class MissingClaimPolicy(StrEnum):
     """What ``ClaimTenantMembership`` does when the membership claim is absent."""
 
-    ALLOW = "allow"  # 3.2 default — allow + one process-level WARNING
-    DENY = "deny"  # 4.0 default
+    # The 3.2 default — an explicit opt-out since 4.0 (Plan 055 / FLIP-7);
+    # reported as `tenant.membership_missing_claim_allows` (HIGH).
+    ALLOW = "allow"
+    # The default since 4.0 (Plan 055 / FLIP-7).
+    DENY = "deny"
 
 
 class TenantMembershipSettings(VarcoSettings):
@@ -110,9 +127,9 @@ class TenantMembershipSettings(VarcoSettings):
             list. Env: ``VARCO_TENANT_MEMBERSHIP_CLAIM``. Defaults to
             ``"tenants"``.
         on_missing_claim: ``MissingClaimPolicy``. Env:
-            ``VARCO_TENANT_MEMBERSHIP_ON_MISSING``. Defaults to ``ALLOW``
-            in 3.2 (flips to ``DENY`` in 4.0, per the 4.0 flip list) —
-            **unchanged by this plan** (§Non-goals).
+            ``VARCO_TENANT_MEMBERSHIP_ON_MISSING``. Defaults to ``DENY``
+            since 4.0 (Plan 055 / FLIP-7); ``allow`` is the explicit,
+            HIGH-reported opt-out.
 
     Edge cases:
         - ``VARCO_TENANT_MEMBERSHIP`` itself (the ``null``/``claim``
@@ -136,7 +153,7 @@ class TenantMembershipSettings(VarcoSettings):
     # VARCO_TENANT_MEMBERSHIP_ON_MISSING_CLAIM (the field's own name) —
     # a validation_alias is required to keep the incumbent name working.
     on_missing_claim: MissingClaimPolicy = Field(
-        default=MissingClaimPolicy.ALLOW,
+        default=MissingClaimPolicy.DENY,
         validation_alias=AliasChoices("VARCO_TENANT_MEMBERSHIP_ON_MISSING"),
     )
 
@@ -255,8 +272,9 @@ class ClaimTenantMembership(AbstractTenantMembership):
         claim_key: The ``AuthContext.metadata`` key holding the membership
             list. Defaults to ``"tenants"``.
         on_missing_claim: ``MissingClaimPolicy`` — behaviour when the claim
-            is entirely absent. Defaults to ``ALLOW`` in 3.2 (flips to
-            ``DENY`` in 4.0, per the 4.0 flip list).
+            is entirely absent. Defaults to ``DENY`` since 4.0 (Plan 055 /
+            FLIP-7); pass ``MissingClaimPolicy.ALLOW`` to restore the 3.2
+            fail-open behaviour (reported as a HIGH posture finding).
     """
 
     name: ClassVar[str] = "claim"
@@ -265,7 +283,7 @@ class ClaimTenantMembership(AbstractTenantMembership):
         self,
         *,
         claim_key: str = _DEFAULT_MEMBERSHIP_CLAIM_KEY,
-        on_missing_claim: MissingClaimPolicy = MissingClaimPolicy.ALLOW,
+        on_missing_claim: MissingClaimPolicy = MissingClaimPolicy.DENY,
     ) -> None:
         self.claim_key = claim_key
         self.on_missing_claim = on_missing_claim
@@ -311,12 +329,19 @@ class ClaimTenantMembership(AbstractTenantMembership):
     def _missing_claim_decision(self, tenant_id: str, subject: str | None) -> MembershipDecision:
         global _missing_claim_warned  # noqa: PLW0603 — see module docstring
         if not _missing_claim_warned:
+            # The one log line is how an operator learns why a fleet 403s
+            # after the 4.0 flip — so it names the policy and the outcome.
+            outcome = (
+                "allowed (explicit opt-out)"
+                if self.on_missing_claim is MissingClaimPolicy.ALLOW
+                else "denied (reason=claim_absent)"
+            )
             logger.warning(
-                "ClaimTenantMembership: no %r claim present on the caller's "
-                "token; on_missing_claim=%s. This warning is emitted once "
-                "per process.",
-                self.claim_key,
+                "ClaimTenantMembership: on_missing_claim=%s — callers without a %r "
+                "claim are %s. This warning is emitted once per process.",
                 self.on_missing_claim.value,
+                self.claim_key,
+                outcome,
             )
             _missing_claim_warned = True
         allowed = self.on_missing_claim is MissingClaimPolicy.ALLOW

@@ -79,8 +79,9 @@ class DocumentAuthorizer(GrantBasedAuthorizer):
         DELETE: owner OR admin role (checked via ``_check_entity`` in the
                 service, not here — see module docstring for rationale).
 
-    Registered as a ``@Singleton`` at default priority (0), which shadows the
-    permissive ``BaseAuthorizer`` at priority ``-(2**31)``.
+    Registered as a ``@Singleton`` (non-fallback), which always wins over the
+    permissive ``@Fallback`` ``BaseAuthorizer`` — itself a binding only under
+    ``VARCO_SECURITY_ENV=development`` since 4.0.
 
     DESIGN: inherits ``GrantBasedAuthorizer`` for the core grant check
         ``GrantBasedAuthorizer.authorize()`` calls ``ctx.can(action, key)``
@@ -166,8 +167,8 @@ class DocumentService(
         Args:
             uow_provider: Injected ``IUoWProvider`` — provided by ``DocumentModule``.
             authorizer:   Injected ``AbstractAuthorizer`` — resolves to
-                          ``DocumentAuthorizer`` (registered at priority 0),
-                          shadowing ``BaseAuthorizer`` (priority ``-(2**31)``).
+                          ``DocumentAuthorizer`` (a non-fallback ``@Singleton``),
+                          shadowing the ``@Fallback`` ``BaseAuthorizer``.
             assembler:    Injected ``DocumentAssembler``.
             producer:     Optional ``AbstractEventProducer``.  Resolves to
                           ``None`` in this example (no bus wired) — ``AsyncService``

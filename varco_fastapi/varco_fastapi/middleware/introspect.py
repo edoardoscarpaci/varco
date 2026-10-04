@@ -16,11 +16,11 @@ render, group, or escalate them; it must not redefine them):
     http.security_headers.absent        warn   No SecurityHeadersMiddleware
     http.security_headers.hsts_absent   info   Installed, hsts_max_age == 0
     http.body_limit.absent              warn   No BodyLimitMiddleware
-    http.rate_limit.absent              warn   No RateLimitMiddleware
+    http.rate_limit.absent              info   No RateLimitMiddleware (opt-in; INFO since 4.0)
     http.rate_limit.no_pre_auth_rule    warn   Installed, every rule POST_AUTH
     http.rate_limit.in_memory_limiter   info   A rule uses InMemoryRateLimiter
     http.rate_limit.fail_open           info   fail_open=True (the default)
-    http.error.detail_exposed           warn   ErrorEnvelopeSettings.include_detail is True
+    http.error.detail_exposed           warn   VARCO_ERROR_INCLUDE_DETAIL=true (off by default since 4.0)
     http.error.debug_enabled            high   ErrorMiddleware(debug=True)
 
 DESIGN: a pure read over ``app.user_middleware``, returning a frozen
@@ -111,7 +111,7 @@ class HttpEdgePosture:
         rate_limit_distributed:      ``True`` when every rule's limiter is
             NOT an ``InMemoryRateLimiter`` (i.e. safe across replicas).
         error_detail_exposed:        ``ErrorEnvelopeSettings().include_detail``
-            — D-S3b's 4.0 flip candidate.
+            — ``False`` by default since 4.0 (Plan 054 / FLIP-10).
         error_debug_enabled:         Whether any ``ErrorMiddleware`` in the
             stack was constructed with ``debug=True``.
         findings:                    Every ``HttpEdgeFinding`` this posture
@@ -168,9 +168,13 @@ def _absent_posture() -> HttpEdgePosture:
             ),
             HttpEdgeFinding(
                 check="http.rate_limit.absent",
-                severity="warn",
+                # Plan 054 / §D-ratelimit: rate limiting is a recorded
+                # non-flip (036 row 11); at WARN, FLIP-2's derived `refuse`
+                # would make its absence a production start-blocker.
+                severity="info",
                 detail="No RateLimitMiddleware in the stack.",
-                remediation="create_varco_app(container, modules=[..., RateLimitModule(RateLimitBundle(...))]).",
+                remediation="create_varco_app(container, modules=[..., RateLimitModule(RateLimitBundle(...))]) "
+                "(opt-in; INFO since 4.0 — Plan 054 §D-ratelimit).",
             ),
         ),
     )
@@ -337,9 +341,13 @@ def _inspect(app: Any) -> HttpEdgePosture:
         findings.append(
             HttpEdgeFinding(
                 check="http.rate_limit.absent",
-                severity="warn",
+                # Plan 054 / §D-ratelimit: rate limiting is a recorded
+                # non-flip (036 row 11); at WARN, FLIP-2's derived `refuse`
+                # would make its absence a production start-blocker.
+                severity="info",
                 detail="No RateLimitMiddleware in the stack.",
-                remediation="create_varco_app(container, modules=[..., RateLimitModule(RateLimitBundle(...))]).",
+                remediation="create_varco_app(container, modules=[..., RateLimitModule(RateLimitBundle(...))]) "
+                "(opt-in; INFO since 4.0 — Plan 054 §D-ratelimit).",
             )
         )
 
@@ -362,9 +370,10 @@ def _inspect(app: Any) -> HttpEdgePosture:
             HttpEdgeFinding(
                 check="http.error.detail_exposed",
                 severity="warn",
-                detail="ErrorEnvelopeSettings.include_detail is True — the "
-                "application-authored str(exc) is echoed in every error body.",
-                remediation="VARCO_ERROR_INCLUDE_DETAIL=false (4.0 flip candidate).",
+                detail="VARCO_ERROR_INCLUDE_DETAIL=true — the application-authored "
+                "str(exc) is echoed in every error body (off by default since 4.0).",
+                remediation="Unset VARCO_ERROR_INCLUDE_DETAIL; if the echo is deliberate, "
+                "VARCO_SECURITY_SUPPRESS=http.error.detail_exposed.",
             )
         )
 

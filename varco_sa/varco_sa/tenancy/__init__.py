@@ -25,6 +25,8 @@ from varco_sa.tenancy.guard import guard_fanout_configuration
 from varco_sa.tenancy.models import tenants_metadata, tenants_table
 from varco_sa.tenancy.provisioner import SASchemaProvisioner
 from varco_sa.tenancy.rls_check import assert_rls_enabled
+from varco_sa.tenancy.rls_posture import RlsPostureCollector, rls_findings
+from varco_sa.tenancy.rls_session import hook_installed
 from varco_sa.tenancy.router import SYMBOLIC_SCHEMA_TOKEN, SASchemaRouter
 
 __all__ = [
@@ -35,6 +37,9 @@ __all__ = [
     "SYMBOLIC_SCHEMA_TOKEN",
     "SASchemaProvisioner",
     "assert_rls_enabled",
+    "RlsPostureCollector",
+    "rls_findings",
+    "hook_installed",
     "SATenantCatalog",
     "tenants_table",
     "tenants_metadata",

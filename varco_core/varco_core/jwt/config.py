@@ -67,13 +67,15 @@ class JwtVerificationSettings(VarcoSettings):
                         registry — see ``varco_core.revocation.di``'s
                         two-step warning.
         revocation_require_jti: Whether a token with no ``jti`` claim is
-                        treated as revoked at ``TOKEN`` scope. Default
-                        ``False`` (§D-S13-jti) — Auth0, Keycloak, and
-                        Cognito do not emit ``jti`` by default (brief 009
-                        §2), so requiring one would break those
-                        deployments the moment a store is wired. Set
-                        ``VARCO_JWT_REVOCATION_REQUIRE_JTI=true`` to fail
-                        closed on a ``jti``-less token instead.
+                        treated as revoked at ``TOKEN`` scope. ``None``
+                        (the 4.0 default, Plan 053 / FLIP-034-3): derived
+                        at check time — ``True`` iff the registry's wired
+                        store is not a ``NullTokenRevocationStore``.
+                        ``true``/``false`` (env or instance) override the
+                        derivation in either direction. Auth0, Keycloak,
+                        Cognito emit no ``jti`` by default (brief 009 §2):
+                        set ``VARCO_JWT_REVOCATION_REQUIRE_JTI=false`` for
+                        such an issuer, or use SUBJECT/TENANT/ISSUER scope.
         revocation_skew_seconds: Clock-skew tolerance (seconds) added to a
                         ``TOKEN``-scope entry's TTL beyond the token's own
                         ``exp`` (brief 009 §5). Default ``60.0`` (OWASP/RFC
@@ -119,7 +121,8 @@ class JwtVerificationSettings(VarcoSettings):
 
     # ── Revocation (Plan 034 / S13) ──────────────────────────────────────────
     revocation_failure_mode: RevocationFailureMode = RevocationFailureMode.FAIL_CLOSED
-    revocation_require_jti: bool = False
+    # None = derived from the registry's wired store (Plan 053 / FLIP-034-3).
+    revocation_require_jti: bool | None = None
     revocation_skew_seconds: float = 60.0
     revocation_enabled: bool = True
 

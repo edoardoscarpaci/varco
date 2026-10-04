@@ -85,7 +85,7 @@ class PostService(
     CRUD service for ``Post`` entities with caching and event publishing.
 
     Implements the full varco service contract:
-    - Authorization via injected ``AbstractAuthorizer`` (defaults to permissive).
+    - Authorization via injected ``AbstractAuthorizer`` (``PostAuthorizer``).
     - DTO ↔ domain translation via injected ``PostAssembler``.
     - Look-aside caching via ``CacheServiceMixin`` (DI-injected ``CacheBackend``).
     - Event publishing via ``AbstractEventProducer`` (optional — no-op if absent).
@@ -125,9 +125,10 @@ class PostService(
         """
         Args:
             uow_provider: Injected ``IUoWProvider`` — provided by SAConfiguration.
-            authorizer:   Injected ``AbstractAuthorizer`` — defaults to
-                          ``BaseAuthorizer`` (permissive) if no custom
-                          authorizer is registered.
+            authorizer:   Injected ``AbstractAuthorizer`` — ``PostAuthorizer``,
+                          a non-fallback binding that wins in every
+                          environment (varco's permissive ``BaseAuthorizer``
+                          binds only under ``VARCO_SECURITY_ENV=development``).
             assembler:    Injected ``PostAssembler`` — handles DTO ↔ Post mapping.
             producer:     Optional ``AbstractEventProducer``.  Injected by the DI
                           container once ``varco_core.di.bootstrap()`` has run

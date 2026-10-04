@@ -79,7 +79,8 @@ the derivation, and the three fixes; `mount_reliability_admin()`, `mount_webhook
 `VARCO_ERROR_INCLUDE_DETAIL=true`, and the middleware path carries `message_key`/`params` like the
 handler path always did; `technical_docs/features/security-posture.md` carries one table listing
 every shipped `check` id with its severity and its 4.0 production consequence, including
-`di.in_process_backend` (WARN → blocks) and `http.rate_limit.absent` (re-tiered to INFO — a
+`di.in_process_backend` (WARN → blocks, **when the app opts in** by contributing
+`DIPostureCollector` — never a default collector, see §D-severity-table) and `http.rate_limit.absent` (re-tiered to INFO — a
 recorded non-flip must not become a start-blocker by the back door). Each flip has exactly one
 greppable escape hatch, a posture id, a §Migration row, and tests for default, escape hatch,
 posture, and 052 composition.
@@ -246,7 +247,7 @@ each gain a function-scoped autouse fixture `_posture_warn_only(monkeypatch)` th
 
 | Candidate | ✅ | ❌ |
 |---|---|---|
-| **(1) chosen: autouse `ENFORCE=warn`, FLIP-2 tests opt out explicitly** | Post-049 *every* `create_varco_app()` test that enters lifespan runs the posture module; post-047 every such test with in-memory seams emits `di.in_process_backend` (WARN); with `VARCO_SECURITY_ENV` unset (CI) the derived default is `refuse` → **hundreds** of existing tests would refuse to start for a reason unrelated to what they test. `ENFORCE` changes *consequence only* — presentation (demotion, ids, severities) is untouched, so every posture assertion in the suite still sees the real report; one line, greppable (`rg -n '_posture_warn_only' varco_*/tests examples/`) | Hides the flip from the suite by default — mitigated by Step 2's explicit `delenv` tests, which are the proof, and by `test_settings_default_enforce_is_none_and_derived` which runs with the variable deleted |
+| **(1) chosen: autouse `ENFORCE=warn`, FLIP-2 tests opt out explicitly** | Post-049 *every* `create_varco_app()` test that enters lifespan runs the posture module; post-053 every such test emits `posture.authorizer_unbound` (HIGH) unless it binds an authorizer (`di.in_process_backend` only where a test opts in to `DIPostureCollector`); with `VARCO_SECURITY_ENV` unset (CI) the derived default is `refuse` → **hundreds** of existing tests would refuse to start for a reason unrelated to what they test. `ENFORCE` changes *consequence only* — presentation (demotion, ids, severities) is untouched, so every posture assertion in the suite still sees the real report; one line, greppable (`rg -n '_posture_warn_only' varco_*/tests examples/`) | Hides the flip from the suite by default — mitigated by Step 2's explicit `delenv` tests, which are the proof, and by `test_settings_default_enforce_is_none_and_derived` which runs with the variable deleted |
 | (2) sweep every test to `VARCO_SECURITY_ENV=development` (053's per-test discipline) | Greppable per test | 053 chose per-test `setenv` for `ENV` because an autouse `ENV=development` would *change presentation* (WARN → INFO) under every posture test — the reason does not transfer to `ENFORCE`, and the sweep here is not four files but every lifespan-entering test in the repo. Rejected |
 | (3) use 052's `InMemoryProfile` everywhere | The designed test shape | Rewriting hundreds of pre-052 tests is 058-scale work, not a flip plan's. Rejected; new tests written by this plan **do** use the profile where it exists |
 
@@ -271,7 +272,7 @@ one** (§D-ratelimit) and adds exactly two INFO ids (§D-flip2-env).
 | `posture.unrecognised_environment` | INFO | **054** (new) | no | set `production`/`development` |
 | `posture.unrecognised_enforce` | INFO | **054** (new) | no — the value is treated as `warn` | set `VARCO_SECURITY_ENFORCE` to exactly `warn`/`refuse`, or unset it |
 | `posture.not_assessed.*` | NOT_ASSESSED | 036 | never (§D-S9-enforce) | install the sibling package |
-| `di.in_process_backend` | WARN | 047 (consequence: **054**) | **yes** — an in-memory event bus / cache / DLQ / idempotency store / job store in production is lost on restart and single-process by construction; INFO in `development` by the standard demotion | `VARCO_<SEAM>_BACKEND=<real backend>`; a deliberate single-process deployment: `VARCO_SECURITY_SUPPRESS=di.in_process_backend` (one id covers every seam; the detail names each) |
+| `di.in_process_backend` | WARN | 047 (consequence: **054**) | **yes, when opted in** (the app contributes `DIPostureCollector(container)`; never a default collector) — an in-memory event bus / cache / DLQ / idempotency store / job store in production is lost on restart and single-process by construction; INFO in `development` by the standard demotion | `VARCO_<SEAM>_BACKEND=<real backend>`; a deliberate single-process deployment: `VARCO_SECURITY_SUPPRESS=di.in_process_backend` (one id covers every seam; the detail names each) |
 | `auth.api_key_query_fallback` | WARN | 034/036 | yes | drop `param=`; suppress |
 | `auth.api_key_plaintext` | WARN | 034/036 (053 deprecates the path) | yes | `hashed_keys=` |
 | `auth.passthrough_bound` | WARN | 034/036 | yes | suppress if the gateway deployment is deliberate (053) |
@@ -306,11 +307,16 @@ Suppression is an operator statement for **any** tier — a suppressed HIGH is d
 does not block (`:382`), as in 3.2.
 
 **What a stock 4.0 app sees in production with zero configuration** (all sibling flips landed):
-`di.in_process_backend` for every seam left on its in-process default → **refuses**. That is the
-row's purpose and brief 010 §3's rule applied to the seams whose in-process default is a
-data-loss shape (DLQ, idempotency, job store, outbox-adjacent bus); the fix is one
-`VARCO_<SEAM>_BACKEND=` per seam, or one suppression for a deliberate single-process deployment.
-The §Migration table says so in its first row.
+**no** `di.in_process_backend` — revised by decision on this plan's drift report: an app may
+legitimately run in-process backends (one process, a worker owning its own state, a demo), so
+047's emitter is wrapped as the public, **opt-in** `varco_fastapi.posture.DIPostureCollector`
+and is not among `SecurityPostureModule`'s default collectors. An app that wants the guarantee
+contributes it once — `contribute(container, PostureCollector, DIPostureCollector(container))` —
+and then every seam left on its in-process default **refuses** a production start (brief 010 §3's
+rule applied to the seams whose in-process default is a data-loss shape: DLQ, idempotency, job
+store, outbox-adjacent bus); the fix is one `VARCO_<SEAM>_BACKEND=` per seam, or one suppression
+for a deliberate single-process deployment. A stock app still learns about an unselected seam
+from `check_backend_selection()`'s WARNING and `varco diagnose`.
 
 ### §D-ratelimit — `http.rate_limit.absent` WARN → INFO, because a recorded non-flip cannot become a start-blocker
 
@@ -510,7 +516,7 @@ first because it changes what every other phase's posture test observes.
 
 ### Phase A — FLIP-2, the severity table, `http.rate_limit.absent`
 
-1. [ ] **Preflight.** Record in `/tmp/claude-1000/-home-edoardo-projects-varco/625af1a2-0cf8-4199-b924-0b3f986861e6/scratchpad/054-preflight.txt`:
+1. [x] **Preflight.** Record in `/tmp/claude-1000/-home-edoardo-projects-varco/625af1a2-0cf8-4199-b924-0b3f986861e6/scratchpad/054-preflight.txt`:
        every `file:line` in §Context re-read (`posture.py:154-196,326-393,671-702`, `admin/mount.py:46-123`,
        `dlq_router.py:47-191`, `audit_router.py:46-193`, `_tenant_scope.py:28-94`,
        `webhook/mount.py:37-108`, `webhook/router.py:67-103,147-200`, `tenancy/router.py:113-117`,
@@ -524,13 +530,14 @@ first because it changes what every other phase's posture test observes.
        are in the tree — each later step names its pre-/post- form. Measure the blast radius:
        `VARCO_SECURITY_ENV= VARCO_SECURITY_ENFORCE= uv run pytest varco_fastapi/tests -q -x -k "posture or app or lifespan"`
        with a **temporary** local `enforce="refuse"` default (revert immediately) → record which
-       tests refuse and why (expected: `di.in_process_backend` on every lifespan-entering test
-       post-047/049). Confirm pydantic-settings' `model_fields_set` behaviour for env-populated
+       tests refuse and why (expected: `posture.authorizer_unbound` on every lifespan-entering
+       test post-053; `di.in_process_backend` only where a test contributes the opt-in
+       `DIPostureCollector` — it is not a default collector). Confirm pydantic-settings' `model_fields_set` behaviour for env-populated
        fields with a two-line check (needed by §D-flip2-message's source detection when 048's
        `provenance_of` is absent). **Verify**: the file exists with ≥ 16 confirmations and the
        measured refusal list.
 
-2. [ ] `varco_fastapi/tests/test_posture_core.py` (red) — `test_settings_default_enforce_is_warn`
+2. [x] `varco_fastapi/tests/test_posture_core.py` (red) — `test_settings_default_enforce_is_warn`
        (`:30-36`) → **replace** with `test_settings_default_enforce_is_none_and_derived`:
        `delenv` both variables → `settings.enforce is None`, `settings.effective_enforce == "refuse"`,
        `settings.enforce_is_derived is True`; **add** `test_development_derives_warn`
@@ -563,7 +570,7 @@ first because it changes what every other phase's posture test observes.
        **Verify**: `uv run pytest varco_fastapi/tests/test_posture_core.py -q` → red on every new
        test except `test_code_enforce_beats_env` and the two existing `refuse` tests.
 
-3. [ ] `varco_fastapi/varco_fastapi/posture.py` — §D-flip2-default's field + two properties (with
+3. [x] `varco_fastapi/varco_fastapi/posture.py` — §D-flip2-default's field + two properties (with
        `Attributes`/`Returns` docstrings and a *"DESIGN: sentinel-derived default, keyed on
        `!= "development"` (Plan 054 / FLIP-2)"* block carrying the ✅/❌ and the rejected literal
        default); `:378` reads `effective_enforce`; §D-flip2-env's two findings appended after the
@@ -581,7 +588,7 @@ first because it changes what every other phase's posture test observes.
        regenerate. **Verify**: Step 2 green; `make test PKG=varco_fastapi`; `make test PKG=examples`
        green **with** the fixture and the Step 1 refusal list empty.
 
-4. [ ] **052 composition tests** — `varco_fastapi/tests/test_posture_wiring_compose.py` (new;
+4. [x] **052 composition tests** — `varco_fastapi/tests/test_posture_wiring_compose.py` (new;
        skipped with a reason if 052's `run_wiring_preflight`/`build_wiring_report` are absent —
        recorded in Step 1): `test_wiring_error_refuses_before_posture_runs` — a container with a
        `@Singleton` whose `Inject[...]` is unbound + `SecurityPostureModule(collectors=[<HIGH collector>])`
@@ -603,10 +610,10 @@ first because it changes what every other phase's posture test observes.
        paragraph to `plans/052-…md` §D-report as a one-line note. **Verify**: green (or skipped
        with the recorded reason).
 
-5. [ ] **`di.in_process_backend` consequence + `http.rate_limit.absent` re-tier** (red first) —
+5. [x] **`di.in_process_backend` consequence + `http.rate_limit.absent` re-tier** (red first) —
        `varco_fastapi/tests/test_posture_severity_table.py` (new): `test_in_process_backend_blocks_production_start`
-       — 047's collector (name from Step 1) over a container whose event-bus seam resolves to the
-       in-memory default, variables `delenv`ed → `SecurityPostureLifecycle(collectors=[it]).start()`
+       — 047's collector, via the opt-in `DIPostureCollector(container)`, over a container whose
+       event-bus seam resolves to the in-memory default, variables `delenv`ed → `SecurityPostureLifecycle(collectors=[it]).start()`
        raises naming `di.in_process_backend`; `test_in_process_backend_is_info_in_development` —
        `setenv development` → starts, finding at `INFO`; `test_in_process_backend_suppressed_starts`;
        `test_rate_limit_absent_is_info` — `inspect_http_edge(FastAPI())` → the finding's
@@ -625,7 +632,7 @@ first because it changes what every other phase's posture test observes.
 
 ### Phase B — FLIP-3 / FLIP-4
 
-6. [ ] `varco_fastapi/tests/test_mount_reliability_admin.py`, `test_mount_webhook_admin.py`,
+6. [x] `varco_fastapi/tests/test_mount_reliability_admin.py`, `test_mount_webhook_admin.py`,
        `test_dlq_router.py`, `test_audit_router.py`, `test_admin_tenant_guard.py` (red) — **add**:
        `test_mount_reliability_admin_refuses_server_auth_none` (`pytest.raises(ValueError, match="requires server_auth")`,
        message mentions `PassthroughAuth(acknowledge_unverified=True)`; **nothing mounted**:
@@ -650,7 +657,7 @@ first because it changes what every other phase's posture test observes.
        `allow_cross_tenant(None, role) is False` still governs; add a direct unit test of
        `allow_cross_tenant(None, "x") is False`. **Verify**: red on the new refusal/guard tests.
 
-7. [ ] Implementation — `varco_fastapi/varco_fastapi/admin/_tenant_scope.py`: `admin_guard()`
+7. [x] Implementation — `varco_fastapi/varco_fastapi/admin/_tenant_scope.py`: `admin_guard()`
        (§D-flip3-enforce, docstring with `Args`/`Returns`/`Raises`/`Edge cases`: "a `server_auth`
        that returns `None` is an authenticated-but-anonymous caller — it fails the role check
        (403) and `allow_cross_tenant` stays `False`"); `resolve_ctx()` reads
@@ -673,7 +680,7 @@ first because it changes what every other phase's posture test observes.
        *"(since 4.0 the same rule holds for `mount_reliability_admin`/`mount_webhook_admin`)"*.
        **Verify**: Step 6 green.
 
-8. [ ] In-repo sweep — every site in §Context's 34-site list gains `server_auth=<stub>`; the
+8. [x] In-repo sweep — every site in §Context's 34-site list gains `server_auth=<stub>`; the
        stub is one shared helper `varco_fastapi/tests/_admin_auth.py::ctx_auth(roles: list[str])`
        (moving `test_admin_tenant_guard.py:23-34`'s `_CtxAuth` there; a `Request`-taking variant
        that raises `HTTPException(401)` without an `X-Test-Auth` header for the per-route tests).
@@ -683,14 +690,14 @@ first because it changes what every other phase's posture test observes.
        **Verify**: `make test PKG=varco_fastapi` green; `rg -n 'server_auth=None' varco_*/tests`
        → only the explicit `ValueError` tests.
 
-9. [ ] `uv run python scripts/api_surface.py` — five function signatures change (`server_auth`
+9. [x] `uv run python scripts/api_surface.py` — five function signatures change (`server_auth`
        loses its default; keyword-only order may reorder in the rendering). Commit the snapshot.
        **Verify**: `uv run python scripts/api_surface.py --check` clean; the `.md` diff shows
        exactly the five functions.
 
 ### Phase C — FLIP-10
 
-10. [ ] `varco_core/tests/test_error_envelope_settings.py` (red) — `:22-25` → `test_include_detail_defaults_to_false`
+10. [x] `varco_core/tests/test_error_envelope_settings.py` (red) — `:22-25` → `test_include_detail_defaults_to_false`
         (`delenv VARCO_ERROR_INCLUDE_DETAIL`); **add** `test_env_true_restores_detail`
         (`setenv true` → `error_message_for(exc).detail == str(exc)`),
         `test_default_omits_detail_but_keeps_params` (a `ServiceValidationError("x", field="f")`
@@ -710,7 +717,7 @@ first because it changes what every other phase's posture test observes.
         default/parity tests; `test_http_exception_bodies_untouched` and `test_debug_500_detail_untouched`
         pass today (controls).
 
-11. [ ] Implementation — `varco_core/varco_core/exception/settings.py:72` → `False`; docstring
+11. [x] Implementation — `varco_core/varco_core/exception/settings.py:72` → `False`; docstring
         `:42-50` → *"Default `False` (4.0, Plan 054 / FLIP-10). `true` restores the 3.x echo —
         reported by `inspect_http_edge()` as `http.error.detail_exposed` (WARN; blocks a production
         start under the default `enforce` unless suppressed). Every built-in `ServiceException`
@@ -727,7 +734,7 @@ first because it changes what every other phase's posture test observes.
 
 ### Docs (same commit as the code — feedback memory)
 
-12. [ ] `technical_docs/features/security-posture.md` — env table `:111-115`: `VARCO_SECURITY_ENFORCE`
+12. [x] `technical_docs/features/security-posture.md` — env table `:111-115`: `VARCO_SECURITY_ENFORCE`
         default → *"unset → derived: `refuse` unless `VARCO_SECURITY_ENV=development`"*, meaning
         rewritten; §"`enforce="refuse"`" `:137-145` → *"`refuse` by default in production (4.0,
         Plan 054 / FLIP-2)"* with the matrix from §D-flip2-default, the message shape, and the
@@ -740,8 +747,9 @@ first because it changes what every other phase's posture test observes.
         *"**landed, Plan 054**"*, row 11 gains *"(`http.rate_limit.absent` re-tiered to INFO so the
         FLIP-2 default cannot flip it by the back door — §D-ratelimit)"*; §Pitfalls: replace the
         "opt-in in 3.2" row with *"Production app refuses to start with `di.in_process_backend`
-        → every in-process seam is a finding under the 4.0 default → `VARCO_<SEAM>_BACKEND=` per
-        seam, or suppress for a deliberate single-process deployment"*; *"`VARCO_SECURITY_ENV=staging`
+        → the app contributed the opt-in `DIPostureCollector`, so every in-process seam is a
+        finding under the 4.0 default → `VARCO_<SEAM>_BACKEND=` per seam, or suppress for a
+        deliberate single-process deployment"*; *"`VARCO_SECURITY_ENV=staging`
         → strict enforcement but no WARN blocking and no demotion; `posture.unrecognised_environment`
         says so → use exactly `production`/`development`"*; *"`VARCO_SECURITY_ENFORCE=warn` in a
         3.2 `.env` you forgot about → the 4.0 refusal never fires → `varco diagnose` header shows
@@ -789,7 +797,7 @@ first because it changes what every other phase's posture test observes.
       → 0 hits outside CHANGELOG history; `rg -n 'server_auth=None' README.md technical_docs/ examples/`
       → 0.
 
-13. [ ] `CHANGELOG.md` — under `## [Unreleased]` (`:10`), above the existing blocks:
+13. [x] `CHANGELOG.md` — under `## [Unreleased]` (`:10`), above the existing blocks:
         `### BREAKING — HTTP-edge and admin-surface default flips (Plan 054, FLIP-2 / FLIP-3 / FLIP-4 / FLIP-10)`
         with bullets: FLIP-2 (default-before `warn`, default-after derived `refuse` unless
         `development`; the exact `RuntimeError` fragment; `VARCO_SECURITY_ENFORCE=warn`;
@@ -808,7 +816,7 @@ first because it changes what every other phase's posture test observes.
 
 ### Verification
 
-14. [ ] `make test` (all eleven suites — the autouse fixture keeps the default app booting);
+14. [x] `make test` (all eleven suites — the autouse fixture keeps the default app booting);
         `make lint` (no-`PKG` path: `api-check` clean **with the regenerated snapshot**,
         `asyncapi-check` unchanged, `import-budget --warn-only` no breach); `make type-check`
         clean (no new `type: ignore`); `rg -n '_posture_warn_only' varco_*/tests examples/` → the
@@ -816,7 +824,8 @@ first because it changes what every other phase's posture test observes.
         the explicit `delenv`/`setenv` sites in `test_posture_core.py`/`test_posture_wiring_compose.py`/
         `test_posture_severity_table.py`; `git diff --stat -- design/api-freeze-and-standards/measurements/asyncapi-example.json`
         → empty; the Step 1 refusal list re-run **without** the fixture reproduces the
-        `di.in_process_backend` refusals (the proof the flip is real), then green with it.
+        `posture.authorizer_unbound` refusals (the proof the flip is real; `di.in_process_backend`
+        appears only in the tests that contribute `DIPostureCollector`), then green with it.
 
 ## Edge cases
 
@@ -864,7 +873,9 @@ first because it changes what every other phase's posture test observes.
 
 | Before (3.2) | After (4.0) | Action if you relied on the old behaviour |
 |---|---|---|
-| `SecurityPosture` warned and started (`enforce="warn"` default) | With `VARCO_SECURITY_ENV` unset or `production`: `enforce` derives `refuse` — one `HIGH` finding anywhere, or one unsuppressed `WARN`, aborts startup: `RuntimeError: SecurityPostureLifecycle(enforce='refuse', derived from VARCO_SECURITY_ENV='production'): refusing to start — unsuppressed blocking findings: <ids>`. **A stock app on in-process defaults refuses with `di.in_process_backend`.** `development` derives `warn`; any other value derives `refuse` and is reported as `posture.unrecognised_environment` | Fix each id (the `SecurityPosture[...]` log lines name the remediation; the severity table in `security-posture.md` lists every id and whether it blocks). Knowingly accepted: `VARCO_SECURITY_SUPPRESS=<id>,<id>`. Restore 3.2 wholesale: `VARCO_SECURITY_ENFORCE=warn` (or `SecurityPostureSettings(enforce="warn")` in code). Dev/tests: `VARCO_SECURITY_ENV=development` |
+| `SecurityPosture` warned and started (`enforce="warn"` default) | With `VARCO_SECURITY_ENV` unset or `production`: `enforce` derives `refuse` — one `HIGH` finding anywhere, or one unsuppressed `WARN`, aborts startup: `RuntimeError: SecurityPostureLifecycle(enforce='refuse', derived from VARCO_SECURITY_ENV='production'): refusing to start — unsuppressed blocking findings: <ids>`. A stock app on in-process defaults does **not** refuse on them — `di.in_process_backend` is
+opt-in (`contribute(container, PostureCollector, DIPostureCollector(container))`); an app that
+opts in refuses with it. `development` derives `warn`; any other value derives `refuse` and is reported as `posture.unrecognised_environment` | Fix each id (the `SecurityPosture[...]` log lines name the remediation; the severity table in `security-posture.md` lists every id and whether it blocks). Knowingly accepted: `VARCO_SECURITY_SUPPRESS=<id>,<id>`. Restore 3.2 wholesale: `VARCO_SECURITY_ENFORCE=warn` (or `SecurityPostureSettings(enforce="warn")` in code). Dev/tests: `VARCO_SECURITY_ENV=development` |
 | `http.rate_limit.absent` was WARN | INFO — rate limiting stays opt-in (036 row 11) and the new default must not turn it into a start-blocker | Nothing. If you gated on it via `enforce=refuse`, gate on the report yourself (`SecurityPosture` is data) |
 | `mount_reliability_admin(app, dlq=…, acknowledge_bundled_admin=True)` mounted **unauthenticated** with one warning; `admin_role` was documentation unless you passed `dependencies=` | `server_auth` is a required keyword on `mount_reliability_admin`, `mount_webhook_admin`, `build_dlq_router`, `build_audit_router`, `build_webhook_router`: omitted → `TypeError`; `None` → `ValueError: … requires server_auth …`. Every reliability route now resolves `server_auth` and enforces `admin_role` (403 `'reliability-admin' role required.`) | Pass `server_auth=<your AbstractServerAuth / callable>`; grant `admin_role` (and `cross_tenant_role` where needed) on the admin token. Behind a gateway that already verified the caller: `server_auth=PassthroughAuth(acknowledge_unverified=True)` (expect `auth.passthrough_bound`, suppress if deliberate). A `dependencies=` you used as the only gate keeps working, additively |
 | `posture.admin_mount_unauthenticated` could fire | Unreachable through varco's mounts (they refuse); the id remains for hand-wired surfaces | Nothing |
@@ -916,7 +927,7 @@ git diff --stat -- design/api-freeze-and-standards/measurements/asyncapi-example
 | **A 4.0 production deployment on in-process defaults stops booting** — the row's purpose and the widest behaviour break in this plan | The refusal is loud, at startup, names every id and all three fixes; `VARCO_SECURITY_ENFORCE=warn` restores 3.2 in one line | §Migration row 1 first; CHANGELOG; the severity table; `varco diagnose` shows `enforce=refuse (derived …)` before deploy |
 | **A recorded non-flip becomes a start-blocker via WARN** | Every WARN id in the severity table is a hole or a misconfiguration, never a non-adoption of an opt-in feature | §D-ratelimit re-tiers the one such id; the table's column 4 is reviewed row by row at Step 12 |
 | ⚠️ ASSUMPTION — 047's collector emits `di.in_process_backend` for *explicitly selected* `memory` as well as for the unset default | The severity table's "escape" cell is right | Step 1 reads 047's emitter; if explicit `memory` is silent, the cell says "select `memory` explicitly, or suppress" |
-| ⚠️ ASSUMPTION — post-049 every lifespan-entering test runs `SecurityPostureModule` and post-047 emits `di.in_process_backend` | The autouse fixture is necessary and sufficient | Step 1 measures the refusal list with a temporary local default; Step 14 re-runs it without the fixture |
+| ⚠️ ASSUMPTION — post-049 every lifespan-entering test runs `SecurityPostureModule` and emits a blocking finding (`posture.authorizer_unbound`; `di.in_process_backend` only where `DIPostureCollector` is contributed — it is opt-in) | The autouse fixture is necessary and sufficient | Step 1 measures the refusal list with a temporary local default; Step 14 re-runs it without the fixture |
 | ⚠️ ASSUMPTION — 052's `enforce_source` is a plain `Literal` the report builder sets from 048's `provenance_of()` | Adding `"derived"` is one value + one branch | Step 4 reads 052's implementation; if provenance is computed differently, the branch lives wherever `enforce` is read and the test still asserts the four tuples |
 | ⚠️ ASSUMPTION — pydantic-settings puts env-populated fields into `model_fields_set` (so `"env"` vs `"code"` cannot be told apart from it alone) | §D-flip2-message's source detection is correct without 048 | Step 1's two-line check; the fallback is the `os.environ` comparison, and 048's `provenance_of` is preferred when the instance is container-bound |
 | `admin_role` enforcement on every reliability route breaks an integration that relied on `dependencies=`-only gating with a role-less token | 403 is the correct answer for a caller without the role on a privileged surface | §Migration row 3; the additive `dependencies=` keeps their extra gate |
@@ -927,24 +938,24 @@ git diff --stat -- design/api-freeze-and-standards/measurements/asyncapi-example
 
 ## Done
 
-- [ ] `SecurityPostureSettings.enforce: str | None = None`; `effective_enforce`/`enforce_is_derived`
+- [x] `SecurityPostureSettings.enforce: str | None = None`; `effective_enforce`/`enforce_is_derived`
       properties; the lifecycle reads the property; `RuntimeError` names derivation + fixes and
       keeps the 3.2 fragment; `SecurityPosture.enforce`; `posture.unrecognised_environment` and
       `posture.unrecognised_enforce` (INFO); all Step 2 tests green.
-- [ ] Two autouse `_posture_warn_only` fixtures; the FLIP-2 tests opt out explicitly; the Step 1
+- [x] Two autouse `_posture_warn_only` fixtures; the FLIP-2 tests opt out explicitly; the Step 1
       refusal list reproduces without the fixture and is empty with it.
-- [ ] 052 composition tests green (or skipped with the recorded reason); `WiringReport.enforce_source`
+- [x] 052 composition tests green (or skipped with the recorded reason); `WiringReport.enforce_source`
       accepts `"derived"` and the header renders the derivation.
-- [ ] `http.rate_limit.absent` is INFO; the severity table exists in `security-posture.md` with
+- [x] `http.rate_limit.absent` is INFO; the severity table exists in `security-posture.md` with
       every shipped id; `test_every_shipped_check_id_has_a_severity_table_row` green.
-- [ ] `server_auth` required on the two mounts and three builders; `None` → `ValueError`; every
+- [x] `server_auth` required on the two mounts and three builders; `None` → `ValueError`; every
       reliability route resolves it and enforces `admin_role`; the unauthenticated warnings are
       gone; 34 sites swept; api-surface snapshot regenerated and `--check` clean.
-- [ ] `include_detail=False`; middleware path emits `message_key`/`params`; the three
+- [x] `include_detail=False`; middleware path emits `message_key`/`params`; the three
       "untouched body" controls green unmodified; `http.error.detail_exposed` texts updated.
-- [ ] Docs per Step 12; CHANGELOG per Step 13; BACKLOG rows `FLIP-2`, `FLIP-3`, `FLIP-4`,
+- [x] Docs per Step 12; CHANGELOG per Step 13; BACKLOG rows `FLIP-2`, `FLIP-3`, `FLIP-4`,
       `FLIP-10` → `done (Plan 054)`.
-- [ ] `make test`, `make lint`, `make type-check` green; AsyncAPI snapshot untouched.
+- [x] `make test`, `make lint`, `make type-check` green; AsyncAPI snapshot untouched.
 
 ## Out of scope / Parked
 

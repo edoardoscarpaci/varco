@@ -8,7 +8,8 @@ Mirrors Plan 007 RD-9 (the tenant control plane) verbatim: this surface can
 *replay* messages onto the bus and *delete* audit records — at least as
 privileged as the tenant admin — so it requires an explicit
 ``acknowledge_bundled_admin=True`` and there is deliberately **no**
-env var that mounts it.
+env var that mounts it. Since 4.0 (Plan 054 / FLIP-3) ``server_auth`` is a
+required keyword too — the same barrier-2 rule as ``mount_tenant_admin``.
 
 Thread safety:  N/A — mounting happens once at startup.
 Async safety:   N/A — synchronous FastAPI route registration.
@@ -16,7 +17,6 @@ Async safety:   N/A — synchronous FastAPI route registration.
 
 from __future__ import annotations
 
-import logging
 import weakref
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
@@ -26,8 +26,6 @@ if TYPE_CHECKING:
     from varco_core.event.dlq import AbstractDeadLetterQueue
     from varco_core.event.redrive import DlqRedriver
     from varco_core.service.audit import AuditRepository
-
-_logger = logging.getLogger(__name__)
 
 # Tracks which FastAPI app instances already had the admin surface mounted
 # — refuses a second mount rather than silently duplicating routes. Same
@@ -46,11 +44,11 @@ _MOUNTED_APPS: weakref.WeakSet[Any] = weakref.WeakSet()
 def mount_reliability_admin(
     app: FastAPI,
     *,
+    server_auth: Any,
     audit_repo: AuditRepository | None = None,
     dlq: AbstractDeadLetterQueue | None = None,
     redriver: DlqRedriver | None = None,
     acknowledge_bundled_admin: bool = False,
-    server_auth: Any | None = None,
     admin_role: str = "reliability-admin",
     cross_tenant_role: str = "cross-tenant-admin",
     prefix: str = "/reliability",
@@ -69,24 +67,38 @@ def mount_reliability_admin(
                      ``ValueError`` (RD-9) — bundling admin-adjacent
                      privilege into the app pod's own environment is a
                      deliberate, friction-gated choice, not a default.
-        server_auth: Auth strategy forwarded to both routers.
-        admin_role:  Documented role requirement.
+        server_auth: **Required** (4.0, Plan 054 / FLIP-3). Auth strategy
+                     forwarded to both routers, which resolve it and enforce
+                     ``admin_role`` on every route. Behind a gateway that
+                     already verified the caller, pass
+                     ``PassthroughAuth(acknowledge_unverified=True)``.
+        admin_role:  Role required on every mounted route (403 otherwise).
         cross_tenant_role: Role required to reach every tenant with an
                      omitted ``tenant_id``, or a ``tenant_id`` other than
                      the resolved one (§D-S4-scope). Forwarded unchanged to
                      both routers.
         prefix:      URL prefix for the whole admin surface.
         dependencies: Extra FastAPI dependencies (e.g. an IP allowlist,
-                     an mTLS check) applied to every mounted route.
+                     an mTLS check) applied to every mounted route —
+                     **additive** to the built-in ``admin_role`` guard, never
+                     a replacement for it.
 
     Raises:
-        ValueError: ``acknowledge_bundled_admin`` is not ``True``, or this
+        ValueError: ``acknowledge_bundled_admin`` is not ``True``, this
             app was already mounted once (a router was actually included on
-            a previous call — see Edge cases).
+            a previous call — see Edge cases), or ``server_auth is None``
+            (checked in that order, before anything is included).
+        TypeError: ``server_auth`` omitted (Python's own required-keyword
+            error).
 
     Edge cases:
-        - ``server_auth=None`` → routes mount unauthenticated and one
-          WARNING is logged at mount time naming the risk.
+        - ``server_auth=None`` → ``ValueError`` before any router is
+          included, so a refusal never half-mounts and never records the app
+          in the double-mount guard (until 4.0 it mounted unauthenticated
+          with one WARNING).
+        - With neither ``audit_repo`` nor ``dlq`` a non-``None``
+          ``server_auth`` is still required — a guard that can never be
+          satisfied is refused even when it would guard nothing.
         - Mounting with neither ``audit_repo`` nor ``dlq`` given mounts
           nothing and does **not** poison the app for a later real mount —
           the app id is only recorded when at least one router was actually
@@ -99,6 +111,22 @@ def mount_reliability_admin(
           could reuse a collected app's address and silently skip mounting —
           Plan 022 / RIDER-2, fixed in both this module and
           ``mount_tenant_admin()`` together.)
+
+    DESIGN: required ``server_auth``, no acknowledgement kwarg (Plan 054 /
+        FLIP-3)
+        ✅ The three admin mounts are identical on barrier 2 —
+           ``build_tenant_router``/``mount_tenant_admin`` already refused
+           ``None``; ``ValueError`` matches the two other refusals here.
+        ✅ The one legitimate "no varco auth" deployment (a verifying
+           gateway) already has its acknowledgement kwarg:
+           ``PassthroughAuth(acknowledge_unverified=True)``, reported by
+           ``auth.passthrough_bound``.
+        ❌ Every call site gains a keyword (a test stub is three lines).
+        Rejected: an ``acknowledge_unauthenticated=True`` kwarg — every
+        existing ``acknowledge_*`` gates a shape that is *sometimes* right;
+        an unauthenticated replay/delete surface never is, and it would be
+        a second knob for the gateway case ``PassthroughAuth`` already
+        covers.
     """
     if not acknowledge_bundled_admin:
         raise ValueError(
@@ -115,12 +143,15 @@ def mount_reliability_admin(
             "refusing to mount a second time (would duplicate routes)."
         )
 
-    if server_auth is None:
-        _logger.warning(
-            "mount_reliability_admin(): server_auth=None — the reliability "
-            "admin surface (%s) is mounting UNAUTHENTICATED.",
-            prefix,
-        )
+    from varco_fastapi.admin._tenant_scope import require_server_auth
+
+    # Before any include_router — a refusal never half-mounts (and never
+    # records the app in _MOUNTED_APPS).
+    require_server_auth(
+        server_auth,
+        owner="mount_reliability_admin",
+        surface="replay messages onto the bus and delete audit records",
+    )
 
     mounted_any = False
 

@@ -440,7 +440,7 @@ class TaskRegistry:
     stored args.
 
     The registry is typically registered as a singleton in the DI container
-    (see ``VarcoFastAPIModule``) so all routers share one instance and can
+    (see ``VarcoFastAPIConfiguration``) so all routers share one instance and can
     register their tasks at ``build_router()`` time.
 
     DESIGN: plain dict over WeakValueDictionary

@@ -72,3 +72,34 @@ def test_f_in_memory_profile_carries_no_providify_scan_marker() -> None:
     # an app-constructed VarcoModule like any other, never a scanned class.
     assert not hasattr(InMemoryProfile, "__providify_singleton__")
     assert not hasattr(InMemoryProfile, "__providify_provider__")
+
+
+def test_in_memory_profile_boots_with_no_env(monkeypatch) -> None:
+    # Plan 053 / FLIP-5: the scanned BaseAuthorizer binds only under
+    # VARCO_SECURITY_ENV=development; the profile binds its own permissive
+    # authorizer explicitly so it still boots with zero env vars.
+    from varco_core.auth.authorizer import BaseAuthorizer
+    from varco_core.auth.base import AbstractAuthorizer
+
+    monkeypatch.delenv("VARCO_SECURITY_ENV", raising=False)
+    c = DIContainer()
+    register_modules(c, in_memory_modules())
+    assert isinstance(c.get(AbstractAuthorizer), BaseAuthorizer)
+
+
+def test_in_memory_profile_authorizer_yields_to_an_app_binding(monkeypatch) -> None:
+    # The profile's authorizer is @Fallback: an app authorizer scanned/bound
+    # AFTER register_modules() still wins, in every environment.
+    from providify import Singleton
+    from varco_core.auth.base import AbstractAuthorizer
+
+    @Singleton
+    class AppAuthorizer(AbstractAuthorizer):
+        async def authorize(self, ctx, action, resource) -> None:
+            return None
+
+    monkeypatch.delenv("VARCO_SECURITY_ENV", raising=False)
+    c = DIContainer()
+    register_modules(c, in_memory_modules())
+    c.bind(AbstractAuthorizer, AppAuthorizer)
+    assert type(c.get(AbstractAuthorizer)) is AppAuthorizer

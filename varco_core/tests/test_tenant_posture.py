@@ -178,3 +178,28 @@ class TestInspectTenantProvenance:
         posture = _posture_mod()
         result = posture.inspect_tenant_provenance(None)
         assert result is not None
+
+
+# ── Plan 055 / FLIP-9 — request_context_sets_tenant defaults False ───────────
+
+
+class TestFlip9RequestContextFlagDefault:
+    def test_default_request_context_flag_is_false(self) -> None:
+        # varco's RequestContextMiddleware never sets the tenant since 4.0, so
+        # the default must not report the unchained setter for every app.
+        import inspect
+
+        from varco_core.tenancy.source import TenantSourceChain
+        from varco_core.tenancy.sources import JwtClaimTenantSource
+
+        posture = _posture_mod()
+        chain = TenantSourceChain(sources=(JwtClaimTenantSource(),))
+
+        sig = inspect.signature(posture.inspect_tenant_provenance)
+        assert sig.parameters["request_context_sets_tenant"].default is False
+        default_findings = posture.inspect_tenant_provenance(chain).findings
+        assert "tenant.unchained_claim_tenant_setter" not in default_findings
+        hand_wired = posture.inspect_tenant_provenance(
+            chain, request_context_sets_tenant=True
+        ).findings
+        assert "tenant.unchained_claim_tenant_setter" in hand_wired

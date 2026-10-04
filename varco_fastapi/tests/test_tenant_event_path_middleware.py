@@ -12,6 +12,8 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from tests._tenant_fixtures import legacy_chain
+
 
 class _CountingPool:
     def __init__(self) -> None:
@@ -51,7 +53,8 @@ def _build_app(catalog, pool):
     from varco_fastapi.middleware.tenant_resolution import TenantResolutionMiddleware
 
     app = FastAPI()
-    app.add_middleware(TenantResolutionMiddleware, catalog=catalog, pool=pool)
+    # Plan 055 / FLIP-6: header-only resolution named explicitly.
+    app.add_middleware(TenantResolutionMiddleware, catalog=catalog, pool=pool, chain=legacy_chain())
 
     @app.get("/ping")
     async def ping():

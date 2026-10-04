@@ -42,7 +42,7 @@ Requires a running PostgreSQL instance:
 ```bash
 export DATABASE_URL="postgresql+asyncpg://user:pw@localhost:5432/mydb"
 cd examples/09-sqlalchemy-postgres
-uv run uvicorn app:app --reload
+VARCO_SECURITY_ENV=development uv run uvicorn app:app --reload
 ```
 
 Try it:
@@ -63,7 +63,7 @@ Tests require Docker (PostgreSQL is managed by `testcontainers`):
 
 ```bash
 # From the workspace root
-uv run pytest examples/09-sqlalchemy-postgres/tests/ -v -m integration
+VARCO_SECURITY_ENV=development uv run pytest examples/09-sqlalchemy-postgres/tests/ -v -m integration
 ```
 
 ## Key design decisions

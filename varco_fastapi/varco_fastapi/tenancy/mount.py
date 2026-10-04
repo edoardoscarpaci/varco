@@ -18,7 +18,9 @@ DESIGN: ``mount_tenant_admin(app, ...)`` over a ``create_varco_app(tenant_admin=
 
 Three independent barriers against accidental bundling:
     1. ``acknowledge_bundled_admin`` defaults ``False`` -> ``ValueError``.
-    2. ``server_auth`` is mandatory (no default) -> ``TypeError``/``ValueError``.
+    2. ``server_auth`` is mandatory (no default) -> ``TypeError``/``ValueError``
+       (since 4.0 the same rule holds for ``mount_reliability_admin``/
+       ``mount_webhook_admin`` — Plan 054 / FLIP-3/4).
     3. No env-var path exists at all — this function is the *only* way to
        mount the router.
 """

@@ -92,11 +92,11 @@ def create_app() -> FastAPI:
     # ── 1. DI container bootstrap ─────────────────────────────────────────────
     container = DIContainer()
 
-    # Scan varco_core — registers BaseAuthorizer (lowest-priority fallback)
+    # Scan varco_core — registers BaseAuthorizer (@Fallback; development-only since 4.0)
     # and other @Singleton defaults (InMemoryEventBus, etc.).
     container.scan("varco_core", recursive=True)
 
-    # Scan varco_fastapi — discovers VarcoFastAPIModule (@Configuration)
+    # Scan varco_fastapi — discovers VarcoFastAPIConfiguration (@Configuration)
     # and all framework @Singleton defaults.
     container.scan("varco_fastapi", recursive=True)
 

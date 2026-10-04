@@ -23,7 +23,8 @@ RequestLoggingMiddleware
 TracingMiddleware
 MetricsMiddleware                    (INSIDE Tracing — Plan 041 / §D-S17-decision)
 **RateLimitMiddleware(stage=PRE_AUTH)**   (opt-in via RateLimitModule(RateLimitBundle(...)))
-RequestContextMiddleware             (populates AuthContext / current_tenant())
+TenantResolutionMiddleware           (opt-in via TenancyModule — EdgeSlot.TENANT_RESOLUTION, Plan 055)
+RequestContextMiddleware             (populates AuthContext; never sets the tenant since 4.0)
 **RateLimitMiddleware(stage=POST_AUTH)**  (opt-in, same bundle)
 LocalizationMiddleware
 IdempotencyMiddleware                (opt-in, unchanged — Plan 029)
@@ -44,7 +45,8 @@ now makes structurally impossible.
 | `SecurityHeadersMiddleware` | Inside CORS, outside everything else | Never rewrites a CORS preflight response; headers attach to every error response — 404, 500, a mapped `ServiceException`, the new 413/429 — because it wraps `ErrorMiddleware` from outside |
 | `BodyLimitMiddleware` | Inside `ErrorMiddleware`, outside `IdempotencyMiddleware` | Its 413 renders through the one error envelope with `correlation_id`; sits outside `IdempotencyMiddleware` (which buffers the whole body via `request.body()`) so an over-limit request is rejected before anything buffers it |
 | `RateLimitMiddleware(PRE_AUTH)` | Outside `RequestContextMiddleware` | Rejects an unauthenticated flood **before** any JWT signature verification (and, on a `kid` miss, a JWKS fetch) — only `IP`/`GLOBAL` scopes are legal here |
-| `RateLimitMiddleware(POST_AUTH)` | Inside `RequestContextMiddleware` | `SUBJECT`/`TENANT` scopes read `get_auth_context_or_none()`/`current_tenant()`, populated by `RequestContextMiddleware` |
+| `TenantResolutionMiddleware` (Plan 055) | Inside `ErrorMiddleware` and `RateLimitMiddleware(PRE_AUTH)`, outside `RequestContextMiddleware` | A chain rejection is enveloped/logged/traced; IP limiting protects the chain's JWT verify; `RequestContextMiddleware` reuses the auth it already ran; `current_tenant()` is set before `POST_AUTH`/`LocalizationMiddleware` |
+| `RateLimitMiddleware(POST_AUTH)` | Inside `RequestContextMiddleware` | `SUBJECT`/`TENANT` scopes read `get_auth_context_or_none()` (populated by `RequestContextMiddleware`) and `current_tenant()` (populated by `TenantResolutionMiddleware`) |
 
 **One `RateLimitMiddleware` class, registered at up to two stack positions** — not one position,
 not two classes. A single position cannot satisfy both "reject early, before auth" and "key by
@@ -177,6 +179,12 @@ from varco_fastapi.modules import RateLimitModule, default_modules
 app = create_varco_app(container, modules=[*default_modules(), RateLimitModule(bundle)], ...)
 ```
 
+**Its absence is `INFO`, not `WARN`, since 4.0 (Plan 054 / §D-ratelimit).** Rate limiting is a
+recorded non-flip (036 row 11); under the 4.0 derived `enforce="refuse"` every production `WARN` is
+a start-blocker, so `http.rate_limit.absent` was re-tiered to `INFO` — a stock app without a
+`RateLimitBundle` still starts. `http.rate_limit.no_pre_auth_rule` stays `WARN` (an *installed*
+limiter with no pre-auth rule is a gap in an adopted feature).
+
 **No new rate limiter, no new algorithm.** `RateLimiter`/`RateLimitConfig`/`InMemoryRateLimiter`
 (`varco_core.resilience.rate_limit`) and `RedisRateLimiter` (`varco_redis.rate_limit`) are used
 as-is — this module is the ASGI assembly around them and nothing else.
@@ -273,11 +281,31 @@ and already rendered by the sanitized `_internal_error_response()`). Both sites 
 `{"code": ..., "message": "An internal error occurred."}` plus `correlation_id`, and log the
 exception type server-side at ERROR with `exc_info=True`.
 
-`ErrorEnvelopeSettings.include_detail` (default `True`, byte-identical to pre-3.2) is a **separate,
-warn-only** knob for a **different** echo — `ErrorMessage.detail`, populated unconditionally for
-every `ServiceException` and deliberately kept because it is the only actionable channel for
-`RouteGuard` denial messages. `inspect_http_edge()` reports it as a `warn`-severity
-`http.error.detail_exposed` finding — 4.0's flip candidate, not 3.2's.
+`ErrorEnvelopeSettings.include_detail` is a **separate** knob for a **different** echo —
+`ErrorMessage.detail` (`str(exc)`) on every `ServiceException`. **Default `False` since 4.0 (Plan
+054 / FLIP-10)**; `VARCO_ERROR_INCLUDE_DETAIL=true` is the one escape hatch (restores 3.x
+byte-for-byte) and is reported by `inspect_http_edge()` as `http.error.detail_exposed` (`warn` —
+which blocks a production start under the 4.0 default `enforce` unless suppressed). The 3.2
+reason to keep it — `RouteGuard` denial messages — no longer applies: a denial is a
+`ServiceAuthorizationError` whose text is `params.operation`.
+
+What a client sees, on the route-handler path (`add_exception_handlers`, `create_varco_app`'s
+default):
+
+| Exception | 3.2 body (`detail` present) | 4.0 body | Actionable content lives in |
+|---|---|---|---|
+| `ServiceValidationError("start before end", field="start")` | `detail: "Validation error (field: 'start'): start before end"` | no `detail` | `params.detail`, `params.field` |
+| `ServiceConflictError("email taken")` | `detail: "email taken"` | no `detail` | `params.detail` |
+| `ServiceNotFoundError(User, "u1")` | `detail: "…User… u1"` | no `detail` | `params.entity`, `params.entity_id` |
+| `ServiceAuthorizationError("delete", Post)` | `detail: "Permission denied: 'delete' on Post."` | no `detail` | `params.operation`, `params.entity` (`reason` was never emitted) |
+| `RouteGuard` denial (`require_roles("admin")`) | `detail: "Permission denied: 'Missing required role(s): 'admin'' on str."` | no `detail` | `params.operation == "Missing required role(s): 'admin'"` |
+| An out-of-tree `ServiceException` with no `error_params()` override | `detail: str(exc)` | no `detail`, no `params` | the server log via `correlation_id`; or override `error_params()` |
+
+**Parity (§D-flip10-parity):** the `ErrorMiddleware` path (a `ServiceException` raised inside a
+middleware) now emits `message_key`/`params` exactly like the handler path — it used to emit only
+`code`/`message`/`detail`, so without this FLIP-10 would have left it with nothing actionable. RFC
+9457 members are still handler-path only. `HTTPException` bodies, `QueryException` bodies and the
+`ErrorMiddleware(debug=True)` 500 `detail` are not the envelope and are unchanged.
 
 ## Metrics inside tracing (Plan 041 / S17)
 
@@ -337,6 +365,8 @@ or escalate these; it must not redefine them.
 | A `SUBJECT`-only rule set leaves anonymous traffic unlimited | `inspect_http_edge()` reports `http.rate_limit.no_pre_auth_rule` | Add an `IP`/`GLOBAL` rule at `stage=PRE_AUTH` |
 | Registering any of the three via `MiddlewareModule` (the `extra_middleware=` replacement) | Verified wrong position (§D-order-bugs) — outside `ErrorMiddleware`/`RequestContextMiddleware` | Use the dedicated `SecurityHeadersModule`/`BodyLimitModule`/`RateLimitModule` instead |
 | `ErrorEnvelopeModule` excluded, with `BodyLimitModule`/`RateLimitModule` on | Both middlewares are self-contained for this case — `RateLimitMiddleware` always sends its own 429/503 response directly; `BodyLimitMiddleware` self-renders a plain JSON 413 (via the same shared `send_json_error` helper) when constructed with `has_error_middleware=False`, which `BodyLimitModule`/`RateLimitModule` compute automatically by reading the `ModuleRegistry` for an enabled `ErrorEnvelopeModule` | No action needed — both middlewares degrade gracefully with `ErrorMiddleware` absent; the 413/429 still carry `code`/`message`/`correlation_id` |
+| Client parsed `detail` | The key is absent since 4.0 (FLIP-10) | Read `params` (`ServiceValidationError` → `detail`/`field`, `ServiceAuthorizationError` → `operation`) or `message_key`; or `VARCO_ERROR_INCLUDE_DETAIL=true` and expect `http.error.detail_exposed` (which blocks a production start unless suppressed) |
+| Out-of-tree `ServiceException` lost its text | Its `str(exc)` was only ever in `detail` | Override `error_params()` to return the structured content |
 | `RateLimitModule(RateLimitBundle(...))` raises `ValueError` for an unbounded `InMemoryRateLimiter` keyspace | §D-S10-keyspace's guard fires uniformly for hand-registered and bundle-assembled `RateLimitMiddleware` alike | Pass `RateLimitBundle(..., acknowledge_unbounded_keyspace=True)` to accept it for a single-process deployment, or use `RedisRateLimiter` for `IP`/`SUBJECT` scopes |
 
 ## See also

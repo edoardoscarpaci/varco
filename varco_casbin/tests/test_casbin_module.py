@@ -7,6 +7,7 @@ expected to fail with `ImportError`.
 
 from __future__ import annotations
 
+import pytest
 from providify import DIContainer
 from varco_casbin.modules import CasbinModule
 from varco_core.di.module import CoreModule
@@ -35,8 +36,13 @@ class TestCasbinModule:
         binding = await container.aget(AbstractAuthorizer)
         assert type(binding).__name__ == "PolicyEngineAuthorizer"
 
-    async def test_policy_authorizer_false_binds_nothing_extra(self) -> None:
+    async def test_policy_authorizer_false_binds_nothing_extra(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from varco_core.auth.authorizer import AbstractAuthorizer
+
+        # FLIP-5 (Plan 053): the BaseAuthorizer fallback binds only in development.
+        monkeypatch.setenv("VARCO_SECURITY_ENV", "development")
 
         container = DIContainer()
         CoreModule().register(container)

@@ -12,7 +12,8 @@ Strategy
 - ``InMemoryRepository`` — hand-rolled stub satisfying ``AsyncRepository[Post]``.
 - ``InMemoryUoW``       — real ``AsyncUnitOfWork`` exposing ``uow.posts``.
 - ``InMemoryUoWProvider``— minimal stub satisfying ``IUoWProvider``.
-- ``BaseAuthorizer``     — permissive no-op (default).
+- ``BaseAuthorizer``     — permissive no-op, constructed directly (no DI, so the
+                          4.0 ``VARCO_SECURITY_ENV=development`` gate does not apply).
 
 All tests are ``async def`` — pytest-asyncio auto mode handles them.
 

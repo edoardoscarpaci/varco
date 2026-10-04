@@ -271,6 +271,15 @@ class CacheBackend(abc.ABC):
         """
         Initialise the backend (connect to broker, allocate resources).
 
+        Not idempotent: a second call without an intervening ``stop()``
+        raises.  Reserve ``RuntimeError`` for that "already started" case and
+        signal a genuine start failure with another exception type (e.g.
+        ``ConnectionError``) — ``CoreModule``'s ``core.stores`` component
+        calls ``start()`` on the bound ``CacheBackend`` at ``INFRA`` and
+        treats ``RuntimeError`` as "already started by its provider" (every
+        shipped cache provider returns an already-started instance), while
+        any other exception aborts startup.
+
         Raises:
             RuntimeError: If already started.
         """

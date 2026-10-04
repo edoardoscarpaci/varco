@@ -15,29 +15,61 @@ DESIGN: catalog status checked before ``pool.ensure()``, always
     documented HTTP code (503/403/410/404) — never a default-database
     fallback, never a bare 500.
 
-DESIGN: ``chain=None`` builds an implicit ``LegacyTenantSource`` chain — one code path (§D-S6-wiring, §D-S6-blast)
-    ✅ Unifies what used to be (pre-3.2) a bespoke header-read into the same
-       ``TenantSourceChain.resolve()`` machinery every explicit chain goes
-       through — one dispatch implementation, not two.
-    ✅ ``chain=None`` -> ``TenantSourceChain(sources=(LegacyTenantSource(header),))``
-       resolves byte-identically to the old header-only code: header absent
-       -> zero claims -> ``tenant_id=None`` -> pass through untouched;
-       header present -> one claim -> ``LENIENT`` (the chain default) never
-       rejects a lone claim -> ``tenant_id=<header value>``.
-    ✅ Emits exactly **one** ``DeprecationWarning``, at construction, never
-       per request (matches the ``varco_fastapi.auth.TrustStore`` shim
-       shape). An **explicit** ``LegacyTenantSource`` in a caller-supplied
-       chain warns **not at all** — it is the named, documented escape
-       hatch the locked decision promises.
+DESIGN: ``chain=None`` means "the configured chain"; the implicit legacy fallback stays, deprecated for 5.0.0 (Plan 055 / FLIP-6, §D-flip6-floor)
+    ``chain=None`` resolves, in order: the env-derived chain
+    (``build_tenant_source_chain()`` reading ``VARCO_TENANT_SOURCES``) — and,
+    when ``TenancyModule`` constructs this middleware, the container-resolved
+    chain it passes in explicitly — and only when *nothing* is configured,
+    the implicit ``TenantSourceChain((LegacyTenantSource(header),))``.
+    ✅ Delivers "tenant resolution defaults to the chain" on both
+       construction paths: a hand-wirer with ``VARCO_TENANT_SOURCES=jwt``
+       exported no longer silently stays header-only.
+    ✅ The implicit fallback resolves byte-identically to the pre-3.2
+       header-only code (header absent -> pass through; present -> that
+       tenant), so a 3.2 caller who ignored the warning keeps working
+       through 4.x — ``CONTRIBUTING.md``'s 12-month floor from 3.2.0
+       (2026-09-12) forbids removing it before 2027-09-12.
+    ✅ The fallback emits exactly **one** ``varco_core.deprecation``
+       warning (since 3.2.0, removed in 5.0.0) at construction, never per
+       request — so the one removal site is greppable by its
+       ``removed_in`` keyword, unlike the 3.2 ad-hoc stdlib warning. An **explicit** ``LegacyTenantSource``
+       (in code, or ``VARCO_TENANT_SOURCES=legacy``) warns not at all — it
+       is the named, permanent escape hatch.
+    ✅ The loud half is posture, not an exception: wired through
+       ``TenancyModule``, the implicit fallback reports
+       ``tenant.no_chain`` + ``tenant.legacy_source_implicit`` (WARN), which
+       refuse a production start under Plan 054's derived ``refuse``.
+    ❌ The ``TypeError`` the 3.2 warning promised does not land in 4.0 — it
+       moves to 5.0.0's removal list.
+    ❌ Two resolution inputs: env-only when hand-wired, container (incl.
+       multi-bound ``TenantSource`` plugins) when module-wired. A hand-wirer
+       naming a plugin source gets a ``ValueError`` pointing at
+       ``chain=``/``TenancyModule`` — fail closed, never a header fallback.
     ❌ A caller passing a custom ``header=`` AND an explicit ``chain=`` gets
        ``header`` silently ignored (the chain decides what to read).
-       Accepted — ``header`` is documented as "still honoured when chain is
-       None" only.
+    Rejected — ``chain=None`` -> ``TypeError`` (the BACKLOG row verbatim):
+    ❌ removes a deprecated path 12 months early.
+    Rejected — ``chain=None`` with no sources -> ``ValueError``: ❌ the same
+    removal under another exception class.
     Rejected — decoding the token's claims without checking its signature to
     make a routing decision before ``RequestContextMiddleware`` verifies it:
     ❌ this is the bug §D-S6-wiring exists to fix, not an optimisation — a
     grep-based CI gate guards against this method name ever appearing in
     this package's middleware or in ``varco_core.tenancy``.
+
+DESIGN: ``catalog``/``pool`` are optional (Plan 055 §D-flip9-shared)
+    ✅ A ``SHARED``-isolation app with a JWT ``tenant_id`` claim and no
+       control plane — the class of app that lost the
+       ``RequestContextMiddleware`` claim setter in 4.0 — can adopt the
+       chain with no catalog and no pool.
+    ❌ No catalog means no suspend/delete gate at the edge — but the setter
+       it replaces checked nothing either, and ``TenancyModule`` reports
+       ``tenant.no_catalog_gate`` (INFO). ``TenancyModule`` refuses
+       startup (``ConfigurationError`` from ``async_init()``) for
+       ``pool=None`` under ``SCHEMA``/``DATABASE`` isolation.
+    Rejected — a ``NullTenantCatalog`` returning ``ACTIVE`` for every id:
+    ❌ a Null Object asserting a status it does not know is a lie in the
+    routing decision; ``None`` says "no gate".
 
 DESIGN: verify the token in this (outer) middleware and let the inner
 ``RequestContextMiddleware`` reuse it (§D-S6-wiring)
@@ -46,17 +78,19 @@ DESIGN: verify the token in this (outer) middleware and let the inner
     ✅ ``current_tenant_provenance() is not None`` is the coordination
        marker ``RequestContextMiddleware`` reads to defer — see that
        module's own docstring for the other half of this design.
-    ❌ ``extra_middleware=`` sits OUTSIDE ``ErrorMiddleware``
-       (``app.py:530-544``) — an ``HTTPException`` raised by ``server_auth``
-       here would otherwise surface as Starlette's default plain-text
-       401/500. **Mitigation is mandatory**: this middleware catches
+    ✅ Since 4.0 ``TenancyModule`` places this middleware at
+       ``EdgeSlot.TENANT_RESOLUTION`` — inside ``ErrorMiddleware``, so a
+       rejection is enveloped, logged, traced and metric'd.
+    ❌ A hand-wired placement at ``EdgeSlot.EXTRA`` (``MiddlewareModule``)
+       still sits OUTSIDE ``ErrorMiddleware`` — an ``HTTPException`` raised
+       by ``server_auth`` would otherwise surface as Starlette's default
+       plain-text 401/500. So this middleware keeps catching
        ``HTTPException`` from ``server_auth`` and returns a ``JSONResponse``
-       itself, exactly as it already does for a non-routable tenant.
+       itself, exactly as it does for a non-routable tenant.
 """
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import replace
 from typing import Any
 
@@ -66,10 +100,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 from varco_core.auth.base import AuthContext
+from varco_core.deprecation import warn_deprecated
 from varco_core.tenancy.catalog import TenantNotFoundError
 from varco_core.tenancy.provenance import provenance_context
 from varco_core.tenancy.routing import routing_decision_for_status
-from varco_core.tenancy.settings import TenantStatus
+from varco_core.tenancy.settings import TenantStatus, build_tenant_source_chain
 from varco_core.tenancy.source import TenantRequest, TenantSourceChain
 from varco_core.tenancy.sources import ActAsTenantSource, LegacyTenantSource
 
@@ -88,15 +123,19 @@ class TenantResolutionMiddleware(BaseHTTPMiddleware):
 
     Args:
         app:     The ASGI application to wrap.
-        catalog: An ``AbstractTenantCatalog``-shaped object (``get()``).
-        pool:    A resource-pool-shaped object with an async ``ensure()``.
+        catalog: An ``AbstractTenantCatalog``-shaped object (``get()``), or
+                 ``None`` (default) — no status gate (``SHARED`` isolation
+                 without a control plane).
+        pool:    A resource-pool-shaped object with an async ``ensure()``,
+                 or ``None`` (default) — no ``ensure()`` call.
         header:  The HTTP header carrying the tenant id. Defaults to
-                 ``"X-Tenant-Id"``. Only consulted when ``chain=None``
-                 builds the implicit ``LegacyTenantSource``.
-        chain:   A ``TenantSourceChain``, or ``None`` (default) — today's
-                 header-only behaviour, now routed through an internally
-                 built ``TenantSourceChain((LegacyTenantSource(header),))``.
-                 Emits exactly one ``DeprecationWarning`` at construction.
+                 ``"X-Tenant-Id"``. Only consulted by the deprecated
+                 implicit ``LegacyTenantSource`` fallback.
+        chain:   A ``TenantSourceChain``, or ``None`` (default) — the
+                 configured chain from ``VARCO_TENANT_SOURCES``; with
+                 nothing configured, the deprecated implicit
+                 ``LegacyTenantSource(header)`` (removed in 5.0.0), which
+                 emits exactly one ``DeprecationWarning`` at construction.
         server_auth: An ``AbstractServerAuth``-shaped callable, or ``None``.
                  Needed to give ``JwtClaimTenantSource`` (or any claim-based
                  source) a verified ``AuthContext`` to read. ``None`` means
@@ -109,7 +148,18 @@ class TenantResolutionMiddleware(BaseHTTPMiddleware):
                  one code, configurable, so a caller cannot use the status
                  as an oracle for *which* check failed).
 
+    Raises:
+        ValueError: ``chain=None`` and ``VARCO_TENANT_SOURCES`` names a
+            source the env-only builder cannot construct (a multi-bound
+            plugin source, or ``act_as`` without a ``DelegationPolicy``) —
+            raised at construction, i.e. on the app's first request.
+
     Edge cases:
+        - ``catalog=None`` -> no status gate; an id unknown to any catalog
+          is still set as ``current_tenant()``.
+        - ``pool=None`` -> no ``ensure()``; legal only under ``SHARED``
+          isolation (``TenancyModule.async_init()`` refuses startup
+          otherwise; a hand-wired middleware is not checked).
         - No tenant resolved at all (``chain`` produced zero claims) ->
           passes through untouched (public routes still work) — same as
           "no tenant header" pre-3.2.
@@ -131,8 +181,8 @@ class TenantResolutionMiddleware(BaseHTTPMiddleware):
         self,
         app: ASGIApp,
         *,
-        catalog: Any,
-        pool: Any,
+        catalog: Any | None = None,
+        pool: Any | None = None,
         header: str = "X-Tenant-Id",
         chain: TenantSourceChain | None = None,
         server_auth: Any | None = None,
@@ -147,22 +197,43 @@ class TenantResolutionMiddleware(BaseHTTPMiddleware):
         self._membership = membership
         self._reject_status = reject_status
 
+        self._chain_implicit = False
         if chain is None:
-            warnings.warn(
-                "TenantResolutionMiddleware(chain=None) is deprecated and will "
-                "be removed in 4.0.0 — pass an explicit TenantSourceChain "
-                "(varco_core.tenancy.source.TenantSourceChain). The implicit "
-                "fallback below reproduces today's X-Tenant-Id-header-only "
-                "behaviour via a LegacyTenantSource, which you can also name "
-                "explicitly to silence this warning: "
-                "TenantSourceChain(sources=(LegacyTenantSource(),)). See "
-                "technical_docs/features/tenant-provenance.md.",
-                DeprecationWarning,
-                stacklevel=2,
+            try:
+                chain = build_tenant_source_chain()
+            except ValueError as exc:
+                # The env-only builder cannot see multi-bound TenantSources or a
+                # bound DelegationPolicy — point the hand-wirer at the two paths
+                # that can, rather than leaving a bare "unknown source" message.
+                raise ValueError(
+                    f"{exc} — pass chain= explicitly or wire TenantResolutionMiddleware "
+                    "through TenancyModule, which can see multi-bound TenantSources"
+                ) from exc
+        if chain is None:
+            warn_deprecated(
+                "TenantResolutionMiddleware(chain=None) with no VARCO_TENANT_SOURCES configured",
+                since="3.2.0",
+                removed_in="5.0.0",
+                replacement=(
+                    "an explicit TenantSourceChain(sources=(LegacyTenantSource(),)) for "
+                    "header-only resolution, or VARCO_TENANT_SOURCES=jwt[,…] "
+                    "(see technical_docs/features/tenant-provenance.md)"
+                ),
+                stacklevel=3,
             )
-            self._chain = TenantSourceChain(sources=(LegacyTenantSource(header),))
-        else:
-            self._chain = chain
+            chain = TenantSourceChain(sources=(LegacyTenantSource(header),))
+            self._chain_implicit = True
+        self._chain = chain
+
+    @property
+    def chain(self) -> TenantSourceChain:
+        """The resolved ``TenantSourceChain`` this middleware dispatches through."""
+        return self._chain
+
+    @property
+    def chain_implicit(self) -> bool:
+        """``True`` iff the deprecated implicit ``LegacyTenantSource`` fallback is active."""
+        return self._chain_implicit
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         tenant_request = TenantRequest(
@@ -226,34 +297,47 @@ class TenantResolutionMiddleware(BaseHTTPMiddleware):
         self, request: Request, call_next: RequestResponseEndpoint, tenant_id: str | None
     ) -> Response:
         """
-        Existing (unchanged) catalog-status + ``pool.ensure()`` gate, now
-        triggered by the chain's resolved ``tenant_id`` rather than a raw
-        header read.
+        Catalog-status + ``pool.ensure()`` gate, triggered by the chain's
+        resolved ``tenant_id``; each half is skipped when its collaborator
+        is ``None`` (Plan 055 §D-flip9-shared).
+
+        Args:
+            request: The incoming request.
+            call_next: The next ASGI handler.
+            tenant_id: The chain's resolved tenant, or ``None``.
+
+        Returns:
+            The downstream response, or a JSON rejection for a non-routable
+            tenant.
         """
         if tenant_id is None:
             return await call_next(request)
 
-        try:
-            descriptor = await self._catalog.get(tenant_id)
-            status_value = (
-                descriptor.status.value
-                if hasattr(descriptor.status, "value")
-                else descriptor.status
-            )
-        except TenantNotFoundError:
-            status_value = TenantStatus.DELETED.value
+        if self._catalog is not None:
+            try:
+                descriptor = await self._catalog.get(tenant_id)
+                status_value = (
+                    descriptor.status.value
+                    if hasattr(descriptor.status, "value")
+                    else descriptor.status
+                )
+            except TenantNotFoundError:
+                status_value = TenantStatus.DELETED.value
 
-        decision = routing_decision_for_status(status_value)
-        if not decision.routable:
-            return JSONResponse(
-                status_code=decision.http_status,
-                content={"detail": f"Tenant {tenant_id!r}: {decision.reason}"},
-            )
+            decision = routing_decision_for_status(status_value)
+            if not decision.routable:
+                return JSONResponse(
+                    status_code=decision.http_status,
+                    content={"detail": f"Tenant {tenant_id!r}: {decision.reason}"},
+                )
 
         from varco_core.service.tenant import tenant_context
 
+        # The one HTTP writer of current_tenant() since 4.0 (Plan 055 / FLIP-9)
+        # — test_tenant_single_writer.py enforces that no second one appears.
         with tenant_context(tenant_id):
-            await self._pool.ensure(tenant_id)
+            if self._pool is not None:
+                await self._pool.ensure(tenant_id)
             return await call_next(request)
 
 

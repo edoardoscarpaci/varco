@@ -298,6 +298,12 @@ bound — the same optional-settings stance `di.py:112-126` takes today) and an
 PostureCollector, collector)`; `start()` (INFRA, before `SecurityPostureModule`'s last-position
 `start()`, 054 `:478`) does `await collector.refresh()` **after** `ensure_table()` work (a
 missing framework table is unrelated to RLS, but the order keeps one connection lifecycle).
+**Revised (decision on drift — the fresh-database first deploy):** the refresh is its own
+lifecycle component, `sa.rls_posture`, at `RLS_POSTURE_PHASE = Phase.INFRA + 50` — after every
+INFRA component, so after `MigrationsModule`'s `upgrade` regardless of list order, with no
+`depends_on` edge (an app without `MigrationsModule` is unaffected). `SAModule.start()` keeps the
+whole sequence for hand callers. And a candidate with no `pg_class` row is reported as
+`data.rls_table_absent` (INFO, `RlsPosture.missing_tables`), never `data.rls_disabled`.
 `SecurityPostureModule.configure_app()` **stops contributing `DataPostureCollector(rls_posture=None)`**
 (051's default set drops from six to five) — it only ever produced a NOT_ASSESSED line, and with
 the live collector present it would duplicate the id.
@@ -477,6 +483,14 @@ belongs to the operator's deploy, not to `start()`).
   §Parked.
 - Rejected — **tolerant `_decrypt_secret` that falls back to plaintext on failure**: accepts
   plaintext forever, silently — the exact state the flip ends.
+- **Revised (decision on drift):** the method takes `legacy_hex: bool | None = None`. Under the
+  default, an entry that fails to decrypt **and** is ambiguous (valid hex decoding to printable
+  UTF-8 — a `PlaintextFieldEncryptor` row, a raw 3.x hex secret, or a wrong-key Fernet token) is
+  never guessed: `varco_core.webhook.base.plan_legacy_reencryption()` plans the whole table first
+  and raises `AmbiguousLegacySecretError` (a `ValueError`) naming every ambiguous subscription id
+  before any write; the operator re-runs with `legacy_hex=True` or `False`. Unambiguous entries
+  (`whsec_…`) still upgrade with no flag. The Plaintext→Fernet switch therefore needs
+  `legacy_hex=True`.
 
 ### §D-snapshots — what must and must not be regenerated
 
@@ -493,7 +507,7 @@ belongs to the operator's deploy, not to `start()`).
 All commands run from `/home/edoardo/projects/varco`. Phase A (FLIP-12) and Phase B (FLIP-13) are
 independent; Docs and Verification last.
 
-1. [ ] **Preflight.** Record in `/tmp/claude-1000/-home-edoardo-projects-varco/625af1a2-0cf8-4199-b924-0b3f986861e6/scratchpad/056-preflight.txt`:
+1. [x] **Preflight.** Record in `/tmp/claude-1000/-home-edoardo-projects-varco/625af1a2-0cf8-4199-b924-0b3f986861e6/scratchpad/056-preflight.txt`:
        every `file:line` in §Context re-read (`settings.py:99-101,106-108,145-158,167-168,198-208`;
        `rls_check.py:89-167,170-220,253-368` incl. `:287-301,352-360`; `posture.py:404-425,604-668,671-726`;
        `di.py:80-174`; `factory.py:150-185`; `rls_autogen.py:186-262`; `rls_session.py:208-264`;
@@ -515,7 +529,7 @@ independent; Docs and Verification last.
 
 ### Phase A — FLIP-12
 
-2. [ ] `varco_core/tests/test_tenancy_settings.py` (red) — `:19,42,157` → `enforce_rls is True`;
+2. [x] `varco_core/tests/test_tenancy_settings.py` (red) — `:19,42,157` → `enforce_rls is True`;
        **add** `test_enforce_rls_env_false_is_the_hatch` (`VARCO_TENANCY_ENFORCE_RLS=false` via the
        `env=` mapping → `False`; `"0"`/`"no"`/`"off"` too), `test_enforce_rls_default_is_true_field_guard`
        (dataclass: `fields(TenancySettings)` default `True`; post-048: `model_fields["enforce_rls"].default is True`),
@@ -525,7 +539,7 @@ independent; Docs and Verification last.
        claim, mechanical). `:105` comment rewritten. **Verify**: red on the three flipped
        assertions and the field guard.
 
-3. [ ] `varco_core/varco_core/tenancy/settings.py` — `:158` → `True`; docstring `:99-101` →
+3. [x] `varco_core/varco_core/tenancy/settings.py` — `:158` → `True`; docstring `:99-101` →
        §D-flip12-default's sentence; `Args: enforce_rls` (`:106-108`) → *"Default `True` since 4.0
        (Plan 056 / FLIP-12): at `SAModule.start()` the RLS posture of every `TENANT`-scoped table
        with a tenant column is read on Postgres under `SHARED` isolation and reported via
@@ -536,7 +550,7 @@ independent; Docs and Verification last.
        field. If 048's settings snapshot exists, regenerate. **Verify**: Step 2 green;
        `uv run pytest varco_core/tests/test_tenancy_settings.py -q`.
 
-4. [ ] `varco_sa/tests/test_rls_candidates.py` (new, red, Docker-free) — `rls_candidate_tables()`:
+4. [x] `varco_sa/tests/test_rls_candidates.py` (new, red, Docker-free) — `rls_candidate_tables()`:
        a `TenantScope.TENANT` class with `tenant_id` → included; a `GLOBAL` class → excluded; a
        `TENANT` class **without** the column → excluded (the single-tenant shape); a class the
        lookup raises `KeyError` for → excluded, no raise; `tenant_column="org_id"` honoured;
@@ -547,7 +561,7 @@ independent; Docs and Verification last.
        registration is not reflected in an earlier snapshot). Use a `table_lookup=` stub so no
        engine is needed. **Verify**: red (`ImportError` on the two names).
 
-5. [ ] `varco_sa/varco_sa/rls_autogen.py` — `rls_candidate_tables()` per §D-flip12-candidates
+5. [x] `varco_sa/varco_sa/rls_autogen.py` — `rls_candidate_tables()` per §D-flip12-candidates
        (docstring: `Args`/`Returns`/`Edge cases` — *"never raises; a nullable tenant column is a
        candidate here (posture reads catalog state; the nullable decision is `plan_tenant_rls`'s)"*);
        `plan_tenant_rls()` calls it for the scope/column step, its own record-building loop
@@ -556,7 +570,7 @@ independent; Docs and Verification last.
        posture collector"*). `varco_sa/__init__.py` `__all__` gains `rls_candidate_tables`.
        **Verify**: Step 4 green; `uv run pytest varco_sa/tests/test_rls_autogen.py varco_sa/tests/test_rls_candidates.py -q`.
 
-6. [ ] `varco_sa/tests/test_rls_findings.py` (new, red, Docker-free) — `rls_findings()` over
+6. [x] `varco_sa/tests/test_rls_findings.py` (new, red, Docker-free) — `rls_findings()` over
        hand-built `RlsPosture`s (helper `_posture(**tables, role=..., dialect=...)`):
        `test_none_is_not_checked` (NOT_ASSESSED, `not_checked_reason` echoed);
        `test_non_postgres_is_info_only` (`dialect="sqlite"`, all-False tables → exactly
@@ -579,7 +593,7 @@ independent; Docs and Verification last.
        not-applicable, no query; empty candidate set → `collect() == []`, no query;
        `enforce_rls=False` + candidates → `data.rls_not_enforced` WARN, no query. **Verify**: red.
 
-7. [ ] Implementation — `varco_sa/varco_sa/tenancy/rls_check.py`: `RlsPosture.dialect: str = "postgresql"`
+7. [x] Implementation — `varco_sa/varco_sa/tenancy/rls_check.py`: `RlsPosture.dialect: str = "postgresql"`
        (trailing; both return sites set it; docstring `Attributes` entry). New module
        `varco_sa/varco_sa/tenancy/rls_posture.py`: `rls_findings()` (§D-flip12-mapping, every
        id's detail/remediation text as tabled, a `DESIGN:` block with the three narrowings and
@@ -596,7 +610,7 @@ independent; Docs and Verification last.
        Step 6 green; `uv run pytest varco_fastapi/tests/test_posture_collectors.py -q` green
        unmodified (it only exercises `rls_posture=None`).
 
-8. [ ] **Module wiring** — `varco_sa/tests/test_sa_module_rls.py` (new, red; skipped with the
+8. [x] **Module wiring** — `varco_sa/tests/test_sa_module_rls.py` (new, red; skipped with the
        Step 1 reason if 049/050's `SAModule` is absent): `[CoreModule(), SAModule(config=sqlite)]`
        → after `register()`, `collect(container, PostureCollector)` contains exactly one
        `RlsPostureCollector`; after `start()` its `collect()` yields `data.rls_not_applicable`
@@ -622,7 +636,7 @@ independent; Docs and Verification last.
        hand-wiring snippet to `postgres-rls.md` (Step 17) as the documented path. **Verify**:
        green or skipped-with-reason; `make test PKG=varco_sa`; `make test PKG=varco_fastapi`.
 
-9. [ ] `varco_sa/tests/test_rls_posture_collector_integration.py` (new, `@pytest.mark.integration`,
+9. [x] `varco_sa/tests/test_rls_posture_collector_integration.py` (new, `@pytest.mark.integration`,
        `postgres_container`, tables named `f"t_{uuid4().hex[:8]}"`, DDL from
        `render_rls_ddl()` so the statement order is the shipped one) — parametrised over the
        three roles (`provision_rls_app_url` owner, `provision_rls_reader_url` non-owner,
@@ -645,7 +659,7 @@ independent; Docs and Verification last.
 
 ### Phase B — FLIP-13
 
-10. [ ] `varco_core/tests/test_plaintext_field_encryptor.py` (new, red) — `PlaintextFieldEncryptor()`
+10. [x] `varco_core/tests/test_plaintext_field_encryptor.py` (new, red) — `PlaintextFieldEncryptor()`
         → `TypeError` matching `acknowledge_plaintext`; `PlaintextFieldEncryptor(acknowledge_plaintext=False)`
         `# type: ignore[arg-type]` → `TypeError` containing "literally True"; `(acknowledge_plaintext=True)`
         → `isinstance(x, FieldEncryptor)`; `encrypt(b"s") == b"s"`, `decrypt(b"s") == b"s"`,
@@ -673,7 +687,7 @@ independent; Docs and Verification last.
         `@pytest.mark.integration` on `mongo_url` with `db_name=f"wh_{uuid4().hex[:8]}"`.
         **Verify**: red.
 
-11. [ ] Implementation — `varco_core/varco_core/encryption.py`: `PlaintextFieldEncryptor`
+11. [x] Implementation — `varco_core/varco_core/encryption.py`: `PlaintextFieldEncryptor`
         (§D-flip13-hatch; `from typing import Literal`; full docstring with the ⛔ line, `Args`,
         `Raises: TypeError`, a `DESIGN: Literal[True] + TypeError, the 053 shape` block);
         `__all__` + `varco_core/__init__.py` lazy map. `varco_core/varco_core/webhook/base.py`:
@@ -691,7 +705,7 @@ independent; Docs and Verification last.
         `Args: encryptor` → *"**Required.** …"*, `Raises: TypeError`. `varco_beanie/varco_beanie/webhook.py`:
         the same. **Verify**: Step 10 green (unit legs); `make test PKG=varco_core`.
 
-12. [ ] `varco_fastapi/tests/test_posture_collectors.py` (extend, red first) — `LocalPostureCollector`/
+12. [x] `varco_fastapi/tests/test_posture_collectors.py` (extend, red first) — `LocalPostureCollector`/
         `_collect_local` with `webhook_repository=` a stub whose `_encryptor` is
         `PlaintextFieldEncryptor(acknowledge_plaintext=True)` → `posture.webhook_secrets_plaintext`
         WARN with `PlaintextFieldEncryptor` in the detail; `_encryptor is None` (out-of-tree) →
@@ -702,7 +716,7 @@ independent; Docs and Verification last.
         `varco_fastapi/varco_fastapi/posture.py:717-726` → §D-flip13-posture's check and texts.
         **Verify**: green.
 
-13. [ ] In-repo sweep — `varco_sa/tests/test_webhook_subscription_repository_integration.py:35,45`
+13. [x] In-repo sweep — `varco_sa/tests/test_webhook_subscription_repository_integration.py:35,45`
         and the Beanie twin `:35,45` gain `encryptor=PlaintextFieldEncryptor(acknowledge_plaintext=True)`
         (the conformance subclass tests the repository contract, not the cipher — the Fernet
         round-trip lives in Step 10); 050's `test_webhook_module.py`/DI guard tests: where a
@@ -713,20 +727,20 @@ independent; Docs and Verification last.
         `make test PKG=varco_beanie`; `uv run pytest varco_sa/tests -m integration -k webhook -q`
         and the Beanie twin when Docker is available.
 
-14. [ ] `varco_sa/tests/test_webhook_repository_encryptor_required.py` — the Beanie constructor
+14. [x] `varco_sa/tests/test_webhook_repository_encryptor_required.py` — the Beanie constructor
         tests and the SA signature guard double as the class-`__init__` guard `api_surface.py
         --check` cannot provide (§D-snapshots); add the same guard for
         `BeanieWebhookSubscriptionRepository.__init__` and for `RlsPosture` (`fields(RlsPosture)[-1].name == "dialect"`,
         default `"postgresql"`) in `varco_sa/tests/test_rls_findings.py`. **Verify**: green.
 
-15. [ ] `uv run python scripts/api_surface.py` — regenerate; the `.md` diff shows **only
+15. [x] `uv run python scripts/api_surface.py` — regenerate; the `.md` diff shows **only
         additions** (`PlaintextFieldEncryptor`, `RlsPostureCollector`, `rls_findings`,
         `rls_candidate_tables`, `hook_installed`) and no removed/changed function signature.
         Commit both files. **Verify**: `uv run python scripts/api_surface.py --check` clean.
 
 ### Docs (same commit as the code — feedback memory)
 
-16. [ ] `CHANGELOG.md` — under `## [Unreleased]`, above the existing blocks:
+16. [x] `CHANGELOG.md` — under `## [Unreleased]`, above the existing blocks:
         `### BREAKING — Data-layer default flips (Plan 056, FLIP-12 / FLIP-13)` with bullets:
         FLIP-12 (`enforce_rls` default `False` → `True`, **and now has a reader** — 3.x never read
         it; what is asserted and the four gates; the ids added/narrowed with severities;
@@ -741,7 +755,7 @@ independent; Docs and Verification last.
         `BACKLOG.md:72,74` — **only if the launching thread has not already done it**: status →
         `done (Plan 056)`. **Verify**: `rg -n 'Plan 056' CHANGELOG.md BACKLOG.md` → ≥ 1 / ≥ 2.
 
-17. [ ] Feature docs, README, ARCHITECTURE, CLAUDE.md —
+17. [x] Feature docs, README, ARCHITECTURE, CLAUDE.md —
       - `technical_docs/features/postgres-rls.md`: `:215-224` (`assert_rls_enabled` "is the
         automated version…") → *"is the hand-callable helper; since 4.0 the automated path is
         `SAModule.start()` → `RlsPostureCollector` → `SecurityPosture` (Plan 056 / FLIP-12)"* with
@@ -811,13 +825,13 @@ independent; Docs and Verification last.
 
 ### Verification
 
-18. [ ] `make test` (all eleven suites; the 054 autouse fixture keeps default apps booting; the new
+18. [x] `make test` (all eleven suites; the 054 autouse fixture keeps default apps booting; the new
         refusal tests `delenv` it explicitly); `uv run pytest varco_sa/tests -m integration -q` and
         `uv run pytest varco_beanie/tests -m integration -q` when Docker is available (Step 9's
         legs must run as the **non-superuser** roles — a green run as the container role proves
         nothing, 037 DoD 2).
 
-19. [ ] `make lint` (no-`PKG` path: `api-check` clean **with the regenerated snapshot**,
+19. [x] `make lint` (no-`PKG` path: `api-check` clean **with the regenerated snapshot**,
         `asyncapi-check` unchanged, `import-budget --check --warn-only` no breach — if `varco_sa`
         breaches, make the `rls_posture` re-export lazy and re-measure); `make type-check` clean
         (the two `# type: ignore[arg-type]` in tests are the only new suppressions; M1 +2,
@@ -946,23 +960,23 @@ git diff --stat -- design/api-freeze-and-standards/measurements/asyncapi-example
 
 ## Done
 
-- [ ] `TenancySettings.enforce_rls` defaults `True`; every other default pinned unchanged;
+- [x] `TenancySettings.enforce_rls` defaults `True`; every other default pinned unchanged;
       docstrings and CLAUDE.md's byte-identical sentence rewritten.
-- [ ] `rls_candidate_tables()`, `SAModelRegistry.registered()`, `RlsPosture.dialect`,
+- [x] `rls_candidate_tables()`, `SAModelRegistry.registered()`, `RlsPosture.dialect`,
       `rls_findings()`, `RlsPostureCollector`, `hook_installed()` shipped with docstrings; the
       three narrowings (premises 2/3/4) pinned by Docker-free tests; `DataPostureCollector`
       delegates.
-- [ ] `SAModule` contributes and refreshes the collector (or the pre-050 hand form is documented);
+- [x] `SAModule` contributes and refreshes the collector (or the pre-050 hand form is documented);
       `SecurityPostureModule` no longer contributes `DataPostureCollector`; the full-app refusal /
       development / suppression tests green.
-- [ ] Integration legs (a)-(f) green as the non-superuser roles, including the hook end-to-end.
-- [ ] `PlaintextFieldEncryptor`; `encryptor` required on both durable repositories with the
+- [x] Integration legs (a)-(f) green as the non-superuser roles, including the hook end-to-end.
+- [x] `PlaintextFieldEncryptor`; `encryptor` required on both durable repositories with the
       shared `TypeError` text; `reencrypt_legacy_plaintext()` on both; posture detection updated;
       in-repo sites swept; api-surface snapshot regenerated and `--check` clean.
-- [ ] Severity table carries every `data.*` id and the corrected webhook row; 054's register test
+- [x] Severity table carries every `data.*` id and the corrected webhook row; 054's register test
       green; docs per Step 17; CHANGELOG per Step 16; BACKLOG rows `FLIP-12`, `FLIP-13` →
       `done (Plan 056)`.
-- [ ] `make test`, `make lint`, `make type-check` green; no RLS revision under
+- [x] `make test`, `make lint`, `make type-check` green; no RLS revision under
       `varco_sa/migrations/versions/`.
 
 ## Out of scope / Parked

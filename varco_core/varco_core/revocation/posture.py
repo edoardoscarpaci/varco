@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from varco_core.revocation.null import NullTokenRevocationStore
+from varco_core.revocation.null import is_null_revocation_store
 
 if TYPE_CHECKING:
     from varco_core.authority.registry import TrustedIssuerRegistry
@@ -53,12 +53,21 @@ class RevocationPostureReport:
                           ``TrustedIssuerRegistry(revocation_store=...)``.
         failure_mode:    ``"fail_closed"`` or ``"fail_open"`` — the
                           effective ``JwtVerificationSettings.revocation_failure_mode``.
-        require_jti:     The effective ``revocation_require_jti`` setting.
+        require_jti:     The effective ``revocation_require_jti`` — the
+                          explicit setting when one is given, else (the 4.0
+                          ``None`` default, Plan 053 / FLIP-034-3) derived
+                          as ``registry_wired``: ``True`` iff the registry's
+                          wired store is non-``Null``. Per-call ``verify()``
+                          kwargs are invisible here.
         token_scope_usable: ``True`` when ``TOKEN``-scope revocation is
                           guaranteed usable — i.e. ``require_jti`` is
                           enforced. ``False`` does not mean tokens never
                           carry a ``jti``; it means this function cannot
                           tell, and reports the conservative fact.
+        require_jti_derived: ``True`` when ``require_jti`` was derived from
+                          the wired store (the setting is ``None``) rather
+                          than set explicitly (Plan 053). Appended with a
+                          default so the frozen dataclass stays additive.
     """
 
     store_bound: bool
@@ -67,6 +76,7 @@ class RevocationPostureReport:
     failure_mode: str
     require_jti: bool
     token_scope_usable: bool
+    require_jti_derived: bool = False
 
 
 def inspect_revocation_posture(
@@ -104,11 +114,16 @@ def inspect_revocation_posture(
 
     registry_store = getattr(registry, "_revocation_store", None) if registry is not None else None
 
-    store_bound = store is not None and not isinstance(store, NullTokenRevocationStore)
+    # One definition of "non-Null" shared with the registry's derivation
+    # (Plan 053 §D-null).
+    store_bound = not is_null_revocation_store(store)
 
-    registry_wired = registry_store is not None and not isinstance(
-        registry_store, NullTokenRevocationStore
-    )
+    registry_wired = not is_null_revocation_store(registry_store)
+
+    # Same derivation as TrustedIssuerRegistry._check_revocation(): an
+    # explicit setting wins; None derives from the WIRED store.
+    explicit = settings.revocation_require_jti
+    require_jti = explicit if explicit is not None else registry_wired
 
     # store_kind prefers the explicit store=, then the registry's own
     # store, then falls back to the Null Object's name — "no real store
@@ -123,6 +138,7 @@ def inspect_revocation_posture(
         store_kind=store_kind,
         registry_wired=registry_wired,
         failure_mode=settings.revocation_failure_mode.value,
-        require_jti=settings.revocation_require_jti,
-        token_scope_usable=settings.revocation_require_jti,
+        require_jti=require_jti,
+        token_scope_usable=require_jti,
+        require_jti_derived=explicit is None,
     )

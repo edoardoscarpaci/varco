@@ -48,11 +48,15 @@ def test_default_app_reports_security_headers_and_body_limit_installed() -> None
     assert posture.rate_limit_installed is False
 
 
-def test_default_app_reports_exactly_rate_limit_absent_and_detail_exposed_findings() -> None:
+def test_default_app_reports_exactly_rate_limit_absent_finding(monkeypatch) -> None:
+    # Plan 054: FLIP-10 removed `http.error.detail_exposed` from a default
+    # app, and §D-ratelimit re-tiered `http.rate_limit.absent` to INFO.
+    monkeypatch.delenv("VARCO_ERROR_INCLUDE_DETAIL", raising=False)
     app = _default_app()
     posture = inspect_http_edge(app)
     checks = {f.check for f in posture.findings}
-    assert checks == {"http.rate_limit.absent", "http.error.detail_exposed"}
+    assert checks == {"http.rate_limit.absent"}
+    assert {f.severity for f in posture.findings} == {"info"}
 
 
 def test_app_with_everything_disabled_reports_all_three_absent_findings() -> None:

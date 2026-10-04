@@ -15,8 +15,7 @@ Key design choices
   first ``save()`` without a round-trip to MongoDB.
 - ``created_at`` / ``updated_at`` are inherited from ``AuditedDomainModel``
   as ``init=False`` fields.  The mapper sets them via ``object.__setattr__``
-  during INSERT/UPDATE.  The service's ``_prepare_for_create`` hook also
-  stamps them Python-side so values are available immediately after ``save()``.
+  during INSERT/UPDATE, so the entity ``save()`` returns already carries them.
 - ``author`` is a plain ``str`` (display name, not a foreign key) so the
   example stays self-contained — no ``User`` collection needed.
 - ``content`` maps to a TEXT-equivalent in MongoDB — stored as a plain ``str``
@@ -68,8 +67,8 @@ class Post(AuditedDomainModel):
           (``default_factory=uuid4``) before ``save()`` — it is available
           immediately without a SELECT round-trip.
         - ``created_at`` / ``updated_at`` are ``None`` until the entity is
-          persisted.  ``PostRead`` expects real datetimes, so the service
-          stamps them before ``save()`` via ``_prepare_for_create``.
+          persisted.  The mapper stamps them on ``save()``; ``PostRead`` is
+          built from the saved entity, so it always sees real datetimes.
         - MongoDB does not enforce ``max_length`` constraints at the driver level —
           ``FieldHint(max_length=...)`` is advisory metadata for documentation
           and future validator integration.

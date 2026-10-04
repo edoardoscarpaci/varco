@@ -132,13 +132,9 @@ def _make_error_response(
             "code": msg.code,
             "message": msg.message,
         }
-        # DEVIATION (Plan 002, guard.py step 29): error_message_for() already
-        # populates ErrorMessage.detail with str(exc) "for dynamic context"
-        # (see its docstring) but this response builder was silently dropping
-        # it. RouteGuard denial messages (require_roles/scopes/token_profile/…)
-        # are only useful to API clients if the actionable str(exc) reaches
-        # the response body — include it whenever present. Non-breaking: no
-        # existing test asserts the absence of a "detail" key here.
+        # `detail` is emitted when present — None by default since 4.0
+        # (Plan 054 / FLIP-10); `params` carries the structured content,
+        # including RouteGuard's denial text as `params.operation`.
         if msg.detail:
             body["detail"] = msg.detail
         if msg.message_key is not None:

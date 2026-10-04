@@ -407,6 +407,18 @@ story). `CoreModule`'s `core.stores` component (§D-components) starts the same 
 `init_beanie()`-needing stores only where 047 N4/N5's docstrings say the app must do it — ⚠️ Step 1
 reads them; if `init_beanie` is already the module's `async_init()`, nothing to add.
 
+> **Plan-text correction (post-4.0-plan debugging):** "`start()` is idempotent" above holds for the
+> four store seams but is **false for `CacheBackend`**, which `core.stores` also starts — its ABC
+> contract (`varco_core/cache/base.py`) is "Raises: RuntimeError: If already started", and every
+> shipped cache provider (`RedisCacheConfiguration.redis_cache`,
+> `RedisLayeredCacheConfiguration.layered_cache`, `MemcachedCacheConfiguration.memcached_cache`)
+> returns an instance it already started. Result: `create_varco_app` died at `INFRA` with
+> "already-started cache" under `VARCO_CACHE_BACKEND=redis|layered|memcached`. Fixed in
+> `CoreModule._start_stores` (`varco_core/varco_core/di/module.py`), which now tolerates that
+> `RuntimeError` for the cache seam only (any other exception still aborts startup). Guards:
+> `varco_core/tests/test_core_stores_cache_start.py`,
+> `varco_redis/tests/test_redis_cache_core_stores_start.py`.
+
 ### §D-asks — two upstream asks, filed, guarded, not waited on
 
 Per CLAUDE.md §"When you hit a providify limitation": the report is a file, the ledger a row, the
@@ -533,7 +545,9 @@ expected red from Step 3 until Step 4 lands — one commit.
        `INFRA`, `varco_ws/modules.py` `CONSUMERS`, `varco_core` `CoreModule` (Step 4). `RedisModule`/
        `MemcachedModule.start()`: `if is_resolvable(CacheBackend): await (await aget(CacheBackend)).start()`
        (the §Context "nobody starts the cache" row) — idempotent against `RedisCache.start()`'s own
-       guard (`cache.py:191`; Step 1 confirms). `varco_fastapi/varco_fastapi/app.py`: the one-line
+       guard (`cache.py:191`; Step 1 confirms). ⚠️ *Correction:* `RedisCache.start()`'s guard **raises**
+       on a second start rather than no-oping, and as shipped `RedisModule`/`MemcachedModule`
+       have no `start()` — `CoreModule`'s `core.stores` starts the cache; see §D-stores' correction. `varco_fastapi/varco_fastapi/app.py`: the one-line
        change of §D-runner; delete the "list `MigrationsModule` first" WARNING, its helper and its
        test in `test_create_varco_app_modules.py`; add to that test: two spy modules `Migrations(INFRA)`
        listed **after** `Core` still start before `core.bus` and stop after it; `SecurityPostureModule`

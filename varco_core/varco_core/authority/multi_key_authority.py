@@ -149,8 +149,13 @@ class MultiKeyAuthority:
         """
         Return a ``JwtBuilder`` pre-seeded with the active authority's issuer.
 
+        ``jti`` minting follows the *active* authority's ``mint_jti`` (Plan
+        053 / FLIP-034-2) — a ring mixing ``mint_jti`` values is the
+        operator's choice, not an error; ``rotate()`` changes the behaviour.
+
         Returns:
-            Fresh ``JwtBuilder`` with ``iss`` set to the active issuer.
+            Fresh ``JwtBuilder`` with ``iss`` set to the active issuer (and a
+            uuid4 ``jti`` unless the active authority has ``mint_jti=False``).
         """
         return self._authorities[self._active_kid].token()
 

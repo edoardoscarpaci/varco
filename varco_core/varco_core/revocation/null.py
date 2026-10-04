@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
     from varco_core.revocation.model import RevocationEntry
 
-__all__ = ["NullTokenRevocationStore"]
+__all__ = ["NullTokenRevocationStore", "is_null_revocation_store"]
 
 
 @Fallback
@@ -74,3 +74,38 @@ class NullTokenRevocationStore(AbstractTokenRevocationStore):
 
     async def delete_expired(self) -> int:
         return 0
+
+
+def is_null_revocation_store(store: AbstractTokenRevocationStore | None) -> bool:
+    """
+    Report whether *store* is "Null" — absent, or a ``NullTokenRevocationStore``
+    (Plan 053 §D-null). The one definition of "non-Null" shared by
+    ``TrustedIssuerRegistry._check_revocation()``'s derived
+    ``revocation_require_jti`` and ``inspect_revocation_posture()``.
+
+    DESIGN: ``isinstance`` behind one helper
+        ✅ An out-of-tree store is non-Null by construction (correct: it
+           does something); a user *subclass* of the Null store is Null
+           (correct: it inherits the no-op contract); zero ABC change.
+        ❌ A user *wrapper* around a Null store (e.g. a logging decorator)
+           is non-Null, so it derives ``require_jti=True`` and rejects
+           ``jti``-less tokens — subclass the Null class instead, or set
+           ``VARCO_JWT_REVOCATION_REQUIRE_JTI=false``.
+        Rejected: an ``is_null`` ClassVar on the ABC (new surface every
+        out-of-tree store inherits, a second definition of the same fact);
+        ``type(store) is NullTokenRevocationStore`` (a Null subclass would
+        start rejecting tokens).
+
+    Args:
+        store: The store to classify, or ``None``.
+
+    Returns:
+        ``True`` iff *store* is ``None`` or an instance of
+        ``NullTokenRevocationStore`` (including subclasses).
+
+    Example::
+
+        is_null_revocation_store(NullTokenRevocationStore())       # True
+        is_null_revocation_store(InMemoryTokenRevocationStore())   # False
+    """
+    return store is None or isinstance(store, NullTokenRevocationStore)

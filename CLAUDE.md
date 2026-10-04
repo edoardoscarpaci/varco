@@ -445,7 +445,9 @@ startup/shutdown?"* → a `VarcoModule` in the owning package (`<pkg>/modules.py
 (`varco_core.di.Phase` names five: `INFRA`/`BUS`/`CONSUMERS`/`SCHEDULERS`/`EDGE`, default
 `CONSUMERS`) — the coarse, anonymous start order across packages that do not know each other;
 `depends_on` stays the fine, named order within/across phases (both, as Spring's
-`SmartLifecycle`). `varco_core.di.LifecycleRunner` (`create_varco_app`'s engine, via
+`SmartLifecycle`). A component that must follow a *whole* phase it cannot name takes an
+integer offset, never a `depends_on` edge (`varco_sa.modules.RLS_POSTURE_PHASE =
+Phase.INFRA + 50`, after migrations). `varco_core.di.LifecycleRunner` (`create_varco_app`'s engine, via
 `resolve_lifecycle_order`/`phased_components`) starts `(phase, depends_on)` ascending and stops
 **the exact reverse of what actually started** — including on a partial-start rollback (the
 pre-050 `VarcoLifespan` bug: a failed `start()` used to roll back in forward order).
@@ -627,9 +629,10 @@ retry/timeout/disable → its own defaults). A new knob goes on `WebhookSettings
 through; never add a constructor-keyword-only or `validate_target`-only option, or the env var
 becomes a lie. Explicit constructor keywords remain per-instance overrides and always win.
 
-**Rule**: `active_secrets` are encrypted via the existing `FieldEncryptor` when a repository is
-constructed with `encryptor=` — no new crypto path. `encryptor=None` is a documented dev/test-only
-default; production wiring must pass a real encryptor.
+**Rule**: `active_secrets` are encrypted via the existing `FieldEncryptor` — no new crypto path.
+`encryptor` is **required** on both durable repositories (Plan 056 / FLIP-13, `TypeError`); the
+dev/test hatch is `PlaintextFieldEncryptor(acknowledge_plaintext=True)`, reported by
+`posture.webhook_secrets_plaintext`; never add a plaintext (`None`) branch back.
 
 **Rule (Plan 038 / S19)**: inbound webhook verification reuses `StandardWebhooksSigner.verify()`
 (via delegation, for the scheme varco already ships) and `AbstractIdempotencyStore` (via
@@ -682,6 +685,9 @@ every out-of-tree implementation, the same `BulkCache`-off-`AsyncCache` rule). A
 cannot report remaining quota must never emit a header that lies about it; the parked design is an
 optional `RateLimitIntrospection` Protocol.
 
+**Rule (Plan 054 / FLIP-10)**: `ErrorEnvelopeSettings.include_detail` is `False`; actionable
+content belongs in `error_params()`, never in `str(exc)`.
+
 **S17 outcome (Plan 041)**: `MetricsMiddleware` now executes INSIDE `TracingMiddleware` — see
 "Metrics inside tracing" in `http-edge-hardening.md` for the decision and its operator-facing
 latency-series step-change note.
@@ -701,6 +707,14 @@ Usage: README's "Security posture preflight"/"Authorization-decision audit" sect
 **not**, because it *is* the tenant control plane (every route addresses a tenant that is by
 definition not the caller's own); see `admin-surface-tenancy.md`'s §D-S4-control for the full
 argument. Do not add a tenant guard to `mount_tenant_admin` without revisiting that decision.
+
+**Rule (Plan 054 / FLIP-3/4)**: `mount_reliability_admin`, `mount_webhook_admin` and their three
+builders require `server_auth` — `None` is a `ValueError` with no escape hatch; never add an
+`acknowledge_unauthenticated` kwarg — the gateway case is `PassthroughAuth(acknowledge_unverified=True)`.
+
+**Rule (Plan 054 / FLIP-2)**: `enforce` derives `refuse` unless `VARCO_SECURITY_ENV=development`;
+a WARN id is a production start-blocker — check the severity table in `security-posture.md`
+before assigning WARN to a new finding, and add the row.
 
 **Rule (Plan 051 / DI-5)**: a posture collector is a `varco_core.posture.PostureCollector`
 contribution (`@Singleton` subclass or `contribute()`), never an edit to
@@ -865,9 +879,11 @@ section.
 - **A redactor that raises redacts** — any failure anywhere in `redact_mapping()`'s walk degrades
   the whole result to `{k: "[REDACTED]" for k in data}`, never a partial pass-through and never
   the original input.
-- Audit redaction is **opt-in** (`AuditLogMixin._audit_redactor`) — the incumbent substring
-  matcher has real false positives on domain-named fields (`"pin"` matches `shipping_address`;
-  `"auth"` matches `author`), so an on-by-default flip would corrupt audit data.
+- Audit redaction is **on by default** (4.0, Plan 057) through `AUDIT_REDACTION_POLICY`
+  (`render_non_json=False` — never a plain `PolicyRedactor()` for a persisted surface);
+  `_audit_redactor = None` is the opt-out and is what `redaction.audit.disabled` reports.
+- Matching is **word-boundary** by default; `match_mode="substring"` is the explicit escape
+  hatch — never "fix" a missed key by loosening the tokenizer; add the exact token as a pattern.
 
 ### Profiling (varco_core.profiling)
 
@@ -1022,7 +1038,7 @@ platform — are distinguishable in the audit trail.
 `JwtAuthority` signs tokens with a private key; `TrustedIssuerRegistry` verifies tokens from multiple trusted issuers. Key rotation is zero-downtime via `MultiKeyAuthority`:
 
 ```python
-# Signing
+# Signing (token() mints a uuid4 jti since 4.0; from_pem(..., mint_jti=False) opts out)
 authority = JwtAuthority.from_pem(pem_bytes, kid="svc:A", issuer="my-svc", algorithm="RS256")
 token = authority.sign(authority.token().subject("usr_1").expires_in(timedelta(hours=1)))
 
@@ -1107,6 +1123,13 @@ both **off by default** — a credential in a URL is already in the access/proxy
 the time anything could warn about it. Name `param="api_key"` / `token_query_param="token"`
 explicitly to re-enable either, one line, greppable.
 
+**Rule (Plan 053)**: `revocation_require_jti` is derived from the *wired* store (`None` → `True`
+iff non-Null, `is_null_revocation_store()`); never make the Null store non-Null by wrapping it.
+
+**Rule (Plan 053)**: `ApiKeyAuth(keys=)` is deprecated (4.0.0 → 5.0.0, `warn_deprecated()`; a
+pytest `error:` rule in `varco_fastapi` forbids silent use); `PassthroughAuth` needs
+`acknowledge_unverified=True`.
+
 ### Authorization — policy engine (varco_core.auth.policy + varco_casbin)
 
 Two layers of authorization coexist: static, token-derived (`varco_core.auth.base`) and
@@ -1122,6 +1145,10 @@ enable_policy_authorizer(container)  # OPT-IN: binds PolicyEngineAuthorizer → 
 ```
 
 **Rules**:
+- `BaseAuthorizer` is a binding only under `VARCO_SECURITY_ENV=development` (Plan 053 / FLIP-5) —
+  never add a second env var to re-enable it; a deliberate permissive production app binds an
+  *instance* and suppresses `posture.base_authorizer_bound`. Tests set the variable per test
+  (`monkeypatch.setenv`), never in an autouse fixture.
 - The authorizer is **opt-in** via `enable_policy_authorizer(container)` — it is NOT a scanned
   `@Configuration` (scan auto-activates those), so importing/bootstrapping `varco_casbin` never
   silently shadows an app's own authorizer.
@@ -1187,15 +1214,23 @@ Usage: README's "Multi-tenancy (DB-level)" section.
 `varco_beanie`, `sqlalchemy`, or `pymongo`. Same seam rule as `AbstractEventBus`/
 `AbstractMigrator`.
 
-**Default is byte-identical to pre-Plan-007 behaviour.** `TenancySettings()` defaults:
-`isolation=SHARED`, `enforce_rls=False`, every model `TenantScope.TENANT`,
-`fanout_framework_tables=False`. No pool, no extra engine/client, no symbolic schema, no
-control-plane surface constructed. No `TenancyModule` in `modules=` (the default)
-registers nothing.
+**Default is byte-identical to pre-Plan-007 behaviour except `enforce_rls`.** `TenancySettings()`
+defaults: `isolation=SHARED`, every model `TenantScope.TENANT`, `fanout_framework_tables=False`;
+`enforce_rls=True` (4.0, Plan 056 / FLIP-12) has an effect only where `SAModule` finds
+`TENANT`-scoped tables carrying a tenant column, on Postgres, under `SHARED`. No pool, no extra
+engine/client, no symbolic schema, no control-plane surface constructed. No `TenancyModule` in
+`modules=` (the default) registers nothing.
+
+**Rule (Plan 056)**: `enforce_rls` is enforced through `SecurityPosture` (`data.*`, contributed by
+`SAModule`), never by a raise in a module — one refusal path; never add `assert_rls_enabled()` to
+a startup hook. The RLS posture collector lives in `varco_sa`, never `varco_fastapi.tenancy` (the
+seam rule) — `TenancyModule` owns `tenant.*`, `SAModule` owns `data.*`.
 
 **Rule**: `mount_tenant_admin(app, control_service, acknowledge_bundled_admin=True,
 server_auth=..., admin_role="tenant-admin")` is the **only** way to expose the admin
-surface — there is deliberately **no** `VARCO_TENANCY_MOUNT_ADMIN` env var, ever.
+surface — there is deliberately **no** `VARCO_TENANCY_MOUNT_ADMIN` env var, ever. Its
+provisioning-authority model is designed in Plan 055 §D-flip14 and unbuilt — do not add a tenant
+guard, and do not build the model without that plan.
 
 **Rule**: never ship a varco-owned Alembic revision that enables RLS (Plan 037 / §D-S12-oq4) —
 varco ships the generator (`varco_sa.rls_autogen`), the ordering guarantee, and the posture
@@ -1211,10 +1246,24 @@ only what feeds it. `TenantProvenance` is its own `AmbientVar`
 (`varco_core.tenancy.provenance`) and must never move into `RequestContext` — same rule as
 `current_tenant()` itself never living there.
 
-**Rule**: `TenantResolutionMiddleware(chain=None)` is byte-identical to pre-3.2 header-only
-behaviour (one `DeprecationWarning` at construction) — nothing flips by default. Full design
-(trust ranking, cross-check modes, the subdomain algorithm, membership binding, act-as
-delegation, the 4.0 flip list, a Pitfalls table): `technical_docs/features/tenant-provenance.md`.
+**Rule**: `TenantResolutionMiddleware(chain=None)` means **the configured chain** (Plan 055 /
+FLIP-6); with nothing configured it falls back to the deprecated implicit `LegacyTenantSource`
+(`removed_in="5.0.0"` — the 12-month floor from 3.2.0 forbids removing it in 4.0; never
+re-introduce the `TypeError` before 2027-09-12); wired through `TenancyModule` it blocks a
+production start via `tenant.no_chain` (a hand-wired middleware is invisible to posture).
+
+**Rule (Plan 055 / FLIP-9)**: `RequestContextMiddleware` never sets the tenant — the only HTTP
+writer of `current_tenant()` is `TenantResolutionMiddleware._continue()`
+(`test_tenant_single_writer.py` enforces it). Never add a second one.
+
+**Rule (Plan 055 / FLIP-7)**: `ClaimTenantMembership.on_missing_claim` is `DENY`; `allow` is an
+explicit, HIGH-reported opt-out.
+
+**Rule (Plan 055 §D-collector)**: `tenant.*` posture findings are contributed by `TenancyModule`,
+never by `SecurityPostureModule` — a non-tenant app must emit none.
+
+Full design (trust ranking, cross-check modes, the subdomain algorithm, membership binding,
+act-as delegation, the 4.0 flip list, a Pitfalls table): `technical_docs/features/tenant-provenance.md`.
 Usage: README's "Tenant identity provenance" section.
 
 **Rule (Plan 051 / DI-5)**: `TenantSource` is `@Multibound` — an out-of-tree source is a scanned
@@ -1626,7 +1675,8 @@ Am I adding a new capability?
 │       ↳ Startup wiring? → varco_fastapi.tenancy.TenancyLifecycle, wrapped by
 │                            varco_fastapi.modules.TenancyModule
 │       ↳ Request-scoped tenant resolution? → varco_fastapi.middleware.
-│                            TenantResolutionMiddleware
+│                            TenantResolutionMiddleware (wired by `TenancyModule`,
+│                            slot `TENANT_RESOLUTION`)
 │       ↳ Admin/provisioning surface? → varco_fastapi.tenancy.mount_tenant_admin()
 │                            (never a create_varco_app kwarg — RD-9)
 │       ↳ New global/shared entity? → Meta.tenant_scope = TenantScope.GLOBAL,
@@ -1641,7 +1691,8 @@ Am I adding a new capability?
 │       path) or `varco_sa.rls.render_rls_ddl` (the per-table escape hatch); the
 │       per-transaction GUC? → `varco_sa.tenancy.rls_session.install_rls_tenant_hook`;
 │       is my deployment actually protected? → `inspect_rls_posture()`
-│       (`technical_docs/features/postgres-rls.md`)
+│       (automatic since 4.0 via `SAModule` → `data.*`;
+│       `technical_docs/features/postgres-rls.md`)
 │
 ├─ Cross-repo service integration (calling a peer whose Python package is
 │  not importable from this repo)?

@@ -311,10 +311,10 @@ call sequence in `varco_fastapi/varco_fastapi/app.py` and reversing it, the
 real request-flow order is:
 
 ```
-CORS → [extra_middleware=, e.g. an app-supplied TenantResolutionMiddleware]
-     → ErrorMiddleware → RequestLoggingMiddleware → MetricsMiddleware
-     → TracingMiddleware → RequestContextMiddleware
-     → LocalizationMiddleware → route handler
+CORS → [MiddlewareModule(slot=EXTRA)]
+     → ErrorMiddleware → RequestLoggingMiddleware → TracingMiddleware
+     → MetricsMiddleware → [TenantResolutionMiddleware, via TenancyModule]
+     → RequestContextMiddleware → LocalizationMiddleware → route handler
 ```
 
 `LocalizationMiddleware` is the **innermost** built-in layer, closest to
@@ -322,16 +322,18 @@ the handler — added earliest (first `add_middleware()` call among the
 built-ins), so it ends up dispatching last. `ErrorMiddleware` sits
 **outside** it, several layers away — not immediately adjacent.
 
-`TenantResolutionMiddleware` has no dedicated slot in `create_varco_app`;
-an app wires it via `extra_middleware=`, which is added just inside CORS —
-still **outside** `ErrorMiddleware`/`RequestLoggingMiddleware`/
-`MetricsMiddleware`/`TracingMiddleware`/`RequestContextMiddleware`, and
-therefore still outside (dispatches before) `LocalizationMiddleware`. The
-ordering guarantee RD-3 depends on — "the tenant-default precedence step
-sees `current_tenant()` already populated" — holds, but the two middlewares
-are **not adjacent** in the stack the way a simplified
-"`... → TenantResolution → Localization → handler`" diagram might suggest;
-several other built-in layers sit between them.
+Since 4.0 (Plan 055) `TenantResolutionMiddleware` has a dedicated slot —
+`EdgeSlot.TENANT_RESOLUTION` (`95`), contributed by `TenancyModule` — inside
+`ErrorMiddleware`/logging/tracing/metrics and the pre-auth rate limit, but
+still **outside** (dispatches before) `RequestContextMiddleware` and
+`LocalizationMiddleware`. (A hand-wired `MiddlewareModule` placement at
+`EdgeSlot.EXTRA`, the pre-049 `extra_middleware=` position, also stays
+outside `LocalizationMiddleware`.) The ordering guarantee RD-3 depends on —
+"the tenant-default precedence step sees `current_tenant()` already
+populated" — holds, but the two middlewares are **not adjacent** in the
+stack the way a simplified "`... → TenantResolution → Localization →
+handler`" diagram might suggest; `RequestContextMiddleware` (and an opt-in
+post-auth rate limit) sit between them.
 
 ### The `request.state` mirror — and its actual reach
 

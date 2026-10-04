@@ -19,19 +19,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from varco_core.service.tenant import tenant_context
 
+from tests._admin_auth import CtxAuth
 
-class _CtxAuth:
-    """A ``server_auth`` stand-in resolving to a fixed set of roles."""
-
-    def __init__(self, roles: list[str]) -> None:
-        self._roles = roles
-
-    def __call__(self):
-        class _Ctx:
-            roles = self._roles
-
-        _Ctx.roles = self._roles
-        return _Ctx()
+# Moved to the shared helper (Plan 054 Step 8); the local name is kept so the
+# call sites below read unchanged.
+_CtxAuth = CtxAuth
 
 
 def _subscription(tenant_id: str):
@@ -63,7 +55,11 @@ def test_build_webhook_router_accepts_cross_tenant_role_kwarg(webhook_repo) -> N
     from varco_fastapi.webhook.router import build_webhook_router
 
     # Must not raise TypeError — the plan adds this kwarg in Phase 1.
-    build_webhook_router(webhook_repo, cross_tenant_role="cross-tenant-admin")
+    build_webhook_router(
+        webhook_repo,
+        server_auth=_CtxAuth(["webhook-admin"]),
+        cross_tenant_role="cross-tenant-admin",
+    )
 
 
 async def test_create_subscription_with_foreign_body_tenant_id_is_rejected(webhook_repo) -> None:
@@ -73,7 +69,12 @@ async def test_create_subscription_with_foreign_body_tenant_id_is_rejected(webho
     from varco_fastapi.webhook import mount_webhook_admin
 
     app = FastAPI()
-    mount_webhook_admin(app, repository=webhook_repo, acknowledge_bundled_admin=True)
+    mount_webhook_admin(
+        app,
+        repository=webhook_repo,
+        acknowledge_bundled_admin=True,
+        server_auth=_CtxAuth(["webhook-admin"]),
+    )
     client = TestClient(app)
 
     with tenant_context("tenant-a"):
@@ -114,29 +115,11 @@ async def test_caller_with_cross_tenant_role_may_read_another_tenants_subscripti
     assert resp.json()["tenant_id"] == "tenant-b"
 
 
-async def test_unauthenticated_mount_never_grants_cross_tenant_access(webhook_repo) -> None:
-    """§D-S4-role: ``ctx is None`` (``server_auth=None``) must resolve
-    ``allow_cross_tenant=False`` unconditionally — the unauthenticated mount
-    is strictly narrower than an authenticated one, never wider."""
-    from varco_fastapi.webhook import mount_webhook_admin
-
-    saved = await webhook_repo.save(_subscription("tenant-b"))
-    pk = str(saved.pk)
-
-    app = FastAPI()
-    mount_webhook_admin(
-        app,
-        repository=webhook_repo,
-        acknowledge_bundled_admin=True,
-        server_auth=None,
-        cross_tenant_role="cross-tenant-admin",
-    )
-    client = TestClient(app)
-
-    with tenant_context("tenant-a"):
-        resp = client.get(f"/webhooks/subscriptions/{pk}")
-
-    assert resp.status_code == 404
+# The 3.x `test_unauthenticated_mount_never_grants_cross_tenant_access`
+# (mounted with server_auth=None) is rewritten at the bottom of this file as
+# `test_server_auth_returning_none_never_grants_cross_tenant_access` — since
+# 4.0 (Plan 054 / FLIP-4) `server_auth=None` is a ValueError, so the
+# `ctx is None` branch is reachable only through a server_auth returning None.
 
 
 # ── §D-S4-scope: reliability admin — absent tenant_id means "mine" ──
@@ -163,7 +146,11 @@ def test_build_dlq_router_accepts_cross_tenant_role_kwarg() -> None:
     from varco_core.event.dlq import InMemoryDeadLetterQueue
     from varco_fastapi.admin.dlq_router import build_dlq_router
 
-    build_dlq_router(InMemoryDeadLetterQueue(), cross_tenant_role="cross-tenant-admin")
+    build_dlq_router(
+        InMemoryDeadLetterQueue(),
+        server_auth=_CtxAuth(["reliability-admin"]),
+        cross_tenant_role="cross-tenant-admin",
+    )
 
 
 async def test_delete_where_with_omitted_tenant_id_scopes_to_callers_tenant(
@@ -299,3 +286,39 @@ def test_mount_tenant_admin_does_not_accept_cross_tenant_role_kwarg() -> None:
             server_auth=_CtxAuth(["tenant-admin"]),
             cross_tenant_role="cross-tenant-admin",
         )
+
+
+# ── Plan 054 / FLIP-3/4 — the `ctx is None` fail-closed branch, now unit-tested directly ──
+#
+# Since 4.0 no mount accepts `server_auth=None`, so the `ctx is None` branch
+# is reachable only through a custom `server_auth` that returns `None` for an
+# anonymous caller. It must stay fail-closed.
+
+
+def test_allow_cross_tenant_is_false_for_a_none_ctx() -> None:
+    from varco_fastapi.admin._tenant_scope import allow_cross_tenant
+
+    assert allow_cross_tenant(None, "x") is False
+
+
+async def test_server_auth_returning_none_never_grants_cross_tenant_access(webhook_repo) -> None:
+    # An authenticated-but-anonymous caller (ctx None) fails the role check; never wider.
+    from varco_fastapi.webhook import mount_webhook_admin
+
+    saved = await webhook_repo.save(_subscription("tenant-b"))
+    pk = str(saved.pk)
+
+    app = FastAPI()
+    mount_webhook_admin(
+        app,
+        repository=webhook_repo,
+        acknowledge_bundled_admin=True,
+        server_auth=lambda: None,
+        cross_tenant_role="cross-tenant-admin",
+    )
+    client = TestClient(app)
+
+    with tenant_context("tenant-a"):
+        resp = client.get(f"/webhooks/subscriptions/{pk}")
+
+    assert resp.status_code in (403, 404)

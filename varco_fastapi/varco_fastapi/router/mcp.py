@@ -369,7 +369,8 @@ class MCPAuthMiddleware:
     Usage::
 
         app = FastAPI()
-        auth = ApiKeyAuth(keys={"secret-key": AuthContext(user_id="mcp-client")})
+        # Digest pre-computed offline with varco_core.auth.api_key.hash_api_key().
+        auth = ApiKeyAuth(hashed_keys={MCP_KEY_DIGEST: AuthContext(user_id="mcp-client")})
         adapter = MCPAdapter(OrderRouter, client=...)
         adapter.mount(app, server_auth=auth)   # convenience — adds middleware + mounts
 
@@ -865,7 +866,7 @@ class MCPAdapter:
         Usage::
 
             app = FastAPI()
-            auth = ApiKeyAuth(keys={"secret": AuthContext(user_id="agent")})
+            auth = ApiKeyAuth(hashed_keys={hash_api_key("secret"): AuthContext(user_id="agent")})
             adapter.mount(app, server_auth=auth)   # MCP endpoint requires auth
             adapter.mount(app)                     # MCP endpoint is open (no auth)
 

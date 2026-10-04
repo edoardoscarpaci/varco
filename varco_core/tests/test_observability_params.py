@@ -198,10 +198,11 @@ class TestRedaction:
         "name",
         # NOTE: names must be valid Python identifiers — a real parameter can never be
         # literally "X-Authorization". "X_Authorization" covers the same contract:
-        # case-insensitive SUBSTRING match of the "authorization" pattern.
+        # case-insensitive WORD-BOUNDARY token match of the "authorization" pattern
+        # (Plan 057 / FLIP-040-1 — the 4.0 default).
         ["password", "user_password", "X_Authorization", "api_key", "secret_token"],
     )
-    def test_redact_patterns_match_by_substring_case_insensitive(self, name: str) -> None:
+    def test_redact_patterns_match_by_word_case_insensitive(self, name: str) -> None:
         from varco_core.observability.params import build_capture_plan
 
         def fn(**kwargs):
@@ -223,6 +224,33 @@ class TestRedaction:
         plan = build_capture_plan(target, ParamCaptureConfig())
         extracted = plan.extract((), {name: "super-secret-value"})
         assert extracted.get(f"param.{name}") == "[REDACTED]"
+
+    def test_shipping_address_param_not_redacted_by_default(self) -> None:
+        # §D-span: span capture inherits the word default — 040's headline
+        # false positive ("pin" in "shipping") is gone.
+        from varco_core.observability.params import ParamCaptureConfig, build_capture_plan
+
+        def fn(shipping_address=None):
+            pass
+
+        plan = build_capture_plan(fn, ParamCaptureConfig())
+        extracted = plan.extract((), {"shipping_address": "1 Main St"})
+        assert extracted.get("param.shipping_address") == "1 Main St"
+
+    def test_redact_match_mode_substring_escape_hatch(self) -> None:
+        # §D-span: a caller relying on substring semantics ("pwd" in "dbpwd")
+        # says so on the ParamCaptureConfig it already holds.
+        from varco_core.observability.params import ParamCaptureConfig, build_capture_plan
+
+        def fn(dbpwd=None):
+            pass
+
+        substring = build_capture_plan(
+            fn, ParamCaptureConfig(redact_patterns=("pwd",), redact_match_mode="substring")
+        )
+        assert substring.extract((), {"dbpwd": "x"}).get("param.dbpwd") == "[REDACTED]"
+        default = build_capture_plan(fn, ParamCaptureConfig(redact_patterns=("pwd",)))
+        assert default.extract((), {"dbpwd": "x"}).get("param.dbpwd") == "x"
 
     def test_redaction_wins_over_explicit_include(self) -> None:
         """Fail-closed: even an include-listed name is redacted if it matches a pattern."""

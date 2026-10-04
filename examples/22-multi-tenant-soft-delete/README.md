@@ -48,7 +48,7 @@ docker run -d --name pg \
 # Run the app
 cd examples/22-multi-tenant-soft-delete
 DATABASE_URL=postgresql+asyncpg://postgres:secret@localhost:5432/postgres \
-  uv run uvicorn app:app --reload
+  VARCO_SECURITY_ENV=development uv run uvicorn app:app --reload
 ```
 
 ```bash
@@ -79,7 +79,7 @@ Integration tests spin up a PostgreSQL container automatically via `testcontaine
 
 ```bash
 # Requires Docker daemon running
-uv run pytest -m integration examples/22-multi-tenant-soft-delete/tests/
+VARCO_SECURITY_ENV=development uv run pytest -m integration examples/22-multi-tenant-soft-delete/tests/
 ```
 
 ## How it works

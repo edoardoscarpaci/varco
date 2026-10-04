@@ -259,6 +259,7 @@ One env var flips a default module off without touching code — the FLIP-1 exam
 
 ```bash
 export VARCO_SECURITY_POSTURE_ENABLED=false   # or default_modules(exclude=(SecurityPostureModule,))
+export VARCO_SECURITY_ENFORCE=warn            # keep it, but restore the 3.x warn-only consequence (FLIP-2)
 ```
 
 RO-4 (a redactor for request logs) is a constructor argument on the logging module, not a
@@ -881,7 +882,7 @@ class MyAuthorizer(AbstractAuthorizer):
 
 
 container = DIContainer()
-container.scan("varco_core", recursive=True)  # registers BaseAuthorizer, a @Fallback default
+container.scan("varco_core", recursive=True)  # BaseAuthorizer: a @Fallback default, development only
 container.bind(AbstractAuthorizer, MyAuthorizer)  # wins — registered AFTER, order doesn't matter
 ```
 
@@ -1177,18 +1178,32 @@ class AppAuthorizer(RoleBasedAuthorizer):
 
 ### BaseAuthorizer
 
-Permissive fallback — allows every operation. Declared `@Fallback`, so any application `AbstractAuthorizer` binding automatically takes precedence, regardless of registration order:
+Permissive fallback — allows every operation. Declared `@Fallback`, so any application `AbstractAuthorizer` binding automatically takes precedence, regardless of registration order.
+
+**Development only: `VARCO_SECURITY_ENV=development`** (exact, case-sensitive — Plan 053 /
+FLIP-5). In any other environment this class is not a binding — a service that injects
+`AbstractAuthorizer` fails at startup (`ConfigurationError` from the wiring preflight) or at
+construction (`LookupError: No binding found for 'AbstractAuthorizer'. Did you forget
+container.bind() or container.provide()?`), and `SecurityPosture` reports
+`posture.authorizer_unbound` (HIGH):
 
 ```python
-from varco_core.base_authorizer import BaseAuthorizer
+from varco_core.auth.authorizer import BaseAuthorizer
 
-# Development / testing only — never ship this to production without shadowing it
-container.scan("varco_core.base_authorizer")
+# export VARCO_SECURITY_ENV=development   (tests: monkeypatch.setenv)
+container.scan("varco_core.auth.authorizer")
+```
 
-# Production guard
-assert not isinstance(container.get(AbstractAuthorizer), BaseAuthorizer), (
-    "No real authorizer registered — refusing to start"
-)
+A deliberately permissive production app binds an *instance* — an instance/provider binding
+carries no class markers, so it resolves in every environment — and suppresses the WARN it
+earns (`container.bind(AbstractAuthorizer, BaseAuthorizer)` does **not** work: a class-keyed
+binding is gated exactly like the scanned one):
+
+```python
+from varco_core.di import bind_instance
+
+bind_instance(container, AbstractAuthorizer, BaseAuthorizer())
+# VARCO_SECURITY_SUPPRESS=posture.base_authorizer_bound
 ```
 
 ---
@@ -1217,9 +1232,11 @@ list(FastrestErrorCodes)  # all built-in codes — iterable because it's an Enum
 
 `ErrorEnvelopeSettings` (env prefix `VARCO_ERROR_`) governs what else the envelope carries —
 whether to include the i18n `message_key`, the structured `params`, an RFC 9457 Problem Details
-body instead, and the `detail` member (`str(exc)`) on a mapped `ServiceException` (byte-identical
-to pre-3.2, a **warn-only** 4.0-flip candidate reported by `inspect_http_edge()` as
-`http.error.detail_exposed`). Every `VARCO_ERROR_*` name, type, and default:
+body instead, and the `detail` member (`str(exc)`) on a mapped `ServiceException` — **off by
+default since 4.0** (Plan 054 / FLIP-10; the structured content is in `params`, including a
+`RouteGuard` denial's `params.operation`). `VARCO_ERROR_INCLUDE_DETAIL=true` restores the 3.x
+echo and is reported by `inspect_http_edge()` as `http.error.detail_exposed` (WARN — blocks a
+production start under the default `enforce` unless suppressed). Every `VARCO_ERROR_*` name, type, and default:
 [technical_docs/settings-reference.md](technical_docs/settings-reference.md).
 
 See `technical_docs/features/error-taxonomy-and-i18n.md` for the full envelope shape and the S3
@@ -1392,8 +1409,14 @@ tenant control plane** (REST or event-driven onboarding, backed by a
 durable catalog), and **global/shared scope** for reference data every
 tenant reads, see `varco_core.tenancy` and
 [`technical_docs/features/multitenancy.md`](technical_docs/features/multitenancy.md).
-Every default there is byte-identical to the `TenantUoWProvider` shape above
-— nothing changes unless you opt in:
+Every `TenancySettings()` default except `enforce_rls` is byte-identical to the
+`TenantUoWProvider` shape above; `enforce_rls=True` (4.0, Plan 056 / FLIP-12) has an effect only
+where `SAModule` finds `TENANT`-scoped tables carrying a tenant column, on Postgres, under `SHARED`
+— it then reads their RLS state at startup and `SecurityPosture` reports `data.*`
+(`VARCO_TENANCY_ENFORCE_RLS=false` skips the read and is itself reported). A 4.0 production app
+with tenant tables must have RLS applied (policy, `ENABLE`, `FORCE`) or explicitly defer — see
+[`postgres-rls.md`](technical_docs/features/postgres-rls.md)'s "Upgrading a 3.x deployment with
+tenant tables". Everything else changes only if you opt in:
 
 ```python
 from varco_core.tenancy import TenancySettings, TenantIsolation
@@ -1529,28 +1552,41 @@ while writing a query; use RLS to stop one reaching the database.
 
 `TenantSourceChain` (`varco_core.tenancy.source`) answers a question the section above assumes
 is already settled: **which of a request's signals — a header, a subdomain, a JWT claim — is
-allowed to name the tenant, and what happens when two disagree?** Nothing flips by default —
-`TenantResolutionMiddleware(chain=None)` keeps reading `X-Tenant-Id`, byte-identically. Full
-design (trust ranking, the two cross-check modes, the subdomain algorithm, membership binding,
-act-as delegation, the 4.0 flip list, a Pitfalls table):
-`technical_docs/features/tenant-provenance.md`.
+allowed to name the tenant, and what happens when two disagree?** Since 4.0 (Plan 055) the
+chain is the default: `TenancyModule` (see [Wiring an app](#wiring-an-app))
+contributes `TenantResolutionMiddleware` at `EdgeSlot.TENANT_RESOLUTION` — inside
+`ErrorMiddleware`, before `RequestContextMiddleware` — with the chain resolved from
+`VARCO_TENANT_SOURCES` and the container. `RequestContextMiddleware` never sets the tenant; the
+chain middleware is the only HTTP writer of `current_tenant()`. Full design (trust ranking, the
+two cross-check modes, the subdomain algorithm, membership binding, act-as delegation, the 4.0
+flip list, a Pitfalls table): `technical_docs/features/tenant-provenance.md`.
 
 ```python
-from varco_core.tenancy.settings import TenantProvenanceSettings, build_tenant_source_chain
+from varco_fastapi.app import create_varco_app
+from varco_fastapi import default_modules
+from varco_fastapi.modules import TenancyModule
+
+# VARCO_TENANT_SOURCES=jwt — the chain is resolved from the container (incl. plugin sources).
+# SHARED isolation without a control plane: catalog=/pool= are optional.
+app = create_varco_app(container, modules=[TenancyModule(), *default_modules()])
+# With a control plane: TenancyModule(catalog=catalog, pool=pool)
+```
+
+The hand-wired form still works — `chain=None` (the default) reads `VARCO_TENANT_SOURCES`
+itself; with nothing configured it falls back to the deprecated implicit `X-Tenant-Id` source
+(one `DeprecationWarning`, removed in 5.0.0) — but it cannot see multi-bound plugin sources and
+is invisible to the security posture report:
+
+```python
 from varco_fastapi.middleware.tenant_resolution import TenantResolutionMiddleware
+from varco_fastapi.modules import MiddlewareModule
 
-# Env-driven — see the table below. VARCO_TENANT_SOURCES unset -> build_tenant_source_chain()
-# returns None -> chain=None below -> byte-identical to pre-3.2 header-only behaviour.
-chain = build_tenant_source_chain(TenantProvenanceSettings.from_env())
-
-app.add_middleware(
-    TenantResolutionMiddleware,
-    catalog=catalog,
-    pool=pool,
-    chain=chain,               # None (default) or a TenantSourceChain
-    server_auth=server_auth,   # needed for a JWT-claim source to see a verified AuthContext
-    reject_status=403,
-)
+MiddlewareModule([(TenantResolutionMiddleware, {
+    "catalog": catalog,          # optional (None -> no status gate)
+    "pool": pool,                # optional (None -> no ensure(); SHARED only)
+    "server_auth": server_auth,  # needed for a JWT-claim source to see a verified AuthContext
+    "reject_status": 403,
+})])  # slot EXTRA — the 3.x position, outside ErrorMiddleware
 ```
 
 Or build a chain explicitly, in code:
@@ -1609,6 +1645,11 @@ container = bootstrap(DIContainer())
 enable_tenant_membership(container)  # opt-in: ClaimTenantMembership over the scanned Null default
 ```
 
+Since 4.0 a token with no `tenants` claim is **denied** (`reason="claim_absent"`) — unless its
+own `tenant_id` equals the resolved tenant (`self_tenant`: a single-tenant fleet needs no IdP
+change). `VARCO_TENANT_MEMBERSHIP_ON_MISSING=allow` restores 3.2 fail-open and is reported as
+HIGH `tenant.membership_missing_claim_allows` (suppress it during an IdP rollout).
+
 **Act-as / RFC 8693 delegation** — varco **consumes** an already-issued, already-verified
 delegation token; it never issues one (token exchange is the IdP's job). `ActAsTenantSource`
 emits a claim only when the token carries an `act` claim *and* a bound `DelegationPolicy` allows
@@ -1635,12 +1676,13 @@ token = authority.sign(
 
 Read by `TenantProvenanceSettings`/`TenantMembershipSettings` (bound via `bind_settings()`,
 Plan 048). Every one is unset by default; an unset `VARCO_TENANT_SOURCES` means
-`build_tenant_source_chain()` returns `None` — nothing changes. Every `VARCO_TENANT_*` name
+`build_tenant_source_chain()` returns `None` — the deprecated implicit header fallback, which
+`TenancyModule` reports as `tenant.no_chain` (a production start-blocker). Every `VARCO_TENANT_*` name
 (sources/cross-check/trust floor/base domains/forwarded-host/reserved labels/legacy header/
 membership/act-as) plus the per-issuer `VARCO_JWT_TRANSFORM__<LABEL>__TENANTS_FIELD` form:
 [technical_docs/settings-reference.md](technical_docs/settings-reference.md). One value worth
-calling out here because it is a scheduled 4.0 flip: `VARCO_TENANT_MEMBERSHIP_ON_MISSING`
-defaults to `allow` today and **flips to `deny` in 4.0**.
+calling out here because it flipped in 4.0: `VARCO_TENANT_MEMBERSHIP_ON_MISSING` defaults to
+**`deny`** (Plan 055 / FLIP-7); `allow` is the explicit, HIGH-reported opt-out.
 
 ---
 
@@ -3122,7 +3164,8 @@ authority = JwtAuthority.from_pem(
     algorithm="RS256",  # RS256, ES256, or HS256
 )
 
-# Build and sign a token
+# Build and sign a token — since 4.0 every token() carries a uuid4 jti by default;
+# JwtAuthority.from_pem(..., mint_jti=False) opts out (Plan 053 / FLIP-034-2)
 token_str = authority.sign(
     authority.token()
     .subject("usr_42")
@@ -3252,7 +3295,7 @@ from the pre-4.0 loose `VARCO_JWKS_*` reads). Every `VARCO_JWT_*` name, type, an
 
 An IdP-minted token rarely uses varco's canonical claim names. Set env vars — **no code
 changes** — and every JWT entry point (`JwtParser.parse()`, `TrustedIssuerRegistry.verify()`,
-`JwtBearerAuth`, `PassthroughAuth`) picks up the mapping for free:
+`JwtBearerAuth`, `PassthroughAuth(acknowledge_unverified=True)`) picks up the mapping for free:
 
 ```bash
 # Keycloak: roles live under realm_access.roles, Spring-style "ROLE_" prefix
@@ -4188,6 +4231,7 @@ DI-6, so these stay loose reads, not a `bind_settings()`-registered class); full
 `varco_beanie`. See the
 [Database Auditing guide](technical_docs/features/database-auditing.md) for
 wiring, the Alembic/Beanie setup, and the per-backend idempotency behaviour.
+Since 4.0 audit diffs are redacted by default (secret-named keys only — see [Redaction](#redaction)).
 
 ---
 
@@ -4196,17 +4240,28 @@ wiring, the Alembic/Beanie setup, and the per-backend idempotency behaviour.
 `varco_core.redaction` is one small, key-name-based redaction seam shared by span capture,
 `error_params()`, the audit trail, and request logging — `Redactor` (a one-method Protocol),
 `PolicyRedactor` (the default), `RedactionPolicy`, and `redact_mapping()`/`redact_query_string()`/
-`json_safe()`. Span capture's byte-identical 15-pattern list moved here; nothing else it does
-changed.
+`json_safe()`. Span capture's 15-pattern list moved here. Matching is **word-boundary** since 4.0
+(`shipping_address` is no longer redacted by `"pin"`, `x-api-key` is redacted by `"api_key"`);
+`RedactionPolicy(match_mode="substring")` is the escape hatch.
+
+Audit diffs are redacted **by default** since 4.0, through `AUDIT_REDACTION_POLICY` (which keeps
+`datetime`/`UUID`/`Decimal` leaves untouched). The two forms you may still write:
 
 ```python
-from varco_core.redaction import PolicyRedactor
+from dataclasses import replace
+
+from varco_core.redaction import AUDIT_REDACTION_POLICY, DEFAULT_REDACT_PATTERNS, PolicyRedactor
 from varco_core.service.audit import AuditLogMixin
 
-# Opt in per service — closes the one live leak this seam exists to fix
-# (a secret-shaped field on a read DTO stored verbatim in the audit table):
+# Opt out — diffs stored verbatim; posture reports redaction.audit.disabled (WARN):
+class LegacyService(AuditLogMixin, AsyncService[...]):
+    _audit_redactor = None
+
+# Extend — keep the audit policy's render_non_json=False, add a pattern:
 class OrderService(AuditLogMixin, AsyncService[...]):
-    _audit_redactor = PolicyRedactor()
+    _audit_redactor = PolicyRedactor(
+        replace(AUDIT_REDACTION_POLICY, patterns=DEFAULT_REDACT_PATTERNS + ("csrftoken",))
+    )
 ```
 
 `error_params()` is redacted on the error envelope by default
@@ -4216,8 +4271,10 @@ key becomes `"[REDACTED]"` and a non-JSON value becomes `"<TypeName>"`.
 `RequestLoggingMiddleware(redactor=...)` gives a body/header/URL-logging subclass something to
 call; the default (`redactor=None`) is byte-identical to pre-3.2 logging.
 
-Full design (the pattern-constant table, the substring matcher's documented false positives, the
-hash-chain write-path-only rule, a Pitfalls table): `technical_docs/features/redaction.md`.
+Full design (the pattern-constant table, the word-boundary contract table, the hash-chain
+write-path-only rule, the default `RedactionPostureCollector` and
+`SecurityPostureModule(audited_services=...)`, a Pitfalls table):
+`technical_docs/features/redaction.md`.
 
 ---
 
@@ -4390,7 +4447,9 @@ async def on_order(self, event: OrderPlacedEvent) -> None: ...
 
 Redrive, retention, tenancy, a Beanie backend, and a bundled REST admin surface
 (`mount_reliability_admin()`) are covered in `technical_docs/features/dead-letter-queues.md`.
-`mount_reliability_admin(..., cross_tenant_role="cross-tenant-admin")` (Plan 036 / S4) is required
+`mount_reliability_admin(app, dlq=..., acknowledge_bundled_admin=True, server_auth=my_auth)`
+requires `server_auth` since 4.0 (Plan 054 / FLIP-3 — `None` is a `ValueError`; every route
+enforces `admin_role`). `cross_tenant_role="cross-tenant-admin"` (Plan 036 / S4) is required
 to omit `tenant_id` and reach every tenant, or to pass a `tenant_id` other than the caller's own —
 an omitted `tenant_id` now scopes to the caller's resolved tenant, not "every tenant". See
 `technical_docs/features/admin-surface-tenancy.md`.
@@ -4505,12 +4564,17 @@ store = await container.aget(AbstractTokenRevocationStore)
 registry = TrustedIssuerRegistry(revocation_store=store)  # still required — binding alone is not enough
 ```
 
+Since 4.0 a wired real (non-`NullTokenRevocationStore`) store derives `require_jti=True` — a
+`jti`-less token is rejected at `TOKEN` scope unless `VARCO_JWT_REVOCATION_REQUIRE_JTI=false`
+(Auth0/Keycloak/Cognito emit no `jti` by default; Plan 053 / FLIP-034-3).
+
 Or, without a code change: `VARCO_REVOCATION_BACKEND=redis` (uses `VARCO_REDIS_URL`) selects the
 same `RedisTokenRevocationStore` — the `TrustedIssuerRegistry(revocation_store=...)` second step
 is unchanged either way. See "Choosing a backend" above.
 
 `VARCO_JWT_REVOCATION_*` (the master kill-switch, `fail_closed`/`fail_open` failure mode, the
-`jti`-required flag, and the clock-skew allowance) — every name, type, and default:
+`jti`-required flag — default unset, i.e. derived from the wired store — and the clock-skew
+allowance) — every name, type, and default:
 [technical_docs/settings-reference.md](technical_docs/settings-reference.md).
 
 Full design (the four-scope table, the not-valid-before watermark rule, the two-step DI footgun,
@@ -4524,9 +4588,9 @@ Plan 034 / S14. `varco_core.auth.api_key.hash_api_key()`/`verify_api_key()` are 
 (`hashlib`, `hmac`) primitives so an API key never has to sit in memory as plaintext, and
 comparison is always `hmac.compare_digest` — never a raw `==`.
 
-`ApiKeyAuth` uses them automatically — `keys=` (plaintext) is hashed immediately at construction;
-`hashed_keys=` (the production path) accepts pre-hashed digests directly, so the plaintext key
-never enters the process at all:
+`ApiKeyAuth(hashed_keys=...)` is the path — it accepts pre-hashed digests directly, so the
+plaintext key never enters the process at all. `keys=` (plaintext, hashed at construction) is
+**deprecated (4.0.0 → removed in 5.0.0)** and emits a `DeprecationWarning`:
 
 ```python
 from varco_core.auth.api_key import hash_api_key
@@ -4746,20 +4810,24 @@ mount_webhook_admin(
     repository=repo,
     redriver=my_dlq_redriver,       # enables the replay-through-DLQ route
     acknowledge_bundled_admin=True,  # required — RD-9, same posture as mount_reliability_admin
-    server_auth=my_auth,
+    server_auth=my_auth,             # required since 4.0 — None is a ValueError (FLIP-4)
     admin_role="webhook-admin",
     cross_tenant_role="cross-tenant-admin",  # Plan 036 / S4 — required to address another
-                                              # tenant's subscription; ctx=None (unauthenticated)
-                                              # can never hold it
+                                              # tenant's subscription; a None ctx can never hold it
 )
 ```
 
 Secrets (`WebhookSubscription.active_secrets`) are encrypted at rest via the existing
-`FieldEncryptor` when a repository is constructed with `encryptor=` — ⚠️ `encryptor=None` (the
-default) stores plaintext, a dev/test-only escape hatch **only reachable by hand**: the DI path
-(`WebhookModule` selecting a durable backend) requires a bound `FieldEncryptor` and never
-constructs a repository with `encryptor=None` (Plan 050 / DI-10; the constructor-level refusal
-itself is Plan 056). Because delivery is at-least-once,
+`FieldEncryptor` — `encryptor` is **required** on both durable repositories since 4.0 (Plan 056 /
+FLIP-13; `TypeError` otherwise), and the DI path (`WebhookModule` selecting a durable backend)
+requires a bound `FieldEncryptor` (Plan 050). Dev/test hatch:
+`PlaintextFieldEncryptor(acknowledge_plaintext=True)`, detected as
+`posture.webhook_secrets_plaintext` (the default posture collector resolves the bound
+repository itself). Upgrading a 3.x deployment with existing rows: run
+`await repo.reencrypt_legacy_plaintext()` once with the new encryptor — an ambiguous entry (valid
+hex of printable text) is never guessed: the run refuses with `AmbiguousLegacySecretError`,
+writing nothing, until you pass `legacy_hex=True` (`PlaintextFieldEncryptor` rows) or
+`legacy_hex=False` (raw 3.x hex secrets). Because delivery is at-least-once,
 point a varco-app receiver at plan 029's `Idempotency-Key` middleware for dedup on the stable
 `webhook-id`.
 
@@ -5254,7 +5322,7 @@ from varco_fastapi import inspect_http_edge
 posture = inspect_http_edge(app)
 posture.security_headers_installed   # True
 posture.rate_limit_installed         # False, unless you added a RateLimitModule
-[f.check for f in posture.findings]  # e.g. ["http.rate_limit.absent", "http.error.detail_exposed"]
+[f.check for f in posture.findings]  # e.g. ["http.rate_limit.absent"] (INFO since 4.0)
 ```
 
 ---
@@ -5272,15 +5340,18 @@ code:
 from varco_fastapi.app import create_varco_app
 
 container = DIContainer()
-app = create_varco_app(container)  # SecurityPostureModule runs the default five collectors
+app = create_varco_app(container)  # SecurityPostureModule runs its default collectors
 ```
 
 Turn it off with `VARCO_SECURITY_POSTURE_ENABLED=false`, or drop it from the module list:
 `default_modules(exclude=(SecurityPostureModule,))`.
 
 `PostureCollector` is a `@Multibound` collection seam (Plan 051 / DI-5) — `SecurityPostureModule`
-contributes the five built-in collectors itself (`HttpEdgeCollector`, `LocalPostureCollector`,
-`AuthPostureCollector`, `TenantPostureCollector`, `DataPostureCollector`); add your own with a
+contributes the four built-in collectors itself (`HttpEdgeCollector`, `LocalPostureCollector`,
+`AuthPostureCollector`, `RedactionPostureCollector` — list your `AuditLogMixin` services once with
+`SecurityPostureModule(audited_services=(OrderService,))`; `TenantPostureCollector` comes from
+`TenancyModule`, Plan 055, and the
+live `data.*` `RlsPostureCollector` from `varco_sa`'s `SAModule`, Plan 056); add your own with a
 plain `@Singleton` subclass:
 
 ```python
@@ -5296,8 +5367,21 @@ class MyPostureCollector(PostureCollector):
         return [PostureFinding(check="my.check", severity=PostureSeverity.INFO, ...)]
 ```
 
-`container.scan("myapp", recursive=True)` is all it takes — no framework edit. Pass
-`collectors=[...]` to `SecurityPostureModule` to replace the built-in five entirely (still
+`container.scan("myapp", recursive=True)` is all it takes — no framework edit.
+
+`di.in_process_backend` (a seam still on its in-process default) is **opt-in** — an app may
+legitimately run in-process backends, so its collector is never a default. To make in-process
+seams block a production start:
+
+```python
+from varco_core.di import contribute
+from varco_core.posture import PostureCollector
+from varco_fastapi.posture import DIPostureCollector
+
+contribute(container, PostureCollector, DIPostureCollector(container))
+```
+
+Pass `collectors=[...]` to `SecurityPostureModule` to replace the built-in four entirely (still
 accepts `PostureCollector` instances or the pre-051 zero-argument callable shape):
 
 ```python
@@ -5309,7 +5393,8 @@ app = create_varco_app(
     modules=[
         *default_modules(exclude=(SecurityPostureModule,)),
         SecurityPostureModule(
-            settings=SecurityPostureSettings(),  # reads VARCO_SECURITY_*
+            # reads VARCO_SECURITY_*; `enforce` derives `refuse` in production since 4.0
+            settings=SecurityPostureSettings(),
             collectors=[HttpEdgeCollector(app=app), MyPostureCollector()],
         ),
     ],
@@ -5321,12 +5406,23 @@ app = create_varco_app(
 other three severities so it is never mistaken for a clean report.
 
 `SecurityPostureSettings` (env prefix `VARCO_SECURITY_`) covers the `production`/`development`
-presentation mode (`VARCO_SECURITY_ENV`, **presentation only** — every check still runs in both
-modes), the `warn`/`refuse` enforcement mode, and the comma-separated suppression list. Every
+presentation mode (`VARCO_SECURITY_ENV` — presentation, every check still runs in both
+modes, **and it gates the permissive `BaseAuthorizer` binding**, Plan 053), the `warn`/`refuse`
+enforcement mode (`VARCO_SECURITY_ENFORCE` — **unset derives `refuse` unless
+`VARCO_SECURITY_ENV=development`**, Plan 054 / FLIP-2: one `HIGH`, or one unsuppressed `WARN` in
+production, aborts startup; `VARCO_SECURITY_ENFORCE=warn` restores 3.x), and the comma-separated
+suppression list. Every
 name, type, and default: [technical_docs/settings-reference.md](technical_docs/settings-reference.md).
 
-Full design (the collector table, the consolidated 4.0 flip list gathering every warn-only
-default across the 3.2 cycle, a Pitfalls table): `technical_docs/features/security-posture.md`.
+**What a stock production app must address** (4.0): `posture.authorizer_unbound` (HIGH — bind an
+`AbstractAuthorizer`). No `tenant.*` finding appears without `TenancyModule` (Plan 055); an app
+that lists `TenancyModule()` must configure `VARCO_TENANT_SOURCES` (else `tenant.no_chain` /
+`tenant.legacy_source_implicit` block) and adopt membership or suppress
+`tenant.no_membership_provider`. The severity table in `technical_docs/features/security-posture.md` lists
+every `check` id and whether it blocks.
+
+Full design (the collector table, the severity table, the consolidated 4.0 flip list, a Pitfalls
+table): `technical_docs/features/security-posture.md`.
 
 ---
 

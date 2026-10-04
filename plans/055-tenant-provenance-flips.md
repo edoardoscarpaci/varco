@@ -447,7 +447,7 @@ All commands run from `/home/edoardo/projects/varco`. Phase A (FLIP-7) → Phase
 Phase C (FLIP-9) → Docs → Verification. A is independent; C depends on B's optional
 `catalog`/`pool` (§D-flip9-shared) so the regression test has a `SHARED`-shaped fixture.
 
-1. [ ] **Preflight.** Record in `/tmp/claude-1000/-home-edoardo-projects-varco/625af1a2-0cf8-4199-b924-0b3f986861e6/scratchpad/055-preflight.txt`:
+1. [x] **Preflight.** Record in `/tmp/claude-1000/-home-edoardo-projects-varco/625af1a2-0cf8-4199-b924-0b3f986861e6/scratchpad/055-preflight.txt`:
        every `file:line` in §Context re-read (`tenant_resolution.py:130-165,167-257`,
        `sources.py:244-276`, `settings.py:236-275,371-435`, `membership.py:129,149,285,328-340`,
        `tenancy/di.py:77-105`, `request_context.py:125-136,154-194,204-225`,
@@ -473,7 +473,7 @@ Phase C (FLIP-9) → Docs → Verification. A is independent; C depends on B's o
 
 ### Phase A — FLIP-7
 
-2. [ ] `varco_core/tests/test_tenant_membership.py` (red) — **replace** the implicit-default
+2. [x] `varco_core/tests/test_tenant_membership.py` (red) — **replace** the implicit-default
        assumptions: `test_missing_claim_denies_by_default` (`ClaimTenantMembership()` with no
        `tenants` claim and a non-matching `tenant_id` → `allowed is False`, `reason == "claim_absent"`);
        `test_default_policy_is_deny_signature_guard` (`inspect.signature(ClaimTenantMembership.__init__).parameters["on_missing_claim"].default is MissingClaimPolicy.DENY`
@@ -490,7 +490,7 @@ Phase C (FLIP-9) → Docs → Verification. A is independent; C depends on B's o
        (`:100-107`) → `DENY`. **Verify**: red on every new/changed default test; the explicit-`ALLOW`
        tests pass today (controls).
 
-3. [ ] `varco_core/varco_core/tenancy/membership.py` — `:129`, `:149` (or the pydantic field
+3. [x] `varco_core/varco_core/tenancy/membership.py` — `:129`, `:149` (or the pydantic field
        default post-048), `:285` → `MissingClaimPolicy.DENY`; enum comments `:88-89` → `ALLOW`
        *"the 3.2 default — explicit opt-out since 4.0 (Plan 055 / FLIP-7); reported as
        `tenant.membership_missing_claim_allows` (HIGH)"*, `DENY` *"the default since 4.0"*; module
@@ -502,7 +502,7 @@ Phase C (FLIP-9) → Docs → Verification. A is independent; C depends on B's o
 
 ### Phase B — FLIP-6
 
-4. [ ] `varco_core/varco_core/deprecation.py` — **only if 053 has not landed** `warn_deprecated()`:
+4. [x] `varco_core/varco_core/deprecation.py` — **only if 053 has not landed** `warn_deprecated()`:
        add it with exactly 053 §D-apikey's signature (`plans/053-…md:327-328`), docstring
        (`Args`/`Edge cases`: *"for one parameter path of a constructor that stays; `stacklevel`
        must count the constructor frame"*), `__all__` entry; test
@@ -511,7 +511,7 @@ Phase C (FLIP-9) → Docs → Verification. A is independent; C depends on B's o
        `filename` of the record is the caller's). **Verify**: green; if 053 landed first, this step
        is a no-op and the note is recorded in the preflight file.
 
-5. [ ] `varco_fastapi/tests/test_tenant_chain_middleware.py` (red) — in `TestChainNoneDeprecationWarning`
+5. [x] `varco_fastapi/tests/test_tenant_chain_middleware.py` (red) — in `TestChainNoneDeprecationWarning`
        (`:98-131`): `test_chain_none_warns_once…` (`:99-123`) gains `monkeypatch.delenv("VARCO_TENANT_SOURCES", raising=False)`
        and asserts the message matches `r"TenantResolutionMiddleware\(chain=None\).*since 3\.2\.0.*removed in 5\.0\.0"`;
        **add** `test_chain_none_with_env_sources_builds_the_chain_and_does_not_warn`
@@ -535,7 +535,7 @@ Phase C (FLIP-9) → Docs → Verification. A is independent; C depends on B's o
        **Verify**: red on the env-derived tests and the optional-kwarg tests; the `error:` rule makes
        `test_tenant_resolution_middleware.py`/`test_tenant_event_path_middleware.py` red (swept in Step 9).
 
-6. [ ] `varco_fastapi/varco_fastapi/middleware/tenant_resolution.py` — §D-flip6-floor's `__init__`
+6. [x] `varco_fastapi/varco_fastapi/middleware/tenant_resolution.py` — §D-flip6-floor's `__init__`
        body (import `build_tenant_source_chain` from `varco_core.tenancy.settings`, `warn_deprecated`
        from `varco_core.deprecation`; catch 051's `ValueError` from the builder and re-raise with
        *"… pass chain= explicitly or wire TenantResolutionMiddleware through TenancyModule, which
@@ -554,7 +554,7 @@ Phase C (FLIP-9) → Docs → Verification. A is independent; C depends on B's o
        `LegacyTenantSource` in a chain is the documented, permanent escape hatch."*; `:257-259`
        still true, kept. **Verify**: Step 5 green.
 
-7. [ ] `varco_fastapi/tests/test_middleware_slots.py` (049; red) — `test_tenant_resolution_slot_position`:
+7. [x] `varco_fastapi/tests/test_middleware_slots.py` (049; red) — `test_tenant_resolution_slot_position`:
        `EdgeSlot.RATE_LIMIT_PRE_AUTH < EdgeSlot.TENANT_RESOLUTION < EdgeSlot.REQUEST_CONTEXT` and
        `EdgeSlot.ERROR < EdgeSlot.TENANT_RESOLUTION`; the existing "the enum *is* the order table"
        test's expected list gains `TENANT_RESOLUTION=95`. New **`varco_fastapi/tests/test_tenancy_module.py`**
@@ -576,7 +576,7 @@ Phase C (FLIP-9) → Docs → Verification. A is independent; C depends on B's o
        `LocalizationMiddleware` (assert by class index, the `test_localization_middleware_ordering.py:65-95`
        style — that file stays green unmodified). **Verify**: red on the module tests.
 
-8. [ ] `varco_fastapi/varco_fastapi/middleware/slots.py` — `TENANT_RESOLUTION = 95` with a
+8. [x] `varco_fastapi/varco_fastapi/middleware/slots.py` — `TENANT_RESOLUTION = 95` with a
        comment citing §D-flip6-slot; `middleware/__init__.py:14-37` order table gains the line
        `TenantResolutionMiddleware (TenancyModule; inside ErrorMiddleware, before RequestContext — Plan 055)`.
        `TenancyModule` (049's file) — §D-flip6-module's signature, `middleware()`, `configure_app()`
@@ -588,7 +588,7 @@ Phase C (FLIP-9) → Docs → Verification. A is independent; C depends on B's o
        block. `varco_fastapi/__init__.py` re-export unchanged (049 already exports `TenancyModule`).
        **Verify**: Step 7 green; `uv run pytest varco_fastapi/tests/test_localization_middleware_ordering.py varco_fastapi/tests/test_request_context_deferral.py -q` green **unmodified**.
 
-9. [ ] In-repo sweep — `test_tenant_resolution_middleware.py:36`, `test_tenant_event_path_middleware.py:54`
+9. [x] In-repo sweep — `test_tenant_resolution_middleware.py:36`, `test_tenant_event_path_middleware.py:54`
        and every other `chain=None` construction from the Step 1 list (except the three tests
        *about* the implicit path) pass `chain=TenantSourceChain(sources=(LegacyTenantSource(<header>),))`
        explicitly (the `_legacy_chain()` helper at `test_tenant_chain_middleware.py:64-68` moves to
@@ -601,7 +601,7 @@ Phase C (FLIP-9) → Docs → Verification. A is independent; C depends on B's o
 
 ### Phase C — FLIP-9
 
-10. [ ] `varco_fastapi/tests/test_request_context_deferral.py` (red) + new
+10. [x] `varco_fastapi/tests/test_request_context_deferral.py` (red) + new
         **`varco_fastapi/tests/test_tenant_single_writer.py`** — `test_request_context_middleware_never_sets_tenant`
         (`RequestContextMiddleware(server_auth=<ctx with metadata tenant_id="acme">)` alone → a
         route reading `current_tenant()` returns `None`); `test_removed_kwargs_raise_type_error`
@@ -622,7 +622,7 @@ Phase C (FLIP-9) → Docs → Verification. A is independent; C depends on B's o
         **Verify**: red on the removal tests; the regression test passes **today** (control —
         proves the chain path already writes the tenant; it must stay green after Step 11).
 
-11. [ ] `varco_fastapi/varco_fastapi/middleware/request_context.py` — delete `tenant_field`/
+11. [x] `varco_fastapi/varco_fastapi/middleware/request_context.py` — delete `tenant_field`/
         `enable_tenant_context` (`:130-131,135-136`), step 6 (`:189-194` → the unconditional
         `call_next`), `_maybe_tenant_context` (`:201-225`) and the `AsyncIterator`/`asynccontextmanager`
         imports if now unused; docstring steps `:65-78` (step 6 → *"Never enters `tenant_context()`
@@ -663,13 +663,13 @@ Phase C (FLIP-9) → Docs → Verification. A is independent; C depends on B's o
         are INFO only). **Verify**: Step 10 green; the regression test still green; `make test PKG=varco_core`;
         `make test PKG=varco_fastapi`; `make test PKG=examples`.
 
-12. [ ] `uv run python scripts/api_surface.py` — `inspect_tenant_provenance`'s signature changes
+12. [x] `uv run python scripts/api_surface.py` — `inspect_tenant_provenance`'s signature changes
         (and `warn_deprecated` appears if Step 4 ran). Commit the snapshot. **Verify**:
         `uv run python scripts/api_surface.py --check` clean; the `.md` diff shows exactly those.
 
 ### Docs (same commit as the code — feedback memory)
 
-13. [ ] `technical_docs/features/tenant-provenance.md` — header `:6` (*"Nothing flips by default in
+13. [x] `technical_docs/features/tenant-provenance.md` — header `:6` (*"Nothing flips by default in
         3.2"*) → the 4.0 statement; §"`LegacyTenantSource`" `:144-152` (*"is removed in 4.0"* →
         the implicit fallback is deprecated for 5.0.0, the floor date, the explicit source is
         permanent); §"The membership model, and its 3.2 fail-open" `:92-120` → *"fail-closed since
@@ -736,7 +736,7 @@ Phase C (FLIP-9) → Docs → Verification. A is independent; C depends on B's o
       **Verify**: `rg -n 'Nothing flips by default|fail-open in 3\.2|removed in 4\.0|enable_tenant_context|chain=None\) → `TypeError`' README.md technical_docs/ CLAUDE.md ARCHITECTURE.md varco_*/varco_*`
       → 0 hits outside CHANGELOG history and the annotated flip-list rows.
 
-14. [ ] `CHANGELOG.md` — under `## [Unreleased]` (`:10`), above existing blocks:
+14. [x] `CHANGELOG.md` — under `## [Unreleased]` (`:10`), above existing blocks:
         `### BREAKING — Tenant-provenance default flips (Plan 055, FLIP-6 / FLIP-7 / FLIP-9)` with
         bullets: FLIP-6 (default = configured chain on both construction paths; the implicit
         fallback **kept**, `warn_deprecated(since="3.2.0", removed_in="5.0.0")` — *"the 12-month
@@ -759,7 +759,7 @@ Phase C (FLIP-9) → Docs → Verification. A is independent; C depends on B's o
 
 ### Verification
 
-15. [ ] `make test` (all eleven suites; 054's autouse fixture keeps default apps booting; the
+15. [x] `make test` (all eleven suites; 054's autouse fixture keeps default apps booting; the
         FLIP tests `delenv` it); `make lint` (no-`PKG` path: `api-check` clean **with the
         regenerated snapshot**, `asyncapi-check` unchanged, `import-budget --warn-only` no breach
         — no new top-level import in any `__init__.py`); `make type-check` clean (no new
@@ -883,24 +883,24 @@ git diff --stat -- design/api-freeze-and-standards/measurements/asyncapi-example
 
 ## Done
 
-- [ ] `ClaimTenantMembership`/`TenantMembershipSettings` default `DENY` at all three sites;
+- [x] `ClaimTenantMembership`/`TenantMembershipSettings` default `DENY` at all three sites;
       `VARCO_TENANT_MEMBERSHIP_ON_MISSING=allow` is the hatch; Step 2 tests green.
-- [ ] `TenantResolutionMiddleware(chain=None)` → env-derived chain, else deprecated implicit legacy
+- [x] `TenantResolutionMiddleware(chain=None)` → env-derived chain, else deprecated implicit legacy
       via `warn_deprecated(since="3.2.0", removed_in="5.0.0")`; no `warnings.warn` left in the file;
       `catalog`/`pool` optional; `sources.py:255` corrected.
-- [ ] `EdgeSlot.TENANT_RESOLUTION = 95`; `TenancyModule` contributes the middleware and the
+- [x] `EdgeSlot.TENANT_RESOLUTION = 95`; `TenancyModule` contributes the middleware and the
       `TenantPostureCollector`, `validate()` refuses `pool=None` under non-`SHARED` isolation;
       `SecurityPostureModule` contributes no tenant collector; the order invariant tests green.
-- [ ] `RequestContextMiddleware(server_auth=)` only; `_maybe_tenant_context` gone;
+- [x] `RequestContextMiddleware(server_auth=)` only; `_maybe_tenant_context` gone;
       `test_only_one_http_writer_of_tenant_context` and the regression test green;
       `inspect_tenant_provenance(request_context_sets_tenant=False)` default.
-- [ ] All `tenant.*` tokens mapped; `tenant.no_catalog_gate` new; the severity table in
+- [x] All `tenant.*` tokens mapped; `tenant.no_catalog_gate` new; the severity table in
       `security-posture.md` has one row per id; `test_every_tenant_token_has_a_severity_row` green.
-- [ ] Production-refusal tests for the implicit fallback and the `allow` opt-out green with both
+- [x] Production-refusal tests for the implicit fallback and the `allow` opt-out green with both
       posture variables `delenv`ed.
-- [ ] §D-flip14 written into `admin-surface-tenancy.md`; BACKLOG `FLIP-14` → `designed (Plan 055
+- [x] §D-flip14 written into `admin-surface-tenancy.md`; BACKLOG `FLIP-14` → `designed (Plan 055
       §D-flip14)`; `FLIP-6`/`FLIP-7`/`FLIP-9` → `done (Plan 055)`.
-- [ ] Docs per Step 13; CHANGELOG per Step 14; api-surface snapshot regenerated; `make test`,
+- [x] Docs per Step 13; CHANGELOG per Step 14; api-surface snapshot regenerated; `make test`,
       `make lint`, `make type-check` green; AsyncAPI snapshot untouched.
 
 ## Out of scope / Parked

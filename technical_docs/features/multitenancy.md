@@ -9,9 +9,10 @@ app. **Globally-scoped (shared, non-tenant-routed) entities**
 (`varco_core.tenancy.TenantScope`) are a first-class concept under every
 strategy.
 
-With every default (`TenancySettings()`), a deployment is **byte-identical**
-to pre-Plan-007 behaviour: no pool, no extra engine/client, no symbolic
-schema, no control-plane surface. Nothing here runs unless you opt in.
+Every `TenancySettings()` default except `enforce_rls` is byte-identical to pre-Plan-007
+behaviour; `enforce_rls=True` (4.0, Plan 056 / FLIP-12) has an effect only where `SAModule` finds
+`TENANT`-scoped tables carrying a tenant column, on Postgres, under `SHARED` — no pool, no extra engine/client, no symbolic schema, no control-plane surface.
+Nothing else here runs unless you opt in.
 
 ## Layering
 
@@ -40,8 +41,11 @@ claim) is allowed to name the tenant, and what happens when two of them disagree
 `varco_core.tenancy.source.TenantSourceChain` and
 `varco_fastapi.middleware.tenant_resolution.TenantResolutionMiddleware(chain=...)`. Full design,
 the trust-ranking table, the two cross-check modes, membership binding, and act-as delegation:
-`technical_docs/features/tenant-provenance.md`. Nothing here changes: `TenantResolutionMiddleware
-(chain=None)` — the only shape that existed before Plan 033 — is byte-identical to today.
+`technical_docs/features/tenant-provenance.md`. Since 4.0 (Plan 055) the chain is the default
+— `TenantResolutionMiddleware(chain=None)` means the configured chain (`VARCO_TENANT_SOURCES`),
+and `TenancyModule` wires the middleware at `EdgeSlot.TENANT_RESOLUTION` (inside
+`ErrorMiddleware`, before `RequestContextMiddleware`). `catalog=`/`pool=` are optional for
+`SHARED` isolation; `RequestContextMiddleware` never sets the tenant.
 
 ## The six strategies
 
@@ -90,7 +94,7 @@ mirroring `MigrationSettings`):
 | Field | Env var | Default |
 |---|---|---|
 | `isolation` | `VARCO_TENANCY_ISOLATION` | `shared` |
-| `enforce_rls` | `VARCO_TENANCY_ENFORCE_RLS` | `false` |
+| `enforce_rls` | `VARCO_TENANCY_ENFORCE_RLS` | `true` (4.0, Plan 056) — `SAModule`'s `sa.rls_posture` component (`Phase.INFRA + 50`, after migrations) reads the RLS posture of `TENANT` tables with a tenant column (Postgres, `SHARED`) and `SecurityPosture` reports `data.*`; `false` skips the read and is reported as `data.rls_not_enforced` |
 | `schema_template` | `VARCO_TENANCY_SCHEMA_TEMPLATE` | `t_{tenant_id}` |
 | `db_template` | `VARCO_TENANCY_DB_TEMPLATE` | `db_{tenant_id}` |
 | `max_entries` | `VARCO_TENANCY_MAX_ENTRIES` | `50` |
@@ -108,15 +112,13 @@ surface can only be mounted via an explicit, acknowledged code call — see
 
 ## Recipe 1 — strategy 1/2: shared schema, optionally RLS-asserted
 
-This is the pre-Plan-007 default. Nothing to wire for strategy 1. For
-strategy 2, turn on the assertion (never DDL — see
-[Postgres RLS](postgres-rls.md)):
+Every `TenancySettings()` default except `enforce_rls` is byte-identical to pre-Plan-007
+behaviour; `enforce_rls=True` (4.0, Plan 056 / FLIP-12) has an effect only where `SAModule` finds
+`TENANT`-scoped tables carrying a tenant column, on Postgres, under `SHARED`. Nothing to wire for strategy 1. For strategy 2, the check is already on (never DDL — see
+[Postgres RLS](postgres-rls.md)'s "The automatic check" section); list `SAModule` and adopt RLS
+on the reported tables.
 
-```python
-from varco_core.tenancy import TenancySettings, TenantIsolation
-
-settings = TenancySettings(isolation=TenantIsolation.SHARED, enforce_rls=True)
-```
+The hand helper below is optional since 4.0 — `SAModule` checks automatically:
 
 ```python
 from varco_sa.tenancy.rls_check import assert_rls_enabled
@@ -955,7 +957,8 @@ query, and it cannot be relied on to catch one at runtime. The database-level ba
 
 | Pitfall | Symptom | Root Cause | Fix |
 |---|---|---|---|
-| **A token's `tenant_id` claim silently activates a suspended/deleted tenant's context** | With `create_varco_app` + a container, `RequestContextMiddleware` (on by default) enters `tenant_context()` from the claim with no catalog-status check and no `pool.ensure()` — the exact check `TenantResolutionMiddleware` performs | Two independent tenant setters existed pre-Plan-033 (the header-reading `TenantResolutionMiddleware` and the claim-reading `RequestContextMiddleware`), with no cross-check between them | Adopt a `TenantSourceChain` (Plan 033 / S6) — `TenantResolutionMiddleware` becomes the single decision point and `RequestContextMiddleware` defers to it; full design: `technical_docs/features/tenant-provenance.md` |
+| **A token's `tenant_id` claim silently activated a suspended/deleted tenant's context (pre-4.0)** | With `create_varco_app` + a container, `RequestContextMiddleware` entered `tenant_context()` from the claim with no catalog-status check and no `pool.ensure()` | Two independent tenant setters existed pre-Plan-033, with no cross-check between them | **Closed in 4.0 (Plan 055 / FLIP-9)** — the claim setter is removed; `TenantResolutionMiddleware` is the only HTTP writer. Adopt `TenancyModule` + `VARCO_TENANT_SOURCES=jwt`; full design: `technical_docs/features/tenant-provenance.md` |
+| **`TenancyModule(pool=None)` under `SCHEMA`/`DATABASE` isolation** | Startup **refuses** before any `start()` — `TenancyModule.async_init()` raises `ConfigurationError` naming `pool=`, regardless of `strict_validation` (`varco diagnose --static` shows it as a `module.tenancy.validate` WARNING) | Per-tenant routing needs a `TenantResourcePool`; `pool=None` is legal only under `SHARED` | Pass `pool=TenantResourcePool(...)` to `TenancyModule` |
 | **Raw `text()` SQL under `TenantIsolation.SCHEMA`** | A hand-written query returns rows from the wrong tenant's schema, or errors on a missing table | `schema_translate_map` rewrites schema references at SQL-compile time — it never touches raw `text()` SQL | Self-qualify the schema in the raw SQL, or route the query through the ORM so it carries the symbolic `"tenant"` token |
 | **`SET` used instead of `SET LOCAL`/`set_config(..., true)` for schema routing** | Under a transaction-mode pooler, one tenant's schema routing leaks into the next logical caller's session | Session-scoped `SET` survives past the transaction on a pooled connection — same defect class as `SAAdvisoryLock`'s U-16 finding | Use `SASchemaRouter`'s default `mechanism="translate_map"`; if you must use the `"search_path"` escape hatch, it already emits `set_config(..., true)`, never a bare `SET` |
 | **Per-tenant engine/binding never `dispose()`d** | Connections/clients accumulate until the pool or the process runs out | A caller evicts a tenant outside `TenantResourcePool`/`SAEngineRegistry`/`BeanieTenantPool`, bypassing their `closer` | Always go through the pool's `evict()`/`aclose()` — never hold a raw engine/client reference past eviction |
@@ -973,7 +976,7 @@ query, and it cannot be relied on to catch one at runtime. The database-level ba
 | **Admin DSN present in an app pod that never mounted the admin surface** | Nothing is actually exposed — but the credential sits unused in the wrong process | `VARCO_TENANCY_ADMIN_DSN` alone grants no route; only `mount_tenant_admin()` mounts one | One WARNING is logged recommending the standalone topology; prefer moving the DSN to a dedicated control-plane deployment |
 | **`mount_tenant_admin()` without `acknowledge_bundled_admin=True`** | `ValueError` at mount time, nothing mounted | The friction is intentional — bundling puts admin-adjacent privilege in the app pod's own environment | Pass `acknowledge_bundled_admin=True` only after confirming the standalone deployment genuinely isn't justified |
 | **`assert_tenant_filter=True` mistaken for tenant enforcement** | A cross-tenant read reaches the database even though the guard is enabled and no `TenantFilterError` was raised | The guard only sees queries that build a `QueryParams` AST — raw `session.execute(text(...))`, a hand-written `Select`, `get(pk)` and Mongo aggregation pipelines bypass it entirely. It is a development-time assertion, never a security control | Enable Postgres RLS (S12) as the actual backstop; treat the guard as a fast feedback loop while writing queries, not as a gate |
-| **`enforce_rls=True` mistaken for "RLS is protecting me"** | Deployment passes `assert_rls_enabled()` on every startup, yet a query from the app's own connection returns every tenant's rows | `enforce_rls` only asserts that a policy **exists** (`pg_class.relrowsecurity`) — it never checks whether the connecting role is actually subject to it (superuser/`BYPASSRLS`/table owner without `FORCE`) | Run `inspect_rls_posture()` — see [Postgres RLS](postgres-rls.md#finding-a-silent-no-op-inspect_rls_posture-plan-037--s12d-d-s12-posture) — and fix the connecting role before trusting the assertion |
+| **`assert_rls_enabled()` mistaken for "RLS is protecting me"** | Deployment passes a hand `assert_rls_enabled()` call on every startup, yet a query from the app's own connection returns every tenant's rows | The helper only asserts that a policy **exists** (`pg_class.relrowsecurity`) — it never checks whether the connecting role is actually subject to it (superuser/`BYPASSRLS`/table owner without `FORCE`) | Since 4.0 `SAModule`'s `enforce_rls` check reports the role (`data.role_bypasses_rls`); without `SAModule`, run `inspect_rls_posture()` — see [Postgres RLS](postgres-rls.md#finding-a-silent-no-op-inspect_rls_posture-plan-037--s12d-d-s12-posture) |
 | **Bundled admin router left ungated at the ingress** | The `/tenancy/*` admin surface is reachable from wherever the app itself is reachable | Role-guarding (`admin_role="tenant-admin"`) is an application-layer control, not a network one | Use the dedicated `prefix=` to deny it at the ingress, and/or pass `dependencies=[Depends(ip_allowlist)]`/an mTLS check |
 | **Redelivered `TenantProvisionRequested` assumed unique** | Worry about double-provisioning on broker redelivery | `provision()` is idempotent (status is the check) and the consumer additionally dedups same-process redelivery by `event_id`; compose with the durable inbox for cross-restart idempotency | No action needed for the common case — redelivery is a documented, tested no-op, not a hazard to work around manually |
 | **Bus-onboarded tenant 404s** | A tenant provisioned purely via `TenantProvisionRequested` is unroutable forever, even though its schema/database was created | Pre-Plan-008: the consumer called the provisioner directly, never wrote the catalog row `routing.py`/`TenantResolutionMiddleware` look up | Upgrade to a `control_service=`-based `TenantProvisionConsumer` (Plan 008), then repair each affected tenant with one idempotent `POST /tenancy/tenants` — re-running `provision()` finds the missing catalog row, adds it, and the provisioner's own idempotency means no duplicate/destructive DDL runs |

@@ -29,7 +29,10 @@ entries from Plan 035 in bold**::
                                           exemplars need a current span)
     **RateLimitMiddleware(stage=PRE_AUTH)**   (opt-in: rate_limit=RateLimitBundle(...);
                                                 only IP/GLOBAL-scoped rules legal here)
-    RequestContextMiddleware            (populates AuthContext / current_tenant())
+    TenantResolutionMiddleware          (TenancyModule; inside ErrorMiddleware, before
+                                          RequestContext — Plan 055; the only HTTP writer
+                                          of current_tenant())
+    RequestContextMiddleware            (populates AuthContext; never sets the tenant)
     **RateLimitMiddleware(stage=POST_AUTH)**  (opt-in, same bundle; SUBJECT/TENANT rules)
     LocalizationMiddleware
     IdempotencyMiddleware               (opt-in, unchanged — Plan 029)

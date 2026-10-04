@@ -22,8 +22,18 @@ DESIGN: self-managed ``AsyncIOMotorClient`` + ``init_beanie`` over the usual
 Secrets encryption
 ------------------
 Same convention as ``varco_sa.webhook``: ``active_secrets`` are encrypted
-via an optional ``FieldEncryptor``; ``None`` (default) stores plaintext —
-a documented dev/test-only escape hatch, never the production default.
+via a ``FieldEncryptor``, **required** since 4.0 (Plan 056 / FLIP-13) —
+``None`` or a non-``FieldEncryptor`` is a ``TypeError``. Dev/test:
+``PlaintextFieldEncryptor(acknowledge_plaintext=True)`` (reported as
+``posture.webhook_secrets_plaintext``). A 3.x deployment with rows written
+by 3.x without an encryptor runs
+``await repo.reencrypt_legacy_plaintext()`` once after upgrading.
+
+Usage::
+
+    repo = BeanieWebhookSubscriptionRepository(
+        url="mongodb://...", db_name="app", encryptor=FernetFieldEncryptor(key)
+    )
 
 Thread safety:  ⚠️ One repository instance owns one Motor client — do not
                 share across event loops.
@@ -39,7 +49,11 @@ from uuid import UUID, uuid4
 from beanie import Document, init_beanie
 from pydantic import Field
 from pymongo import ASCENDING, IndexModel
-from varco_core.webhook.base import WebhookSubscriptionRepository
+from varco_core.webhook.base import (
+    WebhookSubscriptionRepository,
+    plan_legacy_reencryption,
+    require_field_encryptor,
+)
 from varco_core.webhook.models import WebhookSubscription
 
 if TYPE_CHECKING:
@@ -68,7 +82,7 @@ class WebhookSubscriptionDocument(Document):
     tenant_id: str
     target_url: str
     event_patterns: list[str] = Field(default_factory=list)
-    # Ciphertext (hex) when an encryptor is configured, plaintext otherwise.
+    # Hex of the repository encryptor's output (see module docstring).
     active_secrets: list[str] = Field(default_factory=list)
     status: str = "ACTIVE"
     consecutive_failures: int = 0
@@ -100,10 +114,14 @@ class BeanieWebhookSubscriptionRepository(WebhookSubscriptionRepository):
                     convention ``SAWebhookSubscriptionRepository`` uses for
                     an injected engine.
         db_name:    Database name to initialize Beanie against.
-        encryptor:  Optional ``FieldEncryptor`` for ``active_secrets``
-                    (see module docstring).
+        encryptor:  **Required.** The ``FieldEncryptor`` for
+                    ``active_secrets`` (Plan 056 / FLIP-13; see module
+                    docstring). Dev/test:
+                    ``PlaintextFieldEncryptor(acknowledge_plaintext=True)``.
 
     Raises:
+        TypeError: ``encryptor`` is omitted, ``None``, or not a
+            ``FieldEncryptor`` — the message names every fix.
         ValueError: Neither or both of ``url``/``client`` were given.
 
     Edge cases:
@@ -120,8 +138,10 @@ class BeanieWebhookSubscriptionRepository(WebhookSubscriptionRepository):
         url: str | None = None,
         client: Any = None,
         db_name: str,
-        encryptor: FieldEncryptor | None = None,
+        encryptor: FieldEncryptor,
     ) -> None:
+        # Guard first: a plaintext store must never get as far as a URL check.
+        encryptor = require_field_encryptor(encryptor, cls_name=type(self).__name__)
         if (url is None) == (client is None):
             raise ValueError(
                 "BeanieWebhookSubscriptionRepository requires exactly one of "
@@ -154,14 +174,68 @@ class BeanieWebhookSubscriptionRepository(WebhookSubscriptionRepository):
             self._client = None
 
     def _encrypt_secret(self, secret: str) -> str:
-        if self._encryptor is None:
-            return secret
         return self._encryptor.encrypt(secret.encode("utf-8")).hex()
 
     def _decrypt_secret(self, stored: str) -> str:
-        if self._encryptor is None:
-            return stored
         return self._encryptor.decrypt(bytes.fromhex(stored)).decode("utf-8")
+
+    async def reencrypt_legacy_plaintext(self, *, legacy_hex: bool | None = None) -> int:
+        """
+        Rewrite every legacy plaintext ``active_secrets`` entry as ciphertext
+        under this repository's encryptor — the one-shot 3.x → 4.0 upgrade
+        step (Plan 056 / §D-flip13-reencrypt). Not called automatically.
+
+        Same rule as ``SAWebhookSubscriptionRepository.reencrypt_legacy_plaintext``
+        (``varco_core.webhook.base.reencrypt_legacy_secret``): only a decrypt
+        failure marks an entry as plaintext. Plaintext → Fernet switch: run
+        this on the **Fernet** repository with ``legacy_hex=True``.
+
+        Args:
+            legacy_hex: How to read a legacy entry — see
+                ``varco_core.webhook.base.reencrypt_legacy_secret``. ``None``
+                (default) upgrades only unambiguous entries and refuses the
+                batch if any entry is ambiguous; ``True`` — hex of the secret
+                (``PlaintextFieldEncryptor`` rows); ``False`` — raw 3.x
+                secrets.
+
+        Returns:
+            The number of documents rewritten. ``0`` on a second run.
+
+        Raises:
+            beanie.exceptions.CollectionWasNotInitialized: Called before
+                ``start()`` (``init_beanie`` has not run).
+            AmbiguousLegacySecretError: ``legacy_hex=None`` and some entry
+                is valid hex of printable UTF-8 — names every such
+                subscription id; **nothing is written** (every document is
+                planned before the first save).
+
+        Edge cases:
+            - Call after ``start()``; documents are loaded and planned first,
+              then each changed document is saved on its own, so an
+              interrupted write phase is finished by a re-run.
+            - ⚠️ Run it with the encryptor that wrote any existing
+              ciphertext: under ``legacy_hex=None`` a wrong key (or a
+              destroyed ``kid``) refuses, but under an explicit
+              ``True``/``False`` real ciphertext is re-encrypted as the
+              "secret" — see ``reencrypt_legacy_secret``'s Edge cases.
+
+        Async safety:   ⚠️ Run once, from a maintenance script, not
+                        concurrently with writers.
+        """
+        docs = await WebhookSubscriptionDocument.find_all().to_list()
+        by_id = {doc.id: doc for doc in docs}
+        # Plan first (raises AmbiguousLegacySecretError before any save).
+        plan = plan_legacy_reencryption(
+            ((doc.id, doc.active_secrets) for doc in docs),
+            self._encryptor,
+            legacy_hex=legacy_hex,
+        )
+        for doc_id, new_secrets in plan:
+            doc = by_id[doc_id]
+            doc.active_secrets = new_secrets
+            doc.updated_at = datetime.now(UTC)
+            await doc.save()
+        return len(plan)
 
     def _doc_to_entity(self, doc: WebhookSubscriptionDocument) -> WebhookSubscription:
         entity = WebhookSubscription(

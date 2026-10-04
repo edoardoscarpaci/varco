@@ -4,7 +4,8 @@ varco_core.redaction.patterns
 The canonical home of ``DEFAULT_REDACT_PATTERNS`` (Plan 040 / S21, §D-S21-patterns).
 
 Moved here **byte-identical** from ``varco_core.observability.params``
-(``params.py:92-108``) — the same 15 case-insensitive substring patterns,
+(``params.py:92-108``) — the same 15 case-insensitive patterns (matched on
+word-boundary tokens since 4.0, Plan 057 — the list did not change),
 the same order, the same comment. ``params.py`` now imports this tuple
 *object* rather than owning a second copy (§D-S21-compat) — span capture's
 behaviour does not change one character.
@@ -26,8 +27,10 @@ Async safety:   ✅ No I/O, no state.
 
 from __future__ import annotations
 
-# Case-insensitive **substring** match on the parameter/key name.  Fail-closed:
-# redaction wins even over an explicit `include=(...)` allow-list entry.
+# Case-insensitive **word-boundary token** match on the parameter/key name
+# (the 4.0 default — semantics: `policy.py`; `match_mode="substring"` is the
+# 3.2 escape hatch). Still fail-closed: redaction wins even over an explicit
+# `include=(...)` allow-list entry.
 #
 # ⛔ Verbatim from varco_core/observability/params.py:92-108 — do not add,
 # remove, or reorder any entry here. A pattern added to this tuple silently
@@ -68,6 +71,10 @@ DEFAULT_REDACT_PATTERNS: tuple[str, ...] = (
 #      Added here rather than to DEFAULT for the same reason as every other
 #      entry in this tuple: it changes matching behaviour and must be an
 #      explicit opt-in, never a silent default change.
+#      Plan 057: redundant under the 4.0 word default (`api_key`/`api-key`
+#      tokenise identically, so DEFAULT alone catches `x-api-key`); kept
+#      because the tuple is pinned and a `match_mode="substring"` caller
+#      still needs it.
 EXTENDED_REDACT_PATTERNS: tuple[str, ...] = (
     "signature",
     "passphrase",

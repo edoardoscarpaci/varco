@@ -114,15 +114,24 @@ class TenancySettings(VarcoSettings):
     """
     Env-driven multitenancy configuration.
 
-    With every default, the deployment is byte-identical to today's
-    behaviour: no pool, no extra engine/client, no symbolic schema, no
-    control-plane surface constructed.
+    Every ``TenancySettings()`` default except ``enforce_rls`` is
+    byte-identical to pre-Plan-007 behaviour (no pool, no extra
+    engine/client, no symbolic schema, no control-plane surface
+    constructed); ``enforce_rls=True`` (4.0, Plan 056 / FLIP-12) has an
+    effect only where ``SAModule`` finds ``TENANT``-scoped tables carrying a
+    tenant column, on Postgres, under ``SHARED``.
 
     Attributes:
         isolation: ``TenantIsolation`` — storage isolation strategy.
                    Env: ``VARCO_TENANCY_ISOLATION``.
-        enforce_rls: Hardening flag on ``SHARED`` — assert Postgres RLS is
-                   enabled on every routed table. Env:
+        enforce_rls: Hardening flag on ``SHARED``. Default ``True`` since
+                   4.0 (Plan 056 / FLIP-12): ``SAModule``'s ``sa.rls_posture``
+                   lifecycle component (after migrations) reads the RLS
+                   posture of every ``TENANT``-scoped table with a tenant
+                   column on Postgres under ``SHARED`` isolation;
+                   ``SecurityPosture`` reports it (``data.rls_*``).
+                   ``false`` skips the read and is itself reported
+                   (``data.rls_not_enforced``, WARN). Never emits DDL. Env:
                    ``VARCO_TENANCY_ENFORCE_RLS``.
         schema_template: ``{tenant_id}``-templated schema name for
                    ``SCHEMA``. Env: ``VARCO_TENANCY_SCHEMA_TEMPLATE``.
@@ -177,6 +186,8 @@ class TenancySettings(VarcoSettings):
            without the hook, or the hook without the assertion.
         ❌ Three RLS-related flags on one settings object. Accepted; the
            alternative is one flag that means three things.
+        4.0: the default flipped; the meaning did not — it still never sets
+        the GUC (Plan 056 §D-flip12-guc).
     """
 
     model_config = SettingsConfigDict(
@@ -184,7 +195,7 @@ class TenancySettings(VarcoSettings):
     )
 
     isolation: TenantIsolation = TenantIsolation.SHARED
-    enforce_rls: bool = False
+    enforce_rls: bool = True
     schema_template: str = "t_{tenant_id}"
     db_template: str = "db_{tenant_id}"
     max_entries: int = 50

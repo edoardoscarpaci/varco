@@ -58,7 +58,8 @@ class DocumentService(
         - ``uow_provider``  → ``IUoWProvider`` (``InMemoryUoWProvider``)
         - ``authorizer``    → ``AbstractAuthorizer`` (``PolicyEngineAuthorizer``
                               when ``enable_policy_authorizer`` was called;
-                              ``BaseAuthorizer`` permissive fallback otherwise)
+                              ``BaseAuthorizer`` permissive fallback otherwise —
+                              under ``VARCO_SECURITY_ENV=development`` only)
         - ``assembler``     → ``AbstractDTOAssembler[Document, ...]``
                              (``DocumentAssembler``)
 
@@ -82,7 +83,9 @@ class DocumentService(
             authorizer:   Injected ``AbstractAuthorizer``.  Resolves to
                           ``PolicyEngineAuthorizer`` when DI is wired with
                           ``enable_policy_authorizer(container)``; otherwise
-                          falls back to the permissive ``BaseAuthorizer``.
+                          falls back to the permissive ``BaseAuthorizer``
+                          (a binding only under
+                          ``VARCO_SECURITY_ENV=development`` since 4.0).
             assembler:    Injected ``DocumentAssembler``.
             producer:     Optional ``AbstractEventProducer``.  Resolves to
                           ``None`` in this example (no bus wired) — ``AsyncService``

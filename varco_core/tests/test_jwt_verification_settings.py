@@ -26,10 +26,11 @@ class TestRevocationSettingsDefaults:
         settings = JwtVerificationSettings.from_env()
         assert settings.revocation_failure_mode == RevocationFailureMode.FAIL_CLOSED
 
-    def test_revocation_require_jti_defaults_false(self):
+    def test_revocation_require_jti_defaults_none(self):
+        # Plan 053 / FLIP-034-3: None = derived from the wired store at check time.
         from varco_core.jwt.config import JwtVerificationSettings
 
-        assert JwtVerificationSettings.from_env().revocation_require_jti is False
+        assert JwtVerificationSettings.from_env().revocation_require_jti is None
 
     def test_revocation_skew_seconds_defaults_to_60(self):
         from varco_core.jwt.config import JwtVerificationSettings

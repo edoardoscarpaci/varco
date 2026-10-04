@@ -272,11 +272,18 @@ class ErrorMiddleware(BaseHTTPMiddleware):
                 "code": msg.code,
                 "message": msg.message,
             }
-            # See the matching comment in varco_fastapi/exceptions.py
-            # (_make_error_response) — msg.detail carries str(exc) and was
-            # being silently dropped; RouteGuard denial messages need it.
+            # Plan 054 / §D-flip10-parity: the same code/message/detail/
+            # message_key/params shape as varco_fastapi/exceptions.py's
+            # _make_error_response — once FLIP-10 dropped `detail` by
+            # default, a body without message_key/params would carry nothing
+            # actionable. RFC 9457 members are deliberately not added here
+            # (Plan 011 D-3 scope).
             if msg.detail:
                 body["detail"] = msg.detail
+            if msg.message_key is not None:
+                body["message_key"] = msg.message_key
+            if msg.params:
+                body["params"] = msg.params
         except Exception:  # noqa: BLE001
             # Fallback if error_message_for() itself raises — e.g. exc.error_params()
             # or a translator/message_resolver raises (see §D-S3's honest note: an

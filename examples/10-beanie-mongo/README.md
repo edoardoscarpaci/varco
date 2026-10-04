@@ -24,7 +24,7 @@ and full CRUD via `CRUDRouter`.
 ```bash
 export MONGODB_URL="mongodb://localhost:27017"
 cd examples/10-beanie-mongo
-uv run uvicorn app:app --reload
+VARCO_SECURITY_ENV=development uv run uvicorn app:app --reload
 ```
 
 ```bash
@@ -40,7 +40,7 @@ curl http://localhost:8000/v1/posts
 ## Run integration tests
 
 ```bash
-uv run pytest examples/10-beanie-mongo/tests/ -v -m integration
+VARCO_SECURITY_ENV=development uv run pytest examples/10-beanie-mongo/tests/ -v -m integration
 ```
 
 ## Key design notes

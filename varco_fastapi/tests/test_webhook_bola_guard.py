@@ -24,6 +24,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from varco_core.service.tenant import tenant_context
 
+from tests._admin_auth import ctx_auth
+
 
 def _subscription(tenant_id: str):
     from varco_core.webhook.models import WebhookSubscription
@@ -52,7 +54,14 @@ def app_and_client(repo):
     from varco_fastapi.webhook import mount_webhook_admin
 
     app = FastAPI()
-    mount_webhook_admin(app, repository=repo, acknowledge_bundled_admin=True)
+    # Plan 054 / FLIP-4: server_auth is required. The admin role only — no
+    # cross-tenant role, so the BOLA guard below is what is under test.
+    mount_webhook_admin(
+        app,
+        repository=repo,
+        acknowledge_bundled_admin=True,
+        server_auth=ctx_auth(["webhook-admin"]),
+    )
     return app, TestClient(app)
 
 

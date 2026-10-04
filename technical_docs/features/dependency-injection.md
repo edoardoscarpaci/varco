@@ -339,7 +339,7 @@ INFO naming your binding. Calling `enable_*(container)` **twice** still raises `
 | `container.install(VarcoFastAPIConfiguration)` right after `varco_fastapi.di.bootstrap(container)` | A documented no-op, not a bug — `bootstrap()`'s own scan already installs the `@Configuration`, and providify's container-owned install dedup (`scanner.py:255-…`, `container.py:1019/7158/7194`) means a second `install()` of the same module adds no binding and raises nothing (measured against providify 2.1.0; see `test_redundant_install_after_scan_is_a_documented_noop`). Redundant, not harmful — no need to guard against it. |
 | Scanned only `varco_fastapi`, and `AbstractEventProducer` never resolves to `BusEventProducer` | Call `varco_core.di.bootstrap(container)` too — `BusEventProducer` is a `varco_core` Class-A default; the old `setup_event_producer()` helper that used to paper over a missing `varco_core` scan is gone. |
 | Set `VARCO_REDIS_USE_STREAMS` by mutating `os.environ` directly in a test | Use `bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))` before `bootstrap()`, or `monkeypatch.setenv(...)` if the test genuinely exercises the env-var path. `bootstrap(streams=True)` no longer exists. |
-| Bootstrapped `varco_kafka`/`varco_redis`/… and expected its backend to be live | Bootstrapping a package no longer selects it (Plan 047, BREAKING) — set `VARCO_<SEAM>_BACKEND=<name>` too. `check_backend_selection()` logs a `WARNING` ("bootstrapped but unselected") exactly for this case; `varco diagnose`/the `di.in_process_backend` posture finding also surface it. |
+| Bootstrapped `varco_kafka`/`varco_redis`/… and expected its backend to be live | Bootstrapping a package no longer selects it (Plan 047, BREAKING) — set `VARCO_<SEAM>_BACKEND=<name>` too. `check_backend_selection()` logs a `WARNING` ("bootstrapped but unselected") exactly for this case; `varco diagnose` (and the opt-in `di.in_process_backend` posture finding, once `DIPostureCollector` is contributed) also surface it. |
 | `VARCO_CACHE_BACKEND=Redis` (or any other case) | Silently "unset" — `@Requires(value=...)` is exact and case-sensitive. `check_backend_selection()` raises `BackendSelectionError` naming the known, lower-case values. |
 | `VARCO_<SEAM>_BACKEND=pkg.mod:MyClass` where `MyClass.__init__` takes required constructor arguments | `TypeError` at first `get()`, wrapped as `BackendSelectionError` telling you to use a zero-arg factory (`pkg.mod:make_x`) or bind it in code instead — the dotted-path tier deliberately does no dependency injection. |
 | Called `enable_feature_flags(container)` and also set `VARCO_FEATURE_FLAGS_ENABLED=true`, and are unsure which one "won" | Code always wins (Plan 047 §D-precedence) — confirm via `container.validate(raise_on_error=False).infos`, which names one `FALLBACK_SHADOWED` for the env twin whenever code shadows it. |
@@ -494,7 +494,8 @@ ObservabilityModule, FastAPIModule, CorsModule, SecurityHeadersModule, ErrorEnve
 BodyLimitModule, LoggingModule, TracingModule, LocalizationModule, SecurityPostureModule`.
 **FLIP-1** (`BACKLOG.md:81`): `SecurityPostureModule` is in this default set —
 `VARCO_SECURITY_POSTURE_ENABLED=false` or `default_modules(exclude=(SecurityPostureModule,))`
-turns it off; `enforce` stays `"warn"` (Plan 054 owns the flip to `"refuse"`).
+turns it off. Since Plan 054 / FLIP-2 an unset `enforce` derives `"refuse"` unless
+`VARCO_SECURITY_ENV=development` — see `security-posture.md`'s severity table.
 
 **RO-4** (`BACKLOG.md:112`) lands as `LoggingModule(redactor=PolicyRedactor())` — the redactor
 keyword Plan 040 refused to add directly to `create_varco_app`. `LoggingModule()` (no redactor)
@@ -588,7 +589,7 @@ is the one exception: it sorts by its own `TenantTrust` domain key, never by pro
 | `EventConsumer` | `varco_core.event.consumer` | none by default | `@Singleton` subclass | `CoreModule.start()` auto-registers every contribution to the started bus | no consumers — legal, silent |
 | `RetentionPolicy` | `varco_core.retention.policy` | none by default | `@Singleton`/`@Provider`, or `contribute()` | `RetentionModule.async_init()` builds a `RetentionRegistry` from `acollect()` | nothing is ever purged — `RetentionModule.validate()` reports it |
 | `TenantSource` | `varco_core.tenancy.source` | the four built-ins, constructed from settings, not the pool | `@Singleton` subclass, named in `VARCO_TENANT_SOURCES` to become active | `resolve_tenant_source_chain(container)` | `VARCO_TENANT_SOURCES` empty → no chain (unchanged) |
-| `PostureCollector` | `varco_core.posture` | the five default collectors, contributed by `SecurityPostureModule.configure_app()` | `@Singleton` subclass, or `collectors=` replaces the default set | `SecurityPostureModule.start()` → `acollect()` | `SecurityPostureModule.validate()` reports it (cannot happen with the default set) |
+| `PostureCollector` | `varco_core.posture` | the four default collectors (`http_edge`/`local`/`auth`/`redaction`), contributed by `SecurityPostureModule.configure_app()` (the opt-in `DIPostureCollector` only if the app contributes it); `TenantPostureCollector` by `TenancyModule.configure_app()` (Plan 055); `RlsPostureCollector` (`data.*`) by `varco_sa`'s `SAModule.register()` (Plan 056) | `@Singleton` subclass, or `collectors=` replaces the default set | `SecurityPostureModule.start()` → `acollect()` | `SecurityPostureModule.validate()` reports it (cannot happen with the default set) |
 | `HealthCheck` | `varco_core.health` | seven backend probes | `@Singleton(qualifier=...)` | `HealthRouter`'s `Instance[HealthCheck].aget_all()` (unchanged — lazy, zero-tolerant) — `collect(container, HealthCheck)` is an equally valid eager read | no probes — legal |
 
 `WebhookVerifier` is **not** a collection seam (§D-verifier) — a `WebhookVerifier` instance is
@@ -693,11 +694,23 @@ Sequence[LifecycleComponent]` — the default wraps the module's own `start`/`st
 component named/phased like the module; `CoreModule` overrides it to contribute four
 (`core.stores`/INFRA, `core.bus`/BUS, `core.consumers`/CONSUMERS, `core.job_runner`/SCHEDULERS)
 and `WebhookModule` two (`webhook.repository`/INFRA, `webhook.dispatcher`/CONSUMERS).
+`core.stores` calls `start()` on every resolvable store/cache seam that has one. The store seams'
+`start()` is idempotent; `CacheBackend.start()` is **not** (its contract raises `RuntimeError`
+when already started), and every shipped cache provider (`RedisCacheConfiguration.redis_cache`,
+`RedisLayeredCacheConfiguration.layered_cache`, `MemcachedCacheConfiguration.memcached_cache`)
+returns an already-started cache — so for the cache seam only, `core.stores` treats that
+`RuntimeError` as "already started" and moves on. Any other exception still aborts startup.
+`SAModule` also contributes two (Plan 056): `sa`/INFRA (framework-table readiness) and
+`sa.rls_posture` at `varco_sa.modules.RLS_POSTURE_PHASE` = `Phase.INFRA + 50` — an integer
+between two named phases, so the RLS catalog read follows **every** INFRA component (migrations
+included, whichever list position) without a `depends_on` edge that would make
+`MigrationsModule` mandatory. `phase` is any `int`; the five names are buckets, not the only
+legal values.
 
 `create_varco_app` orders modules via `resolve_lifecycle_order()` (049's `depends_on` DFS, then
 a **stable** sort by phase) and flattens every active module's `components()` via
 `phased_components()` (same stable sort, over components). `varco_core.di.lifecycle.
-LifecycleRunner` — the engine `VarcoLispan` now delegates to — is the six-invariant primitive:
+LifecycleRunner` — the engine `VarcoLifespan` now delegates to — is the six-invariant primitive:
 
 1. Start in the given (phase, dependency) order.
 2. Stop in the **exact reverse of what actually started** — the normal-shutdown path.
@@ -736,8 +749,10 @@ needs a teardown hook and has no `@Configuration` of its own (`enable_redis_toke
 |---|---|
 | A `depends_on` pointing at a module scheduled for a later phase | `ModulePhaseError` at `create_varco_app()` time — move the dependency to an earlier/equal phase, or drop the edge. |
 | A user module left at the default `CONSUMERS` phase that opens a store other modules depend on | Works (the bus is up by then) but is fragile — declare `INFRA` explicitly if anything depends on it. |
+| A component that must run after *all* of a phase, from a package that cannot name the modules in it | Use an offset (`Phase.INFRA + 50`, as `SAModule`'s `sa.rls_posture` does), not a `depends_on` edge — the edge makes the target mandatory (`ModuleDependencyError` when absent) and may need an import in the wrong direction. |
 | `enable_*` constructing a connection-holding object without `disposer=` | Leaks at every `container.ashutdown()` — pass `bind_instance(..., disposer=obj.aclose)`. |
 | A Kafka/NATS bus resolved by hand and never started | `publish()` raises `RuntimeError` mentioning `start()` — no more silent hang or first-resolution auto-start (`@PostConstruct` removed in 4.0). |
+| A custom `CacheBackend` whose `start()` raises `RuntimeError` for a genuine start failure (not just "already started") | `core.stores` swallows it as "already started"; the failure surfaces at first use as "not started". Raise a different exception type (e.g. `ConnectionError`) for real failures, as the ABC's contract implies. |
 | `SAModule(ensure_tables=True)` under an Alembic-managed schema | Harmless (`checkfirst`) but redundant — set `ensure_tables=False` when Alembic owns every framework table this deployment uses. |
 
 
@@ -812,8 +827,10 @@ read `report.validation.warnings` directly if you want it gated.
 both are also logged as individual WARNING lines. Fired deprecations also appear in the
 **Deprecations** section. The report header's `environment`/`enforce`/`enforce_source` come from
 `varco_fastapi.diagnose.posture_header(container, modules)` (stored at
-`app.state.varco_posture_header`); a bare `varco_core` caller that passes nothing gets
-`unknown`/`default`, since `varco_core` cannot import `SecurityPostureSettings`.
+`app.state.varco_posture_header`); `enforce` is the *effective* mode and `enforce_source` is
+`derived` (unset, derived from `VARCO_SECURITY_ENV` — rendered `(derived from
+VARCO_SECURITY_ENV=<env>)`, Plan 054), `code`, or `env`. A bare `varco_core` caller that passes
+nothing gets `unknown`/`default`, since `varco_core` cannot import `SecurityPostureSettings`.
 
 The startup and `diagnose()` paths share one capture window
 (`varco_core.di.diagnose.capture_direct_deprecations()` +

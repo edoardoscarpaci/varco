@@ -251,8 +251,11 @@ class LegacyTenantSource(TenantSource):
     service can claim any active tenant. It is ``TenantTrust.LOW`` — the
     ❌ LOWEST row of brief 006 §1's trust table — and is safe only behind an
     ingress that strips a client-supplied header and re-appends a verified
-    value over an authenticated channel. It exists so a deployment can
-    upgrade without an outage and is removed in 4.0.
+    value over an authenticated channel. The **implicit** fallback that
+    builds it (``TenantResolutionMiddleware(chain=None)`` with nothing
+    configured) is deprecated (removed in 5.0.0); an explicit
+    ``LegacyTenantSource`` in a chain is the documented, permanent escape
+    hatch.
 
     Does **not** warn on construction (§D-S6-blast) — the warning belongs
     to ``TenantResolutionMiddleware(chain=None)``, which builds this source

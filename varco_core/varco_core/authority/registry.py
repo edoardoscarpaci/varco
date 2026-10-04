@@ -830,10 +830,13 @@ class TrustedIssuerRegistry:
                             check route).
             revocation_require_jti: Per-call override of
                             ``JwtVerificationSettings.revocation_require_jti``
-                            (§D-S13-jti). ``None`` (default) reads the
-                            setting (default ``False`` — Auth0/Keycloak/
-                            Cognito do not emit ``jti`` by default, brief
-                            009 §2).
+                            (§D-S13-jti). ``None`` (default) → the
+                            setting; setting ``None`` (the 4.0 default) →
+                            derived: ``True`` iff the wired store is not a
+                            ``NullTokenRevocationStore`` (Plan 053 /
+                            FLIP-034-3). Auth0/Keycloak/Cognito do not emit
+                            ``jti`` by default (brief 009 §2) — pass
+                            ``False`` or set the env var for such issuers.
             revocation_failure_mode: Per-call override of
                             ``JwtVerificationSettings.revocation_failure_mode``
                             (§D-S13-fail). ``None`` (default) reads the
@@ -1004,6 +1007,10 @@ class TrustedIssuerRegistry:
             raw:          The raw, verified claim dict from ``_jwt.decode()``.
             require_jti:  Per-call override of
                           ``JwtVerificationSettings.revocation_require_jti``.
+                          ``None`` → settings; settings ``None`` → derived:
+                          ``True`` iff the wired store is not a
+                          ``NullTokenRevocationStore`` (Plan 053 /
+                          FLIP-034-3).
             failure_mode: Per-call override of
                           ``JwtVerificationSettings.revocation_failure_mode``.
 
@@ -1023,10 +1030,20 @@ class TrustedIssuerRegistry:
               switch by being presented on a request that resolves a
               different ambient tenant.
         """
+        # Body-local import: varco_core.authority gains no module-level
+        # dependency on varco_core.revocation.null (Plan 053 §D-null).
+        from varco_core.revocation.null import is_null_revocation_store  # noqa: PLC0415
+
         settings = self.settings
+        # Three-valued merge (Plan 053 / FLIP-034-3): per-call kwarg >
+        # env/settings > derived from the WIRED store. A Null store derives
+        # False so binding the DI default never rejects jti-less foreign
+        # tokens (Auth0/Keycloak/Cognito, brief 009 §2).
         effective_require_jti = (
             require_jti if require_jti is not None else settings.revocation_require_jti
         )
+        if effective_require_jti is None:
+            effective_require_jti = not is_null_revocation_store(self._revocation_store)
         effective_failure_mode = (
             RevocationFailureMode(failure_mode)
             if failure_mode is not None

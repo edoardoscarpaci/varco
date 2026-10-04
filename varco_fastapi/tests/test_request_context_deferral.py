@@ -92,7 +92,10 @@ def _build_app(*, server_auth, with_provenance_publisher: bool, winner_tenant_id
 
 
 class TestNoChainInstalled:
-    def test_behaves_byte_identically_auth_runs_and_claim_tenant_entered(self) -> None:
+    def test_auth_runs_and_claim_tenant_is_not_entered(self) -> None:
+        # Plan 055 / FLIP-9: with no chain upstream, RequestContextMiddleware
+        # still authenticates exactly once — but the pre-4.0 claim setter is
+        # gone, so the "B" claim never becomes current_tenant().
         server_auth = _CountingServerAuth(_auth_ctx(tenant_id="B"))
         app = _build_app(server_auth=server_auth, with_provenance_publisher=False)
         client = TestClient(app)
@@ -100,7 +103,7 @@ class TestNoChainInstalled:
         response = client.get("/ping")
 
         assert response.status_code == 200
-        assert response.json()["tenant"] == "B"
+        assert response.json()["tenant"] is None
         assert server_auth.calls == 1
 
 
@@ -237,3 +240,41 @@ class TestRealChainStackedWithRequestContextMiddlewareSameInstance:
         # RequestContextMiddleware must reuse that verdict rather than
         # calling server_auth a second time.
         assert server_auth.calls == 1
+
+
+# ── Plan 055 / FLIP-9 — RequestContextMiddleware never sets the tenant ───────
+
+
+class TestRequestContextMiddlewareNeverSetsTenant:
+    def test_request_context_middleware_never_sets_tenant(self) -> None:
+        # The unchained claim-tenant setter is removed: a claim alone, with no
+        # chain/catalog/membership check, must never become current_tenant().
+        from varco_fastapi.middleware.request_context import RequestContextMiddleware
+
+        server_auth = _CountingServerAuth(_auth_ctx(tenant_id="acme"))
+        app = FastAPI()
+        app.add_middleware(RequestContextMiddleware, server_auth=server_auth)
+
+        @app.get("/ping")
+        async def ping():
+            from varco_core.service.tenant import current_tenant
+
+            return {"tenant": current_tenant()}
+
+        response = TestClient(app).get("/ping")
+
+        assert response.status_code == 200
+        assert response.json()["tenant"] is None
+
+    def test_removed_kwargs_raise_type_error(self) -> None:
+        # Removed outright (never deprecated) — a 3.x caller gets a loud TypeError.
+        import pytest
+        from varco_fastapi.middleware.request_context import RequestContextMiddleware
+
+        async def _asgi(scope, receive, send):  # pragma: no cover - never called
+            pass
+
+        with pytest.raises(TypeError, match="enable_tenant_context"):
+            RequestContextMiddleware(_asgi, enable_tenant_context=True)
+        with pytest.raises(TypeError, match="tenant_field"):
+            RequestContextMiddleware(_asgi, tenant_field="org")

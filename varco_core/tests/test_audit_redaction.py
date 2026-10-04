@@ -5,8 +5,9 @@ Plan 040 / S21, Phase 3, Step 12 — the audit hook the docstring already
 promised, made real: ``AuditLogMixin._audit_redactor`` / ``_audit_diff()``.
 
 Covers:
-    - default (``_audit_redactor is None``) -> byte-identical diff for
-      create/update/delete (§D-S21-audit).
+    - default (Plan 057 / FLIP-040-2): ``PolicyRedactor(AUDIT_REDACTION_POLICY)``
+      -> secret-named keys redacted, domain keys and non-JSON leaves untouched;
+      ``_audit_redactor = None`` opts out byte-identically to 3.2.
     - ``_audit_redactor = PolicyRedactor()`` -> sensitive fields redacted,
       siblings survive.
     - a subclass overriding ``_audit_diff`` wins.
@@ -19,6 +20,7 @@ Covers:
 
 from __future__ import annotations
 
+from datetime import UTC
 from typing import Any
 from uuid import uuid4
 
@@ -95,51 +97,162 @@ class InMemoryAuditRepository(AuditRepository):
         return [e for e in self.entries if e.entity_type == entity_type]
 
 
-# ── Default: byte-identical, no redactor set ────────────────────────────────
+# ── Default: redacted through AUDIT_REDACTION_POLICY (Plan 057 / FLIP-040-2) ─
 
 
-async def test_default_audit_redactor_is_none() -> None:
+async def test_audit_default_precondition_word_mode() -> None:
+    """§D-order — FLIP-040-2 is conditional on FLIP-040-1; this test is the gate.
+
+    Cherry-picking the audit flip without the word-boundary matcher would
+    redact ``shipping_address``/``author`` in persisted audit rows
+    (040 §D-S21-falsepos) — this test turns that into a red run instead.
+    """
+    from varco_core.redaction import (
+        AUDIT_REDACTION_POLICY,
+        DEFAULT_REDACT_PATTERNS,
+        PolicyRedactor,
+        is_sensitive_key,
+    )
+
+    assert AUDIT_REDACTION_POLICY.match_mode == "word"
+    assert AUDIT_REDACTION_POLICY.render_non_json is False
+    assert AUDIT_REDACTION_POLICY.patterns == DEFAULT_REDACT_PATTERNS
+    assert is_sensitive_key("shipping_address", AUDIT_REDACTION_POLICY) is False
+    assert is_sensitive_key("author", AUDIT_REDACTION_POLICY) is False
+    service = _FakeMixinService(_FakeProducer())
+    assert service._audit_redactor == PolicyRedactor(AUDIT_REDACTION_POLICY)
+
+
+async def test_create_diff_redacted_by_default() -> None:
     producer = _FakeProducer()
     service = _FakeMixinService(producer)
-    assert service._audit_redactor is None
-
-
-async def test_create_diff_byte_identical_without_redactor() -> None:
-    producer = _FakeProducer()
-    service = _FakeMixinService(producer)
-    entity = _FakeEntity(pk="ent-1")
     read_dto = _FakeReadDTO({"password": "hunter2", "field": "value"})
-    ctx = _FakeAuthContext()
 
-    await service._after_create(entity, read_dto, ctx)  # type: ignore[arg-type]
-
-    event, _channel = producer.produced[0]
-    assert event.diff == {"password": "hunter2", "field": "value"}
-
-
-async def test_update_diff_byte_identical_without_redactor() -> None:
-    producer = _FakeProducer()
-    service = _FakeMixinService(producer)
-    entity = _FakeEntity(pk="ent-2")
-    before = _FakeReadDTO({"password": "old"})
-    after = _FakeReadDTO({"password": "new"})
-    ctx = _FakeAuthContext()
-
-    await service._after_update(before, entity, after, ctx)  # type: ignore[arg-type]
+    await service._after_create(_FakeEntity(pk="ent-1"), read_dto, _FakeAuthContext())  # type: ignore[arg-type]
 
     event, _channel = producer.produced[0]
-    assert event.diff == {"before": {"password": "old"}, "after": {"password": "new"}}
+    assert event.diff == {"password": "[REDACTED]", "field": "value"}
 
 
-async def test_delete_diff_byte_identical_without_redactor() -> None:
+async def test_update_diff_redacted_in_both_halves_by_default() -> None:
     producer = _FakeProducer()
     service = _FakeMixinService(producer)
-    ctx = _FakeAuthContext()
+    before = _FakeReadDTO({"password": "old", "name": "alice"})
+    after = _FakeReadDTO({"password": "new", "name": "alice"})
 
-    await service._after_delete("pk-3", ctx)  # type: ignore[arg-type]
+    await service._after_update(before, _FakeEntity(pk="ent-2"), after, _FakeAuthContext())  # type: ignore[arg-type]
+
+    event, _channel = producer.produced[0]
+    assert event.diff == {
+        "before": {"password": "[REDACTED]", "name": "alice"},
+        "after": {"password": "[REDACTED]", "name": "alice"},
+    }
+
+
+async def test_default_does_not_redact_domain_keys() -> None:
+    # The word matcher is what makes on-by-default safe for domain keys.
+    producer = _FakeProducer()
+    service = _FakeMixinService(producer)
+    read_dto = _FakeReadDTO({"shipping_address": "1 Main St", "author": "alice", "pin": "1234"})
+
+    await service._after_create(_FakeEntity(pk="ent-d"), read_dto, _FakeAuthContext())  # type: ignore[arg-type]
+
+    event, _channel = producer.produced[0]
+    assert event.diff == {
+        "shipping_address": "1 Main St",
+        "author": "alice",
+        "pin": "[REDACTED]",
+    }
+
+
+async def test_default_leaves_non_json_leaves_byte_identical() -> None:
+    # Premise 2: plain PolicyRedactor() would render these as "<datetime>" —
+    # a silent, hash-attested corruption. render_non_json=False prevents it.
+    from datetime import date, datetime
+    from decimal import Decimal
+
+    created = datetime(2026, 1, 1, tzinfo=UTC)
+    pk = uuid4()
+    amount = Decimal("12.50")
+    day = date(2026, 1, 2)
+    producer = _FakeProducer()
+    service = _FakeMixinService(producer)
+    read_dto = _FakeReadDTO({"created_at": created, "pk": pk, "amount": amount, "day": day})
+
+    await service._after_create(_FakeEntity(pk="ent-n"), read_dto, _FakeAuthContext())  # type: ignore[arg-type]
+
+    event, _channel = producer.produced[0]
+    assert event.diff["created_at"] is created
+    assert event.diff["pk"] is pk
+    assert event.diff["amount"] is amount
+    assert event.diff["day"] is day
+
+
+async def test_delete_diff_is_empty_by_default() -> None:
+    producer = _FakeProducer()
+    service = _FakeMixinService(producer)
+
+    await service._after_delete("pk-3", _FakeAuthContext())  # type: ignore[arg-type]
 
     event, _channel = producer.produced[0]
     assert event.diff == {}
+
+
+class _OptedOutMixinService(_FakeMixinService):
+    _audit_redactor = None
+
+
+async def test_opt_out_with_none_is_byte_identical() -> None:
+    # The 3.2 behaviour, reproduced verbatim behind the explicit opt-out.
+    producer = _FakeProducer()
+    service = _OptedOutMixinService(producer)
+    ctx = _FakeAuthContext()
+
+    await service._after_create(  # type: ignore[arg-type]
+        _FakeEntity(pk="ent-o1"), _FakeReadDTO({"password": "hunter2", "field": "value"}), ctx
+    )
+    await service._after_update(  # type: ignore[arg-type]
+        _FakeReadDTO({"password": "old"}),
+        _FakeEntity(pk="ent-o2"),
+        _FakeReadDTO({"password": "new"}),
+        ctx,
+    )
+    await service._after_delete("pk-o3", ctx)  # type: ignore[arg-type]
+
+    diffs = [event.diff for event, _ in producer.produced]
+    assert diffs == [
+        {"password": "hunter2", "field": "value"},
+        {"before": {"password": "old"}, "after": {"password": "new"}},
+        {},
+    ]
+
+
+async def test_chain_over_default_redacted_rows_verifies_true() -> None:
+    # Redact-at-write is chain-safe: rows hash what they store.
+    import dataclasses
+
+    producer = _FakeProducer()
+    service = _FakeMixinService(producer)
+    ctx = _FakeAuthContext()
+    await service._after_create(  # type: ignore[arg-type]
+        _FakeEntity(pk="ent-c"), _FakeReadDTO({"password": "hunter2", "name": "a"}), ctx
+    )
+    await service._after_update(  # type: ignore[arg-type]
+        _FakeReadDTO({"password": "hunter2", "name": "a"}),
+        _FakeEntity(pk="ent-c"),
+        _FakeReadDTO({"password": "hunter3", "name": "b"}),
+        ctx,
+    )
+
+    entries: list[AuditEntry] = []
+    prev_hash: str | None = None
+    for seq, (event, _channel) in enumerate(producer.produced, start=1):
+        entry = dataclasses.replace(AuditEntry.from_event(event), seq=seq, prev_hash=prev_hash)
+        entries.append(entry)
+        prev_hash = entry.entry_hash()
+
+    assert AuditRepository.verify_chain(entries) is True
+    assert entries[0].diff["password"] == "[REDACTED]"
 
 
 # ── Opt-in: PolicyRedactor set as a class attribute ─────────────────────────

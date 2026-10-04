@@ -68,7 +68,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -200,6 +200,102 @@ def _default_table_lookup(domain_cls: type) -> sa.Table:
     return orm_cls.__table__  # type: ignore[attr-defined, no-any-return]
 
 
+def _is_tenant_scoped(domain_cls: type) -> bool:
+    """
+    The scope half of the RLS-candidate rule, shared by ``plan_tenant_rls()``
+    and ``rls_candidate_tables()`` so the two can never disagree about which
+    classes are in scope (Plan 056 / §D-flip12-candidates).
+
+    Args:
+        domain_cls: A domain class (or a stand-in exposing ``Meta.tenant_scope``).
+
+    Returns:
+        ``True`` iff the class is ``TenantScope.TENANT`` (the default when
+        ``Meta.tenant_scope`` is absent).
+    """
+    return _read_tenant_scope(domain_cls) is TenantScope.TENANT
+
+
+def _has_tenant_column(table: sa.Table, tenant_column: str) -> bool:
+    """
+    The column half of the RLS-candidate rule, shared like ``_is_tenant_scoped``.
+
+    Args:
+        table:         The resolved ``Table``.
+        tenant_column: The column name that identifies a tenant-carrying table.
+
+    Returns:
+        ``True`` iff ``table`` carries ``tenant_column`` and is not hard-excluded
+        (``varco_tenants``, whose ``tenant_id`` is a primary key).
+    """
+    return table.name not in _HARD_EXCLUDED_TABLES and tenant_column in table.columns
+
+
+def rls_candidate_tables(
+    domain_classes: Iterable[type],
+    *,
+    tenant_column: str = "tenant_id",
+    table_lookup: Callable[[type], sa.Table] | None = None,
+) -> tuple[str, ...]:
+    """
+    Name every table whose RLS posture ``RlsPostureCollector`` asserts
+    (Plan 056 / FLIP-12, §D-flip12-candidates).
+
+    A class contributes its table iff it is ``TenantScope.TENANT``, its table
+    resolves, the table carries ``tenant_column``, and the table is neither
+    ``varco_tenants`` nor a framework table (``framework_metadata()`` names —
+    framework-table RLS posture is parked, Plan 056 Non-goals).
+
+    DESIGN: names only, never a plan record
+        ✅ Pure and total — the posture collector runs at startup and must
+           never raise on a model it cannot reason about; a skipped class is
+           simply absent (the "no tenant column → zero blast radius" rule
+           that keeps single-tenant apps free of findings).
+        ✅ Shares ``_is_tenant_scoped``/``_has_tenant_column`` with
+           ``plan_tenant_rls()``, so "what is a candidate" has one definition.
+        ❌ No ``skipped_reason`` — an operator who wants to know *why* a class
+           is absent runs ``print(plan_tenant_rls(...))`` instead.
+
+    Args:
+        domain_classes: Domain classes to consider — typically
+                        ``SAModelRegistry.registered()``.
+        tenant_column:  Column name identifying a tenant-carrying table.
+                        Default ``"tenant_id"``.
+        table_lookup:   ``domain_cls -> Table`` resolver. Defaults to
+                        ``SAModelRegistry.get(domain_cls).__table__``.
+
+    Returns:
+        Table names, in first-seen order, de-duplicated.
+
+    Edge cases:
+        - Never raises: a class the lookup cannot resolve (``KeyError``,
+          ``AttributeError``) is skipped.
+        - A nullable tenant column is a candidate here — posture reads
+          catalog state; the nullable decision is ``plan_tenant_rls``'s, at
+          DDL time.
+    """
+    from varco_sa.metadata import framework_table_names  # noqa: PLC0415
+
+    lookup = table_lookup or _default_table_lookup
+    framework_names = framework_table_names()
+    names: list[str] = []
+    for domain_cls in domain_classes:
+        if not _is_tenant_scoped(domain_cls):
+            continue
+        try:
+            table = lookup(domain_cls)
+        except (KeyError, AttributeError):
+            # Unresolvable → not a candidate. Narrow on purpose: anything else
+            # is a bug in the lookup and should surface, not vanish.
+            continue
+        if not _has_tenant_column(table, tenant_column):
+            continue
+        if table.name in framework_names or table.name in names:
+            continue
+        names.append(table.name)
+    return tuple(names)
+
+
 def plan_tenant_rls(
     domain_classes: Sequence[type],
     *,
@@ -257,7 +353,7 @@ def plan_tenant_rls(
     plans: list[RlsTablePlan] = []
 
     for domain_cls in domain_classes:
-        if _read_tenant_scope(domain_cls) is not TenantScope.TENANT:
+        if not _is_tenant_scoped(domain_cls):
             continue  # GLOBAL: not a candidate at all, not even a skip entry.
 
         try:
@@ -471,6 +567,7 @@ __all__ = [
     "RlsTablePlan",
     "plan_tenant_rls",
     "render_tenant_rls_ddl",
+    "rls_candidate_tables",
     "tenant_rls_downgrade",
     "tenant_rls_upgrade",
 ]

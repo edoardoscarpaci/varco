@@ -38,7 +38,7 @@ No Docker required — the in-memory repository keeps everything in process.
 
 ```bash
 cd examples/01-minimal-crud-api
-uv run uvicorn app:app --reload
+VARCO_SECURITY_ENV=development uv run uvicorn app:app --reload
 ```
 
 Then open http://localhost:8000/docs for the interactive Swagger UI.
@@ -69,7 +69,7 @@ curl -X DELETE http://localhost:8000/v1/products/<id>
 All tests use the in-memory state — no external services needed.
 
 ```bash
-uv run pytest examples/01-minimal-crud-api/tests/
+VARCO_SECURITY_ENV=development uv run pytest examples/01-minimal-crud-api/tests/
 ```
 
 ## How it works
