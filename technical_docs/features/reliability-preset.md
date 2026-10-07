@@ -69,7 +69,8 @@ preset = ReliabilityPreset.durable(dlq=dlq)
 
 ```python
 from varco_fastapi import create_varco_app
-from varco_fastapi.modules import ReliabilityModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import ReliabilityModule
 
 app = create_varco_app(
     container, routers=[...], modules=[*default_modules(), ReliabilityModule(preset)]

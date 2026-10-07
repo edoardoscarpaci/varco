@@ -122,3 +122,9 @@ P30** — delete `disposer=` from `bind_instance`'s signature and `_attach_dispo
 test_provide_accepts_disposer_kwarg` — `strict=True`, `raises=TypeError`. The moment providify
 adds `disposer=`, this test starts passing and pytest reports it as `XPASS`, which `strict=True`
 turns into a hard failure — impossible to silently miss the fix landing.
+
+## 8. Status at 4.0.0 (Plan 058 audit)
+
+Open. Filed by Plan 050 under a working name ("P-DISP"/"P-INJ"); the ledger id (P30/P31) is now
+also in the guard's `reason=` (`GAP: P3x-…`) so `rg -n 'GAP: P'` counts it. Named in
+`CHANGELOG.md` `[4.0.0]` → Upstream; the guard above is still `xfailed`.

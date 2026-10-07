@@ -371,16 +371,16 @@ connects to Redis it immediately calls `pubsub.subscribe(*_subscribed_channels)`
 This means the correct test fixture ordering is:
 
 ```python
-consumer._setup()  # register_to(bus) — subscription stored in _subscribed_channels
+consumer.register_to(bus)  # subscription stored in _subscribed_channels
 await bus.start()  # connects, subscribes to channels, starts listener task
 ```
 
-If you call `_setup()` **after** `start()`, `subscribe()` calls
+If you call `register_to(bus)` **after** `start()`, `subscribe()` calls
 `asyncio.ensure_future(pubsub.subscribe(...))` to catch up — but that fire-and-forget future
 may not have completed before the first `publish()`. Doing it before `start()` is the safe,
 deterministic ordering.
 
-**Rule**: call `consumer._setup()` (or `register_to(bus)`) before `bus.start()`. This applies
+**Rule**: call `consumer.register_to(bus)` before `bus.start()`. This applies
 to both `RedisEventBus` and `RedisStreamEventBus`.
 
 ---
@@ -669,7 +669,7 @@ No API friction beyond what is already documented in F13.
 
 **Fix**: the pre-started bus pattern (`create_app(bus=pre_started_bus)`) remains the correct
 approach for `ASGITransport` test isolation, but the fixture must call `await bus.start()` before
-passing it to `create_app()`, and `create_app()` must wire `consumer._setup()` / `register_to()`
+passing it to `create_app()`, and `create_app()` must wire `consumer.register_to(bus)`
 **after** the started bus is passed in. Starting the bus first, then registering consumers, is
 the safe, deterministic order for Kafka.
 

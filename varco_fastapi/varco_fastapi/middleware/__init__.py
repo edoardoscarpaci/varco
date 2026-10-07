@@ -16,18 +16,18 @@ Verified execution order (outermost → innermost) as built by
 entries from Plan 035 in bold**::
 
     CORSMiddleware
-    **SecurityHeadersMiddleware**       (opt-out: security_headers=False)
-    extra_middleware=[...]              (caller-supplied, OUTSIDE ErrorMiddleware —
+    **SecurityHeadersMiddleware**       (SecurityHeadersModule; opt-out: exclude=)
+    MiddlewareModule(entries)           (EdgeSlot.EXTRA — caller-supplied, OUTSIDE ErrorMiddleware —
                                           see §D-order-bugs: a ServiceException
                                           raised here is NOT rendered by the
                                           error envelope)
     ErrorMiddleware
-    **BodyLimitMiddleware**             (opt-out: body_limit=False)
+    **BodyLimitMiddleware**             (BodyLimitModule; opt-out: exclude=)
     RequestLoggingMiddleware
     TracingMiddleware
     MetricsMiddleware                   (INSIDE Tracing — Plan 041 / §D-S17-decision:
                                           exemplars need a current span)
-    **RateLimitMiddleware(stage=PRE_AUTH)**   (opt-in: rate_limit=RateLimitBundle(...);
+    **RateLimitMiddleware(stage=PRE_AUTH)**   (opt-in: RateLimitModule(RateLimitBundle(...));
                                                 only IP/GLOBAL-scoped rules legal here)
     TenantResolutionMiddleware          (TenancyModule; inside ErrorMiddleware, before
                                           RequestContext — Plan 055; the only HTTP writer

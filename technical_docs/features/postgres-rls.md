@@ -62,7 +62,7 @@ incident.
 > `enable_rls_ddl()` until 3.0.0. It was never a member of the DI opt-in
 > `enable_*` family — it touches no container, registers no binding and
 > performs no I/O — so it is now `render_rls_ddl()`, which says what it does.
-> `enable_rls_ddl` remains as a deprecated alias until 4.0.0.
+> `enable_rls_ddl` remains as a deprecated alias until 5.0.0 (floor: 2027-08-31).
 
 **Any varco RLS helper MUST emit the `(SELECT …)` form.**
 `varco_sa.rls.render_rls_ddl()` does this unconditionally — it is not a

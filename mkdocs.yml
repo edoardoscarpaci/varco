@@ -136,8 +136,10 @@ nav:
       - Timezone Handling: features/timezone-handling.md
       - Feature Flags: features/feature-flags.md
       - Dependency Injection: features/dependency-injection.md
-  - DI Catalogue (generated): di-catalogue.md
-  - Settings Reference (generated): settings-reference.md
+  - Generated reference:
+      - DI catalogue: di-catalogue.md
+      - Settings reference: settings-reference.md
+      - Entry points: entry-points.md
   - Guides:
       - "Calling another service — client_for": guides/client.md
       - "Typed client code generation": guides/client-code-generation.md
@@ -146,5 +148,6 @@ nav:
   - Known Issues:
       - Plan 002 Follow-ups: known-issues/plan-002-followups.md
   - Migration Notes:
+      - "3.x → 4.0": migrations/3-to-4.md
       - "Plan 009 — Reliability & Service Integration": migrations/009-reliability-and-integration.md
   - API Reference: reference/

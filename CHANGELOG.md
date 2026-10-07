@@ -7,392 +7,69 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+<!-- Ordering rule (introduced by 4.0.0; 5.0.0 follows it): BREAKING blocks first, in the
+     migration guide's order, never merged (each names its plan and rows); then the
+     Keep-a-Changelog sections in the fixed order Added → Changed → Deprecated → Removed → Fixed →
+     Security → Upstream → Documentation; inside a merged section, bullets are grouped by package
+     and keep their (Plan NNN) tag. Release headings keep the `## [X.Y.Z] — YYYY-MM-DD` shape —
+     varco_core/tests/test_deprecation_floor.py parses them (load-bearing). -->
+
 ## [Unreleased]
 
-### Fixed
+## [4.0.0] — YYYY-MM-DD (date set at release, Plan 058 Step 18)
 
-- Apps using `create_varco_app` with `VARCO_CACHE_BACKEND=redis`, `layered`, or `memcached` failed
-  to start: `CoreModule`'s `core.stores` (INFRA) component called `start()` on the cache its
-  provider had already started, and `CacheBackend.start()` raises `RuntimeError` when already
-  started ("already-started cache"). `core.stores` now treats that `RuntimeError` as "already
-  started" for the cache seam only; the scanned `InMemoryCache` default is still started, and any
-  other exception still aborts startup (Plan 050 follow-up).
-- `data.rls_not_checked`'s "not run" reason now names what to start — `SAModule`'s
-  `sa.rls_posture` component / `SAModule.start()` (Plan 056 follow-up).
-- Examples 08/09/10/17/22 updated to the 4.0 API: `varco_fastapi.di.bootstrap(container)` replaces
-  the removed `container.install(VarcoFastAPIModule)`; example 10 no longer passes `init=False`
-  `created_at`/`updated_at` to `domain_replace()`/`dataclasses.replace()` (which raise `ValueError`;
-  the mapper stamps both) and its health test
-  targets `/health/live`; example 17's tests enter the app lifespan explicitly. Stale
-  `VarcoFastAPIModule` names in examples 01/06/07 and in `varco_core` docstrings now read
-  `VarcoFastAPIConfiguration`.
+> **Migration guide:** [technical_docs/migrations/3-to-4.md](technical_docs/migrations/3-to-4.md) — read it before upgrading.
+> Requires providify >= 2.1.1. Twelve months before any deprecated symbol is removed (CONTRIBUTING.md §Removal window); nothing deprecated in 3.x is removed here.
 
-### BREAKING — word-boundary redaction, audit redaction on by default, redaction posture collector (Plan 057, FLIP-040-1 / FLIP-040-2 / RO-5)
+### BREAKING — one wiring contract: explicit container, no service locator, `AlreadyBoundError` (Plan 046, DI-2 / DI-8 / DI-13)
 
-- **FLIP-040-1 — `RedactionPolicy().match_mode` is `"word"`.** The fifteen
-  `DEFAULT_REDACT_PATTERNS` literals are unchanged; the *matching* changed. A key and each pattern
-  are tokenised by the same tokenizer (separators, camelCase, acronym boundaries, digit runs); a
-  pattern matches as a contiguous token subsequence, its last token also matching a simple plural.
-  `api_key`/`apiKey`/`x-api-key`/`Authorization`/`credentials` are redacted by DEFAULT alone;
-  `shipping_address` (`"pin"`) and `author` (`"auth"`) no longer are; suffix-glued names with no
-  separator (`csrftoken`, `csrfmiddlewaretoken`, `secretkey`, `totp_code`, `oauth`) are no longer
-  matched. This flows into span capture, `error_params()` redaction, and any `PolicyRedactor()`.
-  Escape hatches: `RedactionPolicy(match_mode="substring")` (the 3.2 matcher, byte-identical) or
-  listing the exact token as a pattern. A pattern with no alphanumeric token (e.g. `"-"`) now
-  raises `ValueError` at `RedactionPolicy` construction in word mode.
-- **FLIP-040-2 — `AuditLogMixin._audit_redactor` defaults to `PolicyRedactor(AUDIT_REDACTION_POLICY)`.**
-  New export `AUDIT_REDACTION_POLICY = RedactionPolicy(render_non_json=False)` (on
-  `varco_core.redaction` and `varco_core`): secret-named keys in every audit diff written after the
-  upgrade become `"[REDACTED]"`, while `datetime`/`UUID`/`Decimal` leaves stay the same objects.
-  Rows written before the upgrade are untouched. Opt out per service with
-  `_audit_redactor = None`; extend with `PolicyRedactor(dataclasses.replace(AUDIT_REDACTION_POLICY, patterns=…))`.
-- **RO-5 — `varco_fastapi.posture.RedactionPostureCollector`** wires `inspect_redaction_posture()`
-  into `SecurityPosture` as a **default** collector contributed by `SecurityPostureModule`; the
-  audited services are listed once with the new `SecurityPostureModule(audited_services=(…,))`
-  keyword (explicit input, never discovered). The four ids are unchanged; their meaning is now
-  "opted out" and a default app emits none. `redaction.audit.disabled` is WARN — under
-  `enforce="refuse"` in `production` an opted-out service refuses startup unless
-  `VARCO_SECURITY_SUPPRESS=redaction.audit.disabled`.
-- **Added `ParamCaptureConfig.redact_match_mode`** (`"word"` default, `"substring"` escape hatch)
-  for `@span` parameter capture with custom `redact_patterns`.
+Every `bootstrap()` requires a container and returns it. All ten (`varco_core.di` is new,
+`varco_kafka`, `varco_nats`, `varco_redis`, `varco_memcached`, `varco_ws`, `varco_casbin`,
+`varco_sa`, `varco_beanie`, `varco_fastapi`) are `bootstrap(container: DIContainer) ->
+DIContainer`. None consults the process-global container; none returns `None`.
 
-Migration: see `plans/057-redaction-flips.md` §Migration (assembled into the 4.0 guide by Plan 058).
+| Old | New |
+|---|---|
+| `container = varco_x.di.bootstrap()` | `container = DIContainer(); varco_x.di.bootstrap(container)` |
+| `container.scan("varco_core", recursive=True)` (by hand) | `varco_core.di.bootstrap(container)` (identical effect; the documented entry point) |
+| `varco_fastapi.di.bootstrap(container, "myapp")` / `bootstrap("myapp")` | `varco_fastapi.di.bootstrap(container); container.scan("myapp", recursive=True)` |
+| `varco_fastapi.di.bootstrap(container, setup_producer=True)` / `setup_event_producer(container)` | `varco_core.di.bootstrap(container)` — `BusEventProducer` is the `@Fallback` `AbstractEventProducer` (045 A10) |
+| `create_varco_container("varco_core", "varco_redis", "myapp")` | `c = DIContainer(); varco_core.di.bootstrap(c); varco_redis.di.bootstrap(c); c.scan("myapp", recursive=True)` |
+| `varco_sa.di.bootstrap(container, User, Post)` / `varco_beanie.di.bootstrap(container, User, Post)` | `bootstrap(container); bind_repositories(container, User, Post)` |
+| `varco_sa.di.create_tables()` | `create_tables(container)` |
+| `varco_redis.di.bootstrap(container, streams=True)` | `from varco_core.di import bind_instance; bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True)); bootstrap(container)` — or `VARCO_REDIS_USE_STREAMS=true` in the environment (unchanged) |
+| `await varco_redis.di.async_bootstrap(container, setup_cache=True)` / `(…, streams=True)` | `await async_bootstrap(container)` — always installs `RedisCacheConfiguration`; use `bootstrap()` for scan-only; streams as above |
+| `await varco_memcached.di.async_bootstrap(container, setup_cache=False)` | `bootstrap(container)` |
+| `await varco_memcached.di.async_bootstrap()` | `await async_bootstrap(container)` |
+| `DISessionMiddleware(app)` / `app.add_middleware(DISessionMiddleware)` | `app.add_middleware(DISessionMiddleware, container=container)` or `install_middleware_stack(app, [(DISessionMiddleware, {"container": container}), …])` |
+| `varco_fastapi.middleware.session.get_container()` | removed — pass the container you built |
+| `from varco_fastapi.di import bind_mcp_adapter, bind_skill_adapter` | still works — now true re-exports with their real signatures |
 
-### BREAKING — Data-layer default flips (Plan 056, FLIP-12 / FLIP-13)
+`bind_trust_store`, `bind_retention_registry`, `bind_cloudevents_serializer`,
+`bind_websocket_adapter`, `bind_sse_adapter`, `bind_mcp_adapter`, `bind_skill_adapter`,
+`bind_repositories` (both), `bind_clients`, `bind_clients_from`, `bind_peers` now return
+`DIContainer` (was `None`). A second registration of the same `(interface, qualifier)` raises
+`varco_core.di.AlreadyBoundError` (previously: appended, first-registered silently won).
+`bind_websocket_adapter`/`bind_sse_adapter`/`bind_mcp_adapter`/`bind_skill_adapter` gain
+`qualifier=` for multiple adapters. `enable_token_revocation`, `enable_redis_token_revocation`,
+`enable_feature_flags`, `enable_tenant_membership`, `enable_policy_authorizer` are typed `->
+DIContainer` and raise `AlreadyBoundError` when a non-fallback binding of their seam already
+exists (yours, or a previous call); `enable_authorization_audit`'s double-wrap `RuntimeError` is
+now `AlreadyBoundError` (a `RuntimeError` subclass). In tests, replace a binding with providify's
+`di_overrides`/`ContainerOverrides`, not a second call.
 
-- **FLIP-12 — `TenancySettings.enforce_rls` defaults `True`, and now has a reader.** In 3.x nothing
-  read the flag (RLS was checked only if the app called `assert_rls_enabled()` itself). Now
-  `SAModule` contributes a `varco_sa.tenancy.rls_posture.RlsPostureCollector` and
-  `SAModule`'s `sa.rls_posture` lifecycle component (`RLS_POSTURE_PHASE` = `Phase.INFRA + 50`,
-  i.e. after `MigrationsModule` runs, with no hard dependency on it) reads the RLS catalog state
-  of every `TenantScope.TENANT`
-  table carrying a tenant column — on Postgres, under `SHARED` isolation only — and
-  `SecurityPosture` reports it. Gates, in order: `isolation` not `SHARED` or a non-Postgres
-  dialect → `data.rls_not_applicable` (INFO, no query); no candidate table (a single-tenant
-  app) → nothing; `enforce_rls=false` → `data.rls_not_enforced` (WARN, no query); database
-  unreachable → `data.rls_not_checked` (NOT_ASSESSED, never a refusal). Ids: `data.rls_disabled`
-  (HIGH), `data.role_bypasses_rls` (HIGH, **narrowed** — superuser, `BYPASSRLS`, or an owned table
-  *without* `FORCE`; an owned, forced table is no longer reported), `data.rls_not_forced` (WARN),
-  new `data.rls_enabled_without_policy` (WARN — default-deny), new `data.rls_guc_setter_absent`
-  (WARN — live policies with neither `rls_set_tenant` nor an `install_rls_tenant_hook()`), new
-  `data.rls_table_absent` (INFO — a candidate table with no `pg_class` row yet, e.g. a fresh
-  database on first deploy; never reported as `data.rls_disabled`).
-  Under Plan 054's derived `refuse`, a production app with unprotected tenant tables **does not
-  start**; `development` logs and starts. Escape hatch: `VARCO_TENANCY_ENFORCE_RLS=false` (+
-  `VARCO_SECURITY_SUPPRESS=data.rls_not_enforced`). **varco still ships no revision that enables
-  RLS.** Additive: `RlsPosture.dialect` (trailing, default `"postgresql"`),
-  `RlsPosture.missing_tables` (trailing, default empty), `varco_sa.modules.RLS_POSTURE_PHASE`,
-  `SAModelRegistry.registered()`, `rls_candidate_tables()`, `rls_findings()`,
-  `hook_installed()`, `SAModule(rls_tenant_column=)`. `SecurityPostureModule` no longer
-  contributes `DataPostureCollector` (it only ever produced `data.rls_not_checked`); the class
-  stays as the hand form and now delegates to `rls_findings()` — which also fixes its 3.2
-  `AttributeError` on a real `RlsPosture` (`.enabled`/`.forced` → `.rls_enabled`/`.rls_forced`)
-  and its false HIGH on SQLite.
-- **FLIP-13 — webhook signing secrets are never stored in plaintext.**
-  `SAWebhookSubscriptionRepository` and `BeanieWebhookSubscriptionRepository` take `encryptor`
-  as a **required** keyword: omitted → Python's missing-keyword `TypeError`; `None` or a
-  non-`FieldEncryptor` (e.g. the Fernet key `bytes`) → a `TypeError` naming
-  `FernetFieldEncryptor(key)`, the Plan 050 DI path, the dev hatch, and the upgrade step. New
-  `varco_core.PlaintextFieldEncryptor(acknowledge_plaintext=True)` — the greppable dev/test hatch
-  for the hand **and** DI paths. `posture.webhook_secrets_plaintext` (WARN, blocks a production
-  start unless suppressed) now fires on a repository holding a `PlaintextFieldEncryptor` or no
-  encryptor (an out-of-tree one), never on `InMemoryWebhookSubscriptionRepository` (unchanged —
-  its secrets are never at rest). The default `LocalPostureCollector` resolves the bound
-  `WebhookSubscriptionRepository` from the container, so a stock app is assessed (a provider
-  that fails to construct is `posture.not_assessed.webhook_secrets_plaintext`, never a crash). New
-  `reencrypt_legacy_plaintext(*, legacy_hex=None) -> int` on both durable repositories:
-  **mandatory, once, for a 3.x deployment with existing rows** — rows written without an
-  encryptor are plaintext and fail to decrypt through a real encryptor (`ValueError`/
-  `EncryptionError` on first read); the method rewrites them in place and is idempotent. Run it
-  with the key that wrote any existing ciphertext. The default `legacy_hex=None` never guesses:
-  an unambiguous entry (`whsec_…`) is upgraded, and if any entry fails to decrypt and is valid hex
-  of printable UTF-8 the whole run refuses with the new `AmbiguousLegacySecretError` (a
-  `ValueError`, naming every ambiguous subscription id) **before writing anything** — re-run with
-  `legacy_hex=True` (`PlaintextFieldEncryptor` rows) or `legacy_hex=False` (raw 3.x hex secrets).
-  `varco_core.webhook.base.plan_legacy_reencryption()` is the shared plan-then-write rule.
+**New** — `varco_core.di.bind_instance(container, Interface, obj, *, qualifier=None)` registers
+any already-constructed object as a non-fallback singleton; `varco_core.di.is_user_bound(container,
+Interface, qualifier=None)` answers "does a non-fallback binding exist".
 
-Migration: this plan's §Migration (assembled into the 4.0 guide by Plan 058).
+**Removed** — "returns `None` when providify is not installed". providify has been a declared
+dependency of every varco package since 3.0; the guards and their documented `None` path are gone.
 
-### BREAKING — Tenant-provenance default flips (Plan 055, FLIP-6 / FLIP-7 / FLIP-9)
+**Removed** — varco never reads the process-global container internally. Applications may;
+providify's `di_global` fixture exists for their tests.
 
-- **FLIP-6 — tenant resolution defaults to the chain.** `TenantResolutionMiddleware(chain=None)`
-  now means *the configured chain*: the env-derived `build_tenant_source_chain()`
-  (`VARCO_TENANT_SOURCES`) when hand-wired, the container-resolved chain when `TenancyModule`
-  builds it. Only with nothing configured does it fall back to the implicit `X-Tenant-Id`
-  `LegacyTenantSource` — **kept**, as the deprecated path:
-  `warn_deprecated(since="3.2.0", removed_in="5.0.0")` replaces the 3.2 ad-hoc `warnings.warn`,
-  and (wired through `TenancyModule`) `tenant.no_chain` + `tenant.legacy_source_implicit` (WARN)
-  refuse a production start under Plan 054's derived `refuse`. The 12-month floor from 3.2.0 (2026-09-12) forbids the `TypeError` the 3.2 warning promised; it
-  moves to 5.0.0. A hand-wired middleware naming a multi-bound plugin source in
-  `VARCO_TENANT_SOURCES` raises `ValueError` (pass `chain=` or use `TenancyModule`).
-  `EdgeSlot.TENANT_RESOLUTION = 95` (inside `ErrorMiddleware` and the pre-auth rate limit,
-  outside `RequestContextMiddleware`). `TenancyModule` gains `catalog=`/`chain=`/`server_auth=`/
-  `membership=`/`header=`/`reject_status=`, `pool` becomes optional (no `TenancyLifecycle`
-  without one), it contributes the middleware and the `TenantPostureCollector`, and `pool=None`
-  under `SCHEMA`/`DATABASE` isolation refuses startup (`ConfigurationError` from
-  `TenancyModule.async_init()`, before any `start()`, regardless of `strict_validation`). `catalog`/`pool` are optional on the
-  middleware (`None` → no status gate / no `ensure()`), which also gains read-only `chain` and
-  `chain_implicit` properties. Posture: `tenant.legacy_source_explicit`
-  (WARN), `tenant.single_source` (INFO), `tenant.subdomain_trusts_forwarded_host` (WARN) are now
-  mapped; new `tenant.no_catalog_gate` (INFO); `tenant.*` findings appear **only** with
-  `TenancyModule` (`SecurityPostureModule` no longer contributes a tenant collector); a bound
-  `NullTenantMembership` counts as no provider (`tenant.no_membership_provider` WARN).
-- **FLIP-7 — membership fails closed.** `ClaimTenantMembership.on_missing_claim`,
-  `TenantMembershipSettings.on_missing_claim` and the `VARCO_TENANT_MEMBERSHIP_ON_MISSING` default
-  are `DENY`: a token with no `tenants` claim is denied (`reason="claim_absent"`, one WARNING per
-  process naming the policy). The self-tenant path is unchanged (no IdP change for a single-tenant
-  fleet). Escape hatch: `VARCO_TENANT_MEMBERSHIP_ON_MISSING=allow` — reported as HIGH
-  `tenant.membership_missing_claim_allows`, which blocks a `refuse` start unless suppressed.
-- **FLIP-9 — `RequestContextMiddleware` never sets the tenant.** `tenant_field=` and
-  `enable_tenant_context=` are removed (passing either → `TypeError`); `_maybe_tenant_context` is
-  gone. `TenantResolutionMiddleware` is the only HTTP writer of `current_tenant()`.
-  `inspect_tenant_provenance(request_context_sets_tenant=...)` defaults to `False`. Replacement:
-  `TenancyModule()` + `VARCO_TENANT_SOURCES=jwt` (+ `VARCO_TENANT_CLAIM_METADATA_KEY=<claim>`
-  where `tenant_field` differed); `catalog`/`pool` are optional under `SHARED` isolation.
-
-### Documentation
-
-- FLIP-14 provisioning-authority model for `mount_tenant_admin` recorded (Plan 055 §D-flip14,
-  `technical_docs/features/admin-surface-tenancy.md`) — design only.
-
-Migration: Plan 055's §Migration (assembled into the 4.0 guide by Plan 058).
-
-### BREAKING — HTTP-edge and admin-surface default flips (Plan 054, FLIP-2 / FLIP-3 / FLIP-4 / FLIP-10)
-
-- **FLIP-2 — the security posture preflight refuses a production start by default.** Before:
-  `SecurityPostureSettings.enforce` defaulted to `"warn"`. After: the field defaults to `None` and
-  `effective_enforce` derives `"refuse"` unless `VARCO_SECURITY_ENV` is exactly `development`
-  (which derives `"warn"`). Under `refuse` one unsuppressed `HIGH` finding (any environment) or
-  `WARN` finding (`production`) aborts startup with
-  `RuntimeError: SecurityPostureLifecycle(enforce='refuse', derived from VARCO_SECURITY_ENV='production'): refusing to start — unsuppressed blocking findings: <ids>. …`
-  — the 3.2 fragment `refusing to start — unsuppressed blocking findings:` is kept verbatim. A
-  stock production app refuses on `posture.authorizer_unbound` without an app authorizer. (As
-  first landed, a stock app also refused on three `tenant.*` WARNs; Plan 055 below re-homes the
-  tenant collector into `TenancyModule`, so an app with no tenancy emits none.) Escape hatch:
-  `VARCO_SECURITY_ENFORCE=warn` (or `SecurityPostureSettings(enforce="warn")`); per finding,
-  `VARCO_SECURITY_SUPPRESS=<id>`. New INFO ids `posture.unrecognised_environment` /
-  `posture.unrecognised_enforce` report a value that is not exactly `production`/`development` /
-  `warn`/`refuse` (never normalised). `SecurityPosture` gains a trailing `enforce` field and
-  `summary()` ends with `· enforce=<mode>`. `WiringReport.enforce_source` gains `"derived"`; the
-  `varco diagnose` header renders `enforce=refuse (derived from VARCO_SECURITY_ENV=production)`.
-- **`http.rate_limit.absent` WARN → INFO.** Rate limiting is a recorded non-flip (Plan 036 row
-  11); at WARN, FLIP-2 would have made its absence a production start-blocker by the back door.
-- **Severity table.** `technical_docs/features/security-posture.md` now lists every shipped
-  posture `check` id, its severity, and whether it blocks a production start under the 4.0
-  default; a test fails when a new id has no row.
-- **`di.in_process_backend` stays opt-in.** In-process backends are a legitimate deployment
-  shape, so `SecurityPostureModule` does not contribute its collector. New public
-  `varco_fastapi.posture.DIPostureCollector(container)`: an app that wants every seam still on
-  its in-process default to block a production start contributes it once —
-  `contribute(container, PostureCollector, DIPostureCollector(container))`.
-- **FLIP-3 / FLIP-4 — admin surfaces require `server_auth`.** Before: `mount_reliability_admin`
-  and `mount_webhook_admin` with `server_auth=None` logged one `UNAUTHENTICATED` warning and
-  mounted; `build_webhook_router`/`build_dlq_router`/`build_audit_router` accepted `None`. After:
-  `server_auth` is a required keyword on all five — omitted → `TypeError`, `None` → `ValueError`
-  (`… requires server_auth …`), checked before anything is mounted; the warning is gone. Every
-  reliability route now resolves `server_auth` (once per request) and enforces `admin_role` (403
-  `'reliability-admin' role required.`) — before, `admin_role` was enforced only by a caller's own
-  `dependencies=`, which are now additive. Behind a gateway that already verified the caller:
-  `server_auth=PassthroughAuth(acknowledge_unverified=True)`.
-- **FLIP-10 — `ErrorEnvelopeSettings.include_detail` defaults `False`.** Every mapped
-  `ServiceException` body omits `detail` (`str(exc)`); the structured content is in `params`
-  (`ServiceValidationError` → `detail`/`field`, `ServiceConflictError` → `detail`,
-  `ServiceNotFoundError` → `entity`/`entity_id`, `ServiceAuthorizationError` and every
-  `RouteGuard` denial → `operation`) and `message_key`. Escape hatch:
-  `VARCO_ERROR_INCLUDE_DETAIL=true` — reported as `http.error.detail_exposed` (WARN, new text),
-  which blocks a production start under FLIP-2 unless suppressed. The `ErrorMiddleware` path now
-  emits `message_key`/`params` like the route-handler path.
-- Migration: plan 054's §Migration (assembled into the 4.0 guide by Plan 058).
-
-### BREAKING — credential and authorization default flips (Plan 053, FLIP-5 / FLIP-034-1 / FLIP-034-2 / FLIP-034-3 / FLIP-034-4)
-
-- **FLIP-5 — `BaseAuthorizer` binds only under `VARCO_SECURITY_ENV=development`.** Before: the
-  permissive `BaseAuthorizer` was the `@Fallback` `AbstractAuthorizer` in every process. After:
-  it carries `@Requires(env="VARCO_SECURITY_ENV", value="development")` (exact, case-sensitive);
-  in any other process it is not a binding — the wiring preflight refuses startup with
-  `ConfigurationError` (`MISSING_BINDING` at every service injecting `AbstractAuthorizer`, plus a
-  `CONDITION_INACTIVE` naming the variable), and an unvalidated container raises
-  `LookupError: No binding found for 'AbstractAuthorizer'. Did you forget container.bind() or
-  container.provide()?` at first construction. New posture id `posture.authorizer_unbound`
-  (HIGH, never demoted); `posture.base_authorizer_bound` (WARN) now fires in production only for
-  an explicit instance binding. Escape hatch: register a real authorizer; development/tests
-  export `VARCO_SECURITY_ENV=development`; a deliberately permissive production app uses
-  `bind_instance(container, AbstractAuthorizer, BaseAuthorizer())` and suppresses
-  `posture.base_authorizer_bound`. `container.bind(AbstractAuthorizer, BaseAuthorizer)` is gated
-  too. `enable_authorization_audit()` with no app authorizer now raises `LookupError` in
-  production. `varco_core.testing.in_memory_modules()` binds its own permissive `@Fallback`
-  authorizer, so the test profile still boots with zero env vars.
-- **FLIP-034-2 — `JwtAuthority`-minted tokens carry a uuid4 `jti` by default.** Before:
-  `token()` seeded only `iss`. After: `token()` also seeds `with_random_jti()`; `sign()` is
-  unchanged. Escape hatch: `JwtAuthority.from_pem(..., mint_jti=False)` (or the constructor);
-  per token, `.token_id("…")` or a hand-built `JwtBuilder()`. 3.x-minted tokens still in flight
-  carry no `jti` — see FLIP-034-3's bridge. No posture id.
-- **FLIP-034-3 — `revocation_require_jti` is derived from the wired store.** Before:
-  `JwtVerificationSettings.revocation_require_jti: bool = False`. After: `bool | None = None`;
-  `None` derives `True` iff the registry's wired store is not a `NullTokenRevocationStore`
-  (`varco_core.revocation.null.is_null_revocation_store()`). Auth0/Keycloak/Cognito tokens (no
-  `jti` by default) are rejected at `TOKEN` scope the moment a real store is wired. Escape hatch:
-  `VARCO_JWT_REVOCATION_REQUIRE_JTI=false` (or the per-call kwarg) — reported as
-  `auth.revocation_jti_not_required` (INFO); set it for one token lifetime to bridge 3.x tokens.
-  `RevocationPostureReport` gains `require_jti_derived`.
-- **FLIP-034-1 — `ApiKeyAuth(keys=...)` is deprecated (`since="4.0.0", removed_in="5.0.0"`).**
-  Behaviour unchanged (still hashed at construction; `auth.api_key_plaintext` WARN unchanged)
-  plus one `DeprecationWarning` attributed to the caller. Use `ApiKeyAuth(hashed_keys=...)` with
-  `hash_api_key()`. Added `varco_core.deprecation.warn_deprecated()` (also on `varco_core`) —
-  the helper for a deprecated *parameter path*; recorded in the deprecation ledger.
-- **FLIP-034-4 — `PassthroughAuth` requires `acknowledge_unverified=True`.** Before:
-  `PassthroughAuth(*, required=False)`. After: `acknowledge_unverified: Literal[True]` is a
-  required keyword-only argument — omitting it, or passing anything but literally `True`, is a
-  `TypeError`. `auth.passthrough_bound` (WARN) still fires for an acknowledged instance.
-
-Migration: Plan 053's §Migration (assembled into the 4.0 guide by Plan 058).
-
-### BREAKING — runtime validate() in the lifespan (Plan 052)
-
-`create_varco_app(validate=True)` now also runs `container.validate()` inside the lifespan, after
-every `async_init()` and before the first `start()`. An ERROR issue refuses startup with
-`ConfigurationError` (the log lists each issue; the exception text is a count). With
-`strict_validation=True`, varco-side WARNING findings (e.g. `di.revocation_store_not_wired`,
-`module.<name>.validate`) refuse too — providify's own WARNING tier does not. Fix the binding or
-pass `validate=False`. The `VARCO_MIGRATE_MODE`/`VARCO_TENANCY_ISOLATION` "unowned" check and the
-bootstrapped-but-unselected check are now report findings (`settings.unowned`,
-`di.bootstrapped_unselected`), logged at lifespan start instead of at `create_varco_app()` build
-time; the private `_warn_unowned_settings` is removed.
-
-### Dependencies (Plan 052)
-
-- `providify>=2.1.1` is now required (all ten packages). 2.1.1 closes **P34-VALIDATE-INACTIVE-OWNER-DEPS**:
-  `validate()` no longer reports `MISSING_BINDING` ERRORs for the own dependencies of a
-  `@Requires`/`@Profile`-inactive binding. On 2.1.0 that false ERROR (e.g. the `VARCO_WEBHOOK_BACKEND=sa`-gated
-  `SAConfiguration.webhook_repository` → `FieldEncryptor`) would have refused startup of every `SAModule`
-  app without a bound `FieldEncryptor` under the runtime `validate()` above.
-
-### Added (Plan 052, DI-7 / DI-11 / RO-2)
-
-- `varco_core.di.report.build_wiring_report`/`WiringReport`, `varco diagnose` (`--modules`/`--container`/
-  `--app`, `--static`, `--json`, `--check`), startup report log + `VARCO_DIAGNOSE_STARTUP_REPORT`/
-  `_JSON`, `app.state.varco_wiring_report`/`varco_container`/`varco_modules`.
-- `varco_core.settings.all_provenance`, `varco_core.deprecation.fired_deprecations` (ledger).
-- `JwksPostureCollector`/`RetentionPostureCollector` contributed by `CoreModule`; posture ids
-  `auth.jwks_refresh_off`, `auth.jwks_keysets_unloaded`, `retention.platform_wide`,
-  `retention.dry_run_only`, `retention.short_retention`.
-- `varco_core.testing` (`InMemoryProfile`, `in_memory_modules`, `register_modules`,
-  `clear_backend_selection`); `varco_fastapi.testing.in_memory_app_modules()` (FastAPI default set,
-  `development`/`warn` posture, `InMemoryProfile` last); `CoreModule(job_runner=False)`.
-- Findings `settings.unowned`, `di.bootstrapped_unselected` (WARNING) and `deprecation.fired`
-  (INFO); report header `environment`/`enforce`/`enforce_source` from
-  `varco_fastapi.diagnose.posture_header()` (`app.state.varco_posture_header`).
-- `varco_core.di.diagnose.capture_direct_deprecations`/`direct_deprecation_records` (shared
-  deprecation capture window for `diagnose()` and the startup lifespan) and
-  `varco_core.di.select.evaluate_backend_selection` (non-logging backend-selection evaluator).
-- `varco_core` lazy top-level exports: `fired_deprecations`, `build_wiring_report`, `WiringReport`,
-  `DiagnoseSettings`, `InMemoryProfile`, `in_memory_modules`, `JwksPostureCollector`,
-  `RetentionPostureCollector`, `all_provenance`.
-- `varco diagnose --check` exits 1 only on an ERROR or WARNING (INFO findings never fail it); a
-  module whose `async_init()` raises prints `<ModuleName>.async_init failed: <exc>`;
-  `WiringValidationError` lists `owner: message` for each issue.
-- `di_wiring` conformance test `test_diagnose_runs_clean_on_bootstrapped_package`.
-- Upstream gaps filed: P32 (`DIContainer.copy()` drops `_collection_points`), P33
-  (`ContainerOverrides.instance()` false scope-leak). P28 was already filed by Plan 045.
-
-### BREAKING — multi-binding for collection seams (Plan 051, DI-5)
-
-Five hand-rolled "all implementations of X" registries are gone, replaced by one convention:
-a `@Multibound` seam (`EventConsumer`, `RetentionPolicy`, `TenantSource`, `PostureCollector`,
-`HealthCheck`) + a plain non-`@Fallback` contribution (a scanned `@Singleton`/`@Provider`, or
-`varco_core.di.collect.contribute()`) + `collect()`/`acollect()` at the consumer.
-
-- `RetentionRegistry.register()` **removed** — construct `RetentionRegistry(policies)` from an
-  iterable instead; `varco_core.retention.di`/`bind_retention_registry()` are **gone**
-  (`ImportError`) — use `contribute(container, RetentionPolicy, policy)`.
-  `RetentionModule(registry, *, interval=0.0)` → `RetentionModule(*, interval=0.0)` (no more
-  `registry` constructor argument — it builds one itself, in `async_init()`, from every
-  contributed `RetentionPolicy`).
-- `SecurityPostureModule`'s five default collectors (`_collect_http`/`_collect_local`/
-  `_collect_auth`/`_collect_tenant`/`_collect_data`) are now classes (`HttpEdgeCollector`/
-  `LocalPostureCollector`/`AuthPostureCollector`/`TenantPostureCollector`/`DataPostureCollector`,
-  `varco_fastapi.posture`) implementing the new `varco_core.posture.PostureCollector` ABC;
-  `_default_collectors()` is gone. `PostureFinding`/`PostureSeverity` moved to
-  `varco_core.posture` — `varco_fastapi.posture` still re-exports them, identity-preserving.
-- `VARCO_TENANT_SOURCES` is no longer limited to the four built-ins — any bound `TenantSource`
-  (a scanned `@Singleton`, named in the env var) is legal; `_LEGAL_TENANT_SOURCES` is gone.
-  `build_tenant_source_chain(settings, *, delegation_policy=None, sources=())` gained the
-  `sources=` pool argument; `TenantProvenanceSettings` no longer validates source names at
-  construction (moved to build time, where the pool is visible). `resolve_tenant_source_chain
-  (container)` reads settings + the DI pool for you.
-- A DI-bound `EventConsumer` (`@Singleton`) is now **auto-registered** by `CoreModule.start()`,
-  after the bus has started — the `@PostConstruct`-wired convention is no longer the documented
-  way (it still works, silently skipped by the new idempotent path). `EventConsumer` gained
-  `auto_register: ClassVar[bool] = True` (opt-out), `is_registered_to(bus)`,
-  `registered_bus_count`; `start()` is now idempotent per bus.
-- A custom inbound webhook provider no longer requires editing a private `_PROVIDERS` dict —
-  `register_webhook_verifier(name, cls, *, replace=False)` (`varco_core.webhook.inbound`).
-
-### Added
-
-`varco_core.di.collect` (`contribute`, `collect`, `acollect`, `collection_seams`);
-`varco_core.posture` (`PostureCollector`, plus the moved `PostureFinding`/`PostureSeverity`);
-`varco_core.tenancy.resolve_tenant_source_chain`; `varco_core.webhook.inbound.
-register_webhook_verifier`/`registered_webhook_verifiers`; `EventConsumer.auto_register`/
-`is_registered_to`/`registered_bus_count`; a new posture token
-`tenant.third_party_source_high_trust`; the in-tree third-party contribution example,
-`testkit/varco_plugin_example` (never packaged).
-
-Full design, the seam table, the Pitfalls table: `technical_docs/features/dependency-injection.md`'s
-§Multi-binding. Migration table: `plans/051-multi-binding-registries.md`'s §Migration.
-
-### BREAKING — Phased lifecycle, `@Disposes` reachability, DI-wired infrastructure (Plan 050, DI-9 / DI-10)
-
-Every `VarcoModule` now declares `phase: int` (`varco_core.di.Phase` — `INFRA`/`BUS`/
-`CONSUMERS`/`SCHEDULERS`/`EDGE`, default `CONSUMERS`); `create_varco_app` sequences lifecycle by
-`(phase, depends_on)` via the new `varco_core.di.LifecycleRunner` (`resolve_lifecycle_order`/
-`phased_components`), which starts ascending and stops **the exact reverse of what actually
-started** — including on a partial-start rollback (`VarcoLifespan`'s pre-050 rollback bug, which
-stopped already-started components in forward order, is fixed). `KafkaEventBus`/`NatsEventBus`
-no longer start themselves at first DI resolution (`@PostConstruct` removed) — only the `BUS`
-phase (`CoreModule`), or an explicit `await bus.start()`, starts them; `publish()` before
-`start()` now raises `RuntimeError`. `VarcoLifespan` is now a thin adapter over
-`LifecycleRunner` (`AbstractLifecycle` moved to `varco_core.di.lifecycle`, re-exported
-identically from `varco_fastapi.lifespan`); 049's "list `MigrationsModule` first" WARNING and
-its list-order sensitivity are gone — phases make it structurally unnecessary.
-
-`OutboxRelay` (via `ReliabilityModule`), `WebhookDispatcher` (via the new `WebhookModule`), and
-the two `varco_ws` push adapters now receive their dependencies by DI declaration instead of
-being remembered by hand: `OutboxRelay` gets `Serializer[Event]` (a `bind_cloudevents_serializer()`
-swap now reaches it, same as every DLQ backend); `WebhookDispatcher` gets
-`WebhookSubscriptionRepository`/`WebhookSettings`/`AbstractDeadLetterQueue` (it holds no
-`Serializer[Event]` — delivery is HTTP, not the event bus's wire format); the ws/sse adapters get
-`AbstractEventBus`. The new `TrustStoreModule` (`varco_core.tls.module`) owns a
-`ReloadingTrustStore`'s `start()`/`stop()` at the `INFRA` phase — `bind_trust_store` is unchanged
-(bind-only). `SAModule(ensure_tables: bool = True)` (additive) owns SA framework-table readiness
-generically. 14 new/completed `@Disposes` sites close every remaining reachable-disposer gap
-(`OtelConfiguration`'s `TracerProvider`/`MeterProvider` — the last OTel batch used to be dropped
-at shutdown — plus the SA/Redis idempotency/job-store/revocation-store providers);
-`RedisIdempotencyStore.aclose()`/`RedisTokenRevocationStore.aclose()` are additive, idempotent
-methods. `bind_instance(container, Interface, obj, *, disposer=...)` is additive — a P-DISP shim
-(`design/upstream-gaps/providify-provide-disposer.md`) closing `enable_redis_token_revocation`'s
-client leak until providify ships `provide(disposer=)` natively.
-
-New public names: `varco_core.di.{Phase, LifecycleComponent, LifecycleFailure, LifecycleRunner,
-AbstractLifecycle, resolve_lifecycle_order, phased_components, ModulePhaseError}`;
-`VarcoModule.phase`/`.components()`; `varco_core.webhook.module.WebhookModule`;
-`varco_core.tls.module.TrustStoreModule`; `WebhookDispatcher(dlq=)`;
-`ReliabilityPreset.serializer`; `SAModule(ensure_tables=)`; `VarcoLifespan.last_runner`.
-
-Full design, the phase table, the `@Disposes`-or-owner rule, a Pitfalls table:
-`technical_docs/features/dependency-injection.md`'s §Lifecycle phases. Migration table:
-`plans/050-phased-lifecycle-and-di-wired-infrastructure.md`'s §Migration.
-
-### Fixed
-
-- `VarcoLifespan`'s partial-start rollback stopped already-started components in **forward**
-  order instead of reverse (Plan 050).
-- `ReliabilityLifecycle.shutdown()` never stopped the `AuditConsumer`, leaking its bus
-  subscription on every app shutdown (Plan 050).
-- `OtelConfiguration`'s `TracerProvider`/`MeterProvider` were never flushed at
-  `container.ashutdown()` — the last batch of spans/metrics was silently dropped (Plan 050).
-- `RedisIdempotencyStore`/`RedisTokenRevocationStore`/`RedisJobStore`'s DI-provided clients
-  leaked at shutdown — no disposer existed for any of the three (Plan 050).
+**New** — `testkit/varco_conformance/di_wiring.py`, the ninth conformance module. Out-of-tree
+backends are unaffected (the testkit is never packaged). In-tree: every package subclasses it.
 
 ### BREAKING — `VarcoModule` and `create_varco_app(modules=…)` (Plan 049, DI-1 / FLIP-1 / RO-4)
 
@@ -456,6 +133,21 @@ rather than omitting it when no `AbstractServerAuth` is bound — a mid-review g
 briefly present only in this unreleased plan's own working tree, now reverted to restore the
 pre-049 always-present contract. Not a breaking change: it never shipped.
 
+### BREAKING — config-driven backend selection, one feature-enable convention (Plan 047, DI-4 / DI-12 / DI-17)
+
+Bootstrapping a backend package (`varco_kafka`, `varco_nats`, `varco_redis`, `varco_memcached`,
+`varco_sa`, `varco_beanie`) no longer makes it live. Each of the six seams (`cache`, `dlq`,
+`idempotency`, `job_store`, `event_bus`, `revocation`) is selected by one environment variable,
+`VARCO_<SEAM>_BACKEND=<name>` (or a dotted path `pkg.mod:Name`), resolved through providify
+`@Requires` — precedence is code binding > env dotted path > env named backend > the in-process
+`@Fallback` default (`memory`/`null`). See `plans/047-config-driven-backend-selection-and-catalogue.md`'s
+§Migration table for the exact variable per package.
+
+`InMemoryIdempotencyStore`/`InMemoryJobStore` are now resolvable by default (`qualifier=
+"in_memory"`) — previously neither carried any DI binding. `InMemoryJobStore` moved from
+`varco_fastapi.job.store` to `varco_core.job.memory` (the old import path still works, via a
+re-export). `SAIdempotencyStore` gained an additive `engine=` kwarg.
+
 ### BREAKING — one settings recipe, fail-fast at bootstrap, `VARCO_*` renames (Plan 048, DI-6 / DI-16)
 
 Every varco settings object that reads the environment is now a `pydantic_settings.BaseSettings`
@@ -499,119 +191,6 @@ deleted; `varco_redis.di.bootstrap(container)` now binds all four settings class
 `RedisEventBusSettings`) via `bind_settings()`. `await container.ainstall(RedisCacheConfiguration)`
 / `ainstall(RedisLayeredCacheConfiguration)` / a scanned `RedisPubSubBackplane` no longer resolve
 their settings without a prior `bootstrap(container)` call.
-
-### Added (Plan 048)
-
-- `varco_core.settings`: `bind_settings()`, `provenance_of()`, `SettingsProvenance`,
-  `SettingsError`/`SettingsValidationError`/`SettingsAlreadyBoundError`, `CommaSeparated`,
-  `bind_core_settings()`, `varco_core.settings.inventory` (`env_vars_for()`,
-  `discover_settings_classes()`, `check_unique_env_names()`, `LOOSE_ENV_READ_ALLOWLIST`).
-- `scripts/settings_reference.py` / `make settings-reference` / `make settings-check` — the
-  generated `VARCO_*` reference (`technical_docs/settings-reference.md`), wired into `make
-  lint`'s no-`PKG` path and CI's `lint` job.
-- DI-16 worked example: `bind_settings(container, Cls, qualifier=..., env_prefix=...)` builds a
-  second, independently-configured instance of one settings class (demonstrated with
-  `RedisCacheSettings`, `varco_redis/tests/test_redis_named_settings.py`).
-
-### BREAKING — config-driven backend selection, one feature-enable convention (Plan 047, DI-4 / DI-12 / DI-17)
-
-Bootstrapping a backend package (`varco_kafka`, `varco_nats`, `varco_redis`, `varco_memcached`,
-`varco_sa`, `varco_beanie`) no longer makes it live. Each of the six seams (`cache`, `dlq`,
-`idempotency`, `job_store`, `event_bus`, `revocation`) is selected by one environment variable,
-`VARCO_<SEAM>_BACKEND=<name>` (or a dotted path `pkg.mod:Name`), resolved through providify
-`@Requires` — precedence is code binding > env dotted path > env named backend > the in-process
-`@Fallback` default (`memory`/`null`). See `plans/047-config-driven-backend-selection-and-catalogue.md`'s
-§Migration table for the exact variable per package.
-
-`InMemoryIdempotencyStore`/`InMemoryJobStore` are now resolvable by default (`qualifier=
-"in_memory"`) — previously neither carried any DI binding. `InMemoryJobStore` moved from
-`varco_fastapi.job.store` to `varco_core.job.memory` (the old import path still works, via a
-re-export). `SAIdempotencyStore` gained an additive `engine=` kwarg.
-
-### Added (Plan 047)
-
-- `varco_core.di` package: `SEAMS`/`FEATURES` registries, `selected_by()`, `feature_default()`,
-  `env_truthy()`, `bind_env_overrides()`, `check_backend_selection()`,
-  `inspect_backend_selection()`, `inspect_bindings()`, `catalogue()`, `BackendSelectionError`,
-  `CatalogueError`, `ENV_OVERRIDE_PRIORITY`.
-- Seven new selectable providers: `SAModule.dead_letter_queue`/`idempotency_store`/`job_store`,
-  `BeanieModule.idempotency_store`/`job_store`, `RedisStoresConfiguration.idempotency_store`/
-  `job_store`/`revocation_store`.
-- Three feature env twins: `VARCO_FEATURE_FLAGS_ENABLED`, `VARCO_TENANT_MEMBERSHIP_ENABLED`,
-  `VARCO_POLICY_AUTHORIZER_ENABLED` — `enable_*()` still wins over the env form.
-- `scripts/di_catalogue.py` / `make di-catalogue` / `make di-catalogue-check` — the generated
-  default-implementation catalogue (`technical_docs/di-catalogue.md`), wired into `make lint`'s
-  no-`PKG` path and CI's `lint` job.
-- `varco_fastapi.posture._collect_di()` — the `di.in_process_backend` `SecurityPosture` finding
-  (WARN in production) for a seam still served by its in-process default. **Opt-in** (Plan 054):
-  contribute `varco_fastapi.posture.DIPostureCollector(container)` to `PostureCollector`; it is
-  never a default collector, since in-process backends are a legitimate deployment shape.
-- `create_varco_app(container, ...)` now calls `check_backend_selection(container)`, raising
-  `BackendSelectionError` on an unknown `VARCO_<SEAM>_BACKEND` value.
-
-### BREAKING — one wiring contract: explicit container, no service locator, `AlreadyBoundError` (Plan 046, DI-2 / DI-8 / DI-13)
-
-Every `bootstrap()` requires a container and returns it. All ten (`varco_core.di` is new,
-`varco_kafka`, `varco_nats`, `varco_redis`, `varco_memcached`, `varco_ws`, `varco_casbin`,
-`varco_sa`, `varco_beanie`, `varco_fastapi`) are `bootstrap(container: DIContainer) ->
-DIContainer`. None consults the process-global container; none returns `None`.
-
-| Old | New |
-|---|---|
-| `container = varco_x.di.bootstrap()` | `container = DIContainer(); varco_x.di.bootstrap(container)` |
-| `container.scan("varco_core", recursive=True)` (by hand) | `varco_core.di.bootstrap(container)` (identical effect; the documented entry point) |
-| `varco_fastapi.di.bootstrap(container, "myapp")` / `bootstrap("myapp")` | `varco_fastapi.di.bootstrap(container); container.scan("myapp", recursive=True)` |
-| `varco_fastapi.di.bootstrap(container, setup_producer=True)` / `setup_event_producer(container)` | `varco_core.di.bootstrap(container)` — `BusEventProducer` is the `@Fallback` `AbstractEventProducer` (045 A10) |
-| `create_varco_container("varco_core", "varco_redis", "myapp")` | `c = DIContainer(); varco_core.di.bootstrap(c); varco_redis.di.bootstrap(c); c.scan("myapp", recursive=True)` |
-| `varco_sa.di.bootstrap(container, User, Post)` / `varco_beanie.di.bootstrap(container, User, Post)` | `bootstrap(container); bind_repositories(container, User, Post)` |
-| `varco_sa.di.create_tables()` | `create_tables(container)` |
-| `varco_redis.di.bootstrap(container, streams=True)` | `from varco_core.di import bind_instance; bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True)); bootstrap(container)` — or `VARCO_REDIS_USE_STREAMS=true` in the environment (unchanged) |
-| `await varco_redis.di.async_bootstrap(container, setup_cache=True)` / `(…, streams=True)` | `await async_bootstrap(container)` — always installs `RedisCacheConfiguration`; use `bootstrap()` for scan-only; streams as above |
-| `await varco_memcached.di.async_bootstrap(container, setup_cache=False)` | `bootstrap(container)` |
-| `await varco_memcached.di.async_bootstrap()` | `await async_bootstrap(container)` |
-| `DISessionMiddleware(app)` / `app.add_middleware(DISessionMiddleware)` | `app.add_middleware(DISessionMiddleware, container=container)` or `install_middleware_stack(app, [(DISessionMiddleware, {"container": container}), …])` |
-| `varco_fastapi.middleware.session.get_container()` | removed — pass the container you built |
-| `from varco_fastapi.di import bind_mcp_adapter, bind_skill_adapter` | still works — now true re-exports with their real signatures |
-
-`bind_trust_store`, `bind_retention_registry`, `bind_cloudevents_serializer`,
-`bind_websocket_adapter`, `bind_sse_adapter`, `bind_mcp_adapter`, `bind_skill_adapter`,
-`bind_repositories` (both), `bind_clients`, `bind_clients_from`, `bind_peers` now return
-`DIContainer` (was `None`). A second registration of the same `(interface, qualifier)` raises
-`varco_core.di.AlreadyBoundError` (previously: appended, first-registered silently won).
-`bind_websocket_adapter`/`bind_sse_adapter`/`bind_mcp_adapter`/`bind_skill_adapter` gain
-`qualifier=` for multiple adapters. `enable_token_revocation`, `enable_redis_token_revocation`,
-`enable_feature_flags`, `enable_tenant_membership`, `enable_policy_authorizer` are typed `->
-DIContainer` and raise `AlreadyBoundError` when a non-fallback binding of their seam already
-exists (yours, or a previous call); `enable_authorization_audit`'s double-wrap `RuntimeError` is
-now `AlreadyBoundError` (a `RuntimeError` subclass). In tests, replace a binding with providify's
-`di_overrides`/`ContainerOverrides`, not a second call.
-
-**New** — `varco_core.di.bind_instance(container, Interface, obj, *, qualifier=None)` registers
-any already-constructed object as a non-fallback singleton; `varco_core.di.is_user_bound(container,
-Interface, qualifier=None)` answers "does a non-fallback binding exist".
-
-**Removed** — "returns `None` when providify is not installed". providify has been a declared
-dependency of every varco package since 3.0; the guards and their documented `None` path are gone.
-
-**Removed** — varco never reads the process-global container internally. Applications may;
-providify's `di_global` fixture exists for their tests.
-
-**New** — `testkit/varco_conformance/di_wiring.py`, the ninth conformance module. Out-of-tree
-backends are unaffected (the testkit is never packaged). In-tree: every package subclasses it.
-
-### Tests (Plan 046)
-
-- The ninth conformance module (`testkit/varco_conformance/di_wiring.py`, `DIWiringConformance`) —
-  ten subclasses, one per package, each proving `bootstrap()` returns the same container, is
-  idempotent, never touches the process-global container, leaves `validate()` clean, every
-  `@Fallback` default is overridable, and the declared default set is complete.
-- P29-DESCRIPTOR-FALLBACK filed (`design/upstream-gaps/providify-descriptor-fallback-field.md`) —
-  `BindingDescriptor` carries no `fallback` field; guarded by a `strict=True` xfail in
-  `test_providify_contracts.py`.
-- The five providify-absence guard test modules/functions are deleted (`varco_redis`,
-  `varco_memcached`, `varco_ws`, `varco_fastapi`'s milestone_f) along with 045's four
-  `*_fallback_tier.py` seeds and their `test_validate_clean_*` legs — folded into the new
-  `di_wiring` subclasses.
 
 ### BREAKING — `@Fallback` framework defaults, providify >= 2.1.0 (Plan 045, DI-15 close-out / DI-3)
 
@@ -659,61 +238,542 @@ Consequences for application code:
 
 Full model, override recipes, and a Pitfalls table: `technical_docs/features/dependency-injection.md`.
 
-### Fixed / Tests (Plan 045, DI-15 close-out)
+### BREAKING — Phased lifecycle, `@Disposes` reachability, DI-wired infrastructure (Plan 050, DI-9 / DI-10)
 
+Every `VarcoModule` now declares `phase: int` (`varco_core.di.Phase` — `INFRA`/`BUS`/
+`CONSUMERS`/`SCHEDULERS`/`EDGE`, default `CONSUMERS`); `create_varco_app` sequences lifecycle by
+`(phase, depends_on)` via the new `varco_core.di.LifecycleRunner` (`resolve_lifecycle_order`/
+`phased_components`), which starts ascending and stops **the exact reverse of what actually
+started** — including on a partial-start rollback (`VarcoLifespan`'s pre-050 rollback bug, which
+stopped already-started components in forward order, is fixed). `KafkaEventBus`/`NatsEventBus`
+no longer start themselves at first DI resolution (`@PostConstruct` removed) — only the `BUS`
+phase (`CoreModule`), or an explicit `await bus.start()`, starts them; `publish()` before
+`start()` now raises `RuntimeError`. `VarcoLifespan` is now a thin adapter over
+`LifecycleRunner` (`AbstractLifecycle` moved to `varco_core.di.lifecycle`, re-exported
+identically from `varco_fastapi.lifespan`); 049's "list `MigrationsModule` first" WARNING and
+its list-order sensitivity are gone — phases make it structurally unnecessary.
+
+`OutboxRelay` (via `ReliabilityModule`), `WebhookDispatcher` (via the new `WebhookModule`), and
+the two `varco_ws` push adapters now receive their dependencies by DI declaration instead of
+being remembered by hand: `OutboxRelay` gets `Serializer[Event]` (a `bind_cloudevents_serializer()`
+swap now reaches it, same as every DLQ backend); `WebhookDispatcher` gets
+`WebhookSubscriptionRepository`/`WebhookSettings`/`AbstractDeadLetterQueue` (it holds no
+`Serializer[Event]` — delivery is HTTP, not the event bus's wire format); the ws/sse adapters get
+`AbstractEventBus`. The new `TrustStoreModule` (`varco_core.tls.module`) owns a
+`ReloadingTrustStore`'s `start()`/`stop()` at the `INFRA` phase — `bind_trust_store` is unchanged
+(bind-only). `SAModule(ensure_tables: bool = True)` (additive) owns SA framework-table readiness
+generically. 14 new/completed `@Disposes` sites close every remaining reachable-disposer gap
+(`OtelConfiguration`'s `TracerProvider`/`MeterProvider` — the last OTel batch used to be dropped
+at shutdown — plus the SA/Redis idempotency/job-store/revocation-store providers);
+`RedisIdempotencyStore.aclose()`/`RedisTokenRevocationStore.aclose()` are additive, idempotent
+methods. `bind_instance(container, Interface, obj, *, disposer=...)` is additive — a P-DISP shim
+(`design/upstream-gaps/providify-provide-disposer.md`) closing `enable_redis_token_revocation`'s
+client leak until providify ships `provide(disposer=)` natively.
+
+New public names: `varco_core.di.{Phase, LifecycleComponent, LifecycleFailure, LifecycleRunner,
+AbstractLifecycle, resolve_lifecycle_order, phased_components, ModulePhaseError}`;
+`VarcoModule.phase`/`.components()`; `varco_core.webhook.module.WebhookModule`;
+`varco_core.tls.module.TrustStoreModule`; `WebhookDispatcher(dlq=)`;
+`ReliabilityPreset.serializer`; `SAModule(ensure_tables=)`; `VarcoLifespan.last_runner`.
+
+Full design, the phase table, the `@Disposes`-or-owner rule, a Pitfalls table:
+`technical_docs/features/dependency-injection.md`'s §Lifecycle phases. Migration table:
+`plans/050-phased-lifecycle-and-di-wired-infrastructure.md`'s §Migration.
+
+### BREAKING — runtime validate() in the lifespan (Plan 052)
+
+`create_varco_app(validate=True)` now also runs `container.validate()` inside the lifespan, after
+every `async_init()` and before the first `start()`. An ERROR issue refuses startup with
+`ConfigurationError` (the log lists each issue; the exception text is a count). With
+`strict_validation=True`, varco-side WARNING findings (e.g. `di.revocation_store_not_wired`,
+`module.<name>.validate`) refuse too — providify's own WARNING tier does not. Fix the binding or
+pass `validate=False`. The `VARCO_MIGRATE_MODE`/`VARCO_TENANCY_ISOLATION` "unowned" check and the
+bootstrapped-but-unselected check are now report findings (`settings.unowned`,
+`di.bootstrapped_unselected`), logged at lifespan start instead of at `create_varco_app()` build
+time; the private `_warn_unowned_settings` is removed.
+
+### BREAKING — multi-binding for collection seams (Plan 051, DI-5)
+
+Five hand-rolled "all implementations of X" registries are gone, replaced by one convention:
+a `@Multibound` seam (`EventConsumer`, `RetentionPolicy`, `TenantSource`, `PostureCollector`,
+`HealthCheck`) + a plain non-`@Fallback` contribution (a scanned `@Singleton`/`@Provider`, or
+`varco_core.di.collect.contribute()`) + `collect()`/`acollect()` at the consumer.
+
+- `RetentionRegistry.register()` **removed** — construct `RetentionRegistry(policies)` from an
+  iterable instead; `varco_core.retention.di`/`bind_retention_registry()` are **gone**
+  (`ImportError`) — use `contribute(container, RetentionPolicy, policy)`.
+  `RetentionModule(registry, *, interval=0.0)` → `RetentionModule(*, interval=0.0)` (no more
+  `registry` constructor argument — it builds one itself, in `async_init()`, from every
+  contributed `RetentionPolicy`).
+- `SecurityPostureModule`'s five default collectors (`_collect_http`/`_collect_local`/
+  `_collect_auth`/`_collect_tenant`/`_collect_data`) are now classes (`HttpEdgeCollector`/
+  `LocalPostureCollector`/`AuthPostureCollector`/`TenantPostureCollector`/`DataPostureCollector`,
+  `varco_fastapi.posture`) implementing the new `varco_core.posture.PostureCollector` ABC;
+  `_default_collectors()` is gone. `PostureFinding`/`PostureSeverity` moved to
+  `varco_core.posture` — `varco_fastapi.posture` still re-exports them, identity-preserving.
+- `VARCO_TENANT_SOURCES` is no longer limited to the four built-ins — any bound `TenantSource`
+  (a scanned `@Singleton`, named in the env var) is legal; `_LEGAL_TENANT_SOURCES` is gone.
+  `build_tenant_source_chain(settings, *, delegation_policy=None, sources=())` gained the
+  `sources=` pool argument; `TenantProvenanceSettings` no longer validates source names at
+  construction (moved to build time, where the pool is visible). `resolve_tenant_source_chain
+  (container)` reads settings + the DI pool for you.
+- A DI-bound `EventConsumer` (`@Singleton`) is now **auto-registered** by `CoreModule.start()`,
+  after the bus has started — the `@PostConstruct`-wired convention is no longer the documented
+  way (it still works, silently skipped by the new idempotent path). `EventConsumer` gained
+  `auto_register: ClassVar[bool] = True` (opt-out), `is_registered_to(bus)`,
+  `registered_bus_count`; `start()` is now idempotent per bus.
+- A custom inbound webhook provider no longer requires editing a private `_PROVIDERS` dict —
+  `register_webhook_verifier(name, cls, *, replace=False)` (`varco_core.webhook.inbound`).
+
+### BREAKING — credential and authorization default flips (Plan 053, FLIP-5 / FLIP-034-1 / FLIP-034-2 / FLIP-034-3 / FLIP-034-4)
+
+- **FLIP-5 — `BaseAuthorizer` binds only under `VARCO_SECURITY_ENV=development`.** Before: the
+  permissive `BaseAuthorizer` was the `@Fallback` `AbstractAuthorizer` in every process. After:
+  it carries `@Requires(env="VARCO_SECURITY_ENV", value="development")` (exact, case-sensitive);
+  in any other process it is not a binding — the wiring preflight refuses startup with
+  `ConfigurationError` (`MISSING_BINDING` at every service injecting `AbstractAuthorizer`, plus a
+  `CONDITION_INACTIVE` naming the variable), and an unvalidated container raises
+  `LookupError: No binding found for 'AbstractAuthorizer'. Did you forget container.bind() or
+  container.provide()?` at first construction. New posture id `posture.authorizer_unbound`
+  (HIGH, never demoted); `posture.base_authorizer_bound` (WARN) now fires in production only for
+  an explicit instance binding. Escape hatch: register a real authorizer; development/tests
+  export `VARCO_SECURITY_ENV=development`; a deliberately permissive production app uses
+  `bind_instance(container, AbstractAuthorizer, BaseAuthorizer())` and suppresses
+  `posture.base_authorizer_bound`. `container.bind(AbstractAuthorizer, BaseAuthorizer)` is gated
+  too. `enable_authorization_audit()` with no app authorizer now raises `LookupError` in
+  production. `varco_core.testing.in_memory_modules()` binds its own permissive `@Fallback`
+  authorizer, so the test profile still boots with zero env vars.
+- **FLIP-034-2 — `JwtAuthority`-minted tokens carry a uuid4 `jti` by default.** Before:
+  `token()` seeded only `iss`. After: `token()` also seeds `with_random_jti()`; `sign()` is
+  unchanged. Escape hatch: `JwtAuthority.from_pem(..., mint_jti=False)` (or the constructor);
+  per token, `.token_id("…")` or a hand-built `JwtBuilder()`. 3.x-minted tokens still in flight
+  carry no `jti` — see FLIP-034-3's bridge. No posture id.
+- **FLIP-034-3 — `revocation_require_jti` is derived from the wired store.** Before:
+  `JwtVerificationSettings.revocation_require_jti: bool = False`. After: `bool | None = None`;
+  `None` derives `True` iff the registry's wired store is not a `NullTokenRevocationStore`
+  (`varco_core.revocation.null.is_null_revocation_store()`). Auth0/Keycloak/Cognito tokens (no
+  `jti` by default) are rejected at `TOKEN` scope the moment a real store is wired. Escape hatch:
+  `VARCO_JWT_REVOCATION_REQUIRE_JTI=false` (or the per-call kwarg) — reported as
+  `auth.revocation_jti_not_required` (INFO); set it for one token lifetime to bridge 3.x tokens.
+  `RevocationPostureReport` gains `require_jti_derived`.
+- **FLIP-034-1 — `ApiKeyAuth(keys=...)` is deprecated (`since="4.0.0", removed_in="5.0.0"`).**
+  Behaviour unchanged (still hashed at construction; `auth.api_key_plaintext` WARN unchanged)
+  plus one `DeprecationWarning` attributed to the caller. Use `ApiKeyAuth(hashed_keys=...)` with
+  `hash_api_key()`. Added `varco_core.deprecation.warn_deprecated()` (also on `varco_core`) —
+  the helper for a deprecated *parameter path*; recorded in the deprecation ledger.
+- **FLIP-034-4 — `PassthroughAuth` requires `acknowledge_unverified=True`.** Before:
+  `PassthroughAuth(*, required=False)`. After: `acknowledge_unverified: Literal[True]` is a
+  required keyword-only argument — omitting it, or passing anything but literally `True`, is a
+  `TypeError`. `auth.passthrough_bound` (WARN) still fires for an acknowledged instance.
+
+Migration: Plan 053's §Migration (assembled into the 4.0 guide by Plan 058).
+
+### BREAKING — HTTP-edge and admin-surface default flips (Plan 054, FLIP-2 / FLIP-3 / FLIP-4 / FLIP-10)
+
+- **FLIP-2 — the security posture preflight refuses a production start by default.** Before:
+  `SecurityPostureSettings.enforce` defaulted to `"warn"`. After: the field defaults to `None` and
+  `effective_enforce` derives `"refuse"` unless `VARCO_SECURITY_ENV` is exactly `development`
+  (which derives `"warn"`). Under `refuse` one unsuppressed `HIGH` finding (any environment) or
+  `WARN` finding (`production`) aborts startup with
+  `RuntimeError: SecurityPostureLifecycle(enforce='refuse', derived from VARCO_SECURITY_ENV='production'): refusing to start — unsuppressed blocking findings: <ids>. …`
+  — the 3.2 fragment `refusing to start — unsuppressed blocking findings:` is kept verbatim. A
+  stock production app refuses on `posture.authorizer_unbound` without an app authorizer. (As
+  first landed, a stock app also refused on three `tenant.*` WARNs; Plan 055 below re-homes the
+  tenant collector into `TenancyModule`, so an app with no tenancy emits none.) Escape hatch:
+  `VARCO_SECURITY_ENFORCE=warn` (or `SecurityPostureSettings(enforce="warn")`); per finding,
+  `VARCO_SECURITY_SUPPRESS=<id>`. New INFO ids `posture.unrecognised_environment` /
+  `posture.unrecognised_enforce` report a value that is not exactly `production`/`development` /
+  `warn`/`refuse` (never normalised). `SecurityPosture` gains a trailing `enforce` field and
+  `summary()` ends with `· enforce=<mode>`. `WiringReport.enforce_source` gains `"derived"`; the
+  `varco diagnose` header renders `enforce=refuse (derived from VARCO_SECURITY_ENV=production)`.
+- **`http.rate_limit.absent` WARN → INFO.** Rate limiting is a recorded non-flip (Plan 036 row
+  11); at WARN, FLIP-2 would have made its absence a production start-blocker by the back door.
+- **Severity table.** `technical_docs/features/security-posture.md` now lists every shipped
+  posture `check` id, its severity, and whether it blocks a production start under the 4.0
+  default; a test fails when a new id has no row.
+- **`di.in_process_backend` stays opt-in.** In-process backends are a legitimate deployment
+  shape, so `SecurityPostureModule` does not contribute its collector. New public
+  `varco_fastapi.posture.DIPostureCollector(container)`: an app that wants every seam still on
+  its in-process default to block a production start contributes it once —
+  `contribute(container, PostureCollector, DIPostureCollector(container))`.
+- **FLIP-3 / FLIP-4 — admin surfaces require `server_auth`.** Before: `mount_reliability_admin`
+  and `mount_webhook_admin` with `server_auth=None` logged one `UNAUTHENTICATED` warning and
+  mounted; `build_webhook_router`/`build_dlq_router`/`build_audit_router` accepted `None`. After:
+  `server_auth` is a required keyword on all five — omitted → `TypeError`, `None` → `ValueError`
+  (`… requires server_auth …`), checked before anything is mounted; the warning is gone. Every
+  reliability route now resolves `server_auth` (once per request) and enforces `admin_role` (403
+  `'reliability-admin' role required.`) — before, `admin_role` was enforced only by a caller's own
+  `dependencies=`, which are now additive. Behind a gateway that already verified the caller:
+  `server_auth=PassthroughAuth(acknowledge_unverified=True)`.
+- **FLIP-10 — `ErrorEnvelopeSettings.include_detail` defaults `False`.** Every mapped
+  `ServiceException` body omits `detail` (`str(exc)`); the structured content is in `params`
+  (`ServiceValidationError` → `detail`/`field`, `ServiceConflictError` → `detail`,
+  `ServiceNotFoundError` → `entity`/`entity_id`, `ServiceAuthorizationError` and every
+  `RouteGuard` denial → `operation`) and `message_key`. Escape hatch:
+  `VARCO_ERROR_INCLUDE_DETAIL=true` — reported as `http.error.detail_exposed` (WARN, new text),
+  which blocks a production start under FLIP-2 unless suppressed. The `ErrorMiddleware` path now
+  emits `message_key`/`params` like the route-handler path.
+- Migration: plan 054's §Migration (assembled into the 4.0 guide by Plan 058).
+
+### BREAKING — Tenant-provenance default flips (Plan 055, FLIP-6 / FLIP-7 / FLIP-9)
+
+- **FLIP-6 — tenant resolution defaults to the chain.** `TenantResolutionMiddleware(chain=None)`
+  now means *the configured chain*: the env-derived `build_tenant_source_chain()`
+  (`VARCO_TENANT_SOURCES`) when hand-wired, the container-resolved chain when `TenancyModule`
+  builds it. Only with nothing configured does it fall back to the implicit `X-Tenant-Id`
+  `LegacyTenantSource` — **kept**, as the deprecated path:
+  `warn_deprecated(since="3.2.0", removed_in="5.0.0")` replaces the 3.2 ad-hoc `warnings.warn`,
+  and (wired through `TenancyModule`) `tenant.no_chain` + `tenant.legacy_source_implicit` (WARN)
+  refuse a production start under Plan 054's derived `refuse`. The 12-month floor from 3.2.0 (2026-09-12) forbids the `TypeError` the 3.2 warning promised; it
+  moves to 5.0.0. A hand-wired middleware naming a multi-bound plugin source in
+  `VARCO_TENANT_SOURCES` raises `ValueError` (pass `chain=` or use `TenancyModule`).
+  `EdgeSlot.TENANT_RESOLUTION = 95` (inside `ErrorMiddleware` and the pre-auth rate limit,
+  outside `RequestContextMiddleware`). `TenancyModule` gains `catalog=`/`chain=`/`server_auth=`/
+  `membership=`/`header=`/`reject_status=`, `pool` becomes optional (no `TenancyLifecycle`
+  without one), it contributes the middleware and the `TenantPostureCollector`, and `pool=None`
+  under `SCHEMA`/`DATABASE` isolation refuses startup (`ConfigurationError` from
+  `TenancyModule.async_init()`, before any `start()`, regardless of `strict_validation`). `catalog`/`pool` are optional on the
+  middleware (`None` → no status gate / no `ensure()`), which also gains read-only `chain` and
+  `chain_implicit` properties. Posture: `tenant.legacy_source_explicit`
+  (WARN), `tenant.single_source` (INFO), `tenant.subdomain_trusts_forwarded_host` (WARN) are now
+  mapped; new `tenant.no_catalog_gate` (INFO); `tenant.*` findings appear **only** with
+  `TenancyModule` (`SecurityPostureModule` no longer contributes a tenant collector); a bound
+  `NullTenantMembership` counts as no provider (`tenant.no_membership_provider` WARN).
+- **FLIP-7 — membership fails closed.** `ClaimTenantMembership.on_missing_claim`,
+  `TenantMembershipSettings.on_missing_claim` and the `VARCO_TENANT_MEMBERSHIP_ON_MISSING` default
+  are `DENY`: a token with no `tenants` claim is denied (`reason="claim_absent"`, one WARNING per
+  process naming the policy). The self-tenant path is unchanged (no IdP change for a single-tenant
+  fleet). Escape hatch: `VARCO_TENANT_MEMBERSHIP_ON_MISSING=allow` — reported as HIGH
+  `tenant.membership_missing_claim_allows`, which blocks a `refuse` start unless suppressed.
+- **FLIP-9 — `RequestContextMiddleware` never sets the tenant.** `tenant_field=` and
+  `enable_tenant_context=` are removed (passing either → `TypeError`); `_maybe_tenant_context` is
+  gone. `TenantResolutionMiddleware` is the only HTTP writer of `current_tenant()`.
+  `inspect_tenant_provenance(request_context_sets_tenant=...)` defaults to `False`. Replacement:
+  `TenancyModule()` + `VARCO_TENANT_SOURCES=jwt` (+ `VARCO_TENANT_CLAIM_METADATA_KEY=<claim>`
+  where `tenant_field` differed); `catalog`/`pool` are optional under `SHARED` isolation.
+
+### BREAKING — Data-layer default flips (Plan 056, FLIP-12 / FLIP-13)
+
+- **FLIP-12 — `TenancySettings.enforce_rls` defaults `True`, and now has a reader.** In 3.x nothing
+  read the flag (RLS was checked only if the app called `assert_rls_enabled()` itself). Now
+  `SAModule` contributes a `varco_sa.tenancy.rls_posture.RlsPostureCollector` and
+  `SAModule`'s `sa.rls_posture` lifecycle component (`RLS_POSTURE_PHASE` = `Phase.INFRA + 50`,
+  i.e. after `MigrationsModule` runs, with no hard dependency on it) reads the RLS catalog state
+  of every `TenantScope.TENANT`
+  table carrying a tenant column — on Postgres, under `SHARED` isolation only — and
+  `SecurityPosture` reports it. Gates, in order: `isolation` not `SHARED` or a non-Postgres
+  dialect → `data.rls_not_applicable` (INFO, no query); no candidate table (a single-tenant
+  app) → nothing; `enforce_rls=false` → `data.rls_not_enforced` (WARN, no query); database
+  unreachable → `data.rls_not_checked` (NOT_ASSESSED, never a refusal). Ids: `data.rls_disabled`
+  (HIGH), `data.role_bypasses_rls` (HIGH, **narrowed** — superuser, `BYPASSRLS`, or an owned table
+  *without* `FORCE`; an owned, forced table is no longer reported), `data.rls_not_forced` (WARN),
+  new `data.rls_enabled_without_policy` (WARN — default-deny), new `data.rls_guc_setter_absent`
+  (WARN — live policies with neither `rls_set_tenant` nor an `install_rls_tenant_hook()`), new
+  `data.rls_table_absent` (INFO — a candidate table with no `pg_class` row yet, e.g. a fresh
+  database on first deploy; never reported as `data.rls_disabled`).
+  Under Plan 054's derived `refuse`, a production app with unprotected tenant tables **does not
+  start**; `development` logs and starts. Escape hatch: `VARCO_TENANCY_ENFORCE_RLS=false` (+
+  `VARCO_SECURITY_SUPPRESS=data.rls_not_enforced`). **varco still ships no revision that enables
+  RLS.** Additive: `RlsPosture.dialect` (trailing, default `"postgresql"`),
+  `RlsPosture.missing_tables` (trailing, default empty), `varco_sa.modules.RLS_POSTURE_PHASE`,
+  `SAModelRegistry.registered()`, `rls_candidate_tables()`, `rls_findings()`,
+  `hook_installed()`, `SAModule(rls_tenant_column=)`. `SecurityPostureModule` no longer
+  contributes `DataPostureCollector` (it only ever produced `data.rls_not_checked`); the class
+  stays as the hand form and now delegates to `rls_findings()` — which also fixes its 3.2
+  `AttributeError` on a real `RlsPosture` (`.enabled`/`.forced` → `.rls_enabled`/`.rls_forced`)
+  and its false HIGH on SQLite.
+- **FLIP-13 — webhook signing secrets are never stored in plaintext.**
+  `SAWebhookSubscriptionRepository` and `BeanieWebhookSubscriptionRepository` take `encryptor`
+  as a **required** keyword: omitted → Python's missing-keyword `TypeError`; `None` or a
+  non-`FieldEncryptor` (e.g. the Fernet key `bytes`) → a `TypeError` naming
+  `FernetFieldEncryptor(key)`, the Plan 050 DI path, the dev hatch, and the upgrade step. New
+  `varco_core.PlaintextFieldEncryptor(acknowledge_plaintext=True)` — the greppable dev/test hatch
+  for the hand **and** DI paths. `posture.webhook_secrets_plaintext` (WARN, blocks a production
+  start unless suppressed) now fires on a repository holding a `PlaintextFieldEncryptor` or no
+  encryptor (an out-of-tree one), never on `InMemoryWebhookSubscriptionRepository` (unchanged —
+  its secrets are never at rest). The default `LocalPostureCollector` resolves the bound
+  `WebhookSubscriptionRepository` from the container, so a stock app is assessed (a provider
+  that fails to construct is `posture.not_assessed.webhook_secrets_plaintext`, never a crash). New
+  `reencrypt_legacy_plaintext(*, legacy_hex=None) -> int` on both durable repositories:
+  **mandatory, once, for a 3.x deployment with existing rows** — rows written without an
+  encryptor are plaintext and fail to decrypt through a real encryptor (`ValueError`/
+  `EncryptionError` on first read); the method rewrites them in place and is idempotent. Run it
+  with the key that wrote any existing ciphertext. The default `legacy_hex=None` never guesses:
+  an unambiguous entry (`whsec_…`) is upgraded, and if any entry fails to decrypt and is valid hex
+  of printable UTF-8 the whole run refuses with the new `AmbiguousLegacySecretError` (a
+  `ValueError`, naming every ambiguous subscription id) **before writing anything** — re-run with
+  `legacy_hex=True` (`PlaintextFieldEncryptor` rows) or `legacy_hex=False` (raw 3.x hex secrets).
+  `varco_core.webhook.base.plan_legacy_reencryption()` is the shared plan-then-write rule.
+
+Migration: this plan's §Migration (assembled into the 4.0 guide by Plan 058).
+
+### BREAKING — word-boundary redaction, audit redaction on by default, redaction posture collector (Plan 057, FLIP-040-1 / FLIP-040-2 / RO-5)
+
+- **FLIP-040-1 — `RedactionPolicy().match_mode` is `"word"`.** The fifteen
+  `DEFAULT_REDACT_PATTERNS` literals are unchanged; the *matching* changed. A key and each pattern
+  are tokenised by the same tokenizer (separators, camelCase, acronym boundaries, digit runs); a
+  pattern matches as a contiguous token subsequence, its last token also matching a simple plural.
+  `api_key`/`apiKey`/`x-api-key`/`Authorization`/`credentials` are redacted by DEFAULT alone;
+  `shipping_address` (`"pin"`) and `author` (`"auth"`) no longer are; suffix-glued names with no
+  separator (`csrftoken`, `csrfmiddlewaretoken`, `secretkey`, `totp_code`, `oauth`) are no longer
+  matched. This flows into span capture, `error_params()` redaction, and any `PolicyRedactor()`.
+  Escape hatches: `RedactionPolicy(match_mode="substring")` (the 3.2 matcher, byte-identical) or
+  listing the exact token as a pattern. A pattern with no alphanumeric token (e.g. `"-"`) now
+  raises `ValueError` at `RedactionPolicy` construction in word mode.
+- **FLIP-040-2 — `AuditLogMixin._audit_redactor` defaults to `PolicyRedactor(AUDIT_REDACTION_POLICY)`.**
+  New export `AUDIT_REDACTION_POLICY = RedactionPolicy(render_non_json=False)` (on
+  `varco_core.redaction` and `varco_core`): secret-named keys in every audit diff written after the
+  upgrade become `"[REDACTED]"`, while `datetime`/`UUID`/`Decimal` leaves stay the same objects.
+  Rows written before the upgrade are untouched. Opt out per service with
+  `_audit_redactor = None`; extend with `PolicyRedactor(dataclasses.replace(AUDIT_REDACTION_POLICY, patterns=…))`.
+- **RO-5 — `varco_fastapi.posture.RedactionPostureCollector`** wires `inspect_redaction_posture()`
+  into `SecurityPosture` as a **default** collector contributed by `SecurityPostureModule`; the
+  audited services are listed once with the new `SecurityPostureModule(audited_services=(…,))`
+  keyword (explicit input, never discovered). The four ids are unchanged; their meaning is now
+  "opted out" and a default app emits none. `redaction.audit.disabled` is WARN — under
+  `enforce="refuse"` in `production` an opted-out service refuses startup unless
+  `VARCO_SECURITY_SUPPRESS=redaction.audit.disabled`.
+- **Added `ParamCaptureConfig.redact_match_mode`** (`"word"` default, `"substring"` escape hatch)
+  for `@span` parameter capture with custom `redact_patterns`.
+
+Migration: see `plans/057-redaction-flips.md` §Migration (assembled into the 4.0 guide by Plan 058).
+
+### Added
+
+**workspace**
+
+- `scripts/settings_reference.py` / `make settings-reference` / `make settings-check` — the
+  generated `VARCO_*` reference (`technical_docs/settings-reference.md`), wired into `make
+  lint`'s no-`PKG` path and CI's `lint` job. (Plan 048)
+- `scripts/di_catalogue.py` / `make di-catalogue` / `make di-catalogue-check` — the generated
+  default-implementation catalogue (`technical_docs/di-catalogue.md`), wired into `make lint`'s
+  no-`PKG` path and CI's `lint` job. (Plan 047)
+
+**varco-core**
+
+- `varco_core.di.report.build_wiring_report`/`WiringReport`, `varco diagnose` (`--modules`/`--container`/
+  `--app`, `--static`, `--json`, `--check`), startup report log + `VARCO_DIAGNOSE_STARTUP_REPORT`/
+  `_JSON`, `app.state.varco_wiring_report`/`varco_container`/`varco_modules`. (Plan 052)
+- `varco_core.settings.all_provenance`, `varco_core.deprecation.fired_deprecations` (ledger). (Plan 052)
+- `JwksPostureCollector`/`RetentionPostureCollector` contributed by `CoreModule`; posture ids
+  `auth.jwks_refresh_off`, `auth.jwks_keysets_unloaded`, `retention.platform_wide`,
+  `retention.dry_run_only`, `retention.short_retention`. (Plan 052)
+- `varco_core.testing` (`InMemoryProfile`, `in_memory_modules`, `register_modules`,
+  `clear_backend_selection`); `varco_fastapi.testing.in_memory_app_modules()` (FastAPI default set,
+  `development`/`warn` posture, `InMemoryProfile` last); `CoreModule(job_runner=False)`. (Plan 052)
+- `varco_core.di.diagnose.capture_direct_deprecations`/`direct_deprecation_records` (shared
+  deprecation capture window for `diagnose()` and the startup lifespan) and
+  `varco_core.di.select.evaluate_backend_selection` (non-logging backend-selection evaluator). (Plan 052)
+- `varco_core` lazy top-level exports: `fired_deprecations`, `build_wiring_report`, `WiringReport`,
+  `DiagnoseSettings`, `InMemoryProfile`, `in_memory_modules`, `JwksPostureCollector`,
+  `RetentionPostureCollector`, `all_provenance`. (Plan 052)
+- `varco diagnose --check` exits 1 only on an ERROR or WARNING (INFO findings never fail it); a
+  module whose `async_init()` raises prints `<ModuleName>.async_init failed: <exc>`;
+  `WiringValidationError` lists `owner: message` for each issue. (Plan 052)
+- `di_wiring` conformance test `test_diagnose_runs_clean_on_bootstrapped_package`. (Plan 052)
+- `varco_core.di.collect` (`contribute`, `collect`, `acollect`, `collection_seams`);
+  `varco_core.posture` (`PostureCollector`, plus the moved `PostureFinding`/`PostureSeverity`);
+  `varco_core.tenancy.resolve_tenant_source_chain`; `varco_core.webhook.inbound.
+  register_webhook_verifier`/`registered_webhook_verifiers`; `EventConsumer.auto_register`/
+  `is_registered_to`/`registered_bus_count`; a new posture token
+  `tenant.third_party_source_high_trust`; the in-tree third-party contribution example,
+  `testkit/varco_plugin_example` (never packaged). (Plan 051)
+- `varco_core.settings`: `bind_settings()`, `provenance_of()`, `SettingsProvenance`,
+  `SettingsError`/`SettingsValidationError`/`SettingsAlreadyBoundError`, `CommaSeparated`,
+  `bind_core_settings()`, `varco_core.settings.inventory` (`env_vars_for()`,
+  `discover_settings_classes()`, `check_unique_env_names()`, `LOOSE_ENV_READ_ALLOWLIST`). (Plan 048)
+- `varco_core.di` package: `SEAMS`/`FEATURES` registries, `selected_by()`, `feature_default()`,
+  `env_truthy()`, `bind_env_overrides()`, `check_backend_selection()`,
+  `inspect_backend_selection()`, `inspect_bindings()`, `catalogue()`, `BackendSelectionError`,
+  `CatalogueError`, `ENV_OVERRIDE_PRIORITY`. (Plan 047)
+- Seven new selectable providers: `SAModule.dead_letter_queue`/`idempotency_store`/`job_store`,
+  `BeanieModule.idempotency_store`/`job_store`, `RedisStoresConfiguration.idempotency_store`/
+  `job_store`/`revocation_store`. (Plan 047)
+- Three feature env twins: `VARCO_FEATURE_FLAGS_ENABLED`, `VARCO_TENANT_MEMBERSHIP_ENABLED`,
+  `VARCO_POLICY_AUTHORIZER_ENABLED` — `enable_*()` still wins over the env form. (Plan 047)
+- `create_varco_app(container, ...)` now calls `check_backend_selection(container)`, raising
+  `BackendSelectionError` on an unknown `VARCO_<SEAM>_BACKEND` value. (Plan 047)
+- The ninth conformance module (`testkit/varco_conformance/di_wiring.py`, `DIWiringConformance`) —
+  ten subclasses, one per package, each proving `bootstrap()` returns the same container, is
+  idempotent, never touches the process-global container, leaves `validate()` clean, every
+  `@Fallback` default is overridable, and the declared default set is complete. (Plan 046)
+
+**varco-redis**
+
+- DI-16 worked example: `bind_settings(container, Cls, qualifier=..., env_prefix=...)` builds a
+  second, independently-configured instance of one settings class (demonstrated with
+  `RedisCacheSettings`, `varco_redis/tests/test_redis_named_settings.py`). (Plan 048)
+- The five providify-absence guard test modules/functions are deleted (`varco_redis`,
+  `varco_memcached`, `varco_ws`, `varco_fastapi`'s milestone_f) along with 045's four
+  `*_fallback_tier.py` seeds and their `test_validate_clean_*` legs — folded into the new
+  `di_wiring` subclasses. (Plan 046)
+
+**varco-fastapi**
+
+- Findings `settings.unowned`, `di.bootstrapped_unselected` (WARNING) and `deprecation.fired`
+  (INFO); report header `environment`/`enforce`/`enforce_source` from
+  `varco_fastapi.diagnose.posture_header()` (`app.state.varco_posture_header`). (Plan 052)
+- `varco_fastapi.posture._collect_di()` — the `di.in_process_backend` `SecurityPosture` finding
+  (WARN in production) for a seam still served by its in-process default. **Opt-in** (Plan 054):
+  contribute `varco_fastapi.posture.DIPostureCollector(container)` to `PostureCollector`; it is
+  never a default collector, since in-process backends are a legitimate deployment shape.
+
+### Changed
+
+**workspace**
+
+- `scripts/entry_points.py` + `make entry-points`/`make entry-points-check` — the generated DI entry-point table (JSON snapshot, `technical_docs/entry-points.md`, and a marked block in `ARCHITECTURE.md`), wired into `make lint`'s no-`PKG` path and CI's `lint` job (`entry points --check`). CI's `lint` job also gains the `export-asyncapi --check` step CLAUDE.md already claimed it had. (Plan 058)
+
+**varco-core**
+
+- `providify>=2.1.1` is now required (all ten packages) — see Upstream (P34). (Plan 052)
+- `TenantProvisionConsumer(provisioner=, catalog=)` now warns through `varco_core.deprecation.warn_deprecated()` (message: "… is deprecated since 3.0.0 and will be removed in 5.0.0. Use … instead.") and lands in the `fired_deprecations()` ledger; the warning still blames the constructing caller. (Plan 058)
+
+**varco-fastapi**
+
+- `varco_fastapi.auth.TrustStore` now warns through `varco_core.deprecation.warn_deprecated()` (message: "varco_fastapi.auth.TrustStore is deprecated since 3.1.0 and will be removed in 5.0.0. Use … instead.") and lands in the `fired_deprecations()` ledger; the warning still blames the constructing caller. (Plan 058)
+
+### Deprecated
+
+- **Started**
+  - `ApiKeyAuth(keys=...)` → `ApiKeyAuth(hashed_keys=...)` — `since="4.0.0"`, `removed_in="5.0.0"`, floor: 4.0.0's release date + 12 months. (Plan 053)
+  - `TenantResolutionMiddleware(chain=None)`'s implicit `LegacyTenantSource` fallback (→ an explicit chain or `VARCO_TENANT_SOURCES`) — `since="3.2.0"`, `removed_in="5.0.0"`, floor 2027-09-12; the `TypeError` the 3.2 warning promised moves to 5.0.0. (Plan 055)
+  - The legacy env names `FASTREST_AUTHORIZATION__*`, `VARCO_PROFILER_*`, `VARCO_CA_CERT`/`VARCO_CLIENT_CERT`/`VARCO_CLIENT_KEY`/`VARCO_TRUST_STORE_DIR`, `VARCO_JWKS_*` — still read, with a warning naming the new name. (Plan 048)
+- **Re-labelled `removed_in="4.0.0"` → `"5.0.0"`** (OQ3 — the 12-month floor fell after 4.0.0's date; `varco_core/tests/test_deprecation_floor.py` now enforces the floor from this file's release dates) (Plan 058)
+  - `varco_sa.rls.enable_rls_ddl` (→ `render_rls_ddl`) — since 3.0.0, floor 2027-08-31.
+  - `varco_core.migration.MigrationError` / `.MigrationPlan` (→ `SchemaMigrationError`/`SchemaMigrationPlan`) — since 3.0.0, floor 2027-08-31.
+  - `varco_beanie.BeanieConfig` and `varco_beanie.bootstrap.BeanieConfig` (→ `BeanieSettings`) — since 3.0.0, floor 2027-08-31.
+  - `TenantProvisionConsumer(provisioner=, catalog=)` (→ `control_service=`) — since 3.0.0, floor 2027-08-31.
+  - `varco_fastapi.auth.TrustStore` (→ `varco_core.tls.TrustStore`) — since 3.1.0, floor 2027-09-05.
+
+### Removed
+
+- `setup_varco_defaults()` and `varco_fastapi.di.bootstrap(setup_defaults=)`; the 045 priority floors (`-sys.maxsize - 1`, `-sys.maxsize`, `_FALLBACK_PRIORITY`). (Plan 045)
+- `varco_redis.revocation.RedisScanNullTokenRevocationStoreDefault`. (Plan 045)
+- `create_varco_container()`, `varco_fastapi.di.setup_event_producer()`, `varco_fastapi.middleware.session.get_container()`, every in-varco `DIContainer.current()` read, the 16 "providify is not installed" guards, and `bootstrap()`'s `streams=`/`setup_cache=`/`setup_producer=`/`*packages`/`*entity_classes` parameters. (Plan 046)
+- `VARCO_LIFECYCLE_DISCOVERY_WARN`, `create_varco_app`'s eleven keyword objects and six `enable_*` booleans (→ `modules=`), and the three `*Module` names that were providify `@Configuration`s (→ `SAConfiguration`, `BeanieConfiguration`, `VarcoFastAPIConfiguration`). (Plan 049)
+- `@PostConstruct` on `KafkaEventBus.start()`/`NatsEventBus.start()` (started by the `BUS` phase). (Plan 050)
+- `bind_retention_registry()` and `varco_core.retention.di`, `RetentionRegistry.register()`, `TenantProvenanceSettings`' `_LEGAL_TENANT_SOURCES`, `varco_fastapi.posture._default_collectors()` and the module-level `_collect_*` default list (→ collector classes). (Plan 051)
+- `RequestContextMiddleware`'s `enable_tenant_context=`/`tenant_field=` and `_maybe_tenant_context` — `TenantResolutionMiddleware` is the only HTTP writer of `current_tenant()`. (Plan 055)
+
+### Fixed
+
+**varco-core**
+
+- Apps using `create_varco_app` with `VARCO_CACHE_BACKEND=redis`, `layered`, or `memcached` failed
+  to start: `CoreModule`'s `core.stores` (INFRA) component called `start()` on the cache its
+  provider had already started, and `CacheBackend.start()` raises `RuntimeError` when already
+  started ("already-started cache"). `core.stores` now treats that `RuntimeError` as "already
+  started" for the cache seam only; the scanned `InMemoryCache` default is still started, and any
+  other exception still aborts startup (Plan 050 follow-up).
+- `data.rls_not_checked`'s "not run" reason now names what to start — `SAModule`'s
+  `sa.rls_posture` component / `SAModule.start()` (Plan 056 follow-up).
+- `VarcoLifespan`'s partial-start rollback stopped already-started components in **forward**
+  order instead of reverse (Plan 050).
+- `ReliabilityLifecycle.shutdown()` never stopped the `AuditConsumer`, leaking its bus
+  subscription on every app shutdown (Plan 050).
+- `OtelConfiguration`'s `TracerProvider`/`MeterProvider` were never flushed at
+  `container.ashutdown()` — the last batch of spans/metrics was silently dropped (Plan 050).
+- `RedisIdempotencyStore`/`RedisTokenRevocationStore`/`RedisJobStore`'s DI-provided clients
+  leaked at shutdown — no disposer existed for any of the three (Plan 050).
+
+**varco-fastapi**
+
+- Examples 08/09/10/17/22 updated to the 4.0 API: `varco_fastapi.di.bootstrap(container)` replaces
+  the removed `container.install(VarcoFastAPIModule)`; example 10 no longer passes `init=False`
+  `created_at`/`updated_at` to `domain_replace()`/`dataclasses.replace()` (which raise `ValueError`;
+  the mapper stamps both) and its health test
+  targets `/health/live`; example 17's tests enter the app lifespan explicitly. Stale
+  `VarcoFastAPIModule` names in examples 01/06/07 and in `varco_core` docstrings now read
+  `VarcoFastAPIConfiguration`. (Plan 049 follow-up)
+
+### Security
+
+4.0 flips five groups of security defaults to fail-closed — credentials and authorization (Plan
+053), the HTTP edge and admin surfaces (Plan 054), tenant provenance (Plan 055), the data layer
+(Plan 056) and redaction (Plan 057); each BREAKING block above names its escape hatch and posture
+id. Under the new `enforce` default (`refuse` unless `VARCO_SECURITY_ENV=development`) a WARN id is
+a production start-blocker — the severity table in
+[technical_docs/features/security-posture.md](technical_docs/features/security-posture.md) lists
+every id and whether it blocks.
+
+### Upstream
+
+Every providify ask this cycle filed or closed. Open asks keep a report under
+`design/upstream-gaps/` and a `strict=True` xfail guard (`GAP: <id>` in its `reason=`).
+
+**Closed**
+
+- **P22-PROVIDER-PREDESTROY** — resolved 2026-09-02 (Plan 024 / C2): providify 2.0.1 declared the leaked-teardown behaviour intentional and shipped a `WARNING` detector; varco adopted `@Disposes` at all nine affected sites. Report: `design/upstream-gaps/providify-provider-predestroy.md` §8.
+- **P24-DISPOSES-FIRSTMATCH**, **P25-CONDITIONAL-REGISTRATION**, **P26-OPEN-GENERIC-BINDING**, **P27-FALLBACK-BINDING** — resolved 2026-09-14 by providify 2.1.0 (Plan 045): disposer wiring scoped per `install()`; `@Requires(condition=, env=, value=)`; open-generic `returns=Repo[T]`; `@Fallback`/`FallbackMarker`/`IssueKind.FALLBACK_SHADOWED`. Converted guards and report sections are listed in the Plan 045 bullets below.
+- **P34-VALIDATE-INACTIVE-OWNER-DEPS** — resolved 2026-10-02 by providify 2.1.1 (Plan 052): `validate()` skips an inactive owner's own dependencies; varco pins `providify>=2.1.1`. Converted guard: `varco_core/tests/test_providify_contracts.py::TestP34ValidateInactiveOwnerDeps::test_inactive_owner_dependencies_are_not_missing_binding_errors`. Report: `design/upstream-gaps/providify-validate-inactive-owner-deps.md`.
+
+**Filed — open at 4.0.0**
+
+- **P28-FALLBACK-SHADOWED-SCANNED-CLASS** (Plan 045) — `design/upstream-gaps/providify-fallback-shadowed-scanned-class.md`; guard `varco_core/tests/test_fallback_defaults.py::test_fallback_shadowed_scanned_class_blind_spot`.
+- **P29-DESCRIPTOR-FALLBACK** (Plan 046) — `design/upstream-gaps/providify-descriptor-fallback-field.md`; guard `varco_core/tests/test_providify_contracts.py::TestP29DescriptorFallbackField::test_binding_descriptor_carries_fallback`.
+- **P30-PROVIDE-DISPOSER** (Plan 050, "P-DISP" in its plan) — `design/upstream-gaps/providify-provide-disposer.md`; guard `varco_core/tests/test_providify_contracts.py::TestP050UpstreamAsks::test_provide_accepts_disposer_kwarg`.
+- **P31-PROVIDER-INJECT-OVERRIDE** (Plan 050, "P-INJ" in its plan) — `design/upstream-gaps/providify-provider-inject-override.md`; guard `varco_core/tests/test_providify_contracts.py::TestP050UpstreamAsks::test_provider_accepts_inject_override`.
+- **P32-COPY-COLLECTION-POINTS** (Plan 052) — `design/upstream-gaps/providify-copy-collection-points.md`; guard `varco_core/tests/test_providify_contracts.py::TestP32CopyCollectionPoints::test_copy_preserves_collection_points`.
+- **P33-OVERRIDE-INSTANCE-SCOPE-LEAK** (Plan 052) — `design/upstream-gaps/providify-override-instance-scope-leak.md`; guard `varco_core/tests/test_providify_contracts.py::TestP33OverrideInstanceScopeLeak::test_instance_override_trips_scope_leak_on_singleton_consumer`.
+
+**The cycle's filing/closing record, per plan** (043/044 filed P25–P27 against providify 2.0.1; 045 closed them):
+
+- `providify>=2.1.1` is now required (all ten packages). 2.1.1 closes **P34-VALIDATE-INACTIVE-OWNER-DEPS**:
+  `validate()` no longer reports `MISSING_BINDING` ERRORs for the own dependencies of a
+  `@Requires`/`@Profile`-inactive binding. On 2.1.0 that false ERROR (e.g. the `VARCO_WEBHOOK_BACKEND=sa`-gated
+  `SAConfiguration.webhook_repository` → `FieldEncryptor`) would have refused startup of every `SAModule`
+  app without a bound `FieldEncryptor` under the runtime `validate()` above. (Plan 052)
+- Upstream gaps filed: P32 (`DIContainer.copy()` drops `_collection_points`), P33
+  (`ContainerOverrides.instance()` false scope-leak). P28 was already filed by Plan 045. (Plan 052)
+- P29-DESCRIPTOR-FALLBACK filed (`design/upstream-gaps/providify-descriptor-fallback-field.md`) —
+  `BindingDescriptor` carries no `fallback` field; guarded by a `strict=True` xfail in
+  `test_providify_contracts.py`. (Plan 046)
 - **Closed `P24-DISPOSES-FIRSTMATCH`** — providify 2.1.0 scopes `@Disposes` wiring to the bindings
   the same `install()`/`ainstall()` call registered (`CHANGELOG.md:14-24` in the providify source
   tree); varco adopted nothing (the fix was entirely upstream). Guard converted to a passing test:
   `varco_redis/tests/test_redis_cache_disposes.py::test_both_cache_configurations_installed_together_both_get_stopped`.
-  See `design/upstream-gaps/providify-disposes-first-match.md` §7.
+  See `design/upstream-gaps/providify-disposes-first-match.md` §7. (Plan 045)
 - **Closed `P25-CONDITIONAL-REGISTRATION`** — providify 2.1.0 ships
   `@Requires(condition=..., env=..., value=...)`; varco verifies the shipped contract here and
   adopts it at real call sites in Plan 047. Guard converted:
   `varco_core/tests/test_providify_contracts.py::TestP25ConditionalRegistration::test_requires_decorator_is_exported`.
-  See `design/upstream-gaps/providify-conditional-registration.md` §9.
+  See `design/upstream-gaps/providify-conditional-registration.md` §9. (Plan 045)
 - **Closed `P26-OPEN-GENERIC-BINDING`** — providify 2.1.0 ships open-generic provider bindings
   (`returns=Repo[T]` now resolves any closed request); varco verifies the shipped contract here
   and adopts it in Plans 046/051. Guard converted:
   `varco_core/tests/test_providify_contracts.py::TestP26OpenGenericBinding::test_open_alias_registration_resolves_closed_request`.
-  See `design/upstream-gaps/providify-open-generic-binding.md` §8.
+  See `design/upstream-gaps/providify-open-generic-binding.md` §8. (Plan 045)
 - **Closed `P27-FALLBACK-BINDING`** — providify 2.1.0 ships `@Fallback`/`FallbackMarker`/
   `IssueKind.FALLBACK_SHADOWED` exactly under the recommended name and semantics; adopted at ~60
   sites across all ten packages (this plan). Guards converted:
   `varco_core/tests/test_providify_contracts.py::TestP27FallbackBinding::test_fallback_decorator_is_exported`
-  + `::test_validate_reports_shadowed_fallback`. See `design/upstream-gaps/providify-fallback-binding.md` §9.
+  + `::test_validate_reports_shadowed_fallback`. See `design/upstream-gaps/providify-fallback-binding.md` §9. (Plan 045)
 - **Filed `P28-FALLBACK-SHADOWED-SCANNED-CLASS`** — `FALLBACK_SHADOWED` is never emitted for a
   scanned-class default shadowed at its ABC (a scanned `@Singleton`'s own interface is the concrete
   class, never the ABC). Affects 22 of varco's own default sites; gates Plan 052's
   `varco diagnose`. Guarded by a `strict=True` xfail:
   `varco_core/tests/test_fallback_defaults.py::test_fallback_shadowed_scanned_class_blind_spot`.
-  See `design/upstream-gaps/providify-fallback-shadowed-scanned-class.md`.
-
-### Documentation / Tests (Plan 043, DI-15)
-
+  See `design/upstream-gaps/providify-fallback-shadowed-scanned-class.md`. (Plan 045)
 - **Filed `P25-CONDITIONAL-REGISTRATION`** — providify 2.0.1's only activation inputs are
   `@Profile`/`@Alternative`; there is no predicate-over-configuration primitive (`@Requires` does
   not exist under any name, confirmed against providify source at `1402f0a`). See
   `design/upstream-gaps/providify-conditional-registration.md`, guarded by
   `varco_core/tests/test_providify_upstream_gaps.py::TestP25ConditionalRegistration` (strict
-  xfail, `raises=ImportError`).
+  xfail, `raises=ImportError`). (Plan 043)
 - **Filed `P26-OPEN-GENERIC-BINDING`** — providify's generic-alias matching treats a binding-side
   `TypeVar` as a literal, not a wildcard (`providify/utils.py:174-180`), so a single open
   `returns=Repository[T]` registration cannot serve `Repository[User]`/`Repository[Order]`/…,
   forcing the per-type registration loops in `varco_sa`/`varco_beanie`/`varco_fastapi`. See
   `design/upstream-gaps/providify-open-generic-binding.md`, guarded by
   `varco_core/tests/test_providify_upstream_gaps.py::TestP26OpenGenericBinding` (strict xfail,
-  `raises=LookupError`).
+  `raises=LookupError`). (Plan 043)
 - **Re-verified and sharpened `P24-DISPOSES-FIRSTMATCH`** against providify 2.0.1 @ `1402f0a` —
   the loop is unchanged; the report now names the enclosing function
   (`_register_module_providers`) and both its sync and async callers, and proposes a concrete
   `start = len(self._bindings)` slice-based fix. See
   `design/upstream-gaps/providify-disposes-first-match.md`, guarded by
-  `varco_redis/tests/test_redis_cache_disposes.py` (unchanged, still `xfailed`).
-
-No runtime behaviour changes; no public API changes.
-
-### Documentation / Tests (Plan 044, DI-15 third ask)
-
+  `varco_redis/tests/test_redis_cache_disposes.py` (unchanged, still `xfailed`). (Plan 043)
 - **Filed `P27-FALLBACK-BINDING`** — providify 2.0.1 has no `@DefaultBean`-style fallback
   binding; framework defaults are a `priority=-sys.maxsize-1` heuristic that loses an
   equal-priority collision by registration order (`providify/container.py:2382`) and is never
@@ -721,9 +781,16 @@ No runtime behaviour changes; no public API changes.
   (request-relative, active-candidates-only shadowing) plus `IssueKind.FALLBACK_SHADOWED`. See
   `design/upstream-gaps/providify-fallback-binding.md`, guarded by
   `varco_core/tests/test_providify_upstream_gaps.py::TestP27FallbackBinding` (two strict
-  xfails, `raises=ImportError` / `raises=AttributeError`).
+  xfails, `raises=ImportError` / `raises=AttributeError`). (Plan 044)
 
-No runtime behaviour changes; no public API changes.
+### Documentation
+
+- **The one DI guide** — `technical_docs/features/dependency-injection.md` restructured into fourteen sections (a new one-screen "The contract", "Generated references", one merged Pitfalls table, "See also"); the Plan 045 banner removed. (Plan 058)
+- **The 3.x → 4.0 migration guide** — `technical_docs/migrations/3-to-4.md`, every plan's §Migration assembled in the order a user hits them, ending with `varco diagnose --check`. (Plan 058)
+- **Generated references** — `technical_docs/entry-points.md` joins `di-catalogue.md` (Plan 047) and `settings-reference.md` (Plan 048) under a "Generated reference" nav group; `ARCHITECTURE.md`'s "DI Wiring" section is now the generated entry-point table. (Plan 058)
+- README gains one "Wiring an app" chapter (ten subsections, each snippet naming its backing test); CLAUDE.md's DI sections are a routing table again (the taxonomy table is a pointer to the generated one). (Plan 058)
+- `CONTRIBUTING.md` §Mechanism records the 5.0.0 re-label and the floor test. (Plan 058)
+- FLIP-14 provisioning-authority model for `mount_tenant_admin` recorded (Plan 055 §D-flip14, `technical_docs/features/admin-surface-tenancy.md`) — design only. (Plan 055)
 
 ## [3.2.0] — 2026-09-12
 

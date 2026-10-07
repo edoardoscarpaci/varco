@@ -101,7 +101,7 @@ async def bus_and_consumer(nats_url):
         Tuple of ``(NatsEventBus, OrderConsumer)`` — both ready to use.
 
     Edge cases:
-        - Subscriptions from ``consumer._setup()`` are registered on the
+        - Subscriptions from ``consumer.register_to(bus)`` are registered on the
           bus before ``start()`` is called.  ``start()`` then creates the
           durable JetStream consumer and begins receiving messages.
         - ``stop()`` is called in the ``finally`` block — guaranteed even
@@ -132,8 +132,8 @@ async def bus_and_consumer(nats_url):
 
     # Build consumer and register @listen methods BEFORE start() so the bus
     # records which channels to create JetStream consumers for on connect.
-    _consumer = OrderConsumer(bus=_bus)
-    _consumer._setup()
+    _consumer = OrderConsumer()
+    _consumer.register_to(_bus)
 
     await _bus.start()
     try:

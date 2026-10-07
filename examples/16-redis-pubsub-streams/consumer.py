@@ -11,8 +11,17 @@ Pattern
 -------
 The ``@listen`` decorator is **declarative** — it stores metadata on the
 method at class-definition time.  No subscription is created until
-``self.register_to(bus)`` is called (in the ``@PostConstruct`` hook).  This
-separation keeps the consumer bus-agnostic and easy to test.
+``register_to(bus)`` is called.  The consumer holds no bus reference at all,
+which keeps it bus-agnostic and easy to test.
+
+Registration (Plan 051 / DI-5)
+------------------------------
+In a DI-wired app, declare the consumer a ``@Singleton`` and bind it in the
+container: ``CoreModule.start()`` registers every bound ``EventConsumer``
+after the bus has started — no ``@PostConstruct`` hook and no hand-written
+``register_to()`` call.  This example is deliberately **not** DI-wired (see
+``app.py``), so ``create_app`` calls ``consumer.register_to(bus)`` itself —
+the documented path for non-DI consumers (tests, scripts, focused examples).
 
 DESIGN: in-memory notification list over a database
     ✅ Keeps the example laser-focused on the event bus mechanics.
@@ -27,8 +36,7 @@ Async safety:   ✅  ``on_order`` is ``async def``; list.append() is GIL-safe.
 from __future__ import annotations
 
 from events import OrderPlacedEvent
-from providify import PostConstruct
-from varco_core.event import AbstractEventBus, EventConsumer, listen
+from varco_core.event import EventConsumer, listen
 
 
 class OrderConsumer(EventConsumer):
@@ -40,13 +48,10 @@ class OrderConsumer(EventConsumer):
     list to serve the ``GET /v1/notifications`` endpoint.
 
     Lifecycle:
-        ``_setup()`` (``@PostConstruct``) registers all ``@listen`` methods
-        with the bus.  This must be called before any events arrive — the
-        ``create_app`` factory calls ``_setup()`` explicitly when not using
-        a DI container.
-
-    Args:
-        bus: The event bus to subscribe to.  Injected or passed directly.
+        Construction creates no subscription.  ``register_to(bus)`` wires
+        every ``@listen`` method — ``create_app`` calls it explicitly (this
+        example is not DI-wired); a container-bound ``@Singleton`` consumer
+        is instead registered by ``CoreModule.start()`` (Plan 051 / DI-5).
 
     Attributes:
         received: Ordered list of ``OrderPlacedEvent`` objects seen so far.
@@ -55,40 +60,30 @@ class OrderConsumer(EventConsumer):
     Async safety:   ✅  Handler is ``async def``; list.append() is atomic.
 
     Edge cases:
-        - Events published before ``_setup()`` is called are silently lost
-          (no subscription exists yet).
+        - Events published before ``register_to(bus)`` is called are
+          silently lost (no subscription exists yet).
         - There is no maximum list size — in production, add eviction or
           pagination to avoid unbounded memory growth.
     """
 
-    def __init__(self, bus: AbstractEventBus) -> None:
+    def __init__(self) -> None:
         """
-        Args:
-            bus: The event bus this consumer will subscribe to.
-        """
-        # Store bus reference for use in @PostConstruct — NOT for publishing.
-        # Only EventConsumer.register_to() may hold/call the bus directly.
-        self._bus = bus
+        Create the consumer with an empty ``received`` list.
 
+        DESIGN: no bus constructor argument
+            ✅ The consumer never holds the bus — only ``register_to()``
+               touches it, so the "only EventConsumer.register_to() may call
+               the bus" rule holds by construction.
+            ✅ The same class works unchanged under DI auto-registration
+               (``CoreModule.start()``) and under an explicit
+               ``register_to()`` call.
+            ❌ The caller must remember to call ``register_to(bus)`` when
+               not using a container — ``create_app`` does.
+            Rejected: subscribing from a providify post-construct hook —
+            superseded by DI auto-registration in 4.0 (Plan 051 / DI-5).
+        """
         # In-memory store — accumulates every OrderPlacedEvent received.
         self.received: list[OrderPlacedEvent] = []
-
-    @PostConstruct
-    def _setup(self) -> None:
-        """
-        Wire all ``@listen``-decorated methods to the bus.
-
-        Called once after construction (either by the DI container via
-        ``@PostConstruct`` or explicitly by ``create_app``).  After this
-        call, the bus will dispatch matching events to ``on_order``.
-
-        Edge cases:
-            - Calling twice is safe — ``register_to()`` is idempotent for
-              the same bus reference.
-        """
-        # register_to() is the only call that creates real subscriptions.
-        # @listen stores metadata only; no subscription exists until here.
-        self.register_to(self._bus)
 
     @listen(OrderPlacedEvent, channel="orders")
     async def on_order(self, event: OrderPlacedEvent) -> None:

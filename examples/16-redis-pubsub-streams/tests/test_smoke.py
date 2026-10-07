@@ -77,7 +77,7 @@ async def bus_and_consumer(redis_url):
         Tuple of ``(RedisEventBus, OrderConsumer)`` — both ready to use.
 
     Edge cases:
-        - Subscriptions from ``consumer._setup()`` are registered on the
+        - Subscriptions from ``consumer.register_to(bus)`` are registered on the
           bus before ``start()`` is called.  ``start()`` then subscribes
           to the matching Redis channels immediately.
         - ``stop()`` is called in the ``finally`` block — guaranteed even
@@ -92,8 +92,8 @@ async def bus_and_consumer(redis_url):
 
     # Build consumer and register @listen methods BEFORE start() so the bus
     # knows which channels to subscribe to when it connects to Redis.
-    _consumer = OrderConsumer(bus=_bus)
-    _consumer._setup()
+    _consumer = OrderConsumer()
+    _consumer.register_to(_bus)
 
     await _bus.start()
     try:

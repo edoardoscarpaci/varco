@@ -250,6 +250,9 @@ def warn_deprecated(
                      a pytest ``error:<subject-regex>`` filter can match it.
         since:       Version in which the deprecation began.
         removed_in:  Version in which the path stops working. Required.
+                     Must respect the 12-month floor from the ``since``
+                     release's CHANGELOG date — ``test_deprecation_floor.py``
+                     enforces it.
         replacement: What to use instead, or ``None``.
         stacklevel:  ``warnings.warn`` stacklevel, counted from *this*
                      helper: ``2`` (default) blames the helper's caller; a
@@ -310,6 +313,9 @@ def deprecated(
         since:       Version in which the deprecation began, e.g. ``"3.0.0"``.
         removed_in:  Version in which the symbol will be removed. Required —
                      see this module's DESIGN block.
+                     Must respect the 12-month floor from the ``since``
+                     release's CHANGELOG date — ``test_deprecation_floor.py``
+                     enforces it.
         replacement: Name of the preferred replacement, if there is one.
         name:        Override for the deprecated name used in the message.
                      Needed when building a **deprecated alias of a renamed
@@ -339,7 +345,7 @@ def deprecated(
           not stack it.
 
     Example:
-        >>> @deprecated(since="3.0.0", removed_in="4.0.0", replacement="render_rls_ddl")
+        >>> @deprecated(since="3.0.0", removed_in="5.0.0", replacement="render_rls_ddl")
         ... def enable_rls_ddl() -> list[str]:
         ...     return []
     """
@@ -481,17 +487,17 @@ def deprecated_alias(
         from varco_core.migration.errors import SchemaMigrationError
 
         __getattr__ = deprecated_alias(
-            "MigrationError", SchemaMigrationError, since="3.0.0", removed_in="4.0.0"
+            "MigrationError", SchemaMigrationError, since="3.0.0", removed_in="5.0.0"
         )
 
     Chain ``fallback=`` to serve more than one alias from a single module,
     innermost alias first::
 
         __getattr__ = deprecated_alias(
-            "MigrationPlan", SchemaMigrationPlan, since="3.0.0", removed_in="4.0.0",
+            "MigrationPlan", SchemaMigrationPlan, since="3.0.0", removed_in="5.0.0",
             fallback=deprecated_alias(
                 "MigrationError", SchemaMigrationError,
-                since="3.0.0", removed_in="4.0.0",
+                since="3.0.0", removed_in="5.0.0",
             ),
         )
 
@@ -502,6 +508,9 @@ def deprecated_alias(
                      are unaffected by the rename.
         since:       Version in which the deprecation began.
         removed_in:  Version in which the old name stops resolving. Required.
+                     Must respect the 12-month floor from the ``since``
+                     release's CHANGELOG date — ``test_deprecation_floor.py``
+                     enforces it.
         fallback:    Another ``__getattr__``-shaped callable to consult for
                      any name this one does not serve. Use it to chain
                      several aliases in one module.

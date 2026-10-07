@@ -272,7 +272,7 @@ def test_k_deprecations_contains_a_record_after_a_deprecated_call() -> None:
 
     reset_fired_deprecations()
 
-    @deprecated(since="3.0.0", removed_in="4.0.0")
+    @deprecated(since="3.0.0", removed_in="5.0.0")
     def _old() -> None:
         return None
 

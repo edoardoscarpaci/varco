@@ -169,10 +169,12 @@ __all__ = [
 # varco_beanie.bootstrap import BeanieConfig`` was this module's own documented
 # import path — so serving it only from the root would have been a hard break
 # for exactly the callers who followed the docstring. Resolves to the identical
-# ``BeanieSettings`` class; deliberately out of ``__all__``; removed in 4.0.0.
+# ``BeanieSettings`` class; deliberately out of ``__all__``; removed in 5.0.0
+# (deprecated since 3.0.0; the 12-month floor put 4.0.0 out of reach —
+# CONTRIBUTING.md §Removal window).
 __getattr__ = deprecated_alias(
     "BeanieConfig",
     BeanieSettings,
     since="3.0.0",
-    removed_in="4.0.0",
+    removed_in="5.0.0",
 )

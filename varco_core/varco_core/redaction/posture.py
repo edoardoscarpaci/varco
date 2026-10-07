@@ -80,15 +80,15 @@ def inspect_redaction_posture(
         ``check`` ids:
 
         - ``redaction.audit.disabled`` (``warn``): an inspected
-          ``AuditLogMixin`` subclass **opted out** of the 4.0 default —
-          ``_audit_redactor = None`` and no ``_audit_diff`` override.
+            ``AuditLogMixin`` subclass **opted out** of the 4.0 default —
+            ``_audit_redactor = None`` and no ``_audit_diff`` override.
         - ``redaction.error_params.disabled`` (``warn``):
-          ``ErrorEnvelopeSettings.redact_params is False``.
+            ``ErrorEnvelopeSettings.redact_params is False``.
         - ``redaction.default.custom`` (``info``): ``default_redactor()``
-          is not a ``PolicyRedactor``.
+            is not a ``PolicyRedactor``.
         - ``redaction.patterns.substring_mode`` (``info``): the process
-          default **opted out** of word-boundary matching
-          (``match_mode="substring"``).
+            default **opted out** of word-boundary matching
+            (``match_mode="substring"``).
 
     Edge cases:
         - The *class* attribute ``_audit_redactor`` is read — an opt-out

@@ -56,7 +56,7 @@ def deprecated_alias(deprecation_module):
 def test_decorated_function_emits_deprecation_warning(deprecated) -> None:
     """The category must be DeprecationWarning — not UserWarning, not FutureWarning."""
 
-    @deprecated(since="3.0.0", removed_in="4.0.0", replacement="new_fn")
+    @deprecated(since="3.0.0", removed_in="5.0.0", replacement="new_fn")
     def old_fn() -> int:
         return 7
 
@@ -67,7 +67,7 @@ def test_decorated_function_emits_deprecation_warning(deprecated) -> None:
 def test_warning_message_names_since_removed_in_and_replacement(deprecated) -> None:
     """All three metadata values must be greppable in the emitted text (RL-9 relies on it)."""
 
-    @deprecated(since="3.0.0", removed_in="4.0.0", replacement="render_rls_ddl")
+    @deprecated(since="3.0.0", removed_in="5.0.0", replacement="render_rls_ddl")
     def old_fn() -> int:
         return 7
 
@@ -76,7 +76,7 @@ def test_warning_message_names_since_removed_in_and_replacement(deprecated) -> N
 
     message = str(record[0].message)
     assert "3.0.0" in message
-    assert "4.0.0" in message
+    assert "5.0.0" in message
     assert "render_rls_ddl" in message
     assert "old_fn" in message
 
@@ -100,7 +100,7 @@ def test_deprecated_is_keyword_only(deprecated) -> None:
 def test_stacklevel_points_at_the_caller_not_the_decorator(deprecated) -> None:
     """A warning attributed to varco_core/deprecation.py is useless — it must blame this file."""
 
-    @deprecated(since="3.0.0", removed_in="4.0.0", replacement="new_fn")
+    @deprecated(since="3.0.0", removed_in="5.0.0", replacement="new_fn")
     def old_fn() -> int:
         return 7
 
@@ -116,7 +116,7 @@ def test_alias_access_stacklevel_points_at_the_caller(deprecated_alias) -> None:
     class Target:
         pass
 
-    module_getattr = deprecated_alias("OldName", Target, since="3.0.0", removed_in="4.0.0")
+    module_getattr = deprecated_alias("OldName", Target, since="3.0.0", removed_in="5.0.0")
 
     with pytest.warns(DeprecationWarning) as record:
         module_getattr("OldName")
@@ -130,7 +130,7 @@ def test_alias_access_stacklevel_points_at_the_caller(deprecated_alias) -> None:
 def test_decorated_function_still_returns_its_real_value(deprecated) -> None:
     """A deprecation must never change semantics — only add a warning."""
 
-    @deprecated(since="3.0.0", removed_in="4.0.0", replacement="new_fn")
+    @deprecated(since="3.0.0", removed_in="5.0.0", replacement="new_fn")
     def old_fn(a: int, b: int = 2) -> int:
         return a + b
 
@@ -143,7 +143,7 @@ def test_decorated_function_still_returns_its_real_value(deprecated) -> None:
 def test_decorated_function_keeps_wraps_metadata(deprecated) -> None:
     """functools.wraps — otherwise the api_surface snapshot and mypy both see a different symbol."""
 
-    @deprecated(since="3.0.0", removed_in="4.0.0", replacement="new_fn")
+    @deprecated(since="3.0.0", removed_in="5.0.0", replacement="new_fn")
     def old_fn() -> int:
         """Original docstring."""
         return 7
@@ -157,7 +157,7 @@ def test_decorated_function_keeps_wraps_metadata(deprecated) -> None:
 async def test_async_function_survives_the_decorator(deprecated) -> None:
     """The repo is async-heavy — the decorator must not turn a coroutine fn into a plain one."""
 
-    @deprecated(since="3.0.0", removed_in="4.0.0", replacement="new_afn")
+    @deprecated(since="3.0.0", removed_in="5.0.0", replacement="new_afn")
     async def old_afn(value: int) -> int:
         return value * 2
 
@@ -177,7 +177,7 @@ def test_decorating_a_class_warns_on_instantiation_not_at_decoration(deprecated)
     with warnings.catch_warnings(record=True) as at_decoration:
         warnings.simplefilter("always")
 
-        @deprecated(since="3.0.0", removed_in="4.0.0", replacement="NewCls")
+        @deprecated(since="3.0.0", removed_in="5.0.0", replacement="NewCls")
         class OldCls:
             def __init__(self, value: int = 1) -> None:
                 self.value = value
@@ -196,7 +196,7 @@ def test_decorated_class_is_still_the_same_class_for_isinstance(deprecated) -> N
     class Base:
         pass
 
-    @deprecated(since="3.0.0", removed_in="4.0.0", replacement="NewCls")
+    @deprecated(since="3.0.0", removed_in="5.0.0", replacement="NewCls")
     class OldCls(Base):
         pass
 
@@ -218,7 +218,7 @@ def test_alias_returns_the_identical_target_object(deprecated_alias) -> None:
     class NewError(Exception):
         pass
 
-    module_getattr = deprecated_alias("OldError", NewError, since="3.0.0", removed_in="4.0.0")
+    module_getattr = deprecated_alias("OldError", NewError, since="3.0.0", removed_in="5.0.0")
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
@@ -233,7 +233,7 @@ def test_alias_isinstance_and_except_still_work(deprecated_alias) -> None:
     class NewError(Exception):
         pass
 
-    module_getattr = deprecated_alias("OldError", NewError, since="3.0.0", removed_in="4.0.0")
+    module_getattr = deprecated_alias("OldError", NewError, since="3.0.0", removed_in="5.0.0")
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
@@ -253,7 +253,7 @@ def test_alias_message_names_since_removed_in_and_target(deprecated_alias) -> No
     class NewError(Exception):
         pass
 
-    module_getattr = deprecated_alias("OldError", NewError, since="3.0.0", removed_in="4.0.0")
+    module_getattr = deprecated_alias("OldError", NewError, since="3.0.0", removed_in="5.0.0")
 
     with pytest.warns(DeprecationWarning) as record:
         module_getattr("OldError")
@@ -262,7 +262,7 @@ def test_alias_message_names_since_removed_in_and_target(deprecated_alias) -> No
     assert "OldError" in message
     assert "NewError" in message
     assert "3.0.0" in message
-    assert "4.0.0" in message
+    assert "5.0.0" in message
 
 
 def test_alias_raises_attribute_error_for_an_unknown_name(deprecated_alias) -> None:
@@ -271,7 +271,7 @@ def test_alias_raises_attribute_error_for_an_unknown_name(deprecated_alias) -> N
     class NewError(Exception):
         pass
 
-    module_getattr = deprecated_alias("OldError", NewError, since="3.0.0", removed_in="4.0.0")
+    module_getattr = deprecated_alias("OldError", NewError, since="3.0.0", removed_in="5.0.0")
 
     with pytest.raises(AttributeError) as exc:
         module_getattr("TotallyUnrelated")
@@ -295,7 +295,7 @@ def test_alias_removed_in_is_required(deprecated_alias) -> None:
 def test_warns_once_per_call_under_simplefilter_always(deprecated) -> None:
     """Do not over-specify dedup: with `always` every call must produce exactly one warning."""
 
-    @deprecated(since="3.0.0", removed_in="4.0.0", replacement="new_fn")
+    @deprecated(since="3.0.0", removed_in="5.0.0", replacement="new_fn")
     def old_fn() -> int:
         return 7
 
@@ -312,7 +312,7 @@ def test_warns_once_per_call_under_simplefilter_always(deprecated) -> None:
 def test_warns_at_least_once_under_the_default_filter(deprecated) -> None:
     """Whatever the dedup mechanism, the first call from a fresh site must always warn."""
 
-    @deprecated(since="3.0.0", removed_in="4.0.0", replacement="new_fn")
+    @deprecated(since="3.0.0", removed_in="5.0.0", replacement="new_fn")
     def old_fn() -> int:
         return 7
 

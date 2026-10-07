@@ -13,7 +13,8 @@ which both implement ``AbstractMigrator`` defined here.
 **Renamed in 3.0.0 (Plan 022 / AB-2).** This package's ``MigrationError`` and
 ``MigrationPlan`` are now ``SchemaMigrationError`` and ``SchemaMigrationPlan``.
 The old names still resolve here, to the *identical* objects, and emit a
-``DeprecationWarning``; they are removed in 4.0.0. The rename exists because
+``DeprecationWarning``; they are removed in 5.0.0 (floor: 2027-08-31 — the
+12-month window put 4.0.0 out of reach). The rename exists because
 the unrelated, older ``varco_core.migrator`` (domain data/field migration)
 already owned both bare names at the ``varco_core`` top level, which forced
 two deliberate re-export holes. Renaming the *newer, narrower* pair closes
@@ -63,11 +64,11 @@ __getattr__ = deprecated_alias(
     "MigrationPlan",
     SchemaMigrationPlan,
     since="3.0.0",
-    removed_in="4.0.0",
+    removed_in="5.0.0",
     fallback=deprecated_alias(
         "MigrationError",
         SchemaMigrationError,
         since="3.0.0",
-        removed_in="4.0.0",
+        removed_in="5.0.0",
     ),
 )

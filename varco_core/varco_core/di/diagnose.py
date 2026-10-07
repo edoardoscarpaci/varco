@@ -168,9 +168,12 @@ async def diagnose(
         validate: Whether to run ``container.validate(raise_on_error=
             False)``. Module-level ``validate()`` slots always run,
             independent of this flag.
-        environment, enforce, enforce_source: Report-header values the
-            caller read from ``SecurityPostureSettings`` (``varco_core``
-            cannot import it); default ``"unknown"``.
+        environment: Report-header value the caller read from
+            ``SecurityPostureSettings`` (``varco_core`` cannot import it);
+            default ``"unknown"``.
+        enforce: Report-header value, same sourcing as ``environment``.
+        enforce_source: Report-header value, same sourcing as
+            ``environment``.
 
     Returns:
         A ``WiringReport``. Never raises on an ERROR/WARNING finding —
@@ -260,8 +263,11 @@ async def run_wiring_preflight(
             always refuses, regardless of this flag).
         extra_deprecations: Direct-site records the caller captured with
             :func:`capture_direct_deprecations` around its own setup.
-        environment, enforce, enforce_source: Report-header values the
-            caller read from ``SecurityPostureSettings``.
+        environment: Report-header value the caller read from
+            ``SecurityPostureSettings``.
+        enforce: Report-header value, same sourcing as ``environment``.
+        enforce_source: Report-header value, same sourcing as
+            ``environment``.
 
     Returns:
         The assembled ``WiringReport``, when it does not refuse.

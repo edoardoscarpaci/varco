@@ -166,9 +166,8 @@ class TenantSource(ABC):
             A ``TenantClaim`` naming this source's ``trust``, or ``None``
             when this source has nothing to say about ``request``.
 
-        Raises:
-            Nothing — see the class *Edge cases* above. A subclass that
-            raises degrades the chain but never the request.
+        Never raises — see the class *Edge cases* above. A subclass that
+        raises degrades the chain but never the request.
         """
         raise NotImplementedError
 

@@ -141,7 +141,6 @@ class PostureCollector(ABC):
         Returns:
             Zero or more ``PostureFinding``s.
 
-        Raises:
-            Nothing — see the class *Edge cases* above.
+        Never raises — see the class *Edge cases* above.
         """
         raise NotImplementedError

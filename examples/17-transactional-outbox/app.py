@@ -159,9 +159,12 @@ def create_app(db_url: str | None = None) -> tuple[FastAPI, DIContainer]:
 
     relay = OutboxRelay(outbox=relay_outbox_repo, bus=bus, poll_interval=0.1)
 
-    # Consumer wires @listen to the bus; deduplicator guards against replays.
-    consumer = OrderConsumer(bus=bus, deduplicator=dedup)
-    consumer._setup()
+    # register_to(bus) installs the @listen subscriptions; the deduplicator
+    # guards against relay replays.  Called explicitly because this example is
+    # not DI-wired — a container-bound @Singleton consumer would be registered
+    # by CoreModule.start() (Plan 051 / DI-5).
+    consumer = OrderConsumer(deduplicator=dedup)
+    consumer.register_to(bus)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:

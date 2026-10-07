@@ -87,7 +87,7 @@ def create_app(
         - If ``bus`` is ``None`` and NATS is unreachable, ``bus.start()``
           raises ``ConnectionError`` during the ASGI lifespan — FastAPI
           propagates this as a startup error.
-        - The ``OrderConsumer`` calls ``_setup()`` (i.e. ``register_to()``)
+        - ``create_app`` calls ``consumer.register_to(bus)``
           immediately after construction so subscriptions are active before
           the first request is served.
         - JetStream stream creation (``auto_create_stream=True``) happens
@@ -113,12 +113,12 @@ def create_app(
     # Producer wraps the bus — router handlers call _produce(), never bus.publish().
     producer = BusEventProducer(bus=_bus)
 
-    # Consumer registers its @listen methods immediately.
-    # _setup() calls register_to(bus) which installs subscriptions on the bus.
-    # NatsEventBus records the subscriptions and creates JetStream consumers
-    # inside start() — registering before start() is the correct order.
-    consumer = OrderConsumer(bus=_bus)
-    consumer._setup()  # explicit call — no DI container here
+    # register_to(bus) installs the @listen subscriptions on the bus.  It is
+    # called explicitly because this example is not DI-wired — a container-
+    # bound @Singleton consumer would be registered by CoreModule.start()
+    # (Plan 051 / DI-5).  Subscriptions are recorded even before bus.start().
+    consumer = OrderConsumer()
+    consumer.register_to(_bus)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:

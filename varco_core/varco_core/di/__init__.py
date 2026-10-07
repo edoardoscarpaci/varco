@@ -177,7 +177,10 @@ def bind_instance(
 
     Example::
 
-        bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))
+        bind_instance(container, AbstractFeatureFlags, InMemoryFeatureFlags())
+
+        # A settings class goes through varco_core.settings.bind_settings()
+        # instead (Plan 048 / DI-6) — never bind_instance.
 
         # With a disposer (Plan 050 / P-DISP shim):
         store = RedisTokenRevocationStore(url=...)

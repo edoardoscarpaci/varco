@@ -32,7 +32,7 @@ def _reset_ledger() -> None:
     reset_fired_deprecations()
 
 
-@deprecated(since="3.0.0", removed_in="4.0.0", replacement="new_thing")
+@deprecated(since="3.0.0", removed_in="5.0.0", replacement="new_thing")
 def _old_thing() -> str:
     return "ok"
 
@@ -49,7 +49,7 @@ def test_calling_a_deprecated_function_twice_records_one_entry_with_count_two() 
     record = records[0]
     assert record.count == 2
     assert record.since == "3.0.0"
-    assert record.removed_in == "4.0.0"
+    assert record.removed_in == "5.0.0"
     assert record.replacement == "new_thing"
 
 

@@ -125,10 +125,12 @@ __all__ = [
 # ``BeanieSettings`` — the same four fields, bridged by KI-10's manual remap.
 # The alias resolves to the *identical* class, so `isinstance(x, BeanieConfig)`
 # and any existing construction keep working. Deliberately kept out of
-# ``__all__``: a deprecated name should not be advertised. Removed in 4.0.0.
+# ``__all__``: a deprecated name should not be advertised. Removed in 5.0.0
+# (deprecated since 3.0.0; the 12-month floor put 4.0.0 out of reach —
+# CONTRIBUTING.md §Removal window).
 __getattr__ = deprecated_alias(
     "BeanieConfig",
     BeanieSettings,
     since="3.0.0",
-    removed_in="4.0.0",
+    removed_in="5.0.0",
 )

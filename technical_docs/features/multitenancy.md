@@ -731,7 +731,7 @@ worker_service = TenantControlService(
     store_id="orders",  # or VARCO_TENANCY_STORE_ID
 )
 worker_consumer = TenantProvisionConsumer(control_service=worker_service, dlq=my_dlq)
-worker_consumer.register_to(bus)  # from @PostConstruct
+worker_consumer.register_to(bus)  # after the bus has started — or contribute it (CoreModule auto-registers)
 ```
 
 `request_deprovision(tenant_id, confirm=False)` raises
@@ -773,7 +773,7 @@ coordinator = TenantReadinessCoordinator(
     timeout_s=900.0,  # None disables the watchdog
     dlq=my_dlq,
 )
-coordinator.register_to(bus)  # from @PostConstruct — never __init__
+coordinator.register_to(bus)  # after the bus has started — never __init__
 ```
 
 ### Why the unit is a store, not a pod

@@ -255,7 +255,7 @@ class LifecycleRunner:
         shutdown: Optional async hook awaited **after** the last ``stop()``
             call — even when ``setup`` raised. Never raises out of this
             runner; failures are logged and contained (§D-failures) —
-          typically ``container.ashutdown()``.
+            typically ``container.ashutdown()``.
 
     Attributes:
         last_failures: Every ``stop()`` failure from the most recent normal

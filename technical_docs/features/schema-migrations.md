@@ -43,7 +43,8 @@ current before it accepts traffic.
 ```python
 from sqlalchemy.ext.asyncio import create_async_engine
 from varco_fastapi import create_varco_app
-from varco_fastapi.modules import MigrationsModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import MigrationsModule
 from varco_sa.migration import AlembicMigrator
 
 engine = create_async_engine("postgresql+asyncpg://…")
@@ -131,20 +132,27 @@ All inherit `MigrationError`, so one `except MigrationError` catches the family:
 | `IrreversibleMigrationError` | `downgrade()` hit a migration with no `down()` |
 | `MigrationBackendUnavailable` | an optional extra is missing — the message names the exact `pip install` line |
 
-### ⚠️ `MigrationError` and `MigrationPlan` are not re-exported from `varco_core`
+### Renamed in 3.0.0: `SchemaMigrationError` / `SchemaMigrationPlan` (Plan 022 / AB-2)
 
 `varco_core.migrator` — the pre-existing, **unrelated** domain-model data/field
-migration module — already owns those two names at the package's top level. To avoid a
-silent collision, the schema-migration versions are deliberately **not** re-exported
-from `varco_core`. Import them from the submodule:
+migration module — already owns the bare names `MigrationError`/`MigrationPlan` at the
+package's top level. Since 3.0.0 the schema-migration pair is therefore named
+`SchemaMigrationError`/`SchemaMigrationPlan` and **is** re-exported from `varco_core`, so an
+import site says which concept it means:
 
 ```python
-from varco_core.migration import MigrationError, MigrationPlan  # ✅ schema migrations
+from varco_core import SchemaMigrationError, SchemaMigrationPlan  # ✅ schema migrations
 from varco_core import MigrationError  # ⚠️ the OTHER one (varco_core.migrator)
 ```
 
+`varco_core.migration.MigrationError` / `.MigrationPlan` still resolve, to the identical
+objects, with a `DeprecationWarning` — **removed in 5.0.0** (floor: 2027-08-31; the
+12-month window from 3.0.0's release put 4.0.0 out of reach — `CONTRIBUTING.md` §Removal
+window). The bare names in the snippets above are the 3.0 shapes; read them as the
+`Schema*` names.
+
 Everything else — `AbstractMigrator`, `Revision`, `MigrationReport`,
-`MigrationSettings`, `InMemoryMigrator`, and the other three exceptions — **is**
+`MigrationSettings`, `InMemoryMigrator`, and the other three exceptions — is
 available directly from `varco_core`.
 
 ### `InMemoryMigrator`

@@ -83,3 +83,10 @@ guarded below.
 
 `varco_core/tests/test_providify_contracts.py::TestP29DescriptorFallbackField::test_binding_descriptor_carries_fallback`
 — `strict=True` xfail, `raises=AssertionError`.
+
+## 8. Status at 4.0.0 (Plan 058 audit)
+
+Open. Since Plan 047 the one private `container._bindings` read lives in
+`varco_core.di.introspect.inspect_bindings()` (the testkit's `fallback_bindings()` is now an alias
+of it), so the shim is still exactly one call site — it simply moved. It blocks nothing else in
+4.0. Named in `CHANGELOG.md` `[4.0.0]` → Upstream; the guard above is still `xfailed`.

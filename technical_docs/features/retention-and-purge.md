@@ -151,7 +151,8 @@ from datetime import timedelta
 from varco_core.di.collect import contribute
 from varco_core.retention.policy import RetentionPolicy
 from varco_core.retention.targets import DlqRetentionTarget, AuditRetentionTarget
-from varco_fastapi.modules import RetentionModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import RetentionModule
 from varco_fastapi.app import create_varco_app
 
 contribute(

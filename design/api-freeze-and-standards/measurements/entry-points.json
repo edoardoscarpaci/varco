@@ -1,0 +1,748 @@
+{
+  "entry_points": [
+    {
+      "family": "async_bootstrap",
+      "module": "varco_memcached.di",
+      "name": "async_bootstrap",
+      "package": "varco_memcached",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "family": "async_bootstrap",
+      "module": "varco_redis.di",
+      "name": "async_bootstrap",
+      "package": "varco_redis",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "family": "bind",
+      "module": "varco_beanie.di",
+      "name": "bind_repositories",
+      "package": "varco_beanie",
+      "signature": "(container: 'DIContainer', *entity_classes: 'type[DomainModel]') -> 'DIContainer'"
+    },
+    {
+      "family": "bind",
+      "module": "varco_core.di",
+      "name": "bind_instance",
+      "package": "varco_core",
+      "signature": "(container: 'DIContainer', interface: 'Any', instance: 'Any', *, qualifier: 'str | None' = None, disposer: 'Callable[[Any], Any] | None' = None) -> 'ProviderBinding'"
+    },
+    {
+      "family": "bind",
+      "module": "varco_core.di.select",
+      "name": "bind_env_overrides",
+      "package": "varco_core",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "family": "bind",
+      "module": "varco_core.event.cloudevents",
+      "name": "bind_cloudevents_serializer",
+      "package": "varco_core",
+      "signature": "(container: 'DIContainer', settings: 'CloudEventsSettings') -> 'DIContainer'"
+    },
+    {
+      "family": "bind",
+      "module": "varco_core.settings.bind",
+      "name": "bind_settings",
+      "package": "varco_core",
+      "signature": "(container: 'DIContainer', cls: 'type[BaseSettings]', *, instance: 'BaseSettings | None' = None, qualifier: 'str | None' = None, env_prefix: 'str | None' = None) -> 'BaseSettings'"
+    },
+    {
+      "family": "bind",
+      "module": "varco_core.settings.core",
+      "name": "bind_core_settings",
+      "package": "varco_core",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "family": "bind",
+      "module": "varco_core.tls.di",
+      "name": "bind_trust_store",
+      "package": "varco_core",
+      "signature": "(container: 'DIContainer', store: 'ReloadingTrustStore') -> 'DIContainer'"
+    },
+    {
+      "family": "bind",
+      "module": "varco_fastapi.client.peer",
+      "name": "bind_peers",
+      "package": "varco_fastapi",
+      "signature": "(container: 'DIContainer', mapping: 'Mapping[str, type]', *, registry: 'PeerRegistry | None' = None) -> 'DIContainer'"
+    },
+    {
+      "family": "bind",
+      "module": "varco_fastapi.di",
+      "name": "bind_clients",
+      "package": "varco_fastapi",
+      "signature": "(container: 'DIContainer', *client_classes: 'type') -> 'DIContainer'"
+    },
+    {
+      "family": "bind",
+      "module": "varco_fastapi.di",
+      "name": "bind_clients_from",
+      "package": "varco_fastapi",
+      "signature": "(container: 'DIContainer', *router_classes: 'type') -> 'DIContainer'"
+    },
+    {
+      "family": "bind",
+      "module": "varco_fastapi.router.mcp",
+      "name": "bind_mcp_adapter",
+      "package": "varco_fastapi",
+      "signature": "(container: 'DIContainer', router_cls: 'type', *, qualifier: 'str | None' = None, client_cls: 'type | None' = None, base_url: 'str | None' = None, tool_name_prefix: 'str' = '', enabled_routes: 'set[str] | None' = None) -> 'DIContainer'"
+    },
+    {
+      "family": "bind",
+      "module": "varco_fastapi.router.skill",
+      "name": "bind_skill_adapter",
+      "package": "varco_fastapi",
+      "signature": "(container: 'DIContainer', router_cls: 'type', *, agent_name: 'str', agent_description: 'str', agent_version: 'str' = '1.0.0', qualifier: 'str | None' = None, client_cls: 'type | None' = None, base_url: 'str | None' = None, enabled_routes: 'set[str] | None' = None, job_runner_cls: 'type | None' = None, job_store_cls: 'type | None' = None, conversation_store_cls: 'type | None' = None) -> 'DIContainer'"
+    },
+    {
+      "family": "bind",
+      "module": "varco_sa.di",
+      "name": "bind_repositories",
+      "package": "varco_sa",
+      "signature": "(container: 'DIContainer', *entity_classes: 'type[DomainModel]') -> 'DIContainer'"
+    },
+    {
+      "family": "bind",
+      "module": "varco_ws.di",
+      "name": "bind_sse_adapter",
+      "package": "varco_ws",
+      "signature": "(container: 'DIContainer', *, qualifier: 'str | None' = None, event_type: 'Any' = None, channel: 'str' = '*', max_queue_size: 'int' = 100) -> 'DIContainer'"
+    },
+    {
+      "family": "bind",
+      "module": "varco_ws.di",
+      "name": "bind_websocket_adapter",
+      "package": "varco_ws",
+      "signature": "(container: 'DIContainer', *, qualifier: 'str | None' = None, event_type: 'Any' = None, channel: 'str' = '*', max_queue_size: 'int' = 100, backpressure_policy: 'Any' = None) -> 'DIContainer'"
+    },
+    {
+      "family": "bootstrap",
+      "module": "varco_beanie.di",
+      "name": "bootstrap",
+      "package": "varco_beanie",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "family": "bootstrap",
+      "module": "varco_casbin.di",
+      "name": "bootstrap",
+      "package": "varco_casbin",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "family": "bootstrap",
+      "module": "varco_core.di",
+      "name": "bootstrap",
+      "package": "varco_core",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "family": "bootstrap",
+      "module": "varco_fastapi.di",
+      "name": "bootstrap",
+      "package": "varco_fastapi",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "family": "bootstrap",
+      "module": "varco_kafka.di",
+      "name": "bootstrap",
+      "package": "varco_kafka",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "family": "bootstrap",
+      "module": "varco_memcached.di",
+      "name": "bootstrap",
+      "package": "varco_memcached",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "family": "bootstrap",
+      "module": "varco_nats.di",
+      "name": "bootstrap",
+      "package": "varco_nats",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "family": "bootstrap",
+      "module": "varco_redis.di",
+      "name": "bootstrap",
+      "package": "varco_redis",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "family": "bootstrap",
+      "module": "varco_sa.di",
+      "name": "bootstrap",
+      "package": "varco_sa",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "family": "bootstrap",
+      "module": "varco_ws.di",
+      "name": "bootstrap",
+      "package": "varco_ws",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "depends_on": [],
+      "family": "configuration",
+      "module": "varco_beanie.di",
+      "name": "BeanieConfiguration",
+      "package": "varco_beanie"
+    },
+    {
+      "depends_on": [],
+      "family": "configuration",
+      "module": "varco_core.observability.di",
+      "name": "OtelConfiguration",
+      "package": "varco_core"
+    },
+    {
+      "depends_on": [],
+      "family": "configuration",
+      "module": "varco_fastapi.di",
+      "name": "VarcoFastAPIConfiguration",
+      "package": "varco_fastapi"
+    },
+    {
+      "depends_on": [],
+      "family": "configuration",
+      "module": "varco_kafka.dlq",
+      "name": "KafkaDLQConfiguration",
+      "package": "varco_kafka"
+    },
+    {
+      "depends_on": [],
+      "family": "configuration",
+      "module": "varco_memcached.cache",
+      "name": "MemcachedCacheConfiguration",
+      "package": "varco_memcached"
+    },
+    {
+      "depends_on": [],
+      "family": "configuration",
+      "module": "varco_nats.dlq",
+      "name": "NatsDLQConfiguration",
+      "package": "varco_nats"
+    },
+    {
+      "depends_on": [],
+      "family": "configuration",
+      "module": "varco_redis.bulkhead",
+      "name": "RedisBulkheadConfiguration",
+      "package": "varco_redis"
+    },
+    {
+      "depends_on": [],
+      "family": "configuration",
+      "module": "varco_redis.bus",
+      "name": "RedisEventBusSelectorConfiguration",
+      "package": "varco_redis"
+    },
+    {
+      "depends_on": [],
+      "family": "configuration",
+      "module": "varco_redis.cache",
+      "name": "RedisCacheConfiguration",
+      "package": "varco_redis"
+    },
+    {
+      "depends_on": [],
+      "family": "configuration",
+      "module": "varco_redis.cache",
+      "name": "RedisLayeredCacheConfiguration",
+      "package": "varco_redis"
+    },
+    {
+      "depends_on": [],
+      "family": "configuration",
+      "module": "varco_redis.dlq",
+      "name": "RedisDLQConfiguration",
+      "package": "varco_redis"
+    },
+    {
+      "depends_on": [],
+      "family": "configuration",
+      "module": "varco_redis.stores",
+      "name": "RedisStoresConfiguration",
+      "package": "varco_redis"
+    },
+    {
+      "depends_on": [],
+      "family": "configuration",
+      "module": "varco_redis.stream_dlq",
+      "name": "RedisStreamDLQConfiguration",
+      "package": "varco_redis"
+    },
+    {
+      "depends_on": [],
+      "family": "configuration",
+      "module": "varco_sa.di",
+      "name": "SAConfiguration",
+      "package": "varco_sa"
+    },
+    {
+      "family": "enable",
+      "module": "varco_casbin.di",
+      "name": "enable_policy_authorizer",
+      "package": "varco_casbin",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "family": "enable",
+      "module": "varco_core.auth.di",
+      "name": "enable_authorization_audit",
+      "package": "varco_core",
+      "signature": "(container: 'DIContainer', *, policy: 'AuditDecisionPolicy' = <AuditDecisionPolicy.DENIALS: 'denials'>) -> 'DIContainer'"
+    },
+    {
+      "family": "enable",
+      "module": "varco_core.flags.di",
+      "name": "enable_feature_flags",
+      "package": "varco_core",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "family": "enable",
+      "module": "varco_core.revocation.di",
+      "name": "enable_token_revocation",
+      "package": "varco_core",
+      "signature": "(container: 'DIContainer') -> 'DIContainer'"
+    },
+    {
+      "family": "enable",
+      "module": "varco_core.tenancy.di",
+      "name": "enable_tenant_membership",
+      "package": "varco_core",
+      "signature": "(container: 'DIContainer', settings: 'TenantMembershipSettings | None' = None) -> 'DIContainer'"
+    },
+    {
+      "family": "enable",
+      "module": "varco_redis.di",
+      "name": "enable_redis_token_revocation",
+      "package": "varco_redis",
+      "signature": "(container: 'DIContainer', **redis_kwargs: 'Any') -> 'DIContainer'"
+    },
+    {
+      "family": "install",
+      "module": "varco_core.observability.cache",
+      "name": "install_cache_metrics",
+      "package": "varco_core",
+      "signature": "(*, config: 'CacheMetricsConfig | None' = None) -> 'None'"
+    },
+    {
+      "family": "install",
+      "module": "varco_core.observability.reliability",
+      "name": "install_reliability_metrics",
+      "package": "varco_core",
+      "signature": "(*, dlq: 'AbstractDeadLetterQueue | None' = None, dlq_name: 'str | None' = None, outbox_repo: 'OutboxRepository | None' = None, config: 'ReliabilityMetricsConfig | None' = None) -> 'None'"
+    },
+    {
+      "family": "install",
+      "module": "varco_core.observability.retention",
+      "name": "install_retention_metrics",
+      "package": "varco_core",
+      "signature": "() -> 'None'"
+    },
+    {
+      "family": "install",
+      "module": "varco_core.tls.install",
+      "name": "install_process_trust",
+      "package": "varco_core",
+      "signature": "(store: 'TrustStore | ReloadingTrustStore', *, acknowledge_global_mutation: 'bool' = False) -> 'RestoreHandle'"
+    },
+    {
+      "family": "install",
+      "module": "varco_core.webhook.metrics",
+      "name": "install_webhook_metrics",
+      "package": "varco_core",
+      "signature": "() -> 'None'"
+    },
+    {
+      "family": "install",
+      "module": "varco_fastapi.middleware",
+      "name": "install_middleware_stack",
+      "package": "varco_fastapi",
+      "signature": "(app: 'Any', middlewares: 'list[MiddlewareEntry]') -> 'None'"
+    },
+    {
+      "family": "install",
+      "module": "varco_fastapi.middleware.cors",
+      "name": "install_cors",
+      "package": "varco_fastapi",
+      "signature": "(app: 'FastAPI', config: 'CORSConfig | None' = None) -> 'None'"
+    },
+    {
+      "family": "install",
+      "module": "varco_sa.tenancy.global_scope",
+      "name": "install_global_readonly_translation",
+      "package": "varco_sa",
+      "signature": "(call: 'Callable[..., Awaitable[T]]', *, entity_name: 'str') -> 'Callable[..., Awaitable[T]]'"
+    },
+    {
+      "family": "install",
+      "module": "varco_sa.tenancy.global_scope",
+      "name": "install_tenant_passthrough",
+      "package": "varco_sa",
+      "signature": "(call: 'Callable[..., Awaitable[T]]') -> 'Callable[..., Awaitable[T]]'"
+    },
+    {
+      "family": "install",
+      "module": "varco_sa.tenancy.rls_session",
+      "name": "install_rls_tenant_hook",
+      "package": "varco_sa",
+      "signature": "(target: 'Any', *, setting: 'str' = 'rls.tenant_id', require_tenant: 'bool' = False, _set_tenant_local: 'Callable[..., Coroutine[Any, Any, None]] | None' = None) -> 'Callable[[], None]'"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_beanie.modules",
+      "module_name": "beanie",
+      "name": "BeanieModule",
+      "package": "varco_beanie",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_casbin.modules",
+      "module_name": "casbin",
+      "name": "CasbinModule",
+      "package": "varco_casbin",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [],
+      "family": "module",
+      "module": "varco_core.di.module",
+      "module_name": "core",
+      "name": "CoreModule",
+      "package": "varco_core",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [],
+      "family": "module",
+      "module": "varco_core.di.module",
+      "module_name": "",
+      "name": "LifecycleModule",
+      "package": "varco_core",
+      "phase": "Phase.CONSUMERS"
+    },
+    {
+      "depends_on": [],
+      "family": "module",
+      "module": "varco_core.di.module",
+      "module_name": "observability",
+      "name": "ObservabilityModule",
+      "package": "varco_core",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_core.testing",
+      "module_name": "in_memory_profile",
+      "name": "InMemoryProfile",
+      "package": "varco_core",
+      "phase": "Phase.EDGE"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_core.tls.module",
+      "module_name": "trust_store",
+      "name": "TrustStoreModule",
+      "package": "varco_core",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_core.webhook.module",
+      "module_name": "webhook",
+      "name": "WebhookModule",
+      "package": "varco_core",
+      "phase": "Phase.CONSUMERS"
+    },
+    {
+      "depends_on": [],
+      "family": "module",
+      "module": "varco_fastapi.modules.base",
+      "module_name": "middleware_adapter",
+      "name": "MiddlewareModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [],
+      "family": "module",
+      "module": "varco_fastapi.modules.edge",
+      "module_name": "body_limit",
+      "name": "BodyLimitModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [],
+      "family": "module",
+      "module": "varco_fastapi.modules.edge",
+      "module_name": "cors",
+      "name": "CorsModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [],
+      "family": "module",
+      "module": "varco_fastapi.modules.edge",
+      "module_name": "error_envelope",
+      "name": "ErrorEnvelopeModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_fastapi.modules.edge",
+      "module_name": "fastapi",
+      "name": "FastAPIModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [],
+      "family": "module",
+      "module": "varco_fastapi.modules.edge",
+      "module_name": "localization",
+      "name": "LocalizationModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [],
+      "family": "module",
+      "module": "varco_fastapi.modules.edge",
+      "module_name": "logging",
+      "name": "LoggingModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [],
+      "family": "module",
+      "module": "varco_fastapi.modules.edge",
+      "module_name": "metrics",
+      "name": "MetricsModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [],
+      "family": "module",
+      "module": "varco_fastapi.modules.edge",
+      "module_name": "profiling",
+      "name": "ProfilingModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [],
+      "family": "module",
+      "module": "varco_fastapi.modules.edge",
+      "module_name": "rate_limit",
+      "name": "RateLimitModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [],
+      "family": "module",
+      "module": "varco_fastapi.modules.edge",
+      "module_name": "security_headers",
+      "name": "SecurityHeadersModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [],
+      "family": "module",
+      "module": "varco_fastapi.modules.edge",
+      "module_name": "tracing",
+      "name": "TracingModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_fastapi.modules.lifecycle",
+      "module_name": "jwks_refresh",
+      "name": "JwksRefreshModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.SCHEDULERS"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_fastapi.modules.lifecycle",
+      "module_name": "migrations",
+      "name": "MigrationsModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_fastapi.modules.lifecycle",
+      "module_name": "reliability",
+      "name": "ReliabilityModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.CONSUMERS"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_fastapi.modules.lifecycle",
+      "module_name": "retention",
+      "name": "RetentionModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.SCHEDULERS"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_fastapi.modules.lifecycle",
+      "module_name": "security_posture",
+      "name": "SecurityPostureModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.EDGE"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_fastapi.modules.lifecycle",
+      "module_name": "tenancy",
+      "name": "TenancyModule",
+      "package": "varco_fastapi",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_kafka.modules",
+      "module_name": "kafka",
+      "name": "KafkaModule",
+      "package": "varco_kafka",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_memcached.modules",
+      "module_name": "memcached",
+      "name": "MemcachedModule",
+      "package": "varco_memcached",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_nats.modules",
+      "module_name": "nats",
+      "name": "NatsModule",
+      "package": "varco_nats",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_redis.modules",
+      "module_name": "redis",
+      "name": "RedisModule",
+      "package": "varco_redis",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_sa.modules",
+      "module_name": "sa",
+      "name": "SAModule",
+      "package": "varco_sa",
+      "phase": "Phase.INFRA"
+    },
+    {
+      "depends_on": [
+        "CoreModule"
+      ],
+      "family": "module",
+      "module": "varco_ws.modules",
+      "module_name": "ws",
+      "name": "WsModule",
+      "package": "varco_ws",
+      "phase": "Phase.CONSUMERS"
+    },
+    {
+      "family": "mount",
+      "module": "varco_fastapi.admin.mount",
+      "name": "mount_reliability_admin",
+      "package": "varco_fastapi",
+      "signature": "(app: 'FastAPI', *, server_auth: 'Any', audit_repo: 'AuditRepository | None' = None, dlq: 'AbstractDeadLetterQueue | None' = None, redriver: 'DlqRedriver | None' = None, acknowledge_bundled_admin: 'bool' = False, admin_role: 'str' = 'reliability-admin', cross_tenant_role: 'str' = 'cross-tenant-admin', prefix: 'str' = '/reliability', dependencies: 'Sequence[Any] | None' = None) -> 'None'"
+    },
+    {
+      "family": "mount",
+      "module": "varco_fastapi.tenancy.mount",
+      "name": "mount_tenant_admin",
+      "package": "varco_fastapi",
+      "signature": "(app: 'FastAPI', control_service: 'Any', *, acknowledge_bundled_admin: 'bool' = False, server_auth: 'AbstractServerAuth | None' = None, admin_role: 'str' = 'tenant-admin', prefix: 'str' = '/tenancy', dependencies: 'Sequence[DependsType]' = ()) -> 'None'"
+    },
+    {
+      "family": "mount",
+      "module": "varco_fastapi.webhook.mount",
+      "name": "mount_webhook_admin",
+      "package": "varco_fastapi",
+      "signature": "(app: 'FastAPI', *, repository: 'WebhookSubscriptionRepository', server_auth: 'Any', redriver: 'DlqRedriver | None' = None, acknowledge_bundled_admin: 'bool' = False, admin_role: 'str' = 'webhook-admin', cross_tenant_role: 'str' = 'cross-tenant-admin', prefix: 'str' = '/webhooks') -> 'None'"
+    }
+  ]
+}

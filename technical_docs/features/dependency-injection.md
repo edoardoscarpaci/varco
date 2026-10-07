@@ -1,8 +1,96 @@
-# Dependency injection — default bindings
+# Dependency injection
 
-> Plan 045 wrote the **Default bindings** section below. Plan 047 wrote
-> **Selecting a backend** and **Enabling a feature**. Plan 058 completes
-> this document. Plan 052 wrote **Diagnostics** and **Testing** (final form).
+The single DI document: the contract, the default model, selection, settings, modules,
+lifecycle phases, multi-binding, feature enabling, diagnostics and testing — in reading order.
+
+## The contract
+
+The ten rules, one line each. Everything below is the *why* and the *how*.
+
+1. **The container is required and returned** — every `bootstrap(container) -> DIContainer` takes an explicit container and hands it back; varco never reads the process-global one. → [Wiring contract](#wiring-contract)
+2. **Every varco binding of a varco seam is `@Fallback`; a user binding always wins**, regardless of order or priority. → [Default bindings](#default-bindings)
+3. **A backend is live only when `VARCO_<SEAM>_BACKEND` names it** — bootstrapping a package never selects it. → [Selecting a backend](#selecting-a-backend)
+4. **Settings go through `bind_settings()`**; per field, code > env > class default; fail-fast at the call. → [Settings](#settings-plan-048-di-6-di-16)
+5. **A module is a plain `VarcoModule`, never scanned** — constructed by the app, passed to `create_varco_app(modules=[...])`. → [Modules](#modules-plan-049-di-1-flip-1-ro-4)
+6. **Lifecycle is phased; stop is the exact reverse of what started** — including a partial-start rollback. → [Lifecycle phases](#lifecycle-phases-plan-050-di-9-di-10)
+7. **A collection seam is `@Multibound`**; contributions are never `@Fallback` and never carry `priority=`. → [Multi-binding](#multi-binding-for-all-implementations-of-x-plan-051-di-5)
+8. **A feature is `enable_*()` or `VARCO_<FEATURE>_ENABLED`**; code beats env. → [Enabling a feature](#enabling-a-feature)
+9. **`validate()` runs in the lifespan and an ERROR refuses startup.** → [Diagnostics](#diagnostics-plan-052-di-7)
+10. **Tests swap one binding with providify's `di_overrides` on `in_memory_modules()`** — varco ships no fixture. → [Testing](#testing-plan-052-di-11)
+
+## Wiring contract
+
+Plan 046 (DI-2 / DI-8 / DI-13) collapses the wiring-verb taxonomy to one shape per verb and
+removes every service-locator use from varco's own source.
+
+**Every package's `bootstrap(container: DIContainer) -> DIContainer`** — ten of them, including
+the new `varco_core.di.bootstrap` — is idempotent, requires an explicit container (never creates
+one, never reads the process-global container), never touches `os.environ`, and returns the same
+object it was given:
+
+```python
+container = DIContainer()
+varco_core.di.bootstrap(container)      # scan("varco_core", recursive=True) — every @Fallback default
+varco_redis.di.bootstrap(container)     # scan("varco_redis", …) + scan("varco_core.revocation", …)
+varco_sa.di.bootstrap(container)        # scan("varco_sa", …)
+varco_fastapi.di.bootstrap(container)   # scan("varco_fastapi", …)
+container.scan("myapp", recursive=True) # the app's own — plain providify, no varco verb
+bind_repositories(container, User, Post)
+app = create_varco_app(container)
+```
+
+`varco_core.di.bootstrap(container)` is what makes the Class-A `varco_core` defaults (including
+`AbstractEventProducer → BusEventProducer`) available — it replaces the deleted
+`varco_fastapi.di.setup_event_producer()`.
+
+**`varco_core.di.bind_instance(container, Interface, obj, *, qualifier=None) -> ProviderBinding`**
+is the one primitive every hand-built-object `bind_*` helper (`bind_trust_store`,
+`bind_cloudevents_serializer`) now reduces to. The lazy-factory
+`bind_*` helpers (`bind_websocket_adapter`, `bind_mcp_adapter`, `bind_clients`, …) keep their own
+factory bodies but adopt the same contract: **a `bind_*`/`enable_*` call registers a non-fallback
+binding; a second registration of the same `(interface, qualifier)` raises
+`varco_core.di.AlreadyBoundError`.** To replace a binding in a test use providify's
+`di_overrides`/`ContainerOverrides` fixture (RL-3's rule); to have two, qualify them.
+`varco_core.di.is_user_bound(container, Interface, qualifier=None) -> bool` is the primitive
+`bind_instance`/every `enable_*` uses to detect "a non-fallback binding already exists" —
+available directly for an app's own idempotency guards.
+
+**`enable_*`** (`enable_policy_authorizer`, `enable_token_revocation`,
+`enable_redis_token_revocation`, `enable_feature_flags`, `enable_tenant_membership`,
+`enable_authorization_audit`) all raise `AlreadyBoundError` when a non-fallback binding of the
+seam they flip already exists — whether from a previous `enable_*` call or the app's own binding.
+`enable_authorization_audit` is the one exception to the `is_user_bound()` check: its job is to
+*wrap* whatever `AbstractAuthorizer` is currently bound, so it instead checks
+`isinstance(delegate, AuditingAuthorizer)` — call it last, after the real authorizer is wired.
+
+**Streams replacement** (`varco_redis`) — `bootstrap(streams=True)` is gone; it used to mutate
+`os.environ["VARCO_REDIS_USE_STREAMS"]` for the whole process. Register an explicit settings
+instance before `bootstrap()` instead (Plan 048's recipe — see §Settings):
+
+```python
+from varco_core.settings import bind_settings
+from varco_redis.config import RedisEventBusSettings
+
+bind_settings(container, RedisEventBusSettings, instance=RedisEventBusSettings(use_streams=True))
+varco_redis.di.bootstrap(container)
+```
+
+`VARCO_REDIS_USE_STREAMS=true` in the environment keeps working unchanged — it is just a field
+on the settings class, read by pydantic.
+
+**The process-global container** — varco itself never reads or writes
+`DIContainer.current()`/`.acurrent()`/`.scoped()`/`.reset()` (mechanically guarded by
+`varco_core/tests/test_no_service_locator.py`, which walks every `varco_*/varco_*/**/*.py`).
+An *application*'s own code may still use providify's global, and providify's `di_global` pytest
+fixture exists for that code's tests — it is not something varco re-exports or wraps.
+
+**The `di_wiring` conformance suite** (`testkit/varco_conformance/di_wiring.py`, the ninth
+conformance module) is what all ten packages subclass to prove their `bootstrap()` satisfies this
+contract: returns the same container, is idempotent, never touches the process-global container,
+leaves `validate()` clean, every declared `@Fallback` default is overridable after `bootstrap()`,
+and the declared `expected_defaults` set is complete (no undeclared fallback). A new package, or a
+new `@Fallback` default in an existing one, adds a row to that package's `expected_defaults` or
+the suite fails naming the missing `(interface, qualifier)` pair.
 
 ## Default bindings
 
@@ -22,6 +110,10 @@ marker — a resolve-time activation rule ("yield if a
 non-fallback competitor exists"), not a priority comparison.
 
 ### Two tiers, one named constant
+
+(Plan 047 adds a third, `ENV_OVERRIDE_PRIORITY = 200`, for a dotted-path
+`VARCO_<SEAM>_BACKEND` — the full `0 / 100 / 200` picture is §Selecting a backend; every tier is
+still `@Fallback`, and code still wins by the fallback post-step, never by priority.)
 
 Every varco default is `@Fallback`. Within that population there are two
 kinds, both defined in `varco_core.di`:
@@ -110,82 +202,6 @@ stamped **before** any `register()`/`bind()`/`scan()` call sees that class —
 binding construction. varco itself has no such imperative stamp site as of
 3.2.0 (Plan 045 removed the last three); an application author replicating
 this pattern must respect the same ordering.
-
-## Wiring contract
-
-Plan 046 (DI-2 / DI-8 / DI-13) collapses the wiring-verb taxonomy to one shape per verb and
-removes every service-locator use from varco's own source.
-
-**Every package's `bootstrap(container: DIContainer) -> DIContainer`** — ten of them, including
-the new `varco_core.di.bootstrap` — is idempotent, requires an explicit container (never creates
-one, never reads the process-global container), never touches `os.environ`, and returns the same
-object it was given:
-
-```python
-container = DIContainer()
-varco_core.di.bootstrap(container)      # scan("varco_core", recursive=True) — every @Fallback default
-varco_redis.di.bootstrap(container)     # scan("varco_redis", …) + scan("varco_core.revocation", …)
-varco_sa.di.bootstrap(container)        # scan("varco_sa", …)
-varco_fastapi.di.bootstrap(container)   # scan("varco_fastapi", …)
-container.scan("myapp", recursive=True) # the app's own — plain providify, no varco verb
-bind_repositories(container, User, Post)
-app = create_varco_app(container)
-```
-
-`varco_core.di.bootstrap(container)` is what makes the Class-A `varco_core` defaults (including
-`AbstractEventProducer → BusEventProducer`) available — it replaces the deleted
-`varco_fastapi.di.setup_event_producer()`.
-
-**`varco_core.di.bind_instance(container, Interface, obj, *, qualifier=None) -> ProviderBinding`**
-is the one primitive every hand-built-object `bind_*` helper (`bind_trust_store`,
-`bind_retention_registry`, `bind_cloudevents_serializer`) now reduces to. The lazy-factory
-`bind_*` helpers (`bind_websocket_adapter`, `bind_mcp_adapter`, `bind_clients`, …) keep their own
-factory bodies but adopt the same contract: **a `bind_*`/`enable_*` call registers a non-fallback
-binding; a second registration of the same `(interface, qualifier)` raises
-`varco_core.di.AlreadyBoundError`.** To replace a binding in a test use providify's
-`di_overrides`/`ContainerOverrides` fixture (RL-3's rule); to have two, qualify them.
-`varco_core.di.is_user_bound(container, Interface, qualifier=None) -> bool` is the primitive
-`bind_instance`/every `enable_*` uses to detect "a non-fallback binding already exists" —
-available directly for an app's own idempotency guards.
-
-**`enable_*`** (`enable_policy_authorizer`, `enable_token_revocation`,
-`enable_redis_token_revocation`, `enable_feature_flags`, `enable_tenant_membership`,
-`enable_authorization_audit`) all raise `AlreadyBoundError` when a non-fallback binding of the
-seam they flip already exists — whether from a previous `enable_*` call or the app's own binding.
-`enable_authorization_audit` is the one exception to the `is_user_bound()` check: its job is to
-*wrap* whatever `AbstractAuthorizer` is currently bound, so it instead checks
-`isinstance(delegate, AuditingAuthorizer)` — call it last, after the real authorizer is wired.
-
-**Streams replacement** (`varco_redis`) — `bootstrap(streams=True)` is gone; it used to mutate
-`os.environ["VARCO_REDIS_USE_STREAMS"]` for the whole process. Register an explicit settings
-instance before `bootstrap()` instead:
-
-```python
-from varco_core.di import bind_instance
-from varco_redis.config import RedisEventBusSettings
-
-bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))
-varco_redis.di.bootstrap(container)
-# Plan 048 replaces the first line with:
-#   bind_settings(container, RedisEventBusSettings, instance=RedisEventBusSettings(use_streams=True))
-```
-
-`VARCO_REDIS_USE_STREAMS=true` in the environment keeps working unchanged — it is just a field
-on the settings class, read by pydantic.
-
-**The process-global container** — varco itself never reads or writes
-`DIContainer.current()`/`.acurrent()`/`.scoped()`/`.reset()` (mechanically guarded by
-`varco_core/tests/test_no_service_locator.py`, which walks every `varco_*/varco_*/**/*.py`).
-An *application*'s own code may still use providify's global, and providify's `di_global` pytest
-fixture exists for that code's tests — it is not something varco re-exports or wraps.
-
-**The `di_wiring` conformance suite** (`testkit/varco_conformance/di_wiring.py`, the ninth
-conformance module) is what all ten packages subclass to prove their `bootstrap()` satisfies this
-contract: returns the same container, is idempotent, never touches the process-global container,
-leaves `validate()` clean, every declared `@Fallback` default is overridable after `bootstrap()`,
-and the declared `expected_defaults` set is complete (no undeclared fallback). A new package, or a
-new `@Fallback` default in an existing one, adds a row to that package's `expected_defaults` or
-the suite fails naming the missing `(interface, qualifier)` pair.
 
 ## Selecting a backend
 
@@ -281,71 +297,6 @@ that asks for its own qualifier. Only `qualifier="in_memory"` (the ungated in-pr
 always resolves — it is the one qualifier that survives regardless of selection, which is why it
 remains the escape hatch documented above under "The `in_memory` escape hatch".
 
-## Enabling a feature
-
-Three switchable, binding-shaped features follow one convention (Plan 047 / DI-12): in code,
-`enable_<feature>(container)`; in the environment, `VARCO_<FEATURE>_ENABLED` (`1`/`true`/`yes`/
-`on`, case-insensitive, via `varco_core.di.env_truthy`). **Code beats env beats default**, by the
-same fallback/priority mechanism backend selection uses — the env form is a `@Fallback` provider
-at `BACKEND_PRIORITY`, gated by `varco_core.di.feature_default("<feature>")`
-(`@Requires(condition=env_truthy(env))`); the code form is the non-fallback binding `enable_*`
-registers (raises `AlreadyBoundError` on a second non-fallback registration, Plan 046).
-
-| Feature | Env var | Code verb | Category |
-|---|---|---|---|
-| `feature_flags` | `VARCO_FEATURE_FLAGS_ENABLED` | `enable_feature_flags(container)` | optional integration |
-| `tenant_membership` | `VARCO_TENANT_MEMBERSHIP_ENABLED` | `enable_tenant_membership(container, settings=None)` | optional integration |
-| `policy_authorizer` | `VARCO_POLICY_AUTHORIZER_ENABLED` | `enable_policy_authorizer(container)` | optional integration |
-| `authorization_audit` | **none — code-only exception** | `enable_authorization_audit(container)` (call it last) | security |
-
-`varco_core.di.FEATURES` is the registry these rows come from. `enable_authorization_audit` has
-no env form: it wraps whatever `AbstractAuthorizer` is *currently* live, which is a self-cycle if
-expressed as a provider *of* `AbstractAuthorizer` — it stays code-only, and it must be the last
-`enable_*`/env-selection call in your bootstrap.
-
-```python
-from varco_core.flags.di import enable_feature_flags
-
-container = DIContainer()
-varco_core.di.bootstrap(container)
-enable_feature_flags(container)                 # code form — always wins
-# equivalently, before bootstrap: os.environ["VARCO_FEATURE_FLAGS_ENABLED"] = "true"
-```
-
-Calling `enable_*(container)` while the matching env var is also set is not an error and not a
-no-op — code shadows the env twin, and `container.validate()` reports one `FALLBACK_SHADOWED`
-INFO naming your binding. Calling `enable_*(container)` **twice** still raises `AlreadyBoundError`
-(Plan 046, unchanged).
-
-**Default on/off matrix** (published verbatim — §D-features):
-
-| Category | Default | Members |
-|---|---|---|
-| Optional integration | off | every backend of the six seams; `feature_flags`, `tenant_membership`, `policy_authorizer`; `revocation=memory\|redis` |
-| Security feature | on where a safe in-process default exists; off + posture finding otherwise | on: `SecurityHeadersSettings`/`BodyLimitSettings`/`RateLimitSettings` (when a bundle is passed), `MigrationSettings.mode` (`off`, a finding); off + finding: revocation (`null`), `BaseAuthorizer` live, `authorization_audit` |
-| Dev-only convenience | off in production (a posture finding when on) | `ProfilingSettings.enabled`, the in-process backend of any seam (`di.in_process_backend`), `ErrorEnvelopeSettings.include_detail` |
-
-## Pitfalls
-
-| Pitfall | Fix |
-|---|---|
-| Marked a collection contribution (e.g. `HealthCheck`) `@Fallback` | Never do this — a fallback is excluded from `get_all()`/`aget_all()`/`list[T]` the instant any non-fallback sibling exists, which would silently empty `/health` the moment an app adds its own check. Collection contributions stay a plain qualified `@Singleton`. |
-| Subclassed a `@Fallback` class and expected the subclass to also be a fallback | It is not — `FallbackMarker`/`_is_fallback` never walks the MRO (`__dict__`-only lookup, matching `@Profile`'s rule). Re-decorate the subclass explicitly if it should also be a fallback. |
-| Resolved a `@Fallback` singleton *before* registering its shadowing binding, then wondered why the shadow "didn't take" | Not evicted — a fallback singleton already instantiated and cached stays cached even after a shadowing binding arrives later (the same documented `activate_profile()` caveat). `override()`/`reset_binding()` are the eviction tools; varco's own bootstrap order (scan defaults → install app → first `get()`) never hits this in practice. |
-| Two backends scanned for the same seam (e.g. both `varco_kafka` and `varco_nats`) and expected one to deterministically win | Both are `@Fallback` at the same `BACKEND_PRIORITY` — they tie exactly as they did before this plan (first-registered wins), plus `validate()` now names the tie as `AMBIGUOUS_BINDING`. Not a regression; Plan 047 (config-driven backend selection) owns disambiguating this. |
-| Copied a varco default's decorator line verbatim, including `@Fallback` | Your binding is now a fallback too — it ties with varco's own default by priority, then registration order, instead of winning outright. Drop `@Fallback` from your own bindings; omitting it is what makes a binding win. |
-| Called `bootstrap()` with no argument | `TypeError` (missing positional) — every `bootstrap()` requires an explicit container (Plan 046). `container = DIContainer(); varco_x.di.bootstrap(container)`. |
-| Expected a second `bind_x`/`enable_x` call to replace the first | It raises `AlreadyBoundError` instead (Plan 046 — providify's `provide()` appends, it never replaces). Qualify the second binding, or use `di_overrides`/`ContainerOverrides` in a test. |
-| `container.install(VarcoFastAPIConfiguration)` right after `varco_fastapi.di.bootstrap(container)` | A documented no-op, not a bug — `bootstrap()`'s own scan already installs the `@Configuration`, and providify's container-owned install dedup (`scanner.py:255-…`, `container.py:1019/7158/7194`) means a second `install()` of the same module adds no binding and raises nothing (measured against providify 2.1.0; see `test_redundant_install_after_scan_is_a_documented_noop`). Redundant, not harmful — no need to guard against it. |
-| Scanned only `varco_fastapi`, and `AbstractEventProducer` never resolves to `BusEventProducer` | Call `varco_core.di.bootstrap(container)` too — `BusEventProducer` is a `varco_core` Class-A default; the old `setup_event_producer()` helper that used to paper over a missing `varco_core` scan is gone. |
-| Set `VARCO_REDIS_USE_STREAMS` by mutating `os.environ` directly in a test | Use `bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))` before `bootstrap()`, or `monkeypatch.setenv(...)` if the test genuinely exercises the env-var path. `bootstrap(streams=True)` no longer exists. |
-| Bootstrapped `varco_kafka`/`varco_redis`/… and expected its backend to be live | Bootstrapping a package no longer selects it (Plan 047, BREAKING) — set `VARCO_<SEAM>_BACKEND=<name>` too. `check_backend_selection()` logs a `WARNING` ("bootstrapped but unselected") exactly for this case; `varco diagnose` (and the opt-in `di.in_process_backend` posture finding, once `DIPostureCollector` is contributed) also surface it. |
-| `VARCO_CACHE_BACKEND=Redis` (or any other case) | Silently "unset" — `@Requires(value=...)` is exact and case-sensitive. `check_backend_selection()` raises `BackendSelectionError` naming the known, lower-case values. |
-| `VARCO_<SEAM>_BACKEND=pkg.mod:MyClass` where `MyClass.__init__` takes required constructor arguments | `TypeError` at first `get()`, wrapped as `BackendSelectionError` telling you to use a zero-arg factory (`pkg.mod:make_x`) or bind it in code instead — the dotted-path tier deliberately does no dependency injection. |
-| Called `enable_feature_flags(container)` and also set `VARCO_FEATURE_FLAGS_ENABLED=true`, and are unsure which one "won" | Code always wins (Plan 047 §D-precedence) — confirm via `container.validate(raise_on_error=False).infos`, which names one `FALLBACK_SHADOWED` for the env twin whenever code shadows it. |
-| Flipped `VARCO_CACHE_BACKEND` after a `CacheBackend` singleton already resolved, expecting the old backend to disappear | It is not evicted — `@Requires` is evaluated lazily on the *next* `get()`, and providify never evicts an already-cached fallback singleton (the same P24-style caveat as elsewhere in this doc). A second `get()` after the flip constructs and caches the *new* backend alongside the old one; `ashutdown()` stops both. Use a fresh container if a test wants a single, fresh backend. |
-| `get(AbstractEventBus, qualifier="kafka")` while `VARCO_EVENT_BUS_BACKEND` is not `"kafka"` | `LookupError` — a gated binding is invisible to every lookup while inactive, including its own qualifier. Only `qualifier="in_memory"` (the ungated default) always resolves. |
-
 ## Settings (Plan 048 / DI-6, DI-16)
 
 Every varco settings class — every `pydantic_settings.BaseSettings` subclass with a
@@ -366,10 +317,13 @@ bind_settings(container, RedisEventBusSettings)   # fail-fast, right here, right
 **Precedence, per field**: `instance=` kwargs (code) > process environment (`VARCO_X_FIELD`) >
 class default. `bind_settings()` constructs the class **immediately**, at the call — a bad env
 value raises `SettingsValidationError` naming the offending env var, never a lazy failure the
-first time something happens to resolve the class. Register a code override (`instance=Cls(...)`
-or any non-fallback binding) **before** calling a package's `bootstrap()` — providify never
-evicts an already-cached fallback singleton, so an override registered after something already
-resolved the env-backed default has no effect on that already-built object.
+first time something happens to resolve the class. Register a code override (`bind_settings(..., instance=Cls(...))`) **before** calling a
+package's `bootstrap()` or `create_varco_app(container, ...)` — after it, the call raises
+`SettingsAlreadyBoundError`, because the package has already recorded (and resolved) its
+env-backed `@Fallback` binding of that class. This is deliberate, fail-closed behaviour: providify
+never evicts an already-cached fallback singleton, so a late override would leave two live values
+(anything built in between keeps the env copy) while provenance and `varco diagnose` reported only
+the code one. Bind first, or set the env var.
 
 **varco never reads a `.env` file.** Only the real process environment. Call
 `dotenv.load_dotenv()` (or your platform's equivalent) before `bootstrap()` if you want one.
@@ -402,20 +356,6 @@ type, and default (secrets rendered `***`) — lives at
 [technical_docs/settings-reference.md](../settings-reference.md), regenerated by `make
 settings-reference` and gated by `make settings-check` (part of `make lint`'s no-`PKG` path).
 
-### Pitfalls (Settings)
-
-| Pitfall | Fix |
-|---|---|
-| Registered a code override for a settings class *after* calling `bootstrap()` | Too late for anything already built during that `bootstrap()` call — register overrides before `bootstrap()`. |
-| `instance=MySettings(url="...")` and expected every other field to also be fixed | `instance=` is env-aware *per field*, not per object — pydantic still reads `VARCO_X_OTHER_FIELD` while constructing it. Use `MySettings.from_dict({...})` as the `instance=` for a fully env-independent object. |
-| `bind_settings(container, Cls, env_prefix="VARCO_X_REPLICA_")` with no `qualifier=` | `ValueError` — two unqualified bindings of the same class would tie; always pass `qualifier=` alongside `env_prefix=`. |
-| A `list`/`tuple`-typed settings field read from `VARCO_X_ORIGINS=a,b,c` | Type it `varco_core.settings.CommaSeparated`, not a bare `tuple[str, ...]` — pydantic-settings' default env decoding expects JSON for a `list`/`tuple` annotation. |
-| A bare `REDIS_URL`/`POSTGRES_HOST`/… honoured in a dev shell | The `ConnectionSettings` family (§D-connection) is deliberately **not** part of this recipe — those names belong to the underlying service's own tooling, not `bind_settings()`. |
-
-See [technical_docs/di-catalogue.md](../di-catalogue.md) for the **generated** table of every
-seam's live backends, every feature's env var, and every other `@Fallback` default in the
-workspace — regenerated by `make di-catalogue`, never hand-edited.
-
 ## Modules (Plan 049 / DI-1, FLIP-1, RO-4)
 
 `create_varco_app(container, *, modules=None, ...)` replaces the eleven hand-passed keyword
@@ -428,7 +368,7 @@ those (NestJS `imports`/Django `INSTALLED_APPS` semantics — nothing is inserte
 ```python
 from providify import DIContainer
 from varco_fastapi.app import create_varco_app
-from varco_fastapi.modules import default_modules
+from varco_fastapi import default_modules
 from varco_sa.modules import SAModule
 from varco_fastapi.modules import MigrationsModule
 
@@ -523,8 +463,8 @@ HTTP-shaped module contributes: `middleware(container) -> Sequence[MiddlewareSpe
 ABC — `varco_core` stays transport-free, so a non-FastAPI host can run a plain module list
 (`[CoreModule(), KafkaModule(), RetentionModule(r)]`) with no FastAPI import at all.
 `MiddlewareSpec(slot: EdgeSlot, target, kwargs)` names a slot rather than an implicit position;
-`varco_fastapi.middleware.slots.EdgeSlot` **is** the normative, outermost-first middleware order
-table, as code — pinned to `varco_fastapi.middleware`'s prose table by `test_middleware_slots.py`
+`varco_fastapi.middleware.slots.EdgeSlot` (15 members, including `TENANT_RESOLUTION = 95`, Plan
+055) **is** the normative, outermost-first middleware order table, as code — pinned to `varco_fastapi.middleware`'s prose table by `test_middleware_slots.py`
 so the two can never silently drift apart.
 
 **`LifecycleModule(component, *, name=None, depends_on=(), enabled=None)`** and
@@ -542,7 +482,6 @@ worked example is `examples/00-full-stack-post-api/example/module.py`'s `PostApp
 ```python
 from varco_core.di.module import CoreModule, VarcoModule
 
-
 class MyAppModule(VarcoModule):
     name = "my_app"
     depends_on = (CoreModule,)
@@ -558,115 +497,6 @@ class MyAppModule(VarcoModule):
 
 app = create_varco_app(container, modules=[*default_modules(), MyAppModule()])
 ```
-
-### Pitfalls (Modules)
-
-| Pitfall | Fix |
-|---|---|
-| Decorated a `VarcoModule` subclass with `@Configuration`/`@Singleton`/`@Provider` | Activated by every `container.scan()` of its package — a `VarcoModule` is constructed by the app, never scanned (`test_modules_never_scanned.py` enforces this mechanically). |
-| Listed `MigrationsModule`/`TenancyModule` *after* `CoreModule` (or after `*default_modules()`) | No longer a problem (Plan 050) — both declare `phase = Phase.INFRA`, so they start before `core.bus`/`core.consumers` regardless of list position; the pre-050 "list it first or get a WARNING" caveat and its WARNING are both gone. §Lifecycle phases below. |
-| Two instances of one `VarcoModule` subclass in one `modules=` list | `ValueError` — almost always a copy-paste error. Use `default_modules(exclude=(X,))` to drop the default and add your own. |
-| `enabled=False` on a backend module (e.g. `KafkaModule(enabled=False)`) expecting it to deselect the backend | It only skips that module's lifecycle slots — backend *selection* is still Plan 047's `VARCO_<SEAM>_BACKEND`. |
-| A module that `container.get()`s a settings class in `_register()`, then the app tries to override it afterward | Same not-evicted caveat as everywhere else in this doc — a fallback already resolved and cached does not un-resolve. Pass the override as a constructor argument to the module instead (e.g. `SecurityHeadersModule(settings=...)`), which binds it via `bind_instance` before anything else can resolve the fallback. |
-| "Fixed" a settings-shaped module (`SecurityHeadersModule`/`BodyLimitModule`/`SecurityPostureModule`) to call `bind_settings(container, Cls, instance=...)` instead of `bind_instance`, because that is the Settings section's documented recipe | `SettingsAlreadyBoundError` — `FastAPIModule` (or `CoreModule`) always registers a plain `@Fallback` `bind_settings(container, Cls)` binding first (`depends_on=` guarantees the order), and `bind_settings(..., instance=...)` raises against **any** prior binding of that class, fallback or not. `bind_instance` (Plan 046's "already-constructed object" verb) uses separate bookkeeping and only raises against a non-fallback binding — exactly what "a code decision beats the module's own default" needs here. This is a **resolved deviation from the plan's original recipe** (`plans/049-varco-module-and-composable-app.md` §D-enabled), not an oversight — do not revert it. |
-| Assumed `RateLimitModule` always installs two `RateLimitMiddleware` instances (PRE_AUTH + POST_AUTH) | It installs **up to** two — one `MiddlewareSpec` per rule-scope partition that is non-empty. A bundle with only a `TENANT` rule yields exactly one `RateLimitMiddleware` at `POST_AUTH`, not one real instance plus a `rules=()` pass-through at `PRE_AUTH` — an existing byte-identical-order characterization test pins this. Also a **resolved deviation** from the plan's literal "two specs" text (`plans/049` §D-http), not a bug. |
-| Bound no `AbstractServerAuth` and expected the app to refuse to start, or expected no `RequestContextMiddleware` at all | `FastAPIModule` contributes `RequestContextMiddleware` **unconditionally** (pre-049 parity) — with nothing bound it runs in anonymous mode, so every request still gets a populated (but unauthenticated) `AuthContext`/`current_tenant()`. The app boots and serves traffic; it is not fail-closed. ⚠️ Neither `inspect_http_edge()` nor the security posture preflight currently reports this as a finding — verified absent from both `check=` id sets; nothing today surfaces a forgotten `AbstractServerAuth` binding except reading the response yourself. |
-
-## Multi-binding for "all implementations of X" (Plan 051 / DI-5)
-
-**The one convention every collection seam follows**: a collection seam is an ABC (or a frozen
-value type) stamped `@Multibound` (`providify.Multibound`). A contribution is any ordinary
-non-`@Fallback` binding of that type — a scanned `@Singleton` subclass, a `@Provider` returning
-it, or `varco_core.di.collect.contribute(container, Seam, obj)`. A consumer reads it as a bare
-`list[Seam]` constructor hint or via `varco_core.di.collect.collect()`/`acollect()`, which return
-an immutable `tuple`. Zero contributions is a legal, empty tuple — never a `LookupError`.
-providify orders a collection **ascending** by priority, ties in registration order — **no varco
-contribution ever sets `priority=`**, and no consumer reads the order as meaning (the tenant chain
-is the one exception: it sorts by its own `TenantTrust` domain key, never by providify priority).
-
-| Seam | Module | varco's own contributors | How an app/plugin contributes | Reader | Empty means |
-|---|---|---|---|---|---|
-| `EventConsumer` | `varco_core.event.consumer` | none by default | `@Singleton` subclass | `CoreModule.start()` auto-registers every contribution to the started bus | no consumers — legal, silent |
-| `RetentionPolicy` | `varco_core.retention.policy` | none by default | `@Singleton`/`@Provider`, or `contribute()` | `RetentionModule.async_init()` builds a `RetentionRegistry` from `acollect()` | nothing is ever purged — `RetentionModule.validate()` reports it |
-| `TenantSource` | `varco_core.tenancy.source` | the four built-ins, constructed from settings, not the pool | `@Singleton` subclass, named in `VARCO_TENANT_SOURCES` to become active | `resolve_tenant_source_chain(container)` | `VARCO_TENANT_SOURCES` empty → no chain (unchanged) |
-| `PostureCollector` | `varco_core.posture` | the four default collectors (`http_edge`/`local`/`auth`/`redaction`), contributed by `SecurityPostureModule.configure_app()` (the opt-in `DIPostureCollector` only if the app contributes it); `TenantPostureCollector` by `TenancyModule.configure_app()` (Plan 055); `RlsPostureCollector` (`data.*`) by `varco_sa`'s `SAModule.register()` (Plan 056) | `@Singleton` subclass, or `collectors=` replaces the default set | `SecurityPostureModule.start()` → `acollect()` | `SecurityPostureModule.validate()` reports it (cannot happen with the default set) |
-| `HealthCheck` | `varco_core.health` | seven backend probes | `@Singleton(qualifier=...)` | `HealthRouter`'s `Instance[HealthCheck].aget_all()` (unchanged — lazy, zero-tolerant) — `collect(container, HealthCheck)` is an equally valid eager read | no probes — legal |
-
-`WebhookVerifier` is **not** a collection seam (§D-verifier) — a `WebhookVerifier` instance is
-constructed *per route*, with that route's secrets; there is no shared instance to multi-bind.
-It uses the same explicit-registration verb `varco_core.profiling`'s CPU/memory backends use:
-`register_webhook_verifier(name, cls, *, replace=False)`.
-
-### `priority=` means opposite things for `get()` vs. a collection
-
-providify's `priority` picks the **highest**-priority winner for `get(T)`, but sorts a
-`list[T]`/`collect()` result **ascending** — the same number means "the `get()` winner" and "last
-in the list" simultaneously. This is why no varco contribution ever sets `priority=`, and why
-every consumer treats the tuple as a set with a stable, documented-as-incidental order.
-
-### The tuple is made once, at the consumer
-
-`collect()`/`acollect()` convert providify's fresh `list` per resolution into a `tuple` — every
-consumer stores that tuple. providify itself has no de-dup mechanism; `contribute()` refuses the
-exact **same object** twice (identity) — a seam whose contributions have their own notion of
-uniqueness (a policy `name`, a chain source `name`, a posture collector `name`) enforces it at its
-own consumption point.
-
-### `contribute()` vs. `bind_instance()`
-
-| | `bind_instance()` (Plan 046) | `contribute()` (Plan 051) |
-|---|---|---|
-| Says | "the one implementation of *interface*" | "one of many contributions to *seam*" |
-| Second call, same object | `AlreadyBoundError` | `AlreadyBoundError` (identity) |
-| Second call, a distinct object | `AlreadyBoundError` | Registers a second, distinct contribution |
-
-### An empty *required* collection is varco's own finding, never providify's
-
-providify's `validate()` never reports a missing collection — `()` is always a legal answer. A
-module that *requires* at least one contribution says so itself, from its own `validate(container)`
-slot (a pure read over `container.get_all_bindings(Seam)`) — see `RetentionModule`/
-`SecurityPostureModule` above.
-
-### Contributing from your own package
-
-```python
-from providify import Singleton
-from varco_core.posture import PostureCollector, PostureFinding, PostureSeverity
-from varco_core.tenancy.source import TenantSource, TenantTrust
-
-
-@Singleton
-class PartnerHeaderTenantSource(TenantSource):
-    name = "partner"
-    trust = TenantTrust.MEDIUM
-
-    def resolve(self, request):
-        ...
-
-
-@Singleton
-class MyPostureCollector(PostureCollector):
-    name = "my_check"
-
-    def collect(self) -> list[PostureFinding]:
-        return [PostureFinding(check="my.check", severity=PostureSeverity.INFO, ...)]
-```
-
-`container.scan("my_package")` is all it takes — no `bind_*` call, no framework edit. See
-`testkit/varco_plugin_example` for the full four-seam worked example (never packaged).
-
-### Pitfalls (Multi-binding)
-
-| Pitfall | Fix |
-|---|---|
-| A contribution sets `priority=` "to run first" | It sorts **last** among ascending-priority ties, and simultaneously becomes what `get(Seam)` returns as "the winner" — never set `priority=` on a collection contribution. |
-| Used `InjectInstances[T]` instead of a bare `list[T]`/`collect()` | Raises `LookupError` on zero contributions — every consumer would need a try/except. `@Multibound` + `list[T]`/`collect()` resolves to `()` instead. |
-| A contribution marked `@Fallback` | Disappears the moment any non-fallback sibling exists (045's structural rule) — a *default set* is contributed as ordinary bindings and replaced by *construction* (`collectors=`), never by shadowing. |
-| A literal `list[Seam]` binding registered alongside the collection point | The literal binding wins outright and the collection is silently ignored — never register a literal `list[T]` binding for a `@Multibound` seam. |
-| A `@Component`-scoped `EventConsumer` | `CoreModule.validate()` lists it; `start()` raises naming the class — make it `@Singleton` or set `auto_register = False`. |
-| Kept a `@PostConstruct def _setup(self): self.register_to(self._bus)` on a DI-bound consumer | Harmless (the auto path's `is_registered_to()` guard skips an already-registered consumer, silently) but no longer the documented way — delete it; `CoreModule.start()` registers it after the bus has started. |
-| A `TenantSource` bound (scanned) but not named in `VARCO_TENANT_SOURCES` | Inert — bound ≠ active. `resolve_tenant_source_chain()` logs every such name at INFO. |
-| `register_webhook_verifier(name, cls, replace=True)` on a built-in name | Silently shadows the built-in — documented, greppable; never done by varco itself. |
 
 ## Lifecycle phases (Plan 050 / DI-9, DI-10)
 
@@ -743,18 +573,153 @@ needs a teardown hook and has no `@Configuration` of its own (`enable_redis_toke
 `RedisTokenRevocationStore` is the motivating case) — delete it once providify ships
 `provide(disposer=)` natively.
 
-### Pitfalls (Lifecycle phases)
+## Multi-binding for "all implementations of X" (Plan 051 / DI-5)
 
-| Pitfall | Fix |
-|---|---|
-| A `depends_on` pointing at a module scheduled for a later phase | `ModulePhaseError` at `create_varco_app()` time — move the dependency to an earlier/equal phase, or drop the edge. |
-| A user module left at the default `CONSUMERS` phase that opens a store other modules depend on | Works (the bus is up by then) but is fragile — declare `INFRA` explicitly if anything depends on it. |
-| A component that must run after *all* of a phase, from a package that cannot name the modules in it | Use an offset (`Phase.INFRA + 50`, as `SAModule`'s `sa.rls_posture` does), not a `depends_on` edge — the edge makes the target mandatory (`ModuleDependencyError` when absent) and may need an import in the wrong direction. |
-| `enable_*` constructing a connection-holding object without `disposer=` | Leaks at every `container.ashutdown()` — pass `bind_instance(..., disposer=obj.aclose)`. |
-| A Kafka/NATS bus resolved by hand and never started | `publish()` raises `RuntimeError` mentioning `start()` — no more silent hang or first-resolution auto-start (`@PostConstruct` removed in 4.0). |
-| A custom `CacheBackend` whose `start()` raises `RuntimeError` for a genuine start failure (not just "already started") | `core.stores` swallows it as "already started"; the failure surfaces at first use as "not started". Raise a different exception type (e.g. `ConnectionError`) for real failures, as the ABC's contract implies. |
-| `SAModule(ensure_tables=True)` under an Alembic-managed schema | Harmless (`checkfirst`) but redundant — set `ensure_tables=False` when Alembic owns every framework table this deployment uses. |
+**The one convention every collection seam follows**: a collection seam is an ABC (or a frozen
+value type) stamped `@Multibound` (`providify.Multibound`). A contribution is any ordinary
+non-`@Fallback` binding of that type — a scanned `@Singleton` subclass, a `@Provider` returning
+it, or `varco_core.di.collect.contribute(container, Seam, obj)`. A consumer reads it as a bare
+`list[Seam]` constructor hint or via `varco_core.di.collect.collect()`/`acollect()`, which return
+an immutable `tuple`. Zero contributions is a legal, empty tuple — never a `LookupError`.
+providify orders a collection **ascending** by priority, ties in registration order — **no varco
+contribution ever sets `priority=`**, and no consumer reads the order as meaning (the tenant chain
+is the one exception: it sorts by its own `TenantTrust` domain key, never by providify priority).
 
+| Seam | Module | varco's own contributors | How an app/plugin contributes | Reader | Empty means |
+|---|---|---|---|---|---|
+| `EventConsumer` | `varco_core.event.consumer` | none by default | `@Singleton` subclass | `CoreModule.start()` auto-registers every contribution to the started bus | no consumers — legal, silent |
+| `RetentionPolicy` | `varco_core.retention.policy` | none by default | `@Singleton`/`@Provider`, or `contribute()` | `RetentionModule.async_init()` builds a `RetentionRegistry` from `acollect()` | nothing is ever purged — `RetentionModule.validate()` reports it |
+| `TenantSource` | `varco_core.tenancy.source` | the four built-ins, constructed from settings, not the pool | `@Singleton` subclass, named in `VARCO_TENANT_SOURCES` to become active | `resolve_tenant_source_chain(container)` | `VARCO_TENANT_SOURCES` empty → no chain (unchanged) |
+| `PostureCollector` | `varco_core.posture` | the four default collectors (`http_edge`/`local`/`auth`/`redaction`), contributed by `SecurityPostureModule.configure_app()` (the opt-in `DIPostureCollector` only if the app contributes it); `TenantPostureCollector` by `TenancyModule.configure_app()` (Plan 055); `RlsPostureCollector` (`data.*`) by `varco_sa`'s `SAModule.register()` (Plan 056) | `@Singleton` subclass, or `collectors=` replaces the default set | `SecurityPostureModule.start()` → `acollect()` | `SecurityPostureModule.validate()` reports it (cannot happen with the default set) |
+| `HealthCheck` | `varco_core.health` | seven backend probes | `@Singleton(qualifier=...)` | `HealthRouter`'s `Instance[HealthCheck].aget_all()` (unchanged — lazy, zero-tolerant) — `collect(container, HealthCheck)` is an equally valid eager read | no probes — legal |
+
+`WebhookVerifier` is **not** a collection seam (§D-verifier) — a `WebhookVerifier` instance is
+constructed *per route*, with that route's secrets; there is no shared instance to multi-bind.
+It uses the same explicit-registration verb `varco_core.profiling`'s CPU/memory backends use:
+`register_webhook_verifier(name, cls, *, replace=False)`.
+
+### Who contributes which posture collector (the final map)
+
+| Owner | Collectors | Finding ids |
+|---|---|---|
+| `SecurityPostureModule.configure_app()` | `HttpEdgeCollector`, `LocalPostureCollector`, `AuthPostureCollector`, `RedactionPostureCollector` | `http.*`, `local.*`/`posture.*`, `auth.*`, `redaction.*` |
+| `CoreModule` (lazy suppliers, Plan 052 / RO-2) | `JwksPostureCollector`, `RetentionPostureCollector` | `jwks.*`, `retention.*` |
+| `TenancyModule.configure_app()` (Plan 055) | `TenantPostureCollector` | `tenant.*` |
+| `varco_sa`'s `SAModule` (Plan 056) | `RlsPostureCollector` | `data.*` |
+| nobody — opt-in, app-contributed (Plan 054) | `DIPostureCollector` | `di.in_process_backend` |
+
+A non-tenant, non-SA app therefore emits no `tenant.*`/`data.*` finding.
+
+### `priority=` means opposite things for `get()` vs. a collection
+
+providify's `priority` picks the **highest**-priority winner for `get(T)`, but sorts a
+`list[T]`/`collect()` result **ascending** — the same number means "the `get()` winner" and "last
+in the list" simultaneously. This is why no varco contribution ever sets `priority=`, and why
+every consumer treats the tuple as a set with a stable, documented-as-incidental order.
+
+### The tuple is made once, at the consumer
+
+`collect()`/`acollect()` convert providify's fresh `list` per resolution into a `tuple` — every
+consumer stores that tuple. providify itself has no de-dup mechanism; `contribute()` refuses the
+exact **same object** twice (identity) — a seam whose contributions have their own notion of
+uniqueness (a policy `name`, a chain source `name`, a posture collector `name`) enforces it at its
+own consumption point.
+
+### `contribute()` vs. `bind_instance()`
+
+| | `bind_instance()` (Plan 046) | `contribute()` (Plan 051) |
+|---|---|---|
+| Says | "the one implementation of *interface*" | "one of many contributions to *seam*" |
+| Second call, same object | `AlreadyBoundError` | `AlreadyBoundError` (identity) |
+| Second call, a distinct object | `AlreadyBoundError` | Registers a second, distinct contribution |
+
+### An empty *required* collection is varco's own finding, never providify's
+
+providify's `validate()` never reports a missing collection — `()` is always a legal answer. A
+module that *requires* at least one contribution says so itself, from its own `validate(container)`
+slot (a pure read over `container.get_all_bindings(Seam)`) — see `RetentionModule`/
+`SecurityPostureModule` above.
+
+### Contributing from your own package
+
+```python
+from providify import Singleton
+from varco_core.posture import PostureCollector, PostureFinding, PostureSeverity
+from varco_core.tenancy.source import TenantSource, TenantTrust
+
+@Singleton
+class PartnerHeaderTenantSource(TenantSource):
+    name = "partner"
+    trust = TenantTrust.MEDIUM
+
+    def resolve(self, request):
+        ...
+
+@Singleton
+class MyPostureCollector(PostureCollector):
+    name = "my_check"
+
+    def collect(self) -> list[PostureFinding]:
+        return [PostureFinding(check="my.check", severity=PostureSeverity.INFO, ...)]
+```
+
+`container.scan("my_package")` is all it takes — no `bind_*` call, no framework edit. See
+`testkit/varco_plugin_example` for the full four-seam worked example (never packaged).
+
+## Enabling a feature
+
+Three switchable, binding-shaped features follow one convention (Plan 047 / DI-12): in code,
+`enable_<feature>(container)`; in the environment, `VARCO_<FEATURE>_ENABLED` (`1`/`true`/`yes`/
+`on`, case-insensitive, via `varco_core.di.env_truthy`). **Code beats env beats default**, by the
+same fallback/priority mechanism backend selection uses — the env form is a `@Fallback` provider
+at `BACKEND_PRIORITY`, gated by `varco_core.di.feature_default("<feature>")`
+(`@Requires(condition=env_truthy(env))`); the code form is the non-fallback binding `enable_*`
+registers (raises `AlreadyBoundError` on a second non-fallback registration, Plan 046).
+
+| Feature | Env var | Code verb | Category |
+|---|---|---|---|
+| `feature_flags` | `VARCO_FEATURE_FLAGS_ENABLED` | `enable_feature_flags(container)` | optional integration |
+| `tenant_membership` | `VARCO_TENANT_MEMBERSHIP_ENABLED` | `enable_tenant_membership(container, settings=None)` | optional integration |
+| `policy_authorizer` | `VARCO_POLICY_AUTHORIZER_ENABLED` | `enable_policy_authorizer(container)` | optional integration |
+| `authorization_audit` | **none — code-only exception** | `enable_authorization_audit(container)` (call it last) | security |
+
+`varco_core.di.FEATURES` is the registry these rows come from. `enable_authorization_audit` has
+no env form: it wraps whatever `AbstractAuthorizer` is *currently* live, which is a self-cycle if
+expressed as a provider *of* `AbstractAuthorizer` — it stays code-only, and it must be the last
+`enable_*`/env-selection call in your bootstrap.
+
+```python
+from varco_core.flags.di import enable_feature_flags
+
+container = DIContainer()
+varco_core.di.bootstrap(container)
+enable_feature_flags(container)                 # code form — always wins
+# equivalently, before bootstrap: os.environ["VARCO_FEATURE_FLAGS_ENABLED"] = "true"
+```
+
+Calling `enable_*(container)` while the matching env var is also set is not an error and not a
+no-op — code shadows the env twin, and `container.validate()` reports one `FALLBACK_SHADOWED`
+INFO naming your binding. Calling `enable_*(container)` **twice** still raises `AlreadyBoundError`
+(Plan 046, unchanged).
+
+**Default on/off matrix** (published verbatim — §D-features):
+
+| Category | Default | Members |
+|---|---|---|
+| Optional integration | off | every backend of the six seams; `feature_flags`, `tenant_membership`, `policy_authorizer`; `revocation=memory\|redis` |
+| Security feature | on where a safe in-process default exists; off + posture finding otherwise | on: `SecurityHeadersSettings`/`BodyLimitSettings`/`RateLimitSettings` (when a bundle is passed), `MigrationSettings.mode` (`off`, a finding); off + finding: revocation (`null`), `BaseAuthorizer` live, `authorization_audit` |
+| Dev-only convenience | off in production (a posture finding when on) | `ProfilingSettings.enabled`, the in-process backend of any seam (`di.in_process_backend`), `ErrorEnvelopeSettings.include_detail` |
+
+## Generated references
+
+Three pages are **generated from the live tree** — never hand-edit them; regenerate with the
+`make` target and commit. `make lint` (no `PKG=`) fails when any of them drifts.
+
+| Page | Answers | Regenerate | Gate |
+|---|---|---|---|
+| [DI catalogue](../di-catalogue.md) | Which backends exist for each selectable seam, each feature's env var, every other `@Fallback` default in the workspace | `make di-catalogue` | `make di-catalogue-check` |
+| [Settings reference](../settings-reference.md) | Every `bind_settings()`-eligible class, its prefix, every field's `VARCO_*` env var, type and default (secrets `***`) | `make settings-reference` | `make settings-check` |
+| [Entry points](../entry-points.md) | Every wiring entry point — the ten `bootstrap()`s, every `bind_*`/`enable_*`/`mount_*`/`install_*`, every `VarcoModule` (with `name`/`phase`/`depends_on`) and `@Configuration` — with its signature. The same tables sit in `ARCHITECTURE.md`'s "DI Wiring" section | `make entry-points` | `make entry-points-check` |
 
 ## Diagnostics (Plan 052 / DI-7)
 
@@ -787,7 +752,7 @@ varco diagnose --path DIR ...                # prepended to sys.path (repeatable
 
 It runs `register()` -> `async_init()` -> module `validate()` -> `container.validate()` and
 **never calls `start()`**. `--static` skips `async_init` (Docker-free; the report carries a
-banner because a `MISSING_BINDING` naming an `ainstall()`-registered provider may be spurious).
+notice line because a `MISSING_BINDING` naming an `ainstall()`-registered provider may be spurious).
 Exit codes: `0` report produced (content never changes it without `--check`); `1` `--check` and
 the worst severity is ERROR/WARNING, or the driver failed; `2` usage error.
 
@@ -840,18 +805,6 @@ module whose `async_init()` raises surfaces as
 `WiringValidationError`, whose message lists `owner: message` per ERROR and `check: detail` per
 WARNING finding (`varco_fastapi` maps it to `ConfigurationError`).
 
-### Pitfalls (Diagnostics)
-
-| Pitfall | Fix |
-|---|---|
-| `varco diagnose` with no Redis/DB fails in `async_init` | use `--static` |
-| `--check` in CI without `--static` needs the brokers | `--static`, or provision them |
-| A `MISSING_BINDING` under `--static` may be an `ainstall()` provider | re-run without `--static` |
-| A deprecation fired at import time before the capture window | only `deprecated()`-helper sites are ledgered |
-| `di.bootstrapped_unselected` fires in a process that merely *imported* a backend | the backend registry is process-global: any `bootstrap()`/import of `varco_redis`/`varco_kafka`/... in the same interpreter (a test session, a shared worker) registers values for the seam, so an app that never selected it still gets the WARNING. Set `VARCO_<SEAM>_BACKEND` (to the default value to silence), or `clear_backend_selection(monkeypatch)` in tests |
-| `validate=False` also skips the runtime gate | keep it `True`; fix the binding |
-| Startup refused on an ERROR that never bit on 3.x | read the report, fix the binding; `validate=False` is the escape |
-
 ## Testing (Plan 052 / DI-11)
 
 `varco_core.testing.in_memory_modules()` is a varco app on in-process defaults: no job
@@ -892,3 +845,78 @@ touch this recipe: P32 (`copy()` loses `_collection_points`) and P33 (`instance(
 `DEPENDENT`, tripping a false scope-leak for singleton consumers) - see
 `design/upstream-gaps/providify-copy-collection-points.md` and
 `providify-override-instance-scope-leak.md`.
+
+### The env you need in a test
+
+| Variable | How | Why |
+|---|---|---|
+| `VARCO_SECURITY_ENV=development` | per test, `monkeypatch.setenv(...)` — **never** an autouse fixture (Plan 053) | `BaseAuthorizer` is a binding only under it (FLIP-5). Not needed with `in_memory_modules()`/`InMemoryProfile`, which bind `BaseAuthorizer()` explicitly so the profile boots with no env vars (R14) |
+| `VARCO_SECURITY_ENFORCE=warn` | an autouse `_posture_warn_only` fixture per lifespan-entering test package (Plan 054) | an unset `enforce` derives `refuse` outside `development` (FLIP-2), so a test app would refuse over any WARN finding |
+| `VARCO_<SEAM>_BACKEND` | `clear_backend_selection(monkeypatch)` (Plan 052) | the backend registry is process-global; a test that adds a backend module on purpose clears the selection around it |
+
+Both security variables coexist: different variables, different reasons (R15).
+
+## Pitfalls
+
+Keyed by symptom; two plans' rows with the same symptom are one row citing both, and a fix a
+later plan changed keeps only the winner's. The **Plan** column names the design of record.
+
+| Pitfall | Fix | Plan |
+|---|---|---|
+| Marked a collection contribution (e.g. `HealthCheck`) `@Fallback` | Never do this — a fallback is excluded from `get_all()`/`aget_all()`/`list[T]` the instant any non-fallback sibling exists, which would silently empty `/health` the moment an app adds its own check. Collection contributions stay a plain qualified `@Singleton`; a *default set* is contributed as ordinary bindings and replaced by *construction* (`collectors=`), never by shadowing. | 045, 051 |
+| Subclassed a `@Fallback` class and expected the subclass to also be a fallback | It is not — `FallbackMarker`/`_is_fallback` never walks the MRO (`__dict__`-only lookup, matching `@Profile`'s rule). Re-decorate the subclass explicitly if it should also be a fallback. | 045 |
+| Resolved a `@Fallback` singleton *before* registering its shadowing binding, then wondered why the shadow "didn't take" | Not evicted — a fallback singleton already instantiated and cached stays cached even after a shadowing binding arrives later (the same documented `activate_profile()` caveat). `override()`/`reset_binding()` are the eviction tools; varco's own bootstrap order (scan defaults → install app → first `get()`) never hits this in practice. | 045 |
+| Two backends scanned for the same seam (e.g. both `varco_kafka` and `varco_nats`) and expected one to deterministically win | Since Plan 047 neither is live unless `VARCO_<SEAM>_BACKEND` names it — set the variable to the one you want; a value no bootstrapped package registered raises `BackendSelectionError`. | 045, 047 |
+| Copied a varco default's decorator line verbatim, including `@Fallback` | Your binding is now a fallback too — it ties with varco's own default by priority, then registration order, instead of winning outright. Drop `@Fallback` from your own bindings; omitting it is what makes a binding win. | 045 |
+| Called `bootstrap()` with no argument | `TypeError` (missing positional) — every `bootstrap()` requires an explicit container (Plan 046). `container = DIContainer(); varco_x.di.bootstrap(container)`. | 046 |
+| Expected a second `bind_x`/`enable_x` call to replace the first | It raises `AlreadyBoundError` instead (Plan 046 — providify's `provide()` appends, it never replaces). Qualify the second binding, or use `di_overrides`/`ContainerOverrides` in a test. | 046 |
+| `container.install(VarcoFastAPIConfiguration)` right after `varco_fastapi.di.bootstrap(container)` | A documented no-op, not a bug — `bootstrap()`'s own scan already installs the `@Configuration`, and providify's container-owned install dedup (`scanner.py:255-…`, `container.py:1019/7158/7194`) means a second `install()` of the same module adds no binding and raises nothing (measured against providify 2.1.0; see `test_redundant_install_after_scan_is_a_documented_noop`). Redundant, not harmful — no need to guard against it. | 046 |
+| Scanned only `varco_fastapi`, and `AbstractEventProducer` never resolves to `BusEventProducer` | Call `varco_core.di.bootstrap(container)` too — `BusEventProducer` is a `varco_core` Class-A default; the old `setup_event_producer()` helper that used to paper over a missing `varco_core` scan is gone. | 046 |
+| Set `VARCO_REDIS_USE_STREAMS` by mutating `os.environ` directly in a test | Use `bind_settings(container, RedisEventBusSettings, instance=RedisEventBusSettings(use_streams=True))` before `bootstrap()`, or `monkeypatch.setenv(...)` if the test genuinely exercises the env-var path. `bootstrap(streams=True)` no longer exists. | 046, 048 |
+| Bootstrapped `varco_kafka`/`varco_redis`/… and expected its backend to be live | Bootstrapping a package no longer selects it (Plan 047, BREAKING) — set `VARCO_<SEAM>_BACKEND=<name>` too. `check_backend_selection()` logs a `WARNING` ("bootstrapped but unselected") exactly for this case; `varco diagnose` (and the opt-in `di.in_process_backend` posture finding, once `DIPostureCollector` is contributed) also surface it. | 047 |
+| `VARCO_CACHE_BACKEND=Redis` (or any other case) | Silently "unset" — `@Requires(value=...)` is exact and case-sensitive. `check_backend_selection()` raises `BackendSelectionError` naming the known, lower-case values. | 047 |
+| `VARCO_<SEAM>_BACKEND=pkg.mod:MyClass` where `MyClass.__init__` takes required constructor arguments | `TypeError` at first `get()`, wrapped as `BackendSelectionError` telling you to use a zero-arg factory (`pkg.mod:make_x`) or bind it in code instead — the dotted-path tier deliberately does no dependency injection. | 047 |
+| Called `enable_feature_flags(container)` and also set `VARCO_FEATURE_FLAGS_ENABLED=true`, and are unsure which one "won" | Code always wins (Plan 047 §D-precedence) — confirm via `container.validate(raise_on_error=False).infos`, which names one `FALLBACK_SHADOWED` for the env twin whenever code shadows it. | 047 |
+| Flipped `VARCO_CACHE_BACKEND` after a `CacheBackend` singleton already resolved, expecting the old backend to disappear | It is not evicted — `@Requires` is evaluated lazily on the *next* `get()`, and providify never evicts an already-cached fallback singleton (the same P24-style caveat as elsewhere in this doc). A second `get()` after the flip constructs and caches the *new* backend alongside the old one; `ashutdown()` stops both. Use a fresh container if a test wants a single, fresh backend. | 047 |
+| `get(AbstractEventBus, qualifier="kafka")` while `VARCO_EVENT_BUS_BACKEND` is not `"kafka"` | `LookupError` — a gated binding is invisible to every lookup while inactive, including its own qualifier. Only `qualifier="in_memory"` (the ungated default) always resolves. | 047 |
+| Registered a code override for a settings class *after* calling `bootstrap()` | Too late for anything already built during that `bootstrap()` call — register overrides before `bootstrap()`. | 048 |
+| `instance=MySettings(url="...")` and expected every other field to also be fixed | `instance=` is env-aware *per field*, not per object — pydantic still reads `VARCO_X_OTHER_FIELD` while constructing it. Use `MySettings.from_dict({...})` as the `instance=` for a fully env-independent object. | 048 |
+| `bind_settings(container, Cls, env_prefix="VARCO_X_REPLICA_")` with no `qualifier=` | `ValueError` — two unqualified bindings of the same class would tie; always pass `qualifier=` alongside `env_prefix=`. | 048 |
+| A `list`/`tuple`-typed settings field read from `VARCO_X_ORIGINS=a,b,c` | Type it `varco_core.settings.CommaSeparated`, not a bare `tuple[str, ...]` — pydantic-settings' default env decoding expects JSON for a `list`/`tuple` annotation. | 048 |
+| A bare `REDIS_URL`/`POSTGRES_HOST`/… honoured in a dev shell | The `ConnectionSettings` family (§D-connection) is deliberately **not** part of this recipe — those names belong to the underlying service's own tooling, not `bind_settings()`. | 048 |
+| Decorated a `VarcoModule` subclass with `@Configuration`/`@Singleton`/`@Provider` | Activated by every `container.scan()` of its package — a `VarcoModule` is constructed by the app, never scanned (`test_modules_never_scanned.py` enforces this mechanically). | 049 |
+| Listed `MigrationsModule`/`TenancyModule` *after* `CoreModule` (or after `*default_modules()`) | No longer a problem (Plan 050) — both declare `phase = Phase.INFRA`, so they start before `core.bus`/`core.consumers` regardless of list position; the pre-050 "list it first or get a WARNING" caveat and its WARNING are both gone. §Lifecycle phases below. | 049 |
+| Two instances of one `VarcoModule` subclass in one `modules=` list | `ValueError` — almost always a copy-paste error. Use `default_modules(exclude=(X,))` to drop the default and add your own. | 049 |
+| `enabled=False` on a backend module (e.g. `KafkaModule(enabled=False)`) expecting it to deselect the backend | It only skips that module's lifecycle slots — backend *selection* is still Plan 047's `VARCO_<SEAM>_BACKEND`. | 049 |
+| A module that `container.get()`s a settings class in `_register()`, then the app tries to override it afterward | Same not-evicted caveat as everywhere else in this doc — a fallback already resolved and cached does not un-resolve. Pass the override as a constructor argument to the module instead (e.g. `SecurityHeadersModule(settings=...)`), which binds it via `bind_instance` before anything else can resolve the fallback. | 049 |
+| "Fixed" a settings-shaped module (`SecurityHeadersModule`/`BodyLimitModule`/`SecurityPostureModule`) to call `bind_settings(container, Cls, instance=...)` instead of `bind_instance`, because that is the Settings section's documented recipe | `SettingsAlreadyBoundError` — `FastAPIModule` (or `CoreModule`) always registers a plain `@Fallback` `bind_settings(container, Cls)` binding first (`depends_on=` guarantees the order), and `bind_settings(..., instance=...)` raises against **any** prior binding of that class, fallback or not. `bind_instance` (Plan 046's "already-constructed object" verb) uses separate bookkeeping and only raises against a non-fallback binding — exactly what "a code decision beats the module's own default" needs here. This is a **resolved deviation from the plan's original recipe** (`plans/049-varco-module-and-composable-app.md` §D-enabled), not an oversight — do not revert it. | 049 |
+| Assumed `RateLimitModule` always installs two `RateLimitMiddleware` instances (PRE_AUTH + POST_AUTH) | It installs **up to** two — one `MiddlewareSpec` per rule-scope partition that is non-empty. A bundle with only a `TENANT` rule yields exactly one `RateLimitMiddleware` at `POST_AUTH`, not one real instance plus a `rules=()` pass-through at `PRE_AUTH` — an existing byte-identical-order characterization test pins this. Also a **resolved deviation** from the plan's literal "two specs" text (`plans/049` §D-http), not a bug. | 049 |
+| Bound no `AbstractServerAuth` and expected the app to refuse to start, or expected no `RequestContextMiddleware` at all | `FastAPIModule` contributes `RequestContextMiddleware` **unconditionally** (pre-049 parity) — with nothing bound it runs in anonymous mode, so every request still gets a populated (but unauthenticated) `AuthContext`/`current_tenant()`. The app boots and serves traffic; it is not fail-closed. ⚠️ Neither `inspect_http_edge()` nor the security posture preflight currently reports this as a finding — verified absent from both `check=` id sets; nothing today surfaces a forgotten `AbstractServerAuth` binding except reading the response yourself. | 049 |
+| A `depends_on` pointing at a module scheduled for a later phase | `ModulePhaseError` at `create_varco_app()` time — move the dependency to an earlier/equal phase, or drop the edge. | 050 |
+| A user module left at the default `CONSUMERS` phase that opens a store other modules depend on | Works (the bus is up by then) but is fragile — declare `INFRA` explicitly if anything depends on it. | 050 |
+| A component that must run after *all* of a phase, from a package that cannot name the modules in it | Use an offset (`Phase.INFRA + 50`, as `SAModule`'s `sa.rls_posture` does), not a `depends_on` edge — the edge makes the target mandatory (`ModuleDependencyError` when absent) and may need an import in the wrong direction. | 050 |
+| `enable_*` constructing a connection-holding object without `disposer=` | Leaks at every `container.ashutdown()` — pass `bind_instance(..., disposer=obj.aclose)`. | 050 |
+| A Kafka/NATS bus resolved by hand and never started | `publish()` raises `RuntimeError` mentioning `start()` — no more silent hang or first-resolution auto-start (Kafka/NATS no longer start themselves at first resolution since 4.0). | 050 |
+| A custom `CacheBackend` whose `start()` raises `RuntimeError` for a genuine start failure (not just "already started") | `core.stores` swallows it as "already started"; the failure surfaces at first use as "not started". Raise a different exception type (e.g. `ConnectionError`) for real failures, as the ABC's contract implies. | 050 |
+| `SAModule(ensure_tables=True)` under an Alembic-managed schema | Harmless (`checkfirst`) but redundant — set `ensure_tables=False` when Alembic owns every framework table this deployment uses. | 050 |
+| A contribution sets `priority=` "to run first" | It sorts **last** among ascending-priority ties, and simultaneously becomes what `get(Seam)` returns as "the winner" — never set `priority=` on a collection contribution. | 051 |
+| Used `InjectInstances[T]` instead of a bare `list[T]`/`collect()` | Raises `LookupError` on zero contributions — every consumer would need a try/except. `@Multibound` + `list[T]`/`collect()` resolves to `()` instead. | 051 |
+| A literal `list[Seam]` binding registered alongside the collection point | The literal binding wins outright and the collection is silently ignored — never register a literal `list[T]` binding for a `@Multibound` seam. | 051 |
+| A `@Component`-scoped `EventConsumer` | `CoreModule.validate()` lists it; `start()` raises naming the class — make it `@Singleton` or set `auto_register = False`. | 051 |
+| Kept a `@PostConstruct def _setup(self): self.register_to(self._bus)` on a DI-bound consumer | Harmless (the auto path's `is_registered_to()` guard skips an already-registered consumer, silently) but no longer the documented way — delete it; `CoreModule.start()` registers it after the bus has started. | 051 |
+| A `TenantSource` bound (scanned) but not named in `VARCO_TENANT_SOURCES` | Inert — bound ≠ active. `resolve_tenant_source_chain()` logs every such name at INFO. | 051 |
+| `register_webhook_verifier(name, cls, replace=True)` on a built-in name | Silently shadows the built-in — documented, greppable; never done by varco itself. | 051 |
+| `varco diagnose` with no Redis/DB fails in `async_init` | use `--static` | 052 |
+| `--check` in CI without `--static` needs the brokers | `--static`, or provision them | 052 |
+| A `MISSING_BINDING` under `--static` may be an `ainstall()` provider | re-run without `--static` | 052 |
+| A deprecation fired at import time before the capture window | only `deprecated()`-helper sites are ledgered | 052 |
+| `di.bootstrapped_unselected` fires in a process that merely *imported* a backend | the backend registry is process-global: any `bootstrap()`/import of `varco_redis`/`varco_kafka`/... in the same interpreter (a test session, a shared worker) registers values for the seam, so an app that never selected it still gets the WARNING. Set `VARCO_<SEAM>_BACKEND` (to the default value to silence), or `clear_backend_selection(monkeypatch)` in tests | 052 |
+| `validate=False` also skips the runtime gate | keep it `True`; fix the binding | 052 |
+| Startup refused on an ERROR that never bit on 3.x | read the report, fix the binding; `validate=False` is the escape | 052 |
+
+## See also
+
+- README.md's **Wiring an app** chapter — worked, test-backed snippets for everything above.
+- CLAUDE.md's "DI wiring (providify)" section — the agent-facing rules, one line each, pointing here.
+- [The 3.x → 4.0 migration guide](../migrations/3-to-4.md) — what to change when upgrading.
+- [Security posture](security-posture.md) — the severity table every posture finding id lives in.

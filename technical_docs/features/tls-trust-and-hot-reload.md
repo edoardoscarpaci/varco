@@ -217,7 +217,7 @@ the `INFRA` phase, so a hand-rolled `lifespan.register(store)` call is no longer
 
 ```python
 from varco_core.tls import TrustStore, TrustStoreModule
-from varco_fastapi.modules import default_modules
+from varco_fastapi import default_modules
 
 app = create_varco_app(
     container,
@@ -305,7 +305,7 @@ Pitfalls table below. `HttpConnectionSettings.to_trust_store()` (`varco_fastapi.
 deliberately keeps returning the legacy type — see `SSLConfig.to_trust_store()` above for the
 lossless replacement.
 
-Removed in 4.0.0.
+Removed in 5.0.0 (deprecated since 3.1.0; floor: 2027-09-05).
 
 ## Encrypted private keys (Plan 027 / T6a, §D-T6-password)
 

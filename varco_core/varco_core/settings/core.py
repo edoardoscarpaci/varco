@@ -4,11 +4,10 @@ varco_core.settings.core
 ``bind_core_settings()`` — binds every ``varco_core``-owned settings class
 that has no package-specific home (Plan 048 / DI-6, §D-core-list).
 
-``varco_core`` has no ``bootstrap()`` and, by locked decision, nothing in it
-is scanned into activation — so something has to call ``bind_settings()``
-for its own classes. Today's callers: ``varco_fastapi.di.bootstrap()``/
-``create_varco_container()`` call this first; 049's core module will call it
-from ``register()`` unchanged.
+By locked decision nothing in ``varco_core`` is scanned into activation as a
+settings binding — so something has to call ``bind_settings()`` for its own
+classes. Callers: every package's ``bootstrap()`` calls this first, and
+``CoreModule.register()`` (Plan 049) does too.
 
 DESIGN: one function, one list, not per-class module-level providers
     ✅ A single audited list (§D-core-list) is either complete or wrong in

@@ -3,18 +3,30 @@ example.app
 ===========
 FastAPI application bootstrap for the Post example.
 
-Wires the complete stack in the correct order:
+The bootstrap sequence *is* the ``VarcoModule`` list built by ``modules()``
+and handed to ``create_varco_app(container, modules=...)`` (Plan 049 / DI-1):
 
-    1.  JWT authority     (RSA-2048; from env PEM or auto-generated in dev)
-    2.  Trusted issuer registry + JwtBearerAuth (per-request auth)
-    3.  Event bus         (Redis Pub/Sub)
-    4.  Cache backend     (Redis)
-    5.  ORM               (SQLAlchemy)
-    6.  FastAPI defaults + event producer
-    7.  Post domain module (PostService, PostAssembler, PostEventConsumer,
-                            PostAuthorizer)
-    8.  Router construction → ``include_router``
-    9.  Lifespan: bus → consumer → job runner
+    1.  JWT authority + ``TrustedIssuerRegistry`` + ``JwtBearerAuth``
+        (built outside DI — pure value objects, no lifecycle)
+    2.  ``SAConfig`` from ``DATABASE_URL`` (the engine connects lazily)
+    3.  ``*default_modules()`` — ``CoreModule`` (starts/stops the event bus
+        and job runner, auto-registers consumers), ``ObservabilityModule``,
+        ``FastAPIModule``, …
+    4.  ``SAModule``      (SQLAlchemy repositories for ``Post``)
+    5.  ``RedisModule(cache=True)`` (registers the Redis ``@Fallback`` backends —
+        live only when ``VARCO_<SEAM>_BACKEND=redis`` selects them — and
+        installs ``RedisCacheConfiguration``)
+    6.  ``WsModule``      (WebSocket/SSE push buses)
+    7.  ``PostAppModule`` (``depends_on`` SA/Redis/Ws — PostService, routers,
+        ``PostEventConsumer``; mounts the three routers in ``async_init()``)
+
+Before the list registers, ``create_app()`` binds
+``RedisEventBusSettings(use_streams=True)`` via ``bind_settings(instance=)`` — a
+settings override always precedes every module (it raises afterwards).
+Registration runs synchronously inside ``create_app()``; ``async_init()``/
+``start()``/``stop()`` run in the returned app's ASGI lifespan, ordered by
+each module's ``phase`` then ``depends_on``.  ``PostEventConsumer`` is a
+``@Singleton`` and is registered by ``CoreModule.start()`` (Plan 051 / DI-5).
 
 Environment variables required
 -------------------------------
@@ -54,13 +66,15 @@ Quick start (manual)::
          -H "Authorization: Bearer <token>"
 
 DESIGN: create_app() factory over module-level ``app = FastAPI()``
-    ✅ Async DI bootstrap (``await container.ainstall(...)``).
+    ✅ The module list is built per call — env (``DATABASE_URL``, PEM) is read
+       when the factory runs, not at import.
     ✅ Multiple independent instances (testing, multi-tenant).
     ✅ Auth wiring happens at factory time — authority is not a global.
     ❌ Uvicorn needs ``--factory`` flag.
 
 Thread safety:  ✅ ``create_app()`` is called once at startup.
-Async safety:   ✅ ``create_app()`` is ``async def`` — use with an ASGI server.
+Async safety:   ✅ ``create_app()`` is synchronous; every async step runs in
+                the app's ASGI lifespan.
 """
 
 from __future__ import annotations
@@ -72,8 +86,10 @@ from providify import DIContainer
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 from varco_core.di.module import VarcoModule
+from varco_core.settings import bind_settings
 from varco_fastapi.app import create_varco_app
 from varco_fastapi.modules.defaults import default_modules
+from varco_redis.config import RedisEventBusSettings
 from varco_redis.modules import RedisModule
 from varco_sa.config import SAConfig
 from varco_sa.modules import SAModule
@@ -186,14 +202,18 @@ def create_app() -> FastAPI:
        (sync, outside DI — a pure value object, no lifecycle).
     2. Build ``SAConfig`` from ``DATABASE_URL`` (sync — the engine itself
        connects lazily on first use).
-    3. ``create_varco_app(container, modules=[*default_modules(),
+    3. ``bind_settings(container, RedisEventBusSettings,
+       instance=RedisEventBusSettings(use_streams=True))`` — before any module
+       registers (a settings override is never bound from a module that runs
+       after a backend's ``bootstrap()``; it would raise).
+    4. ``create_varco_app(container, modules=[*default_modules(),
        SAModule(config=..., entities=(Post,)), RedisModule(cache=True),
        WsModule(), PostAppModule(authority, registry, server_auth)],
        routers=[])`` — ``default_modules()`` already lists ``CoreModule``/
        ``ObservabilityModule`` first; every module's ``register()`` runs
        synchronously here; ``async_init()``/``start()``/``stop()`` run inside
        the returned app's ASGI lifespan (unchanged ``VarcoLifespan`` timing).
-    4. ``routers=[]`` — ``PostRouter``/``AuthRouter``/``StreamsRouter`` all
+    5. ``routers=[]`` — ``PostRouter``/``AuthRouter``/``StreamsRouter`` all
        need a DI-injected or hand-built constructor argument
        ``create_varco_app``'s ``_mount_router`` cannot supply (a synchronous,
        no-argument ``router_cls()`` call) — ``PostAppModule.async_init()``
@@ -221,6 +241,15 @@ def create_app() -> FastAPI:
     Async safety:   ✅ Sync — no event loop required at call time.
     """
     container = DIContainer()
+    # Opt into Redis Streams (Plan 046 §D-streams) BEFORE any module registers.
+    # bind_settings(instance=) raises SettingsAlreadyBoundError against any
+    # prior binding of the class — including the @Fallback one RedisModule's
+    # bootstrap() records — so a settings override is always bound first, never
+    # from a module that runs after a backend (one value per class, decided
+    # once; nothing can have resolved an env-built copy before this line).
+    bind_settings(
+        container, RedisEventBusSettings, instance=RedisEventBusSettings(use_streams=True)
+    )
     app = create_varco_app(
         container,
         modules=modules(os.environ["DATABASE_URL"]),

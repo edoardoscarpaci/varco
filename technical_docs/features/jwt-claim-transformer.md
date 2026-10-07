@@ -340,7 +340,8 @@ The effective period is derived from the two knobs above — **no third env var*
 
 ```python
 from varco_fastapi.app import create_varco_app
-from varco_fastapi.modules import JwksRefreshModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import JwksRefreshModule
 
 registry = TrustedIssuerRegistry.from_env()
 app = create_varco_app(

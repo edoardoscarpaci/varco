@@ -131,3 +131,12 @@ resolving it once in `__init__` via `.get()` — providify's own documented exem
 injecting `Inject[CacheBackend]`"), reported here rather than silently applied; the recipe shown
 in the README/`dependency-injection.md` §Testing should note the same substitution for any
 consumer of a seam whose production default is `@Singleton`, until fix (a) or (b) lands.
+
+## 8. Guard
+
+`varco_core/tests/test_providify_contracts.py::TestP33OverrideInstanceScopeLeak::
+test_instance_override_trips_scope_leak_on_singleton_consumer` — `strict=True`,
+`raises=ScopeViolationDetectedError`, `reason="GAP: P33 — …"`. The moment
+`ContainerOverrides.instance()` stops binding `Scope.DEPENDENT` (or `_check_scope_violation()`
+exempts it), pytest reports `XPASS`, which `strict=True` turns into a hard failure. Status at
+4.0.0 (Plan 058 audit): open; named in `CHANGELOG.md` `[4.0.0]` → Upstream.

@@ -110,7 +110,10 @@ Every hard deprecation emits a `DeprecationWarning` via `varco_core.deprecation`
 `deprecated_alias(...)`-created alias resolves to the **identical object** as its replacement, so
 `isinstance()` and `except SomeException:` keep working across the deprecation window — it is not
 a wrapper or a shim with subtly different behaviour. Plan 022 shipped four worked examples, all
-`since="3.0.0", removed_in="4.0.0"`:
+`since="3.0.0"`; **re-labelled `removed_in="5.0.0"` in 4.0.0** — the 12-month floor (2027-08-31)
+fell after 4.0.0's date, which is the case the floor exists for: a major bump is necessary, never
+sufficient. `varco_core/tests/test_deprecation_floor.py` computes the floor from this file's
+policy and `CHANGELOG.md`'s release dates, and fails on any `removed_in=` that violates it:
 
 - `varco_sa.rls.enable_rls_ddl` → `render_rls_ddl` (AB-1)
 - `varco_core.migration.MigrationError`/`.MigrationPlan` → `varco_core.SchemaMigrationError`/

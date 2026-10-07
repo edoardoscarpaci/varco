@@ -353,9 +353,8 @@ class RlsPostureCollector(PostureCollector):
         ``data.rls_not_enforced``; catalog read fails → not checked (one
         WARNING); otherwise the read posture.
 
-        Raises:
-            Nothing for an unreachable database (``_FETCH_ERRORS``). Any other
-            exception is a bug and propagates.
+        Never raises for an unreachable database (``_FETCH_ERRORS``). Any
+        other exception is a bug and propagates.
         """
         from varco_sa.factory import SAModelRegistry  # noqa: PLC0415
         from varco_sa.rls_autogen import rls_candidate_tables  # noqa: PLC0415

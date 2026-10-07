@@ -356,7 +356,7 @@ OtelConfig(
 from the very first request:
 
 ```python
-from varco_fastapi.modules import default_modules
+from varco_fastapi import default_modules
 from varco_core.di.module import ObservabilityModule
 
 app = create_varco_app(

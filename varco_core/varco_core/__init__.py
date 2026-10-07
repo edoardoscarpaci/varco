@@ -317,7 +317,7 @@ if TYPE_CHECKING:
     # schema pair to SchemaMigrationError / SchemaMigrationPlan, which closes that
     # hole: both concepts are now re-exported below and an import site says which
     # one it means. The old varco_core.migration names still resolve there as
-    # deprecated aliases until 4.0.0.
+    # deprecated aliases until 5.0.0 (floor: 2027-08-31).
     from varco_core.migration import (
         AbstractMigrator,
         InMemoryMigrator,

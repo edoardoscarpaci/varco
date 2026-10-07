@@ -89,7 +89,7 @@ def render_rls_ddl(
     Renamed from ``enable_rls_ddl()`` in 3.0.0 (Plan 022 / AB-1): the old name
     read as a member of the DI opt-in ``enable_*`` family (CLAUDE.md's "DI
     wiring verb taxonomy") when it touches no container and registers no
-    binding. ``enable_rls_ddl`` remains as a deprecated alias until 4.0.0.
+    binding. ``enable_rls_ddl`` remains as a deprecated alias until 5.0.0 (floor: 2027-08-31).
 
     The generated policy uses the ``(SELECT current_setting(...))`` InitPlan
     form — see the module docstring's InitPlan finding. Do not hand-edit the
@@ -253,10 +253,11 @@ async def set_tenant_local(
 #: AB-1's back-compat seam. Deliberately kept OUT of ``__all__`` — a
 #: deprecated name should keep resolving for anyone who imports it explicitly,
 #: but must not be advertised to ``from varco_sa.rls import *`` or to
-#: autocomplete. Removed in 4.0.0.
+#: autocomplete. Removed in 5.0.0 (deprecated since 3.0.0; the 12-month floor
+#: put 4.0.0 out of reach — CONTRIBUTING.md §Removal window).
 enable_rls_ddl = deprecated(
     since="3.0.0",
-    removed_in="4.0.0",
+    removed_in="5.0.0",
     replacement="render_rls_ddl",
     name="enable_rls_ddl",
 )(render_rls_ddl)

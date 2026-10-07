@@ -63,6 +63,20 @@ jobs:
           varco_fastapi/varco_fastapi varco_casbin/varco_casbin
       - name: api surface --check
         run: uv run python scripts/api_surface.py --check
+      # Plan 058 / DI-14 (§D-entrypoints): the generated DI entry-point table —
+      # snapshot + technical_docs/entry-points.md + ARCHITECTURE.md's marked block.
+      - name: entry points --check
+        run: uv run python scripts/entry_points.py --check
+      # Plan 058 premise (4): CLAUDE.md said the AsyncAPI snapshot gate rode in
+      # this job, but no step ran it. Args copied from Makefile's ASYNCAPI_ARGS.
+      - name: export-asyncapi --check
+        run: >
+          uv run varco export-asyncapi
+          --title "varco example — full-stack post API" --version 0.1.0
+          --path examples/00-full-stack-post-api
+          --consumer example.consumer:PostEventConsumer
+          -o design/api-freeze-and-standards/measurements/asyncapi-example.json
+          --check
       # Plan 028 / Phase 1 (P1b), Step 12. WARN-ONLY on purpose: the ~2x
       # ceiling headroom in import-budget.json is an assumption about
       # GitHub-runner variance that no source quantifies, so a breach prints

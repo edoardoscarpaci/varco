@@ -49,7 +49,9 @@ async def send_json_error(
     going through the envelope machinery.
 
     Args:
-        scope, receive, send: The ASGI call's own arguments.
+        scope:       The ASGI call's own ``scope``.
+        receive:     The ASGI call's own ``receive``.
+        send:        The ASGI call's own ``send``.
         status_code: HTTP status to send.
         code:        Stable machine error code for the body's ``code`` field.
         message:     Human-readable message for the body's ``message`` field.

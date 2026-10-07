@@ -643,9 +643,8 @@ class TrustedIssuerRegistry:
         Returns:
             None.
 
-        Raises:
-            Never raises — a misconfigured period is clamped, not rejected;
-            an already-running refresher makes this call an idempotent no-op.
+        Never raises — a misconfigured period is clamped, not rejected;
+        an already-running refresher makes this call an idempotent no-op.
 
         Edge cases:
             - Called twice: idempotent — the second call is a no-op and the

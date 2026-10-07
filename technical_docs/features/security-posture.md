@@ -48,7 +48,8 @@ Passing a hand-built collector list (the pre-049 `SecurityPostureLifecycle(colle
 shape) now goes through the module's constructor:
 
 ```python
-from varco_fastapi.modules import SecurityPostureModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import SecurityPostureModule
 from varco_fastapi.posture import SecurityPostureSettings
 
 module = SecurityPostureModule(

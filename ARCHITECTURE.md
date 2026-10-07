@@ -84,6 +84,13 @@ varco_core/              — Domain model, service layer, event system, resilien
   │   │                    policy_authorizer/authorization_audit), feature_default()
   │   ├── introspect.py  — BindingRecord, inspect_bindings() (the one `container._bindings`
   │   │                    read), Catalogue, catalogue(), CatalogueError
+  │   ├── module.py      — VarcoModule ABC, ModuleRegistry, CoreModule, ObservabilityModule,
+  │   │                    LifecycleModule (Plan 049 / DI-1)
+  │   ├── lifecycle.py   — Phase, LifecycleComponent, LifecycleRunner, resolve_lifecycle_order(),
+  │   │                    phased_components(), ModulePhaseError (Plan 050 / DI-9)
+  │   ├── collect.py     — contribute(), collect(), acollect() over @Multibound seams (Plan 051)
+  │   ├── report.py      — WiringReport, WiringFinding, build_wiring_report() (Plan 052 / DI-7)
+  │   ├── diagnose.py    — the `varco diagnose` driver + the startup capture window (Plan 052)
   │   └── errors.py      — BackendSelectionError, CatalogueError
   ├── settings/          — varco_core.settings: bind_settings()/bind_core_settings() (Plan 048 /
   │   │                    DI-6, DI-16): the one `@Provider` closure recipe every
@@ -98,6 +105,10 @@ varco_core/              — Domain model, service layer, event system, resilien
   │   │                    _EXCLUDED_SETTINGS, check_unique_env_names()
   │   └── core.py        — bind_core_settings(container) — every varco_core-owned settings class
   │                        with no package-specific home (§D-core-list)
+  ├── posture.py         — PostureCollector (@Multibound), PostureFinding, PostureSeverity —
+  │                        the canonical home (Plan 051); varco_fastapi.posture re-exports them
+  ├── testing.py         — in_memory_modules(), register_modules(), InMemoryProfile,
+  │                        clear_backend_selection() (Plan 052 / DI-11)
   └── exception/         — Domain, service, query, HTTP exception hierarchy
 
 varco_kafka/             — Kafka event bus backend (aiokafka)
@@ -193,6 +204,19 @@ varco_casbin/            — Casbin policy-engine authorization backend (ACL/RBA
   ├── router.py          — build_policy_router() — FastAPI APIRouter REST admin ([fastapi] extra)
   ├── models/*.conf      — bundled Casbin models: acl, rbac, rbac_domains, abac
   └── di.py              — bootstrap(container) scan helper; enable_policy_authorizer(container) (opt-in authorizer)
+
+varco_fastapi/           — FastAPI integration: routers, middleware, create_varco_app
+  ├── modules/           — the HTTP-side VarcoModules (Plan 049): base.py (HttpContributor,
+  │                        MiddlewareModule), edge.py (FastAPIModule + the edge modules),
+  │                        lifecycle.py (Migrations/Tenancy/Reliability/Retention/JwksRefresh/
+  │                        SecurityPosture modules), defaults.py (default_modules())
+  ├── middleware/slots.py — EdgeSlot (15 members, incl. TENANT_RESOLUTION = 95), MiddlewareSpec
+  ├── diagnose.py        — wiring_report(app), posture_header() (Plan 052)
+  └── testing.py         — in_memory_app_modules() (Plan 052)
+
+<pkg>/modules.py         — every other package's one VarcoModule (SAModule, BeanieModule, KafkaModule,
+                           NatsModule, RedisModule, MemcachedModule, WsModule, CasbinModule);
+                           the full generated list: the "DI Wiring" section below
 ```
 
 > Authorization seam lives in **varco_core.auth.policy** (PolicyEngine, PolicyManagement,
@@ -337,7 +361,7 @@ TrustStore (varco_core.tls.store, @dataclass(frozen=True))
       to_requests_adapter()                        — thin delegations to tls.clients (below)
         │
         └── varco_fastapi.auth.trust_store.TrustStore (subclass, §D-T3-oq1)
-              — ⚠️ DEPRECATED, removed in 4.0.0. Pins 3.0 semantics: recursive=False,
+              — ⚠️ DEPRECATED, removed in 5.0.0 (floor: 2027-09-05). Pins 3.0 semantics: recursive=False,
                 cert_patterns=("*.pem","*.crt"), deferred (not eager) mTLS-pairing check.
                 isinstance(legacy, core.TrustStore) is True; the reverse is False.
 
@@ -1182,7 +1206,7 @@ Supporting surfaces
 Renamed in 3.0.0 (Plan 022 / AB-2) from `MigrationError`/`MigrationPlan`, which collided at the
 `varco_core` top level with the unrelated `varco_core.migrator` (domain data/field migration)
 pair. Both schema names are now re-exported from `varco_core` directly; the old names still
-resolve from `varco_core.migration` as deprecated aliases to the identical objects until 4.0.0.
+resolve from `varco_core.migration` as deprecated aliases to the identical objects until 5.0.0 (floor: 2027-08-31).
 
 See `technical_docs/features/schema-migrations.md`.
 
@@ -1260,7 +1284,7 @@ allowlist, resolve-then-validate-then-PIN (defeats DNS rebinding), blocked-by-de
 (including the ::ffff:<private-v4> bypass form).
 
 WebhookDispatcher (EventConsumer) — varco_core.webhook.dispatcher
-  ├── never holds AbstractEventBus — wired via register_to(bus, dlq=...) from @PostConstruct
+  ├── never holds AbstractEventBus — WebhookModule (Plan 050) wires it via register_to(bus, dlq=...)
   ├── @listen(WebhookTriggerEvent) — an app republishes its own domain events as this envelope
   ├── runs its own per-subscription retry loop on RetryPolicy (NOT the generic
   │   @listen(retry_policy=..., dlq=...) wrapper — one event can match N subscriptions that must
@@ -1613,39 +1637,150 @@ cache = await InMemoryCache(
 
 ### DI Wiring
 
-```python
-# Container setup
-container = DIContainer()
+Every package exposes `bootstrap(container) -> DIContainer` (scan its `@Singleton`s, return the
+same container); an app passes a list of `VarcoModule`s to `create_varco_app(container,
+modules=[...])`; `bind_*`/`enable_*`/`mount_*`/`install_*` are the explicit wiring verbs. The
+contract, the `@Fallback` default model, backend selection, phases, and multi-binding are
+designed in [`technical_docs/features/dependency-injection.md`](technical_docs/features/dependency-injection.md);
+the table below is **generated** by `scripts/entry_points.py` (`make entry-points`) from the
+same `scripts/packages.sh` derivation as `scripts/api_surface.py`, and `make lint`
+(`entry-points-check`) fails if it drifts. Standalone page: `technical_docs/entry-points.md`.
 
-# Register backends: scan discovers @Singleton bus classes; cache is opt-in
-container.scan("varco_kafka", recursive=True)  # discovers Kafka bus
-container.install(SAConfiguration)  # sync setup — renamed from SAModule (Plan 049 §D-names);
-    # `SAModule` now names the VarcoModule in varco_sa.modules — see "Modules" below
-await container.ainstall(RedisCacheConfiguration)  # async opt-in cache
+<!-- entry-points:begin -->
+<!-- generated — `make entry-points`; never hand-edit between these markers -->
 
-# Bind repositories (auto-derived from DomainModel fields)
-bind_repositories(container, User, Order, Product)
+#### `bootstrap` (10)
 
-# Resolve: DI knows concrete types, app code injects protocols
-user_service: AsyncService[User, UUID, ...] = container.resolve(UserService)
-event_bus: AbstractEventBus = container.resolve(AbstractEventBus)
-```
+| Name | Package | Module | Signature |
+|---|---|---|---|
+| `bootstrap` | varco_beanie | `varco_beanie.di` | `(container: 'DIContainer') -> 'DIContainer'` |
+| `bootstrap` | varco_casbin | `varco_casbin.di` | `(container: 'DIContainer') -> 'DIContainer'` |
+| `bootstrap` | varco_core | `varco_core.di` | `(container: 'DIContainer') -> 'DIContainer'` |
+| `bootstrap` | varco_fastapi | `varco_fastapi.di` | `(container: 'DIContainer') -> 'DIContainer'` |
+| `bootstrap` | varco_kafka | `varco_kafka.di` | `(container: 'DIContainer') -> 'DIContainer'` |
+| `bootstrap` | varco_memcached | `varco_memcached.di` | `(container: 'DIContainer') -> 'DIContainer'` |
+| `bootstrap` | varco_nats | `varco_nats.di` | `(container: 'DIContainer') -> 'DIContainer'` |
+| `bootstrap` | varco_redis | `varco_redis.di` | `(container: 'DIContainer') -> 'DIContainer'` |
+| `bootstrap` | varco_sa | `varco_sa.di` | `(container: 'DIContainer') -> 'DIContainer'` |
+| `bootstrap` | varco_ws | `varco_ws.di` | `(container: 'DIContainer') -> 'DIContainer'` |
 
-**Corrected DI call shapes** (documented incorrectly in several places before this
-was traced to a real bug — see below):
-- `install()` / `ainstall()` take **only** the module class, never a `config=`
-  kwarg — `container.install(OtelConfiguration, config=OtelConfig(...))` has
-  never worked.
-- `provide()` takes exactly **one** argument: a module-level, `@Provider`-decorated
-  factory function. `container.provide(lambda: X())` and
-  `container.provide(fn, SomeInterface)` both raise
-  `ProviderBindingNotDecoratedError` / `TypeError` — there is no "pass the
-  interface as a second argument" call shape.
-- Equal-priority bindings for the same interface resolve to the **first one
-  registered**, not the last (`DIContainer._get_best_candidate` does
-  `max(candidates, key=lambda b: b.priority)`, and Python's `max()` keeps the
-  first element on a tie). An override `provide()` call must run *before*
-  `install()`/`scan()`, or it must declare a higher `priority=` explicitly.
+#### `async_bootstrap` (2)
+
+| Name | Package | Module | Signature |
+|---|---|---|---|
+| `async_bootstrap` | varco_memcached | `varco_memcached.di` | `(container: 'DIContainer') -> 'DIContainer'` |
+| `async_bootstrap` | varco_redis | `varco_redis.di` | `(container: 'DIContainer') -> 'DIContainer'` |
+
+#### `bind` (15)
+
+| Name | Package | Module | Signature |
+|---|---|---|---|
+| `bind_repositories` | varco_beanie | `varco_beanie.di` | `(container: 'DIContainer', *entity_classes: 'type[DomainModel]') -> 'DIContainer'` |
+| `bind_instance` | varco_core | `varco_core.di` | `(container: 'DIContainer', interface: 'Any', instance: 'Any', *, qualifier: 'str \| None' = None, disposer: 'Callable[[Any], Any] \| None' = None) -> 'ProviderBinding'` |
+| `bind_env_overrides` | varco_core | `varco_core.di.select` | `(container: 'DIContainer') -> 'DIContainer'` |
+| `bind_cloudevents_serializer` | varco_core | `varco_core.event.cloudevents` | `(container: 'DIContainer', settings: 'CloudEventsSettings') -> 'DIContainer'` |
+| `bind_settings` | varco_core | `varco_core.settings.bind` | `(container: 'DIContainer', cls: 'type[BaseSettings]', *, instance: 'BaseSettings \| None' = None, qualifier: 'str \| None' = None, env_prefix: 'str \| None' = None) -> 'BaseSettings'` |
+| `bind_core_settings` | varco_core | `varco_core.settings.core` | `(container: 'DIContainer') -> 'DIContainer'` |
+| `bind_trust_store` | varco_core | `varco_core.tls.di` | `(container: 'DIContainer', store: 'ReloadingTrustStore') -> 'DIContainer'` |
+| `bind_peers` | varco_fastapi | `varco_fastapi.client.peer` | `(container: 'DIContainer', mapping: 'Mapping[str, type]', *, registry: 'PeerRegistry \| None' = None) -> 'DIContainer'` |
+| `bind_clients` | varco_fastapi | `varco_fastapi.di` | `(container: 'DIContainer', *client_classes: 'type') -> 'DIContainer'` |
+| `bind_clients_from` | varco_fastapi | `varco_fastapi.di` | `(container: 'DIContainer', *router_classes: 'type') -> 'DIContainer'` |
+| `bind_mcp_adapter` | varco_fastapi | `varco_fastapi.router.mcp` | `(container: 'DIContainer', router_cls: 'type', *, qualifier: 'str \| None' = None, client_cls: 'type \| None' = None, base_url: 'str \| None' = None, tool_name_prefix: 'str' = '', enabled_routes: 'set[str] \| None' = None) -> 'DIContainer'` |
+| `bind_skill_adapter` | varco_fastapi | `varco_fastapi.router.skill` | `(container: 'DIContainer', router_cls: 'type', *, agent_name: 'str', agent_description: 'str', agent_version: 'str' = '1.0.0', qualifier: 'str \| None' = None, client_cls: 'type \| None' = None, base_url: 'str \| None' = None, enabled_routes: 'set[str] \| None' = None, job_runner_cls: 'type \| None' = None, job_store_cls: 'type \| None' = None, conversation_store_cls: 'type \| None' = None) -> 'DIContainer'` |
+| `bind_repositories` | varco_sa | `varco_sa.di` | `(container: 'DIContainer', *entity_classes: 'type[DomainModel]') -> 'DIContainer'` |
+| `bind_sse_adapter` | varco_ws | `varco_ws.di` | `(container: 'DIContainer', *, qualifier: 'str \| None' = None, event_type: 'Any' = None, channel: 'str' = '*', max_queue_size: 'int' = 100) -> 'DIContainer'` |
+| `bind_websocket_adapter` | varco_ws | `varco_ws.di` | `(container: 'DIContainer', *, qualifier: 'str \| None' = None, event_type: 'Any' = None, channel: 'str' = '*', max_queue_size: 'int' = 100, backpressure_policy: 'Any' = None) -> 'DIContainer'` |
+
+#### `enable` (6)
+
+| Name | Package | Module | Signature |
+|---|---|---|---|
+| `enable_policy_authorizer` | varco_casbin | `varco_casbin.di` | `(container: 'DIContainer') -> 'DIContainer'` |
+| `enable_authorization_audit` | varco_core | `varco_core.auth.di` | `(container: 'DIContainer', *, policy: 'AuditDecisionPolicy' = <AuditDecisionPolicy.DENIALS: 'denials'>) -> 'DIContainer'` |
+| `enable_feature_flags` | varco_core | `varco_core.flags.di` | `(container: 'DIContainer') -> 'DIContainer'` |
+| `enable_token_revocation` | varco_core | `varco_core.revocation.di` | `(container: 'DIContainer') -> 'DIContainer'` |
+| `enable_tenant_membership` | varco_core | `varco_core.tenancy.di` | `(container: 'DIContainer', settings: 'TenantMembershipSettings \| None' = None) -> 'DIContainer'` |
+| `enable_redis_token_revocation` | varco_redis | `varco_redis.di` | `(container: 'DIContainer', **redis_kwargs: 'Any') -> 'DIContainer'` |
+
+#### `mount` (3)
+
+| Name | Package | Module | Signature |
+|---|---|---|---|
+| `mount_reliability_admin` | varco_fastapi | `varco_fastapi.admin.mount` | `(app: 'FastAPI', *, server_auth: 'Any', audit_repo: 'AuditRepository \| None' = None, dlq: 'AbstractDeadLetterQueue \| None' = None, redriver: 'DlqRedriver \| None' = None, acknowledge_bundled_admin: 'bool' = False, admin_role: 'str' = 'reliability-admin', cross_tenant_role: 'str' = 'cross-tenant-admin', prefix: 'str' = '/reliability', dependencies: 'Sequence[Any] \| None' = None) -> 'None'` |
+| `mount_tenant_admin` | varco_fastapi | `varco_fastapi.tenancy.mount` | `(app: 'FastAPI', control_service: 'Any', *, acknowledge_bundled_admin: 'bool' = False, server_auth: 'AbstractServerAuth \| None' = None, admin_role: 'str' = 'tenant-admin', prefix: 'str' = '/tenancy', dependencies: 'Sequence[DependsType]' = ()) -> 'None'` |
+| `mount_webhook_admin` | varco_fastapi | `varco_fastapi.webhook.mount` | `(app: 'FastAPI', *, repository: 'WebhookSubscriptionRepository', server_auth: 'Any', redriver: 'DlqRedriver \| None' = None, acknowledge_bundled_admin: 'bool' = False, admin_role: 'str' = 'webhook-admin', cross_tenant_role: 'str' = 'cross-tenant-admin', prefix: 'str' = '/webhooks') -> 'None'` |
+
+#### `install` (10)
+
+| Name | Package | Module | Signature |
+|---|---|---|---|
+| `install_cache_metrics` | varco_core | `varco_core.observability.cache` | `(*, config: 'CacheMetricsConfig \| None' = None) -> 'None'` |
+| `install_reliability_metrics` | varco_core | `varco_core.observability.reliability` | `(*, dlq: 'AbstractDeadLetterQueue \| None' = None, dlq_name: 'str \| None' = None, outbox_repo: 'OutboxRepository \| None' = None, config: 'ReliabilityMetricsConfig \| None' = None) -> 'None'` |
+| `install_retention_metrics` | varco_core | `varco_core.observability.retention` | `() -> 'None'` |
+| `install_process_trust` | varco_core | `varco_core.tls.install` | `(store: 'TrustStore \| ReloadingTrustStore', *, acknowledge_global_mutation: 'bool' = False) -> 'RestoreHandle'` |
+| `install_webhook_metrics` | varco_core | `varco_core.webhook.metrics` | `() -> 'None'` |
+| `install_middleware_stack` | varco_fastapi | `varco_fastapi.middleware` | `(app: 'Any', middlewares: 'list[MiddlewareEntry]') -> 'None'` |
+| `install_cors` | varco_fastapi | `varco_fastapi.middleware.cors` | `(app: 'FastAPI', config: 'CORSConfig \| None' = None) -> 'None'` |
+| `install_global_readonly_translation` | varco_sa | `varco_sa.tenancy.global_scope` | `(call: 'Callable[..., Awaitable[T]]', *, entity_name: 'str') -> 'Callable[..., Awaitable[T]]'` |
+| `install_tenant_passthrough` | varco_sa | `varco_sa.tenancy.global_scope` | `(call: 'Callable[..., Awaitable[T]]') -> 'Callable[..., Awaitable[T]]'` |
+| `install_rls_tenant_hook` | varco_sa | `varco_sa.tenancy.rls_session` | `(target: 'Any', *, setting: 'str' = 'rls.tenant_id', require_tenant: 'bool' = False, _set_tenant_local: 'Callable[..., Coroutine[Any, Any, None]] \| None' = None) -> 'Callable[[], None]'` |
+
+#### `module` (32)
+
+| Name | Package | Module | `name` | `phase` | `depends_on` |
+|---|---|---|---|---|---|
+| `BeanieModule` | varco_beanie | `varco_beanie.modules` | `beanie` | `Phase.INFRA` | CoreModule |
+| `CasbinModule` | varco_casbin | `varco_casbin.modules` | `casbin` | `Phase.INFRA` | CoreModule |
+| `CoreModule` | varco_core | `varco_core.di.module` | `core` | `Phase.INFRA` | — |
+| `LifecycleModule` | varco_core | `varco_core.di.module` | `` | `Phase.CONSUMERS` | — |
+| `ObservabilityModule` | varco_core | `varco_core.di.module` | `observability` | `Phase.INFRA` | — |
+| `InMemoryProfile` | varco_core | `varco_core.testing` | `in_memory_profile` | `Phase.EDGE` | CoreModule |
+| `TrustStoreModule` | varco_core | `varco_core.tls.module` | `trust_store` | `Phase.INFRA` | CoreModule |
+| `WebhookModule` | varco_core | `varco_core.webhook.module` | `webhook` | `Phase.CONSUMERS` | CoreModule |
+| `MiddlewareModule` | varco_fastapi | `varco_fastapi.modules.base` | `middleware_adapter` | `Phase.INFRA` | — |
+| `BodyLimitModule` | varco_fastapi | `varco_fastapi.modules.edge` | `body_limit` | `Phase.INFRA` | — |
+| `CorsModule` | varco_fastapi | `varco_fastapi.modules.edge` | `cors` | `Phase.INFRA` | — |
+| `ErrorEnvelopeModule` | varco_fastapi | `varco_fastapi.modules.edge` | `error_envelope` | `Phase.INFRA` | — |
+| `FastAPIModule` | varco_fastapi | `varco_fastapi.modules.edge` | `fastapi` | `Phase.INFRA` | CoreModule |
+| `LocalizationModule` | varco_fastapi | `varco_fastapi.modules.edge` | `localization` | `Phase.INFRA` | — |
+| `LoggingModule` | varco_fastapi | `varco_fastapi.modules.edge` | `logging` | `Phase.INFRA` | — |
+| `MetricsModule` | varco_fastapi | `varco_fastapi.modules.edge` | `metrics` | `Phase.INFRA` | — |
+| `ProfilingModule` | varco_fastapi | `varco_fastapi.modules.edge` | `profiling` | `Phase.INFRA` | — |
+| `RateLimitModule` | varco_fastapi | `varco_fastapi.modules.edge` | `rate_limit` | `Phase.INFRA` | — |
+| `SecurityHeadersModule` | varco_fastapi | `varco_fastapi.modules.edge` | `security_headers` | `Phase.INFRA` | — |
+| `TracingModule` | varco_fastapi | `varco_fastapi.modules.edge` | `tracing` | `Phase.INFRA` | — |
+| `JwksRefreshModule` | varco_fastapi | `varco_fastapi.modules.lifecycle` | `jwks_refresh` | `Phase.SCHEDULERS` | CoreModule |
+| `MigrationsModule` | varco_fastapi | `varco_fastapi.modules.lifecycle` | `migrations` | `Phase.INFRA` | CoreModule |
+| `ReliabilityModule` | varco_fastapi | `varco_fastapi.modules.lifecycle` | `reliability` | `Phase.CONSUMERS` | CoreModule |
+| `RetentionModule` | varco_fastapi | `varco_fastapi.modules.lifecycle` | `retention` | `Phase.SCHEDULERS` | CoreModule |
+| `SecurityPostureModule` | varco_fastapi | `varco_fastapi.modules.lifecycle` | `security_posture` | `Phase.EDGE` | CoreModule |
+| `TenancyModule` | varco_fastapi | `varco_fastapi.modules.lifecycle` | `tenancy` | `Phase.INFRA` | CoreModule |
+| `KafkaModule` | varco_kafka | `varco_kafka.modules` | `kafka` | `Phase.INFRA` | CoreModule |
+| `MemcachedModule` | varco_memcached | `varco_memcached.modules` | `memcached` | `Phase.INFRA` | CoreModule |
+| `NatsModule` | varco_nats | `varco_nats.modules` | `nats` | `Phase.INFRA` | CoreModule |
+| `RedisModule` | varco_redis | `varco_redis.modules` | `redis` | `Phase.INFRA` | CoreModule |
+| `SAModule` | varco_sa | `varco_sa.modules` | `sa` | `Phase.INFRA` | CoreModule |
+| `WsModule` | varco_ws | `varco_ws.modules` | `ws` | `Phase.CONSUMERS` | CoreModule |
+
+#### `configuration` (14)
+
+| Name | Package | Module | `depends_on` |
+|---|---|---|---|
+| `BeanieConfiguration` | varco_beanie | `varco_beanie.di` | — |
+| `OtelConfiguration` | varco_core | `varco_core.observability.di` | — |
+| `VarcoFastAPIConfiguration` | varco_fastapi | `varco_fastapi.di` | — |
+| `KafkaDLQConfiguration` | varco_kafka | `varco_kafka.dlq` | — |
+| `MemcachedCacheConfiguration` | varco_memcached | `varco_memcached.cache` | — |
+| `NatsDLQConfiguration` | varco_nats | `varco_nats.dlq` | — |
+| `RedisBulkheadConfiguration` | varco_redis | `varco_redis.bulkhead` | — |
+| `RedisEventBusSelectorConfiguration` | varco_redis | `varco_redis.bus` | — |
+| `RedisCacheConfiguration` | varco_redis | `varco_redis.cache` | — |
+| `RedisLayeredCacheConfiguration` | varco_redis | `varco_redis.cache` | — |
+| `RedisDLQConfiguration` | varco_redis | `varco_redis.dlq` | — |
+| `RedisStoresConfiguration` | varco_redis | `varco_redis.stores` | — |
+| `RedisStreamDLQConfiguration` | varco_redis | `varco_redis.stream_dlq` | — |
+| `SAConfiguration` | varco_sa | `varco_sa.di` | — |
+<!-- entry-points:end -->
 
 ⚠️ **The quoted-`@Provider`-return-annotation landmine.** A `@Provider` (or
 `@Configuration` provider method) whose return annotation is a *string* —
@@ -1663,7 +1798,7 @@ parameter for **every** provider/constructor in that container as empty from
 then on. The failure surfaces nowhere near the real defect: it looks like an
 unrelated provider is missing a required constructor argument
 (`TypeError: some_fn() missing 1 required positional argument: 'x'`). This is
-exactly what happened to `VarcoFastAPIConfiguration.profiling_settings` (`VarcoFastAPIModule` at the time of the bug, renamed by Plan 049 §D-names — see “Modules” below) — fixed by
+exactly what happened to `VarcoFastAPIConfiguration.profiling_settings` — fixed by
 dropping the quotes and importing `ProfilingSettings` at module scope — see
 `CHANGELOG.md`'s `[Unreleased]` → `varco-fastapi` → Fixed entry).
 
@@ -1691,44 +1826,23 @@ plain ABC and never a providify `@Configuration`, the tri-state, `EdgeSlot`):
 `technical_docs/features/dependency-injection.md`'s §Modules; the phase model: its §Lifecycle
 phases.
 
-| Module | Package | `phase` | In `default_modules()`? | `depends_on` |
-|---|---|---|---|---|
-| `CoreModule` | `varco_core.di.module` | `INFRA` (record only — `components()` spans `INFRA`/`BUS`/`CONSUMERS`/`SCHEDULERS`) | ✅ | — |
-| `ObservabilityModule` | `varco_core.di.module` | `INFRA` | ✅ | — |
-| `LifecycleModule` (adapter) | `varco_core.di.module` | `CONSUMERS` (default; per-instance `phase=` kwarg) | — | per-instance |
-| `WebhookModule` | `varco_core.webhook.module` | `CONSUMERS` | opt-in | `CoreModule` |
-| `TrustStoreModule` | `varco_core.tls.module` | `INFRA` | opt-in | `CoreModule` |
-| `FastAPIModule` | `varco_fastapi.modules` | `INFRA` | ✅ | `CoreModule` |
-| `CorsModule` | `varco_fastapi.modules` | `INFRA` | ✅ | — |
-| `SecurityHeadersModule` | `varco_fastapi.modules` | `INFRA` | ✅ | — |
-| `ErrorEnvelopeModule` | `varco_fastapi.modules` | `INFRA` | ✅ | — |
-| `BodyLimitModule` | `varco_fastapi.modules` | `INFRA` | ✅ | — |
-| `LoggingModule` | `varco_fastapi.modules` | `INFRA` | ✅ | — |
-| `TracingModule` | `varco_fastapi.modules` | `INFRA` | ✅ | — |
-| `LocalizationModule` | `varco_fastapi.modules` | `INFRA` | ✅ | — |
-| `SecurityPostureModule` | `varco_fastapi.modules` | `EDGE` | ✅ (FLIP-1) | `CoreModule` |
-| `MetricsModule` | `varco_fastapi.modules` | `INFRA` | opt-in | — |
-| `ProfilingModule` | `varco_fastapi.modules` | `INFRA` | opt-in | — |
-| `RateLimitModule` | `varco_fastapi.modules` | `INFRA` | opt-in | — |
-| `MigrationsModule` | `varco_fastapi.modules` | `INFRA` | opt-in | `CoreModule` |
-| `TenancyModule` | `varco_fastapi.modules` | `INFRA` | opt-in | `CoreModule` |
-| `ReliabilityModule` | `varco_fastapi.modules` | `CONSUMERS` | opt-in | `CoreModule` |
-| `RetentionModule` | `varco_fastapi.modules` | `SCHEDULERS` | opt-in | `CoreModule` |
-| `JwksRefreshModule` | `varco_fastapi.modules` | `SCHEDULERS` | opt-in | `CoreModule` |
-| `MiddlewareModule` (adapter) | `varco_fastapi.modules.base` | `INFRA` | — | per-instance |
-| `SAModule` | `varco_sa.modules` | `INFRA` (+ `sa.rls_posture` at `RLS_POSTURE_PHASE` = `INFRA + 50`) | opt-in | `CoreModule` |
-| `BeanieModule` | `varco_beanie.modules` | `INFRA` | opt-in | `CoreModule` |
-| `RedisModule` | `varco_redis.modules` | `INFRA` | opt-in | `CoreModule` |
-| `KafkaModule` | `varco_kafka.modules` | `INFRA` | opt-in | `CoreModule` |
-| `NatsModule` | `varco_nats.modules` | `INFRA` | opt-in | `CoreModule` |
-| `MemcachedModule` | `varco_memcached.modules` | `INFRA` | opt-in | `CoreModule` |
-| `CasbinModule` | `varco_casbin.modules` | `INFRA` | opt-in | `CoreModule` |
-| `WsModule` | `varco_ws.modules` | `CONSUMERS` | opt-in | `CoreModule` |
+Every module, with its `name`, `phase` and `depends_on`, is the generated **`module`** table in
+the "DI Wiring" section above (`make entry-points` — one table, generated, never two). What
+`default_modules()` installs (in order): `CoreModule`, `ObservabilityModule`, `FastAPIModule`,
+`CorsModule`, `SecurityHeadersModule`, `ErrorEnvelopeModule`, `BodyLimitModule`, `LoggingModule`,
+`TracingModule`, `LocalizationModule`, `SecurityPostureModule` (FLIP-1); everything else is
+opt-in. `CoreModule.components()` spans `INFRA`/`BUS`/`CONSUMERS`/`SCHEDULERS`; `SAModule` adds
+`sa.rls_posture` at `RLS_POSTURE_PHASE = Phase.INFRA + 50`.
 
 `HttpContributor` (`varco_fastapi.modules.base`, `runtime_checkable` Protocol —
 `middleware()`/`configure_app()`) is deliberately **not** on the core `VarcoModule` ABC, so
-`varco_core` stays transport-free. `EdgeSlot` (`varco_fastapi.middleware.slots`) is the
-outermost-first middleware order table, as code.
+`varco_core` stays transport-free. `EdgeSlot` (`varco_fastapi.middleware.slots`, 15 members —
+including `TENANT_RESOLUTION = 95`, Plan 055) is the outermost-first middleware order table, as
+code.
+
+Posture collectors are contributed by their owning module (`SecurityPostureModule`,
+`CoreModule`, `TenancyModule`, `SAModule`); the final ownership map is one table in the DI guide's
+§Multi-binding ("Who contributes which posture collector").
 
 ⚠️ **`FastAPIModule`'s `RequestContextMiddleware` contribution is unconditional, unlike every
 other row's own on/off switch.** With `AbstractServerAuth` bound it runs the app's real auth
@@ -1839,7 +1953,8 @@ Pitfalls table: `technical_docs/features/dependency-injection.md`'s §Lifecycle 
 
 4. **Implement event consumer** (`varco_core.event.EventConsumer`)
    - Decorate handlers with `@listen(EventType, channel="name")`
-   - Call `register_to(bus)` in `@PostConstruct` method
+   - Make it a `@Singleton` — `CoreModule.start()` calls `register_to(bus)` after the bus starts
+     (Plan 051); a hand `register_to(bus)` is only for non-DI consumers
 
 5. **Bind in DI** (in your app's DI setup)
    - `bind_repositories(container, DomainModel)`
@@ -2039,7 +2154,7 @@ filtered_query = transformer.transform(base_query, params, User)
   `_collect_lifecycle_components()`/`_try_resolve_component()` and
   `VARCO_LIFECYCLE_DISCOVERY_WARN` are deleted, not just deprecated.
 - **Typed HTTP clients**: `AsyncVarcoClient` / `SyncVarcoClient` with retry, circuit breaker, and JWT injection.
-- **DI wiring**: `VarcoFastAPIConfiguration` (renamed from `VarcoFastAPIModule` — Plan 049
+- **DI wiring**: `VarcoFastAPIConfiguration` (Plan 049
   §D-names) + `bind_clients()`. ⚠️ `bind_clients()` is
   currently known-broken (raises `ClassBindingNotDecoratedError` — the internal
   factory it builds is never `@Provider`-decorated); see the `bind_clients()`
@@ -2087,7 +2202,8 @@ Prometheus scrape traffic and Kubernetes health probe noise from latency histogr
 **Wiring via `create_varco_app` (Plan 049 — `MetricsModule`, opt-in)**:
 
 ```python
-from varco_fastapi.modules import MetricsModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import MetricsModule
 
 # Auto-mounts MetricsMiddleware + MetricsRouter at /metrics
 app = create_varco_app(container, modules=[*default_modules(), MetricsModule()], validate=False)
@@ -2206,7 +2322,8 @@ profiles one HTTP request at a time:
 
 **Wiring** (Plan 049 — `ProfilingModule`, opt-in):
 ```python
-from varco_fastapi.modules import ProfilingModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import ProfilingModule
 app = create_varco_app(container, modules=[*default_modules(), ProfilingModule()])
 # or:
 app.add_middleware(
@@ -2445,6 +2562,6 @@ status on the error path.
 | Saga without persistent repository | Crash mid-saga leaves system in half-applied state with no recovery path | Use `AbstractSagaRepository` to persist state after every step |
 | `WebSocketEventBus` / `SSEEventBus` used as `AbstractEventBus` | They are push adapters, not bus implementations — cannot publish or route | Pass them a real bus; use the bus for service-to-service; use adapters only for browser push |
 | Cache backend `add_warmer()` called after `__aenter__` | Warmers only run during `__aenter__` — adding one after start is a no-op | Register all warmers before `async with cache:` |
-| Subscribes to events in `__init__` | Blocks service instantiation, makes testing hard | Defer to `@PostConstruct` + `register_to()` |
+| Subscribes to events in `__init__` | Blocks service instantiation, makes testing hard | Bind the consumer as a `@Singleton` and let `CoreModule.start()` call `register_to()` (Plan 051) |
 | Mixin hook doesn't call `super()` | Breaks the MRO chain, later mixins never run | Always chain with `return await super()._hook_name(...)` |
 

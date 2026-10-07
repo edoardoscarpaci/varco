@@ -7,7 +7,7 @@ Step 19, §D-S13-di).
 
 Mirrors ``varco_core.flags.di``'s ``enable_feature_flags`` precedent
 verbatim: ``NullTokenRevocationStore`` is bound by default (a scanned
-``@Singleton`` at the lowest priority — see ``null.py``), and
+``@Fallback @Singleton`` — see ``null.py``), and
 ``enable_token_revocation(container)`` is the only way to swap in
 ``InMemoryTokenRevocationStore``. This is deliberately **not** a scanned
 ``@Configuration`` — ``scan`` auto-activates those, which would silently

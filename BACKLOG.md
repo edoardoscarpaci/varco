@@ -1,10 +1,11 @@
 # BACKLOG
 
-**One cycle is live: `# 4.0 — dependency-injection standardization`, immediately below — fully planned
-(plans/045–058, index `plans/000-index-4-0-di-standardization.md`), building next.**
+**No cycle is live.** 4.0 (dependency-injection standardization + the security-default flip
+list) is built — plans/045–058, index `plans/000-index-4-0-di-standardization.md` — and awaits its
+`v4.0.0` release (Plan 058 Phase F: bump, rc rehearsal, tag).
 
-Everything from earlier cycles (3.0.0, 3.0.1, both 3.1 cycles, and 3.2) is **complete and
-shipped** — compressed under `## ✅ Shipped`; the detail lives in `plans/`, `CHANGELOG.md`, and git
+Everything from earlier cycles (3.0.0, 3.0.1, both 3.1 cycles, 3.2, and the 4.0 build) is
+**complete** — compressed under `## ✅ Shipped`; the detail lives in `plans/`, `CHANGELOG.md`, and git
 history. What is *never* trimmed are the **parks** (with their un-park triggers) and the
 **answered decisions**: they are the reason this project does not re-argue settled questions
 every cycle.
@@ -14,40 +15,14 @@ every cycle.
 
 ---
 
-# 4.0 — dependency-injection standardization (discover, 2026-09-12)
+# 4.0 — dependency-injection standardization (discover 2026-09-12; built, plans/045–058)
 
-Produced by `/discover` with the focus *"fix and standardize the whole DI story: factories,
-multiple injection, feature enabling, and the defaults varco provides — learn from Quarkus, Spring,
-Django, and document everything."* Originally reserved as "3.3.0, the DI fix"; **renumbered
-4.0.0 at the interview** because the wiring surface breaks outright and CONTRIBUTING.md's
-SemVer policy does not allow that in a minor.
+Every row of this cycle is built; the design of record is `plans/000-index-4-0-di-standardization.md`
+and plans/045–058, the user-facing record `CHANGELOG.md` `[4.0.0]` and
+`technical_docs/migrations/3-to-4.md`. The decisions below are kept because they are answered
+decisions, not work.
 
-**Research briefs backing this cycle:**
-[`010-default-implementation-di-conventions.md`](design/research/010-default-implementation-di-conventions.md)
-(Quarkus `@DefaultBean` / Spring `@ConditionalOnMissingBean` / ASP.NET `TryAdd*`, startup
-diagnostics, fail-closed security defaults),
-[`014-multi-binding-qualifiers-and-conditional-di.md`](design/research/014-multi-binding-qualifiers-and-conditional-di.md)
-(collection injection, qualifiers, conditional activation, async factories, lifecycle phases —
-⚠️ its claim that providify has `@Requires` is wrong; providify's conditional primitives are
-`@Profile`/`@Alternative`),
-[`015-starters-modules-and-configuration-binding.md`](design/research/015-starters-modules-and-configuration-binding.md)
-(module/starter unit, options binding, app-level composition, startup validation, test profiles).
-
-## The problem this cycle exists to fix
-
-The scout inventory (2026-09-12) found **~53 wiring entry points across six verb shapes**
-(`bootstrap`/`async_bootstrap`/`bind_*`/`enable_*`/`mount_*`/`install_*`), each package with its
-own return contract (`bootstrap()` returns the container in some, `None` in others, undocumented),
-**15 framework defaults registered by hand at `priority=-sys.maxsize-1`**, every "all
-implementations of X" case gathered by a hand-rolled registry (0 uses of `InjectInstances`/
-`Multibound`), backend selection by "first-scanned wins", 32 `DIContainer.current()`
-service-locator sites in 14 files, all 11 `create_varco_app` subsystems hand-constructed and
-hand-passed, and DI documented in five places with none complete. Meanwhile varco uses **none** of
-providify's `@Alternative`/`@Profile`/`Multibound`/`ConfigProperties`/`depends_on=`/
-`validate()` features. The fix is one contract, one default model, one selection mechanism, one
-report, one document.
-
-## Locked decisions (this session)
+## Locked decisions (4.0 cycle)
 
 | Decision | Choice | Consequence |
 |---|---|---|
@@ -59,31 +34,8 @@ report, one document.
 
 ## Live
 
-Ordered by severity, then complexity ascending. The 4.0 `DI-*`/`FLIP-*` rows are all planned — see
-`## 📋 Planned — 4.0` below; only the carried-over rows remain live here.
-
-_(4.0 theme: empty — every row is planned; carried-over rows below)_
-
-## 📋 Planned — 4.0 (2026-09-20)
-
-Every row of the 4.0 Live table is planned, one line per plan file. Build order, dependency edges, and
-the whole-set done criteria: [`plans/000-index-4-0-di-standardization.md`](plans/000-index-4-0-di-standardization.md).
-A row moves to `## ✅ Shipped` only when its plan is built and merged.
-
-- `DI-2`, `DI-8`, `DI-13` — plans/046-wiring-verb-collapse-and-explicit-container.md — `done (Plan 046)`
-- `DI-12`, `DI-4`, `DI-17` — plans/047-config-driven-backend-selection-and-catalogue.md — `done (Plan 047)`
-- `DI-6`, `DI-16` — plans/048-settings-standardization.md — `done (Plan 048)`
-- `DI-1`, `FLIP-1` — plans/049-varco-module-and-composable-app.md — `done (Plan 049)`
-- `DI-9`, `DI-10` — plans/050-phased-lifecycle-and-di-wired-infrastructure.md — `done (Plan 050)`
-- `DI-5` — plans/051-multi-binding-registries.md — `done (Plan 051)`
-- `DI-7`, `DI-11` — plans/052-diagnose-report-and-test-profile.md — `done (Plan 052)`
-- `FLIP-5`, `FLIP-034-4`, `FLIP-034-1`, `FLIP-034-2`, `FLIP-034-3` — plans/053-credential-and-auth-flips.md — `done (Plan 053)`
-- `FLIP-2`, `FLIP-10`, `FLIP-3`, `FLIP-4` — plans/054-http-edge-and-admin-surface-flips.md — `done (Plan 054)`
-- `FLIP-7`, `FLIP-6`, `FLIP-9` — plans/055-tenant-provenance-flips.md — `done (Plan 055)` (FLIP-6: the default flips to the chain; `chain=None` → `TypeError` deferred to 5.0.0 — 12-month floor from 3.2.0, the implicit fallback is `removed_in="5.0.0"`)
-- `FLIP-14` — `designed (Plan 055 §D-flip14) — implementation is its own future plan` (`technical_docs/features/admin-surface-tenancy.md`)
-- `FLIP-13`, `FLIP-12` — plans/056-data-layer-flips.md — `done (Plan 056)`
-- `FLIP-040-1`, `FLIP-040-2`, `RO-5` — plans/057-redaction-flips.md — `done (Plan 057)`
-- `DI-14` — plans/058-di-guide-migration-and-4-0-release.md
+Only carried-over rows remain; every 4.0 `DI-*`/`FLIP-*` row shipped (see `## ✅ Shipped`) or is
+parked with a trigger (`FLIP-14`, see `## Parked`).
 
 ### Carried over from 3.2 (open, not this cycle's theme)
 
@@ -92,10 +44,7 @@ Roll-forward rows that lost their un-IDed status here; none is DI-shaped and non
 | ID | Feature | Severity | Complexity | Status | Rationale | Evidence |
 |----|---------|----------|------------|--------|-----------|----------|
 | `RO-1` | `MetricsMiddleware` records `status_code="500"` for exceptions `ErrorMiddleware` renders as 4xx | 🟡 should | S | todo | Every error-rate dashboard over `http.server.request.duration` is wrong for mapped exceptions; out of Plan 041's scope | `varco_fastapi/varco_fastapi/middleware/metrics.py:368,375-388`; `app.py:636-642` |
-| `RO-2` | Wire `inspect_jwks_posture()` and `inspect_retention_posture()` into `SecurityPosture` | 🟡 should | S | ✅ planned → plans/052-diagnose-report-and-test-profile.md | Plans 041/039 export the inspectors; the harness (`posture.py:258`, collectors `:400+`) does not call them. Natural to land inside `DI-7`. Post-Plan-051: each is now a ~15-line `PostureCollector` subclass contributed by `JwksRefreshModule`/`RetentionModule` — `PostureCollector` is `@Multibound`, so no `varco_fastapi/posture.py` edit is needed | `plans/039` §D-S20-posture |
 | `RO-3` | Confirm Stripe's inbound HMAC secret encoding against a real delivery | 🟡 should | S | todo | `StripeWebhookVerifier` pins `RAW_UTF8` against brief 013 §2's conflicting description; if wrong, one enum value on one class | `plans/038` Risks table |
-| `RO-4` | `create_varco_app` gains a `log_redactor=` keyword | 🟡 should | S | `done (Plan 049)` — landed as `LoggingModule(redactor=...)`, not a `create_varco_app` keyword | Deliberately not added by Plan 040; folds into `DI-1`'s module shape | `plans/040` §D-S21-logging |
-| `RO-5` | `inspect_redaction_posture()` becomes a `SecurityPosture` collector | 🟡 should | S | `done (Plan 057)` — `varco_fastapi.posture.RedactionPostureCollector`, a default collector contributed by `SecurityPostureModule`; the audited services are explicit input via `SecurityPostureModule(audited_services=...)` | Un-parked by `FLIP-040-2` — the finding then means "opted out" | `plans/040` §D-S21-posture |
 | `RO-6` | `varco_core.schedule` general driver (a materialization loop for non-retention schedules) | 🟡 should | S | todo | Plan 032 shipped `ScheduleMaterializer` with no general caller; 039 closed it for retention only | `plans/039` §D-S20-driver |
 | `RO-7` | `0007_schedules_table.py` vs. `materializer.py:29`'s claimed `UNIQUE(schedule_id, run_at)` index — fix the DESIGN block (the index cannot exist; `uuid5` `job_id` is the real backstop) | 🟡 should | S | todo | Verified absent by Plan 039 / Step 12 | `varco_sa/varco_sa/schedule.py:11-19` |
 | `RO-8` | DLQ and `WebhookDelivery` payload redaction (fifth/sixth redaction surfaces) | 🟡 should | M | todo | Out of Plan 040's scope | `plans/040` §Parked |
@@ -106,50 +55,28 @@ Roll-forward rows that lost their un-IDed status here; none is DI-shaped and non
 | `RO-13` | `CONF-RG` — automate the register↔marker cross-check in `make lint`'s no-`PKG` path | 🟢 nice | S | todo | Plan 042 Q2 left it manual | `COVERAGE.md` findings register |
 | `RO-14` | `CoreModule.start()`'s 051 auto-`register_to()` loop passes no `dlq=` to any auto-registered `EventConsumer` — the app's own DLQ never reaches a consumer unless it hand-calls `register_to(bus, dlq=...)` | 🟡 should | S | todo | Deliberately out of Plan 050's scope (§Non-goals) — a behaviour change for every consumer; `WebhookDispatcher` got its own injected `dlq` instead, precisely to avoid needing this | `plans/050` §Non-goals |
 
-## Open questions (this cycle)
-
-1. **`VarcoModule` shape (`DI-1`)** — a providify `@Configuration` subclass with `depends_on=`,
-   or a varco ABC that *owns* a `@Configuration`? The former reuses providify's module ordering
-   and `@Disposes`; the latter keeps `start()/stop()` phases (`DI-9`) out of providify's
-   vocabulary. Decide in `/plan DI-1`, citing providify source for what `depends_on=` guarantees
-   at install time.
-   **Answered (Plan 049 §D-shape):** a plain varco ABC, never a `@Configuration` — providify's scanner
-   auto-installs every public `@Configuration`, `depends_on` orders install only, and `install()`
-   constructs the class itself.
-2. **Config-selected alternatives (`DI-4`)** — can providify's `@Alternative` be *selected from
-   configuration* (Quarkus `selected-alternatives`), or only from code? If only code, this is a
-   `DI-15` upstream ask before `DI-4` can be planned.
-   **Answered (Plan 043 / P25 §5):** code or @Profile only; DI-4 not blocked via a public-API
-   activate_profile() translation — see the report. **Superseded (Plan 047):** providify 2.1.0's
-   `@Requires(env=, value=)` replaces the profile translation outright.
-   **Re-answered (Plan 047 §D-mechanism):** providify 2.1.0 ships `@Requires(env=, value=)`; used
-   directly, no profile translation.
-3. **Does 4.0.0 also renumber the 3.x → 4.0 deprecation windows?** `FLIP-034-1` assumes
-   `since="4.0.0", removed_in="5.0.0"`. Confirm the nine existing `removed_in="4.0.0"` sites stay
-   *un-removed* in 4.0.0 (12-month floor: not before 2027-08-31) and get re-labelled, or the
-   `--check` gate in `scripts/api_surface.py` will read a removal as a break.
-   **Answered (Plan 058):** un-removed and re-labelled `removed_in="5.0.0"`; a floor test guards it.
-   Plan 055 found the same floor blocks `TenantResolutionMiddleware(chain=None)` → `TypeError`
-   (3.2.0 tagged 2026-09-12) — the default flips to the chain, the error waits for 5.0.
-
 ## ✅ Shipped
 
-Most recent ten individually; older cycles rolled up by theme. Detail: `plans/`, `CHANGELOG.md`.
+Most recent individually; older cycles rolled up by theme. Detail: `plans/`, `CHANGELOG.md`.
 
-- `DI-15` (done — Plan 043/044 filed P24-P27; Plan 045 closed all four against providify 2.1.0),
-  `DI-3` (done — Plan 045; the interim `FRAMEWORK_DEFAULT_PRIORITY` named-floor clause never
-  built, since providify 2.1.0 shipped `@Fallback` first) — `@Fallback` framework defaults across
-  all ten packages (plan: plans/045)
-- `S23` conformance-guard recovery — five lost findings recorded, Docker-free guards (plan: plans/042)
-- `S21` unified redaction seam — `varco_core.redaction` behind spans/errors/audit (plan: plans/040)
-- `S19` inbound webhook verification — `WebhookVerifier` ABC, four providers, replay guard (plan: plans/038)
-- `S22` JWKS background refresh — `start_refresh()`, `JwksRefreshLifecycle`, posture inspector (plan: plans/041)
-- `S17` `MetricsMiddleware` inside `TracingMiddleware` — exemplars reachable (plan: plans/041)
-- `S20` retention & purge automation — `varco_core.retention`, scheduler, CLI, posture (plan: plans/039)
-- `S18` answered, not built — `extra_middleware=` lands outside `ErrorMiddleware`; dedicated kwargs instead (rule in CLAUDE.md)
-- `S12` `S15` data-layer tenant enforcement — RLS-by-default, `rls_autogen`, applicator assertion (plan: plans/037)
-- `S4` `S9` `S11` authorization surface — admin cross-tenant guards, `SecurityPostureLifecycle`, `AuditingAuthorizer` (plan: plans/036)
-- `S5` `S6` `S16` tenant identity — `TenantSourceChain`, membership, RFC 8693 act-as (plan: plans/033)
+**4.0 — DI standardization + the flip list: 27 rows shipped (plans/045–058)**
+- `DI-14` — one DI guide, the 3.x → 4.0 migration guide, generated entry-point table, the 5.0.0 deprecation-floor re-label (plan: plans/058-di-guide-migration-and-4-0-release.md)
+- `FLIP-040-1`, `FLIP-040-2`, `RO-5` — word-boundary redaction, audit redaction on by default, redaction posture collector (plan: plans/057-redaction-flips.md)
+- `FLIP-12`, `FLIP-13` — `enforce_rls=True` via `SAModule` posture, required webhook-secret encryptor (plan: plans/056-data-layer-flips.md)
+- `FLIP-6`, `FLIP-7`, `FLIP-9` — chain-by-default tenant resolution, fail-closed membership, single tenant writer (plan: plans/055-tenant-provenance-flips.md); `FLIP-14` designed there, parked below
+- `FLIP-2`, `FLIP-3`, `FLIP-4`, `FLIP-10` — `enforce` derives `refuse`, admin mounts require `server_auth`, no `str(exc)` detail (plan: plans/054-http-edge-and-admin-surface-flips.md)
+- `FLIP-5`, `FLIP-034-1`…`FLIP-034-4` — `BaseAuthorizer` development-only, `jti` by default, `ApiKeyAuth(keys=)` deprecated, `PassthroughAuth` acknowledgement (plan: plans/053-credential-and-auth-flips.md)
+- `DI-7`, `DI-11`, `RO-2` — `varco diagnose`/`WiringReport`, runtime `validate()` gate, in-memory test profile, JWKS/retention posture collectors (plan: plans/052-diagnose-report-and-test-profile.md)
+- `DI-5` — `@Multibound` collection seams (plan: plans/051-multi-binding-registries.md)
+- `DI-9`, `DI-10` — phased lifecycle, `@Disposes` reachability, DI-wired infrastructure (plan: plans/050-phased-lifecycle-and-di-wired-infrastructure.md)
+- `DI-1`, `FLIP-1`, `RO-4` — `VarcoModule` + `create_varco_app(modules=…)`, posture default-on, `LoggingModule(redactor=…)` (plan: plans/049-varco-module-and-composable-app.md)
+- `DI-6`, `DI-16` — `bind_settings()`, generated settings reference, named instances (plan: plans/048-settings-standardization.md)
+- `DI-4`, `DI-12`, `DI-17` — `VARCO_<SEAM>_BACKEND` selection, `enable_*`/`VARCO_<FEATURE>_ENABLED`, generated DI catalogue (plan: plans/047-config-driven-backend-selection-and-catalogue.md)
+- `DI-2`, `DI-8`, `DI-13` — explicit-container wiring contract, `AlreadyBoundError`, `di_wiring` conformance (plan: plans/046-wiring-verb-collapse-and-explicit-container.md)
+- `DI-15`, `DI-3` — providify 2.1.0 asks closed (P24–P27), `@Fallback` framework defaults (plans: plans/043, plans/044, plans/045)
+
+**Earlier**
+- 3.2 security & tenancy: 11 items shipped (`S4`, `S5`, `S6`, `S9`, `S11`, `S12`, `S15`, `S16`, `S17`, `S19`–`S23`; `S18` answered, not built — `extra_middleware=` landed outside `ErrorMiddleware`, dedicated modules instead) (plans/033, plans/036–042)
 - 3.2 credential/HTTP-edge hardening: 8 items shipped (`S1`–`S3`, `S7`, `S8`, `S10`, `S13`, `S14`; plans/034, plans/035)
 - 3.1 API surface & interop: 8 items shipped (`D1`, `D4`–`D8`, `N1`–`N3`; plans/029–032)
 - 3.1 trust store, hot reload & performance: 9 items shipped (`T3`–`T7`, `P1`–`P4`; plans/025–028)
@@ -162,6 +89,18 @@ Killed and deferred ideas with the reason and the un-park trigger. A row leaves 
 trigger fires. Grouped by theme; each line is `item — why · ⏵ trigger`.
 
 **This cycle (4.0)**
+- **`FLIP-14` — provisioning-authority model for `mount_tenant_admin`** — **designed** (plans/055 §D-flip14, recorded in `technical_docs/features/admin-surface-tenancy.md`); building it is its own plan · ⏵ a second control-plane consumer, or an IdP that can mint a provisioning profile
+- **`Literal[True]` sweep of the four `acknowledge_*: bool = False` → `ValueError` sites** (plans/053, plans/056 left them; the newer sites are `Literal[True]` → `TypeError`) — no unification in 4.0 · ⏵ a fifth acknowledgement kwarg is added, or mypy `strict` flags a `bool` site
+- **A shared `scripts/_packages.py`** for the four verbatim `discover_packages()` copies (`api_surface.py`, `settings_reference.py`, `di_catalogue.py`, `entry_points.py`) · ⏵ a fifth script needs it
+- **Redacting list-valued leaves in `redact_mapping()`** (plans/057-redaction-flips.md) · ⏵ a DTO dump with a nested list of secrets is reported
+- **`register_webhook_signer()`** mirroring plans/051's `register_webhook_verifier()` · ⏵ an out-of-tree signing scheme
+- **Deprecating `varco_fastapi.posture.PostureFinding`/`PostureSeverity`** (a silent re-export of `varco_core.posture`, soft deprecation) · ⏵ 5.0.0 planning
+- **An HTTP endpoint for the wiring report** (plans/052-diagnose-report-and-test-profile.md) · ⏵ an operator needs the report from a running pod without log access
+- **Per-phase stop timeout in `LifecycleRunner`** (plans/050-phased-lifecycle-and-di-wired-infrastructure.md) · ⏵ a component's `stop()` measured hanging shutdown in production
+- **`varco diagnose --check` as a repo `make lint` gate** — environment-dependent (plans/052 §D-cli); the migration guide tells *apps* to run it · ⏵ a hermetic, environment-free mode exists
+- **Flipping `import_budget.py` from warn-only to a gate** — Plan 028 Phase 2's ≥ 10 CI observations still unmet · ⏵ the observations are recorded
+- **Rewriting pre-052 tests onto `InMemoryProfile`** — style, not a defect · ⏵ —
+- **The 5.0.0 removal list** — written down, with floors, in `technical_docs/migrations/3-to-4.md` §10: the five AB-* names (2027-08-31), `TenantProvisionConsumer(provisioner=, catalog=)` (2027-08-31), `varco_fastapi.auth.TrustStore` (2027-09-05), `TenantResolutionMiddleware(chain=None)`'s implicit fallback → `TypeError` (2027-09-12), `ApiKeyAuth(keys=)` and Plan 048's legacy env names (4.0.0's date + 12 months) · ⏵ 5.0.0 planning, never before each floor (`test_deprecation_floor.py`)
 - **Ship the DI break as 3.3.0** — rejected: CONTRIBUTING.md's SemVer policy; renumbered 4.0.0 · ⏵ never
 - **Plan 036 §D-S9-flip rows 8 (`CrossCheckMode` stays `LENIENT`) and 11 (rate limiting stays opt-in)** — recorded non-flips, argued on the merits by Plans 033/035 · ⏵ new evidence only
 
@@ -255,6 +194,18 @@ trigger fires. Grouped by theme; each line is `item — why · ⏵ trigger`.
   `workflow_dispatch`, never a required check.
 - **Standards alignment park — reversed** (Plan 022) → CloudEvents/AsyncAPI changed no public
   surface; both shipped in 3.1.
+- **4.0 OQ1 — `VarcoModule` shape** (Plan 049 §D-shape) → a plain varco ABC, **never** a providify
+  `@Configuration` — the scanner auto-installs every public `@Configuration` and `install()`
+  constructs the class itself; a module is constructed by the app (`test_modules_never_scanned.py`).
+- **4.0 OQ2 — config-selected alternatives** (Plan 047 §D-mechanism) → providify 2.1.0 ships
+  `@Requires(env=, value=)`; used directly via `selected_by()` — the P25 `activate_profile()`
+  translation (Plan 043) is superseded.
+- **4.0 OQ3 — does 4.0.0 renumber the 3.x deprecation windows?** (Plan 058 §D-floor) → **yes**: every
+  3.x window naming 4.0.0 is re-labelled `removed_in="5.0.0"` and nothing is removed (12-month floor:
+  not before 2027-08-31); the floor is computed from `CHANGELOG.md`'s release-date headings and
+  enforced by `varco_core/tests/test_deprecation_floor.py`. The `api_surface.py --check` gate is
+  structurally unaffected — deprecated names live outside `__all__`. The same floor moved
+  `TenantResolutionMiddleware(chain=None)` → `TypeError` to 5.0.0 (Plan 055).
 - **4.0 — version number for the DI break** (discover 2026-09-12) → **4.0.0, not 3.3.0**;
   CONTRIBUTING.md's SemVer policy stands. The 12-month removal floor is unaffected by the major
   bump.

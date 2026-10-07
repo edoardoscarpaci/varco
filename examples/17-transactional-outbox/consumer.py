@@ -7,6 +7,15 @@ Event consumer for ``OrderCreatedEvent`` in the transactional-outbox example.
 channel.  Received events are appended to ``received`` — an in-memory list
 that the HTTP handler exposes for inspection.
 
+Registration (Plan 051 / DI-5)
+------------------------------
+The consumer holds no bus reference.  In a DI-wired app, declare it a
+``@Singleton`` bound in the container and ``CoreModule.start()`` registers it
+after the bus has started — no ``@PostConstruct`` hook and no hand-written
+``register_to()`` call.  This example is deliberately **not** DI-wired (see
+``app.py``), so ``create_app`` calls ``consumer.register_to(bus)`` itself — the
+documented path for non-DI consumers (tests, scripts, focused examples).
+
 Deduplication
 -------------
 ``SADeduplicator`` is wired into the ``@listen`` decorator via ``deduplicator=``.
@@ -33,8 +42,7 @@ Async safety:   ✅ Handler is ``async def``; list.append() is GIL-safe.
 from __future__ import annotations
 
 from events import OrderCreatedEvent
-from providify import PostConstruct
-from varco_core.event import AbstractEventBus, EventConsumer, listen
+from varco_core.event import EventConsumer, listen
 
 
 class OrderConsumer(EventConsumer):
@@ -48,13 +56,14 @@ class OrderConsumer(EventConsumer):
         received: Ordered list of ``OrderCreatedEvent`` objects seen so far.
 
     Args:
-        bus:          The event bus to subscribe to.
         deduplicator: An ``AbstractDeduplicator`` instance (e.g. ``SADeduplicator``).
                       When ``None``, no deduplication is applied.
 
     Lifecycle:
-        ``_setup()`` (``@PostConstruct``) registers all ``@listen`` methods
-        with the bus.  This must be called before any events arrive.
+        Construction creates no subscription.  ``register_to(bus)`` wires
+        every ``@listen`` method — ``create_app`` calls it explicitly (this
+        example is not DI-wired); a container-bound ``@Singleton`` consumer
+        is instead registered by ``CoreModule.start()`` (Plan 051 / DI-5).
 
     Thread safety:  ❌ Single event loop; ``received`` is not thread-safe.
     Async safety:   ✅ Handler is ``async def``; list.append() is atomic.
@@ -62,33 +71,16 @@ class OrderConsumer(EventConsumer):
 
     def __init__(
         self,
-        bus: AbstractEventBus,
         *,
         deduplicator=None,
     ) -> None:
         """
         Args:
-            bus:          The event bus this consumer subscribes to.
             deduplicator: Optional ``AbstractDeduplicator`` — wraps the handler
                           so duplicate ``event_id`` values are skipped.
         """
-        self._bus = bus
         self._deduplicator = deduplicator
         self.received: list[OrderCreatedEvent] = []
-
-    @PostConstruct
-    def _setup(self) -> None:
-        """
-        Wire all ``@listen``-decorated methods to the bus.
-
-        Called once after construction (either by the DI container via
-        ``@PostConstruct`` or explicitly by ``create_app``).
-
-        Edge cases:
-            - Calling twice is safe — ``register_to()`` is idempotent for the
-              same bus reference.
-        """
-        self.register_to(self._bus)
 
     @listen(OrderCreatedEvent, channel="orders")
     async def on_order(self, event: OrderCreatedEvent) -> None:

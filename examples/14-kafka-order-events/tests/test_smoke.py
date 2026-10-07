@@ -92,7 +92,7 @@ async def bus_and_consumer(kafka_servers):
         Tuple of ``(KafkaEventBus, OrderConsumer)`` — both ready to use.
 
     Edge cases:
-        - ``consumer._setup()`` is called before ``bus.start()`` — subscriptions
+        - ``consumer.register_to(bus)`` is called before ``bus.start()`` — subscriptions
           are registered on the bus object, and ``start()`` creates the Kafka
           consumer for those topics.
         - ``stop()`` is called in the ``finally`` block — guaranteed even
@@ -119,8 +119,8 @@ async def bus_and_consumer(kafka_servers):
 
     # Build consumer and register @listen methods BEFORE start() so the bus
     # knows which topics to subscribe to when it connects to Kafka.
-    _consumer = OrderConsumer(bus=_bus)
-    _consumer._setup()
+    _consumer = OrderConsumer()
+    _consumer.register_to(_bus)
 
     await _bus.start()
     try:

@@ -175,7 +175,8 @@ bundle = RateLimitBundle(
         RateLimitRule(scope=RateLimitScope.TENANT, limiter=InMemoryRateLimiter(RateLimitConfig(rate=1000, period=60.0)), name="tenant"),
     ),
 )
-from varco_fastapi.modules import RateLimitModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import RateLimitModule
 app = create_varco_app(container, modules=[*default_modules(), RateLimitModule(bundle)], ...)
 ```
 

@@ -131,3 +131,9 @@ not about how many call sites use the workaround).
 test_provider_accepts_inject_override` — `strict=True`, `raises=TypeError`. The moment
 providify adds `inject=`, this test starts passing and pytest reports `XPASS`, which
 `strict=True` turns into a hard failure.
+
+## 8. Status at 4.0.0 (Plan 058 audit)
+
+Open. Filed by Plan 050 under a working name ("P-DISP"/"P-INJ"); the ledger id (P30/P31) is now
+also in the guard's `reason=` (`GAP: P3x-…`) so `rg -n 'GAP: P'` counts it. Named in
+`CHANGELOG.md` `[4.0.0]` → Upstream; the guard above is still `xfailed`.

@@ -54,22 +54,24 @@ An `OrderConsumer` listens on the `"orders"` channel and appends every
 
 ```python
 class OrderConsumer(EventConsumer):
-    def __init__(self, bus: AbstractEventBus) -> None:
-        self._bus = bus  # store ref — NOT for publishing
-        self.received = []
-
-    @PostConstruct
-    def _setup(self) -> None:
-        self.register_to(self._bus)  # subscriptions created HERE
+    def __init__(self) -> None:
+        self.received = []  # no bus reference — only register_to() touches it
 
     @listen(OrderPlacedEvent, channel="orders")
     async def on_order(self, event: OrderPlacedEvent) -> None:
         self.received.append(event)
+
+
+consumer = OrderConsumer()
+consumer.register_to(bus)  # subscriptions created HERE
 ```
 
 `@listen` stores metadata on the method at class-definition time.  No subscription
 exists until `register_to(bus)` is called.  This keeps the consumer bus-agnostic and
-testable without a real broker.
+testable without a real broker.  This example is not DI-wired, so `create_app` calls
+`register_to(bus)` itself; in a DI-wired app the consumer is a `@Singleton` bound in
+the container and `CoreModule.start()` registers it after the bus starts (Plan 051 /
+DI-5) — no hand-written registration at all.
 
 ### 2. Publish via `AbstractEventProducer`, not the bus
 
@@ -92,8 +94,8 @@ in the fixture and pass the live instance into `create_app`:
 async def bus_and_consumer(redis_url):
     config = RedisEventBusSettings(url=redis_url)
     _bus = RedisEventBus(config=config)
-    _consumer = OrderConsumer(bus=_bus)
-    _consumer._setup()          # register @listen before start()
+    _consumer = OrderConsumer()
+    _consumer.register_to(_bus)  # register @listen before start()
     await _bus.start()
     try:
         yield _bus, _consumer

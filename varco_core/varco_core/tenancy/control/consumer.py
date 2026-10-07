@@ -62,13 +62,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import warnings
 from collections import OrderedDict
 from collections.abc import Callable
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
+from varco_core.deprecation import warn_deprecated
 from varco_core.event.consumer import EventConsumer, listen
 from varco_core.resilience import RetryPolicy
 from varco_core.tenancy.control.events import (
@@ -170,23 +170,25 @@ class TenantProvisionConsumer(EventConsumer):
                     "control_service=TenantControlService(catalog=..., "
                     "provisioner=..., producer=...) directly instead."
                 )
-            # NOT migrated to @deprecated (Plan 022 / Phase 2 step 14, and the
-            # one deviation from §D-DEP recorded there): this deprecation is
-            # *argument-conditional* — only the provisioner=/catalog= shape is
-            # deprecated, while control_service= is the supported path through
-            # the same constructor. @deprecated decorates a whole callable and
-            # would warn on every construction, including the correct one.
-            # What §D-DEP actually buys is applied by hand instead: the message
-            # now names a concrete removal version rather than the unfalsifiable
-            # "one minor release after Plan 008 lands" it carried before, so it
-            # is greppable alongside every removed_in= in the tree.
-            warnings.warn(
-                "TenantProvisionConsumer(provisioner=..., catalog=...) is a "
-                "deprecated shim (Plan 008 RD-12) — pass "
-                "control_service=TenantControlService(...) instead. This shim "
-                "is deprecated since 3.0.0 and will be removed in 4.0.0.",
-                DeprecationWarning,
-                stacklevel=2,
+            # Argument-conditional, so @deprecated (whole-callable) does not
+            # fit (Plan 022 / Phase 2 step 14, the one recorded §D-DEP
+            # deviation — still correct): only the provisioner=/catalog= shape
+            # is deprecated, while control_service= is the supported path
+            # through the same constructor. warn_deprecated() is the
+            # parameter-path helper (Plan 053) and carries the literal
+            # since=/removed_in= keywords the floor test reads
+            # (test_deprecation_floor.py, Plan 058). stacklevel=3 counts from
+            # inside the helper: warn_deprecated (1) → __init__ (2) → the
+            # constructing caller (3) — the frame the pre-058 direct
+            # warnings.warn(stacklevel=2) blamed.
+            warn_deprecated(
+                "TenantProvisionConsumer(provisioner=..., catalog=...)",
+                since="3.0.0",
+                removed_in="5.0.0",
+                replacement=(
+                    "control_service=TenantControlService(catalog=..., provisioner=..., producer=...)"
+                ),
+                stacklevel=3,
             )
             effective_producer: AbstractEventProducer = (
                 producer if producer is not None else _NullProducer()  # type: ignore[assignment]

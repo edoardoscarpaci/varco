@@ -72,13 +72,16 @@ async def test_container_shutdown_closes_orphaned_stream_manager_connection(
 
     from varco_core.event.channel import ChannelManager
     from varco_fastapi.lifespan import VarcoLifespan
+    from varco_nats.di import bootstrap
 
     run_id = uuid4().hex[:8]
     monkeypatch.setenv("VARCO_NATS_ADMIN_SERVERS", nats_url)
     monkeypatch.setenv("VARCO_NATS_ADMIN_STREAM_NAME", f"test_{run_id}")
 
-    container = providify.DIContainer()
-    container.scan("varco_nats", recursive=True)
+    # bootstrap(), not a bare container.scan(): since Plan 048 / DI-6 the
+    # settings classes (NatsChannelManagerSettings, ...) are bound only by
+    # bind_settings() inside bootstrap() — a scan alone leaves them unbound.
+    container = bootstrap(providify.DIContainer())
 
     manager: Any = await container.aget(ChannelManager)
     client = manager._nc

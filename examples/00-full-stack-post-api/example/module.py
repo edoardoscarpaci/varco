@@ -13,8 +13,10 @@ What this module owns
   ``PostAssembler``/``PostService``/``PostEventConsumer``/``StreamsRouter``),
   self-binds ``PostRouter``/``PostService`` (both have abstract bases the
   scanner does not self-bind), and binds the already-constructed
-  ``AbstractServerAuth``/``RedisEventBusSettings(use_streams=True)``
-  instances the app built before the container existed.
+  ``AbstractServerAuth`` the app built before the container existed.
+  ``RedisEventBusSettings(use_streams=True)`` is **not** bound here — a
+  settings override must exist before any module registers, so
+  ``create_app()`` binds it ahead of ``create_varco_app()``.
   ``bind_repositories(container, Post)`` is **not** called here — the app's
   own ``SAModule(entities=(Post,))`` (``app.py``) already does it.
 - ``async_init()``: ``await create_tables(container)`` (DDL — not for
@@ -86,14 +88,10 @@ class PostAppModule(VarcoModule):
     def _register(self, container: DIContainer) -> None:
         from varco_core.di import bind_instance  # noqa: PLC0415
         from varco_fastapi.auth.server_auth import AbstractServerAuth  # noqa: PLC0415
-        from varco_redis.config import RedisEventBusSettings  # noqa: PLC0415
 
         from example.router import PostRouter  # noqa: PLC0415
         from example.service import PostService  # noqa: PLC0415
 
-        # §D-streams (Plan 046) — an explicit, non-fallback settings
-        # instance registered before RedisModule's own bootstrap runs.
-        bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))
         # Makes FastAPIModule's middleware() install RequestContextMiddleware
         # (§D-http's FastAPIModule row: "iff AbstractServerAuth is resolvable").
         bind_instance(container, AbstractServerAuth, self._server_auth)

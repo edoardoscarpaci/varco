@@ -50,7 +50,7 @@ Minimal usage::
 
 Extending the default set::
 
-    from varco_fastapi.modules import default_modules
+    from varco_fastapi import default_modules
     from varco_sa.modules import SAModule
 
     app = create_varco_app(
@@ -152,14 +152,20 @@ def create_varco_app(
             ``None`` auto-scans from the container.
         scan_packages: Package names to scan before auto-discovering
             routers. Ignored when ``routers`` is an explicit list.
-        title, version, description, openapi_url, docs_url: Forwarded to
-            the ``FastAPI(...)`` constructor.
+        title: Forwarded to the ``FastAPI(...)`` constructor.
+        version: Forwarded to the ``FastAPI(...)`` constructor.
+        description: Forwarded to the ``FastAPI(...)`` constructor.
+        openapi_url: Forwarded to the ``FastAPI(...)`` constructor.
+        docs_url: Forwarded to the ``FastAPI(...)`` constructor.
         validate: Run startup validation checks (DI bindings + router
             classes). Default ``True``.
         strict_validation: Pass ``strict=True`` to ``validate_router_class``.
-        mcp_adapter, mcp_path, skill_adapter, skill_base_url,
-            skill_agent_card_path, skill_tasks_prefix: The app's own MCP/A2A
-            mounts — unchanged from pre-049.
+        mcp_adapter: The app's own MCP mount — unchanged from pre-049.
+        mcp_path: Path of the MCP mount — unchanged from pre-049.
+        skill_adapter: The app's own A2A mount — unchanged from pre-049.
+        skill_base_url: A2A base URL — unchanged from pre-049.
+        skill_agent_card_path: A2A agent-card path — unchanged from pre-049.
+        skill_tasks_prefix: A2A tasks prefix — unchanged from pre-049.
 
     Returns:
         A fully configured ``fastapi.FastAPI`` instance.

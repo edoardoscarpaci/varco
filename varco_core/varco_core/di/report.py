@@ -194,7 +194,7 @@ class DiagnoseSettings(VarcoSettings):
     code-controlled; these settings only control whether/how the report is
     *logged*, never suppress a problem line.
 
-    Args:
+    Attributes:
         startup_report: Log the rendered ``report.render()`` block at INFO.
             ``True`` by default. Setting this ``False`` never suppresses
             the per-issue/per-finding WARNING/ERROR lines (§D-startup).
@@ -862,10 +862,14 @@ def build_wiring_report(
         extra_deprecations: Records captured by a deprecation window the
             caller opened (direct ``warnings.warn`` sites); merged with the
             ledger, de-duplicated on ``subject``.
-        environment, enforce, enforce_source: The report header's
-            ``SecurityPostureSettings`` facts. Supplied by a
-            ``varco_fastapi``-aware caller because ``varco_core`` must not
-            import that class; default to the honest ``"unknown"``.
+        environment: The report header's ``SecurityPostureSettings``
+            environment. Supplied by a ``varco_fastapi``-aware caller
+            because ``varco_core`` must not import that class; defaults to
+            the honest ``"unknown"``.
+        enforce: The header's effective enforce mode (same sourcing and
+            default as ``environment``).
+        enforce_source: Where ``enforce`` came from (same sourcing and
+            default as ``environment``).
             ``enforce_source="derived"`` (Plan 054 / §D-compose) means
             ``enforce`` was unset and derived from ``environment`` — the
             renderer prints ``(derived from VARCO_SECURITY_ENV=<env>)``.

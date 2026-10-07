@@ -150,29 +150,22 @@ if `list_for_entity()` will be called frequently in production; without it,
 
 ## Step 3 — wire the consumer
 
-`AuditConsumer.register_to(bus)` must be called from a `@PostConstruct` method,
-never from `__init__` (project-wide rule — subscribing in `__init__` couples
-service construction to bus readiness and makes unit testing harder):
+`AuditConsumer` is hand-constructed (it takes the repository), so contribute it to the
+`@Multibound` `EventConsumer` seam — `CoreModule.start()` registers every contribution to the bus
+after the bus has started (Plan 051 / DI-5). Never subscribe from `__init__` (it couples
+construction to bus readiness), and no `@PostConstruct` hook is needed any more:
 
 ```python
-from providify import Component, Inject, PostConstruct
-from varco_core.event.base import AbstractEventBus
+from varco_core.di import contribute
+from varco_core.event.consumer import EventConsumer
 from varco_core.service.audit import AuditConsumer
 from varco_sa.audit import SAAuditRepository
 
-
-@Component
-class AuditWiring:
-    def __init__(
-        self, bus: Inject[AbstractEventBus], audit_repo: Inject[SAAuditRepository]
-    ) -> None:
-        self._bus = bus
-        self._consumer = AuditConsumer(audit_repo=audit_repo)
-
-    @PostConstruct
-    def _setup(self) -> None:
-        self._consumer.register_to(self._bus)
+contribute(container, EventConsumer, AuditConsumer(audit_repo=SAAuditRepository(...)))
 ```
+
+`ReliabilityModule(ReliabilityPreset(audit=True, ...))` wires (and, since Plan 050, stops) the
+consumer for you when you use the preset.
 
 ## Step 4 — reading the trail
 
@@ -444,7 +437,7 @@ SQLite suite (`varco_sa/tests/test_sa_audit_chain.py`), including a
 
 | Pitfall | Symptom | Root cause | Fix |
 |---|---|---|---|
-| Audit entries never written | Service emits, DB table stays empty | `AuditConsumer.register_to(bus)` never called | Call it from a `@PostConstruct` method |
+| Audit entries never written | Service emits, DB table stays empty | `AuditConsumer.register_to(bus)` never called | `contribute(container, EventConsumer, AuditConsumer(...))` (auto-registered by `CoreModule.start()`), or use `ReliabilityModule` with `audit=True` |
 | `relation "varco_audit_log" does not exist` | Consumer raises on first audit event | `audit_metadata` not in the Alembic `target_metadata` | Add `from varco_sa.audit import audit_metadata` to `env.py` |
 | `CollectionWasNotInitialized` on audit save | Beanie raises when the consumer persists | `AuditDocument` missing from `init_beanie(document_models=...)` | Register it at startup — this is the **only** required registration, including with `hash_chain=True` (the `varco_audit_seq` counter rides on `AuditDocument`'s database) |
 | Audit record lost on broker outage | Domain write committed, no audit row | Audit is emitted post-commit as a plain event | Emit the `AuditEvent` through the transactional outbox |

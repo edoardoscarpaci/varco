@@ -11,7 +11,7 @@ failures with a `RetryPolicy`.
 | `KafkaEventBus` | AT_LEAST_ONCE delivery over Kafka topics |
 | `BusEventProducer` | Publish side — services never touch the bus directly |
 | `@listen` + `RetryPolicy` | Handler retried up to 3× on failure (base delay 0.5 s) |
-| `OrderConsumer(EventConsumer)` | Declarative `@listen`, wired in `@PostConstruct` |
+| `OrderConsumer(EventConsumer)` | Declarative `@listen`; `create_app` calls `register_to(bus)` (non-DI example — a container-bound `@Singleton` consumer is auto-registered by `CoreModule.start()`) |
 | In-memory notification list | Exposed via `GET /v1/notifications` |
 
 ## Endpoints

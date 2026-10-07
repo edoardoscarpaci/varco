@@ -112,17 +112,27 @@ both SA bindings). Neighbours building on `varco_sa.di.SAModule` should be aware
 
 ## Done for the whole set
 
-- Every `DI-*` and `FLIP-*` row in BACKLOG.md's 4.0 Live table is shipped or explicitly parked with
+Ticked by Plan 058 / Step 17, each with its proving command (2026-10-06). The last box is Plan 058
+Phase F (the release) and stays open until the tag exists.
+
+- [x] Every `DI-*` and `FLIP-*` row in BACKLOG.md's 4.0 Live table is shipped or explicitly parked with
   a trigger; RO-2/RO-4/RO-5 are shipped inside their host plans; RO-1/3/6–13 remain live.
-- `make lint`, `make type-check`, `make test` green on 3.12/3.13; `api_surface.py --check`,
-  `asyncapi-check`, `import_budget.py --check --warn-only`, and the new settings/catalogue/
-  entry-point `--check` snapshots all green.
-- `testkit/varco_conformance/di_wiring.py` subclassed by every package; COVERAGE.md has a row per
-  package.
-- A default varco container's `container.validate()` has zero ERROR/WARNING issues.
-- `technical_docs/features/dependency-injection.md` is the single DI document; CLAUDE.md's taxonomy
-  table is a pointer to it; the 3.x → 4.0 migration guide covers every breaking row.
-- `v4.0.0` tagged via `scripts/bump.py`; the nine `removed_in` sites read `5.0.0`.
+  — `rg -n '^\| `(DI|FLIP)-' BACKLOG.md` → 0; `rg -n '^\| `RO-' BACKLOG.md` → 11 (RO-1, RO-3, RO-6–RO-14)
+- [x] `make lint`, `make type-check`, `make test` green (local interpreter 3.12; CI's matrix adds
+  3.13); `api_surface.py --check`, `asyncapi-check`, `import_budget.py --check --warn-only`, and the
+  settings/catalogue/entry-point `--check` snapshots all green. — `make lint && make type-check &&
+  make test`; Plan 058 Step 16
+- [x] `testkit/varco_conformance/di_wiring.py` subclassed by every package; COVERAGE.md has a row per
+  package. — `rg -l 'module_cls = ' varco_*/tests/test_*di_wiring*.py | wc -l` → 10 (core's subclass
+  is `test_di_wiring_conformance.py`)
+- [x] A default varco container's `container.validate()` has zero ERROR/WARNING issues. —
+  `uv run pytest varco_fastapi/tests/test_fastapi_di_wiring.py varco_fastapi/tests/test_startup_wiring_report.py -q`
+- [x] `technical_docs/features/dependency-injection.md` is the single DI document; CLAUDE.md's taxonomy
+  table is a pointer to it; the 3.x → 4.0 migration guide covers every breaking row. — Plan 058
+  Steps 7, 9, 11 (`rg -c '^## ' technical_docs/features/dependency-injection.md` → 14)
+- [ ] `v4.0.0` tagged via `scripts/bump.py`; the nine `removed_in` sites read `5.0.0`. — the re-label
+  is done (`rg -n 'removed_in="4\.0\.0"' varco_*` → 0, Plan 058 Step 2); the tag is Plan 058
+  Phase F (Steps 18–22), not yet run.
 
 ## Findings that surfaced during planning (read before building)
 

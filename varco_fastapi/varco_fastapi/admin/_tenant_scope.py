@@ -147,10 +147,10 @@ def resolve_tenant_scope(
 
     Returns:
         - ``requested is None`` and the caller holds ``cross_tenant_role``:
-          ``None`` — an explicit, privileged, unscoped sweep (today's
-          behaviour, restored exactly for a caller who opts in).
+            ``None`` — an explicit, privileged, unscoped sweep (today's
+            behaviour, restored exactly for a caller who opts in).
         - ``requested is None`` otherwise: ``current_tenant()`` via
-          ``assert_tenant_matches(None, ...)`` — "mine", not "everyone".
+            ``assert_tenant_matches(None, ...)`` — "mine", not "everyone".
         - ``requested`` given: ``assert_tenant_matches(requested, ...)``.
 
     Raises:

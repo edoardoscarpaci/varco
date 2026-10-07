@@ -531,9 +531,10 @@ def tenant_rls_upgrade(
                — this module never applies DDL on its own (§D-S12-oq4: no
                revision ships in ``varco_sa``).
         plans: Output of ``plan_tenant_rls()``, reviewed by the operator.
-        setting/null_tenant: Forwarded to ``render_tenant_rls_ddl()`` —
-               must match whatever was passed to ``plan_tenant_rls()`` for
-               ``null_tenant`` to render the same ``OR IS NULL`` decision.
+        setting: Forwarded to ``render_tenant_rls_ddl()``.
+        null_tenant: Forwarded to ``render_tenant_rls_ddl()`` — must match
+               whatever was passed to ``plan_tenant_rls()`` to render the
+               same ``OR IS NULL`` decision.
 
     Never raises directly — DDL errors surface from ``op.execute()`` at
     migration-apply time, the same trust model as

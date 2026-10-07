@@ -4,8 +4,8 @@ varco_core.flags.di
 Providify DI integration for ``varco_core.flags`` (Plan 032 / D7).
 
 Mirrors ``varco_casbin.di``'s ``enable_policy_authorizer`` precedent:
-``NullFeatureFlags`` is bound by default (a scanned ``@Singleton`` at the
-lowest priority — see ``null.py``), and ``enable_feature_flags(container)``
+``NullFeatureFlags`` is bound by default (a scanned ``@Fallback
+@Singleton`` — see ``null.py``), and ``enable_feature_flags(container)``
 is the only way to swap in a real backend. This is deliberately **not** a
 scanned ``@Configuration`` — ``scan`` auto-activates those, which would
 silently change flag-resolution behaviour for any app that merely imports

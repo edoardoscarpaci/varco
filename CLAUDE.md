@@ -9,6 +9,9 @@ type hierarchies (navigate the codebase without reading files one-by-one). [READ
 operator Pitfalls tables.
 [technical_docs/common-pitfalls.md](technical_docs/common-pitfalls.md) — the cross-cutting
 pitfall catalogue.
+[technical_docs/features/dependency-injection.md](technical_docs/features/dependency-injection.md)
+— the single DI guide. [technical_docs/migrations/3-to-4.md](technical_docs/migrations/3-to-4.md)
+— the 3.x → 4.0 migration guide.
 
 ---
 
@@ -120,6 +123,23 @@ Every other flag once filed as "Stopped"/"Decided never"/"Out of scope" (`disall
 — see Plan 021 §D1–§D6 for the full per-flag remediation pattern and U-8 evidence discipline
 applied to each re-opened "never" verdict.
 
+### Snapshot gates (one table)
+
+Every generated artifact is committed and diffed by a `--check`; all run in `make lint`'s
+no-`PKG` path (`make lint PKG=<one>` skips them, §D-C5) and in `test.yml`'s `lint` job.
+
+| `make` gate | Regenerate | What moves it | CI step |
+|---|---|---|---|
+| `api-check` | `uv run python scripts/api_surface.py` | a name added/removed in a top-level `__all__`, a function signature | `api surface --check` |
+| `asyncapi-check` | `make asyncapi` | the example app's consumer wiring | `export-asyncapi --check` |
+| `import-budget` (**warn-only**) | `scripts/import_budget.py --update` (never ceilings) | a new top-level import | `import budget --check (warn-only)` |
+| `settings-check` | `make settings-reference` | a settings field, prefix or default | `settings reference --check` |
+| `di-catalogue-check` | `make di-catalogue` | a default, backend or feature binding | `di catalogue --check` |
+| `entry-points-check` | `make entry-points` | a `bootstrap`/`bind_*`/`enable_*`/`mount_*`/`install_*`, a `VarcoModule` (`name`/`phase`/`depends_on`) or `@Configuration` — also diffs `ARCHITECTURE.md`'s marked block | `entry points --check` |
+
+Not a repo gate, but the one-liner to run in an *app's* CI: `uv run varco diagnose --modules
+pkg.mod:modules --static --check`.
+
 ### Public API surface snapshot (`scripts/api_surface.py`)
 
 `scripts/api_surface.py` (Plan 022 / Phase 0, §D-AUDIT) records the public API surface — for every
@@ -143,6 +163,8 @@ standalone `make api-check`, and CI's `lint` job (`.github/workflows/test.yml`, 
 `mypy`) — so removing a name from any `__all__`, or narrowing an exported function's signature,
 now fails CI. Regenerating and committing the snapshot alongside the change is now a **hard
 requirement**, not a courtesy — `--check` will fail the very next `make lint`/CI run otherwise.
+A deprecated name outside `__all__` is invisible to `--check`; the 12-month removal floor is
+enforced by `varco_core/tests/test_deprecation_floor.py`, not by this gate (Plan 058 / OQ3).
 
 ⚠️ **Known limitation, deliberate:** class signatures are **not** recorded. They are synthesised
 from `__init__`/`__new__` and, for pydantic models and dataclasses, from generated code whose
@@ -157,7 +179,8 @@ change — see `_ADDRESS_RE`.) Additions and module moves are reported as notes 
 `make asyncapi` regenerates `design/api-freeze-and-standards/measurements/asyncapi-example.json`
 from the example app's live consumers; `make asyncapi-check` diffs it and fails on drift. Wired
 into `make lint`'s no-`PKG` path only (the same §D-C5 rule as `api-check`), and into **no new CI
-job** — it rides in `test.yml`'s existing `lint` job. Regenerate and commit whenever
+job** — an `export-asyncapi --check` step in `test.yml`'s existing `lint` job (added by Plan 058;
+before it, the gate ran in `make lint` only). Regenerate and commit whenever
 `examples/00-full-stack-post-api`'s consumer wiring moves. Details:
 `technical_docs/features/asyncapi-export.md`.
 
@@ -374,141 +397,62 @@ Authorization is enforced at the service layer (not HTTP), via the injected `Abs
 
 ### DI wiring (providify)
 
-Each backend package ships a `di.py` with a `bootstrap()` helper that runs `container.scan(...)` to discover its `@Singleton` classes. Some packages also expose an opt-in `@Configuration` for resources that need imperative async setup (e.g. `RedisCacheConfiguration`). The DI module is the only place that knows concrete types — application code always injects interfaces (`AbstractEventBus`, `AsyncRepository[D]`, `IUoWProvider`).
+The single DI document is `technical_docs/features/dependency-injection.md` (its §The contract
+is the one-screen summary); worked snippets are README's "Wiring an app". The rules below are
+one line each — the *why* is behind the link. Application code always injects interfaces; only
+a package's `di.py`/`modules.py` knows concrete types.
 
 ```python
-# Typical app bootstrap (Plan 049 / DI-1 — create_varco_app(modules=[...]))
-from providify import DIContainer
-from varco_fastapi.app import create_varco_app
-
 container = DIContainer()
 app = create_varco_app(container)  # modules=None -> varco_fastapi.default_modules()
 ```
 
-**Rule**: every varco-registered binding of a varco seam is `@Fallback` (in-process defaults
-bare, backends at `varco_core.di.BACKEND_PRIORITY`); a user binding always wins regardless of
-order; never mark a collection contribution (`HealthCheck`) `@Fallback`. Full model + pitfalls:
-`technical_docs/features/dependency-injection.md`.
-
-**Rule (Plan 047 / DI-4)**: a backend of one of the six selectable seams (`cache`, `dlq`,
-`idempotency`, `job_store`, `event_bus`, `revocation`) is live only when `VARCO_<SEAM>_BACKEND`
-names it (or a dotted path) — bootstrapping a package never makes it live. Precedence: code
-binding > env dotted path > env named backend > `@Fallback` default. Every backend binding is
-`@Fallback` **and** `selected_by(seam, value)`, never a plain non-fallback. `make di-catalogue`
-regenerates the generated catalogue; `make lint` fails on drift (`di-catalogue-check`).
-
-**Rule (Plan 047 / DI-12)**: a binding-shaped feature is switched by `enable_*(container)` or
-`VARCO_<FEATURE>_ENABLED`, both routed through `varco_core.di.features.feature_default(...)` —
-never an imperative env read inside `bootstrap()`.
-
-**Decision tree addition**: *"Making a backend/feature selectable, or adding a new default?"* →
-`varco_core.di` (`selected_by`/`feature_default`/`SEAMS`/`FEATURES`) — never a provider-body
-`if`, never `activate_profile`.
-
-The `enable_policy_authorizer` bullet above also has an env form: `VARCO_POLICY_AUTHORIZER_ENABLED=true`.
-The revocation two-step pitfall (`varco_core.revocation`) also applies to its env form —
-`VARCO_REVOCATION_BACKEND=redis` still needs `TrustedIssuerRegistry(revocation_store=...)` —
-`varco diagnose` reports it as `di.revocation_store_not_wired`.
-
-**Rule (Plan 052)**: `varco diagnose` / `varco_core.di.report.build_wiring_report()` is the only wiring
-report — never a second `inspect_*` harness; a new wiring fact is a `WiringFinding` there.
-**Rule**: tests swap a binding with providify's `di_overrides.instance()` on a
-`varco_core.testing.in_memory_modules()` container — never a varco fixture.
-Command: `uv run varco diagnose --modules pkg.mod:modules --static --check`.
-**Decision tree**: *"What is live and why?"* → `varco_core.di.report.build_wiring_report` / `varco diagnose`; *"is it safe?"*
-→ `SecurityPosture`; *"swap one binding in a test?"* → `varco_core.testing` + `di_overrides`.
-
-**Rule (Plan 048 / DI-6)**: every settings class is bound by `varco_core.settings.
-bind_settings()` — never `@Singleton`, never a scanned `@Provider`, never a hand-rolled
-`is_user_bound()` idempotency guard. The `VARCO_*` reference is generated from the live tree —
-regenerate with `make settings-reference`, or `make lint` fails (`settings-check`). Full model,
-precedence, and a Pitfalls table: `technical_docs/features/dependency-injection.md`'s "Settings"
-section.
-
-**Modules (Plan 049)**: a varco module is a plain `varco_core.di.VarcoModule` — constructed by
-the app, never a providify `@Configuration`, never scanned (mechanically enforced by
-`test_modules_never_scanned.py`, core + fastapi). `*Configuration` = a providify `@Configuration`
-grouping `@Provider` methods, scan-installed, owned by its package's `bootstrap()`
-(`SAConfiguration`, `BeanieConfiguration`, `VarcoFastAPIConfiguration`); `*Module` = a
-`VarcoModule`, one per package, app-constructed (`SAModule`, `BeanieModule`, `KafkaModule`, …).
-`create_varco_app(container, *, modules=None, ...)` takes a list of `VarcoModule` instances in
-place of the eleven pre-4.0 keyword objects; `modules=None` installs
-`varco_fastapi.default_modules()`. Full model (slots, tri-state, `depends_on`, `EdgeSlot`,
-writing an app's own module): `technical_docs/features/dependency-injection.md`'s §Modules.
-
-**Decision tree addition**: *"A subsystem the app should switch on/off, or that needs
-startup/shutdown?"* → a `VarcoModule` in the owning package (`<pkg>/modules.py`), never a
-`create_varco_app` keyword — declare its `phase`; spans phases? override `components()`
-(`CoreModule` is the example); HTTP position → an `EdgeSlot`, never `add_middleware` in a module.
-
-**Lifecycle phases (Plan 050 / DI-9)**: every `VarcoModule` declares `phase: int`
-(`varco_core.di.Phase` names five: `INFRA`/`BUS`/`CONSUMERS`/`SCHEDULERS`/`EDGE`, default
-`CONSUMERS`) — the coarse, anonymous start order across packages that do not know each other;
-`depends_on` stays the fine, named order within/across phases (both, as Spring's
-`SmartLifecycle`). A component that must follow a *whole* phase it cannot name takes an
-integer offset, never a `depends_on` edge (`varco_sa.modules.RLS_POSTURE_PHASE =
-Phase.INFRA + 50`, after migrations). `varco_core.di.LifecycleRunner` (`create_varco_app`'s engine, via
-`resolve_lifecycle_order`/`phased_components`) starts `(phase, depends_on)` ascending and stops
-**the exact reverse of what actually started** — including on a partial-start rollback (the
-pre-050 `VarcoLifespan` bug: a failed `start()` used to roll back in forward order).
-`container.ashutdown()` runs last, always. A `depends_on` edge pointing at a module in a later
-phase is a `ModulePhaseError`, raised before anything registers — never silently rescheduled.
-Kafka/NATS buses no longer start themselves at first DI resolution (`@PostConstruct` removed) —
-only the `BUS` phase (or an explicit `await bus.start()`) starts them, so nothing publishes
-before migrations/tenancy/stores have run. Every provider-produced singleton with a
-`stop()`/`aclose()`/`close()`/`shutdown()` method needs a `@Disposes` in its own declaring
-`@Configuration` — or, if a `VarcoModule` owns its lifecycle directly (never via providify
-disposal), a `module_owned` entry in that package's `di_wiring` conformance subclass; both are
-enforced by `testkit/varco_conformance/di_wiring.py`'s
-`test_every_lifecycle_bearing_provider_has_a_disposer_or_owner`. Full model + a Pitfalls table:
-`technical_docs/features/dependency-injection.md`'s §Lifecycle phases.
+**Contract** — every `bootstrap(container) -> DIContainer` requires and returns the container; a
+second `bind_*`/`enable_*` of the same `(interface, qualifier)` raises `AlreadyBoundError`; varco
+never reads the process-global container (`test_no_service_locator.py`). → §Wiring contract
+**Defaults & selection** — every varco binding of a varco seam is `@Fallback` (a user binding
+always wins; never mark a collection contribution `@Fallback`) → §Default bindings · a backend of
+the six seams is live only when `VARCO_<SEAM>_BACKEND` names it; every backend binding is
+`@Fallback` **and** `selected_by(seam, value)` → §Selecting a backend · a feature is `enable_*()`
+or `VARCO_<FEATURE>_ENABLED` via `feature_default(...)`, never an env read inside `bootstrap()` →
+§Enabling a feature · a new selectable backend/feature/default → `varco_core.di`
+(`selected_by`/`feature_default`/`SEAMS`/`FEATURES`), never a provider-body `if` or
+`activate_profile` · `VARCO_REVOCATION_BACKEND=redis` still needs
+`TrustedIssuerRegistry(revocation_store=...)` (`di.revocation_store_not_wired`).
+**Settings** — every settings class is bound by `bind_settings()`, never `@Singleton`/a scanned
+`@Provider`/a hand-rolled `is_user_bound()` guard. → §Settings
+**Modules & lifecycle** — a module is a plain `VarcoModule`, never a `@Configuration`, never
+scanned (`test_modules_never_scanned.py`); a switchable subsystem is a `VarcoModule` in
+`<pkg>/modules.py`, never a `create_varco_app` keyword; HTTP position is an `EdgeSlot`, never
+`add_middleware` → §Modules · every module declares `phase`; `LifecycleRunner` stops the
+**exact reverse** of what started (rollback too); a whole-phase follower takes an integer offset, never a
+`depends_on` edge; a lifecycle-bearing provider needs a `@Disposes` or a `module_owned` entry
+(`di_wiring` conformance) → §Lifecycle phases
+**Multi-binding** — "all implementations of X" is a `@Multibound` seam + `contribute()`/
+`collect()`, never a hand list, never `InjectInstances[T]`; a contribution never sets
+`priority=`; a `@Singleton` `EventConsumer` is auto-registered by `CoreModule.start()`. →
+§Multi-binding
+**Diagnostics & testing** — `varco diagnose` / `build_wiring_report()` is the only wiring report
+(a new fact is a `WiringFinding`); tests swap one binding with providify's `di_overrides` on an
+`in_memory_modules()` container, never a varco fixture. → §Diagnostics, §Testing
 
 ### DI wiring verb taxonomy
 
-The DI wiring verbs above (`bootstrap`, `bind_*`, `enable_*`, `mount_*`, `install_*`, plus
-`async_bootstrap`) look like one family but are six distinct shapes. This table is the index —
-it does not restate any individual function's reasoning; follow the example path to that
-function's own docstring for the "why".
+Every wiring entry point — the ten `bootstrap()`s, every `bind_*`/`enable_*`/`mount_*`/
+`install_*`, every `VarcoModule` and `@Configuration` — is listed with its signature in
+`technical_docs/entry-points.md` (generated; `make entry-points`, gated by `make lint`). The verb
+meanings: `dependency-injection.md` §Wiring contract. The name-collision notes stay here:
 
-| Verb | Shape | Meaning | Example |
-|---|---|---|---|
-| `bootstrap` | `(container: DIContainer) -> DIContainer` | one per package (ten, incl. `varco_core.di`); `container.scan(pkg, recursive=True)` (+ the package's own hand `provide()`s, idempotently); container **required**; never creates one, never reads the process-global container, never touches `os.environ`; returns the same object; safe to call twice | `varco_kafka.di.bootstrap(container)` |
-| `async_bootstrap` | `async (container) -> DIContainer` | `bootstrap()` + `await container.ainstall(<the package's connection-opening @Configuration>)`; no kwargs | `varco_redis.di.async_bootstrap`, `varco_memcached.di.async_bootstrap` |
-| `bind_*` | `(container, …, *, qualifier=None) -> DIContainer` | registers **non-fallback** bindings the app decides at wiring time; the primitive is `varco_core.di.bind_instance(container, Interface, obj, *, qualifier=None)`; a second registration of the same `(interface, qualifier)` raises `AlreadyBoundError` — qualify to have two, use `di_overrides` to replace in a test | `bind_instance`, `bind_repositories`, `bind_clients`/`bind_clients_from`/`bind_peers`, `bind_trust_store`, `bind_cloudevents_serializer`, `bind_websocket_adapter`/`bind_sse_adapter`/`bind_mcp_adapter`/`bind_skill_adapter` |
-| `enable_*` | `(container, …) -> DIContainer` | flips on an opt-in binding that shadows a `@Fallback` default; raises `AlreadyBoundError` if a non-fallback binding of that seam already exists (yours or a previous `enable_*`) | `enable_policy_authorizer`, `enable_token_revocation`, `enable_redis_token_revocation`, `enable_feature_flags`, `enable_tenant_membership`, `enable_authorization_audit` (wraps the current binding — call it last) |
-| `mount_*(app, ...)` | sync, mutates the ASGI app | flips on an opt-in privileged **HTTP surface**, always behind an explicit acknowledgement kwarg | `varco_fastapi.tenancy.mount_tenant_admin`, `varco_fastapi.admin.mount_reliability_admin` |
-| `install_*(...)` | sync, **container-free**; **three shapes** | ⚠️ one verb, three shapes (Plan 022 / AB-3, extended Plan 037 / §D-S12-hook). **(a)** a process-global side effect (OTel instrument registration), taking no argument at all; **(b)** an ASGI-app mutation, taking and modifying an `app`; **(c)** a mutation of a caller-supplied SQLAlchemy object (a `Session`/`sessionmaker`/`async_sessionmaker`), container-free, returning an uninstall callable. Neither (a) nor (b) nor (c) takes a container — all are unrelated to `container.install(SomeConfiguration)` | (a) `install_cache_metrics`, `install_reliability_metrics` · (b) `install_middleware_stack`, `install_cors` · (c) `varco_sa.tenancy.rls_session.install_rls_tenant_hook` |
-
-Rule: varco never reads the process-global container — every helper takes the container
-(guarded by `varco_core/tests/test_no_service_locator.py`); a middleware gets it via
-`install_middleware_stack(app, [(DISessionMiddleware, {"container": container})])`.
-Rule: the ten packages subclass `varco_conformance.di_wiring.DIWiringConformance`; a new
-package or a new `@Fallback` default adds a row to its `expected_defaults` or the suite fails.
-
-Name collisions this table exists specifically to call out (audited at Plan 022's RL-8
-checkpoint — see `design/api-freeze-and-standards/api-break-candidates.md` for each verdict):
-- `install_*` in this taxonomy takes **no container** — `container.install(X)` is providify's
-  unrelated `@Configuration`-install verb. **AB-3 verdict: `leave-and-document`** — renaming four
-  functions to fix a naming *adjacency* this row already resolves is a poor use of the 3.0.0
-  window. What the audit did fix is the row itself, which used to claim `install_*` was uniformly
-  "a process-global side effect": that is false of `install_middleware_stack` and `install_cors`,
-  which take and mutate an ASGI `app`. Do **not** move that pair into the `mount_*` family —
-  `mount_*` is "an opt-in privileged HTTP surface, always behind an explicit acknowledgement
-  kwarg", which middleware installation is not.
-- ~~`enable_rls_ddl()`~~ → **`render_rls_ddl()`** (`varco_sa/varco_sa/rls.py`). **AB-1 verdict:
-  `rename+alias`, landed in 3.0.0.** It was never in the `enable_*` family — it is a pure
-  DDL-string generator, touches no container, performs no I/O — and `render_*` now says so. The
-  old name remains as a deprecated alias until 4.0.0.
-
-Several `bind_*` factories above register a binding whose interface is only known at call time
-(a generic alias like `AsyncRepository[User]`, or a plain class captured in a closure) —
-providify needs the *real* return type, not the placeholder `from __future__ import
-annotations` leaves on a closure. Framework code doing this uses providify's native
-`container.provide(Provider(singleton=...)(factory), returns=...)` / `@Provider(returns=...)`
-(providify ≥ 2.0.0, Plan 016 / RL-2) — the `returns=` override is applied at
-decoration/registration time, so no `factory.__annotations__["return"] = ...` patching is
-needed. (Prior to providify 2.0.0 this went through a since-deleted `varco_core`
-compat shim — see UPSTREAM-GAPS.md U-20.)
+- `install_*` takes **no container** — `container.install(X)` is providify's unrelated
+  `@Configuration`-install verb (**AB-3: `leave-and-document`**). It has three shapes:
+  process-global (`install_cache_metrics`), ASGI-app mutation (`install_middleware_stack`,
+  `install_cors` — **not** `mount_*`, which is "an opt-in privileged HTTP surface behind an
+  acknowledgement kwarg"), and a SQLAlchemy-object mutation (`install_rls_tenant_hook`).
+- ~~`enable_rls_ddl()`~~ → **`render_rls_ddl()`** (**AB-1: `rename+alias`**, 3.0.0) — a pure
+  DDL-string generator, never an `enable_*`; the old name remains as a deprecated alias until
+  5.0.0 (floor: 2027-08-31).
+- A `bind_*` whose interface is known only at call time uses providify's
+  `Provider(..., returns=...)` / `@Provider(returns=...)` — never `__annotations__` patching.
 
 ### Resilience (varco_core.resilience)
 
@@ -1192,7 +1136,7 @@ to be imported from `varco_core.migration` explicitly. The rename closes that ho
 schema-migration surface is now on `varco_core` directly**, and an import site says which concept
 it means. `varco_core.migration.MigrationError` / `.MigrationPlan` still resolve, to the identical
 objects (so `except` and `isinstance` are unaffected), emit a `DeprecationWarning`, and are removed
-in 4.0.0. `varco_core.MigrationError`/`.MigrationPlan` still mean the **domain-migration** pair and
+in 5.0.0 (floor: 2027-08-31). `varco_core.MigrationError`/`.MigrationPlan` still mean the **domain-migration** pair and
 are unchanged.
 
 `alembic` is an optional extra: `pip install "varco-sa[migrations]"`. See
@@ -1437,7 +1381,10 @@ shared, never-packaged suite of behavioral contract tests, **nine** modules, one
 ABC plus `di_wiring.py` (`event_bus.py`, `cache.py`, `job_store.py`, `dlq.py`,
 `channel_manager.py`, `idempotency_store.py`, `webhook_subscription.py`, `token_revocation.py` —
 the last added by Plan 034 / S13b — and `di_wiring.py`, subclassed by all ten packages'
-`bootstrap()`). Reached via one `pythonpath = ["../testkit"]` line in a package's
+`bootstrap()`, each subclass setting `module_cls` (049), `selectable` (047), `module_owned` (050),
+and a `known_warnings` that carries none of the three disposer kinds — they are never
+allowlisted again, 050; the one remaining entry is providify's `MISSING_BINDING_DEFAULTED` for
+`InMemoryEventBus.__init__`). Reached via one `pythonpath = ["../testkit"]` line in a package's
 `[tool.pytest.ini_options]`; a backend opts in with a thin subclass overriding the abstract
 fixture:
 
@@ -1488,7 +1435,7 @@ project, with **four** function-scoped, yield-based, non-autouse fixtures:
 | `di_container` | A fresh, empty `DIContainer` — a new instance per test. |
 | `di_acontainer` | The async counterpart — same fresh-per-test contract, usable directly under this repo's `asyncio_mode = "auto"` with no extra marker; `container.ashutdown()` is awaited automatically at teardown. |
 | `di_overrides` | A `ContainerOverrides` bound to that test's `di_container`; any override made through it is undone automatically at teardown. |
-| `di_global` | Makes `DIContainer.current()` return the test's container for the duration of the test, then restores whatever `current()` returned before. |
+| `di_global` | Makes providify's process-global `current()` return the test's container for the duration of the test, then restores whatever `current()` returned before. |
 
 varco **deliberately does not re-export or wrap any of these** — see Design §RL-3d in Plan 016:
 `testkit/varco_conformance` is never packaged, so it cannot deliver fixtures to a downstream
@@ -1516,6 +1463,10 @@ Two neighbours, so you file a new pitfall in the right place:
 - Feature-specific *operational* pitfalls (wrong env var → wrong runtime behaviour) go in
   that feature's own `technical_docs/features/*.md` **Pitfalls** section.
 - Agent/contributor *workflow* rules stay in this file.
+
+DI pitfalls (bootstrap, `@Fallback`, selection, settings, modules, phases, multi-binding,
+diagnostics) live in **one merged table**: `technical_docs/features/dependency-injection.md`'s
+§Pitfalls.
 
 ---
 

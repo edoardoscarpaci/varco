@@ -737,7 +737,7 @@ class TestP050UpstreamAsks:
     @pytest.mark.xfail(
         strict=True,
         raises=TypeError,
-        reason="GAP: P-DISP — provide() accepts no disposer= kwarg on providify 2.1.0 "
+        reason="GAP: P30-PROVIDE-DISPOSER (P-DISP) — provide() accepts no disposer= kwarg on providify 2.1.0 "
         "(container.py:1250); see design/upstream-gaps/providify-provide-disposer.md",
     )
     def test_provide_accepts_disposer_kwarg(self) -> None:
@@ -755,7 +755,7 @@ class TestP050UpstreamAsks:
     @pytest.mark.xfail(
         strict=True,
         raises=TypeError,
-        reason="GAP: P-INJ — provide()/@Provider accept no inject= parameter-override "
+        reason="GAP: P31-PROVIDER-INJECT-OVERRIDE (P-INJ) — provide()/@Provider accept no inject= parameter-override "
         "kwarg on providify 2.1.0 (decorator/scope.py has no parameter twin to returns=); "
         "see design/upstream-gaps/providify-provider-inject-override.md",
     )

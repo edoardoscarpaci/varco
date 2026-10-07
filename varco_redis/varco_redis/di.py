@@ -59,11 +59,11 @@ explicit non-fallback settings instance before ``bootstrap()`` (Plan 046
     # VARCO_REDIS_USE_STREAMS=true
     container.scan("varco_redis", recursive=True)
 
-    # Or, code-side:
-    from varco_core.di import bind_instance
+    # Or, code-side (Plan 048's recipe; the 046-era bind_instance form is equivalent):
+    from varco_core.settings import bind_settings
     from varco_redis.config import RedisEventBusSettings
 
-    bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))
+    bind_settings(container, RedisEventBusSettings, instance=RedisEventBusSettings(use_streams=True))
     bootstrap(container)
 
 Overriding the default settings::
@@ -118,10 +118,12 @@ def bootstrap(container: DIContainer) -> DIContainer:
     this function (Plan 046 §D-streams — ``bootstrap(streams=True)`` is
     removed; it used to mutate ``os.environ`` for the whole process)::
 
-        from varco_core.di import bind_instance
+        from varco_core.settings import bind_settings
         from varco_redis.config import RedisEventBusSettings
 
-        bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))
+        bind_settings(
+            container, RedisEventBusSettings, instance=RedisEventBusSettings(use_streams=True)
+        )
         bootstrap(container)
 
     Override settings before calling bootstrap::

@@ -4,8 +4,8 @@ varco_core.tenancy.di
 Providify DI integration for tenant membership (Plan 033 / S5).
 
 Mirrors ``varco_core.flags.di``'s ``enable_feature_flags`` precedent exactly:
-``NullTenantMembership`` is bound by default (a scanned ``@Singleton`` at
-the lowest priority — see ``membership.py``), and
+``NullTenantMembership`` is bound by default (a scanned ``@Fallback
+@Singleton`` — see ``membership.py``), and
 ``enable_tenant_membership(container)`` is the only way to swap in
 ``ClaimTenantMembership``. This is deliberately **not** a scanned
 ``@Configuration`` — ``scan`` auto-activates those, which would silently

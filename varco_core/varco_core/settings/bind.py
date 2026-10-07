@@ -248,9 +248,13 @@ def bind_settings(
     Exactly one of two paths runs:
 
     - **Code path** (``instance=`` given): registers *instance* as a
-      non-fallback singleton binding. A second call for the same
-      ``(cls, qualifier)`` raises ``SettingsAlreadyBoundError`` — this is a
-      bug, not a precedence question (use ``di_overrides`` in tests).
+      non-fallback singleton binding. It raises
+      ``SettingsAlreadyBoundError`` if ``bind_settings()`` has already
+      recorded **any** binding for the same ``(cls, qualifier)`` — an
+      earlier ``instance=`` call *or* an earlier env-path ``@Fallback``
+      one (e.g. from a backend's ``bootstrap()``). Bind a code override
+      before anything else touches the class; in tests use
+      ``di_overrides`` instead.
     - **Env path** (``instance=`` omitted): constructs ``cls()`` (or
       ``cls(_env_prefix=env_prefix)`` when *env_prefix* is given) eagerly,
       right now, and registers it as a ``@Fallback`` singleton — so any
@@ -284,13 +288,35 @@ def bind_settings(
         ValueError: If *env_prefix* is given without *qualifier*.
         TypeError: If *instance* is not an instance of *cls*.
         SettingsAlreadyBoundError: If *instance* is given and a previous
-            ``bind_settings()`` call already registered a non-fallback
-            binding for this ``(cls, qualifier)``.
+            ``bind_settings()`` call already registered a binding for this
+            ``(cls, qualifier)`` — fallback or not.
         SettingsValidationError: If the env path fails pydantic validation
             — names the offending env var(s) and the class, never the raw
             value.
 
+    DESIGN: the code path refuses to follow an env-path fallback
+        The env path resolves and caches the env-built value eagerly, so a
+        later code override could not un-resolve it: anything that read the
+        class in between would keep the env copy while ``provenance_of()``
+        and ``varco diagnose`` reported the code instance — two live values,
+        and a report that describes only one of them.
+        ✅ One value per ``(cls, qualifier)``, decided once; provenance is
+           never wrong about what a component actually holds.
+        ✅ A late override fails loudly at startup instead of half-applying
+           (security-relevant classes: TLS, auth, secrets).
+        ✅ A malformed env var can never be "fixed" by a code value bound
+           after it was already parsed — the order is explicit.
+        ❌ The override must be bound before any package ``bootstrap()`` /
+           ``VarcoModule`` that registers the class — i.e. before
+           ``create_varco_app(container, ...)``, never from an app module
+           that ``depends_on`` the backend. ``bind_instance`` (Plan 046)
+           keeps its own, separate "only a non-fallback binding conflicts"
+           rule for module-constructor overrides.
+
     Edge cases:
+        - ``instance=`` after a package ``bootstrap()`` already bound the
+          class via the env path: ``SettingsAlreadyBoundError`` — bind
+          first, or set the env var instead.
         - Called twice with no *instance* and no competing binding: the
           second call is a pure no-op resolve — exactly one binding ends
           up registered (idempotent).

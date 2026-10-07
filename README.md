@@ -78,10 +78,246 @@ policy engine, field encryption, observability, profiling, …) — see
 
 ---
 
+## Wiring an app
+
+One chapter, in the order you need it: start from the default app, add modules, pick backends,
+configure settings, switch features on, add your own code, then check what you built. Every
+snippet below names the test that runs its shape. The design and the full reference live in the
+single DI guide, [technical_docs/features/dependency-injection.md](technical_docs/features/dependency-injection.md);
+upgrading from 3.x? Read [the 3.x → 4.0 migration guide](technical_docs/migrations/3-to-4.md) first.
+
+### The 8-line default app
+
+```python
+from providify import DIContainer
+from varco_fastapi.app import create_varco_app
+
+container = DIContainer()
+app = create_varco_app(container)  # modules=None -> varco_fastapi.default_modules()
+# tested by varco_fastapi/tests/test_create_varco_app_modules.py
+```
+
+`modules=None` installs `default_modules()` — `CoreModule`, observability, CORS, security headers,
+the error envelope, body limits, logging, tracing, localization and the security posture
+preflight (FLIP-1), each switchable by one env var or `exclude=`. `FastAPIModule` always
+contributes `RequestContextMiddleware` (anonymous mode when no `AbstractServerAuth` is bound).
+Detail: the guide's [§Modules](technical_docs/features/dependency-injection.md#modules-plan-049--di-1-flip-1-ro-4).
+
+### Adding modules (the idiom `[*default_modules(), …]`)
+
+An explicit `modules=[...]` list installs **exactly** those — nothing is inserted implicitly — so
+start from the defaults and append:
+
+```python
+from varco_fastapi import default_modules
+from varco_fastapi.modules import LoggingModule, MigrationsModule
+from varco_core.redaction import PolicyRedactor
+from varco_sa.modules import SAModule
+
+app = create_varco_app(
+    container,
+    modules=[
+        *default_modules(exclude=(LoggingModule,)),
+        LoggingModule(redactor=PolicyRedactor()),           # RO-4: redact request logs
+        MigrationsModule(my_migrator),                      # INFRA phase — list position is irrelevant
+        SAModule(config=my_sa_config, entities=(User, Post)),
+    ],
+    routers=[UserRouter, PostRouter],
+)
+# tested by varco_fastapi/tests/test_default_modules.py
+```
+
+`export VARCO_SECURITY_POSTURE_ENABLED=false` flips a default module off without code;
+`VARCO_SECURITY_ENFORCE=warn` keeps the preflight but restores the 3.x warn-only consequence
+(FLIP-2). Every package ships exactly one `VarcoModule` (`SAModule`, `KafkaModule`,
+`CasbinModule`, …); the generated list is [technical_docs/entry-points.md](technical_docs/entry-points.md).
+
+### Choosing a backend
+
+Six seams — `cache`, `dlq`, `idempotency`, `job_store`, `event_bus`, `revocation` — are each
+selected by **one environment variable**. Bootstrapping a package never makes its backend live:
+
+```bash
+export VARCO_EVENT_BUS_BACKEND=redis    # Pub/Sub, or Streams with VARCO_REDIS_USE_STREAMS=true
+export VARCO_CACHE_BACKEND=redis
+export VARCO_DLQ_BACKEND=redis-streams  # the DLQ spells "use Streams" as its own value
+export VARCO_JOB_STORE_BACKEND=myapp.stores:make_job_store   # a dotted path also works
+# tested by varco_core/tests/test_di_selection.py
+```
+
+Unset means the in-process default (`memory`, or `null` for `revocation`). Code always wins over
+either env form — `bind_instance(container, AbstractEventBus, my_bus)` ignores these variables.
+`check_backend_selection()` (run by `create_varco_app`) raises on a typo. Detail and the
+generated per-seam list: [§Selecting a backend](technical_docs/features/dependency-injection.md#selecting-a-backend),
+[technical_docs/di-catalogue.md](technical_docs/di-catalogue.md).
+
+### Settings and environment variables
+
+Every settings class is a `VARCO_<FEATURE>_`-prefixed `BaseSettings`, registered by
+`bind_settings()` — constructed eagerly, fail-fast, at the call:
+
+```python
+from varco_core.settings import bind_settings
+from varco_redis.cache import RedisCacheSettings
+from varco_redis.config import RedisEventBusSettings
+
+bind_settings(container, RedisEventBusSettings, instance=RedisEventBusSettings(channel_prefix="orders"))
+bind_settings(  # DI-16: a second, independently-configured named instance
+    container, RedisCacheSettings, qualifier="sessions", env_prefix="VARCO_REDIS_SESSIONS_CACHE_"
+)
+# tested by varco_core/tests/test_settings_bind.py
+```
+
+Per field: `instance=` kwargs (code) > process env > class default. Register overrides **before**
+`bootstrap()`. varco never reads a `.env` file. Every `VARCO_*` variable, generated:
+[technical_docs/settings-reference.md](technical_docs/settings-reference.md); design:
+[§Settings](technical_docs/features/dependency-injection.md#settings-plan-048--di-6-di-16).
+
+### Enabling a feature
+
+```python
+from varco_core.flags.di import enable_feature_flags
+
+enable_feature_flags(container)   # code form — always beats VARCO_FEATURE_FLAGS_ENABLED=true
+# tested by varco_core/tests/test_di_features.py
+```
+
+| Feature | Env var | Code verb |
+|---|---|---|
+| `feature_flags` | `VARCO_FEATURE_FLAGS_ENABLED` | `enable_feature_flags(container)` |
+| `tenant_membership` | `VARCO_TENANT_MEMBERSHIP_ENABLED` | `enable_tenant_membership(container)` |
+| `policy_authorizer` | `VARCO_POLICY_AUTHORIZER_ENABLED` | `enable_policy_authorizer(container)` |
+
+`enable_authorization_audit(container)` is code-only (no env form) — call it last. Calling an
+`enable_*` twice raises `AlreadyBoundError`. Detail: [§Enabling a feature](technical_docs/features/dependency-injection.md#enabling-a-feature).
+
+### Writing your own module
+
+Subclass `VarcoModule` when your app has its own scan/bind/start/stop story — never decorate it
+with `@Configuration` (a module is constructed, never scanned):
+
+```python
+from varco_core.di import Phase
+from varco_core.di.module import CoreModule, VarcoModule
+
+
+class MyAppModule(VarcoModule):
+    name = "my_app"
+    depends_on = (CoreModule,)
+    phase = Phase.CONSUMERS          # the default; INFRA if other modules depend on it
+
+    def _register(self, container):
+        container.scan("myapp", recursive=True)
+
+    async def start(self, container): ...
+
+
+app = create_varco_app(container, modules=[*default_modules(), MyAppModule()])
+# tested by varco_fastapi/tests/test_create_varco_app_modules.py
+```
+
+`LifecycleModule(component)` / `MiddlewareModule(entries)` wrap a hand-built `start()`/`stop()`
+object or a raw middleware entry without a subclass. Worked example:
+`examples/00-full-stack-post-api/example/module.py`.
+
+### Contributing from your own package
+
+Five seams (`EventConsumer`, `RetentionPolicy`, `TenantSource`, `PostureCollector`,
+`HealthCheck`) are `@Multibound` — contribute with an ordinary `@Singleton`, no framework edit:
+
+```python
+from providify import Singleton
+from varco_core.event.consumer import EventConsumer, listen
+from varco_core.posture import PostureCollector, PostureFinding, PostureSeverity
+
+
+@Singleton
+class PluginConsumer(EventConsumer):          # auto-registered by CoreModule after the bus starts
+    @listen(SomeEvent, channel="plugin")
+    async def on(self, event: SomeEvent) -> None: ...
+
+
+@Singleton
+class PluginPostureCollector(PostureCollector):
+    name = "plugin"
+
+    def collect(self) -> list[PostureFinding]:
+        return [PostureFinding(check="plugin.example", severity=PostureSeverity.INFO, ...)]
+# tested by varco_core/tests/test_plugin_contributions.py
+```
+
+`container.scan("my_plugin_package")` is all it takes. Never set `priority=` on a contribution and
+never mark one `@Fallback`. Full four-seam example: `testkit/varco_plugin_example`; design:
+[§Multi-binding](technical_docs/features/dependency-injection.md#multi-binding-for-all-implementations-of-x-plan-051--di-5).
+
+### Lifecycle phases in one paragraph
+
+Every module declares a `phase` (`INFRA` → `BUS` → `CONSUMERS` (default) → `SCHEDULERS` →
+`EDGE`); `create_varco_app` starts modules ascending by `(phase, depends_on)` and stops the
+**exact reverse of what actually started** — on shutdown and on a partial-start rollback alike —
+so `MigrationsModule`, `WebhookModule()` or `TrustStoreModule(spec=...)` listed anywhere still
+start before the bus (tested by `varco_fastapi/tests/test_create_varco_app_phased_lifecycle.py`).
+Kafka/NATS buses start only in the `BUS` phase (or an explicit `await bus.start()`). Detail:
+[§Lifecycle phases](technical_docs/features/dependency-injection.md#lifecycle-phases-plan-050--di-9-di-10).
+
+### varco diagnose
+
+```bash
+varco diagnose --modules myapp.wiring:modules --static --json --check
+# tested by varco_core/tests/test_cli_diagnose.py
+```
+
+Prints what every seam is bound to, where each binding came from, fired deprecations, module
+phases, settings provenance and providify's `validate()` result — without starting anything.
+`create_varco_app` logs the same report at startup (`VARCO_DIAGNOSE_STARTUP_REPORT=false`
+silences the block) and refuses to start on a `validate()` ERROR (`validate=False` is the
+escape). Detail: [§Diagnostics](technical_docs/features/dependency-injection.md#diagnostics-plan-052--di-7).
+
+### Testing a varco app
+
+```python
+from varco_core.testing import in_memory_modules, register_modules
+
+@pytest.fixture(scope="session")
+def app_container():
+    c = DIContainer(); register_modules(c, in_memory_modules()); return c
+
+@pytest.fixture
+def di_container(app_container):              # redefines providify's fixture: a fresh copy per test
+    c = app_container.copy(); yield c; c.shutdown()
+
+async def test_uses_fake_cache(di_container, di_overrides):
+    di_overrides.instance(CacheBackend, FakeCache())
+# tested by varco_core/tests/test_single_override_recipe.py
+```
+
+`di_container`/`di_overrides` are providify's own fixtures — varco ships none. A whole FastAPI app:
+`varco_fastapi.testing.in_memory_app_modules()`. ⚠️ On providify 2.1.x two interim workarounds
+apply (P32/P33) — the working form is the test named above.
+
+> **The env you need in a test.** `VARCO_SECURITY_ENV=development` only via a per-test
+> `monkeypatch.setenv(...)`, never an autouse fixture (`in_memory_modules()` already binds
+> `BaseAuthorizer()` explicitly, so it needs none); `VARCO_SECURITY_ENFORCE=warn` via an autouse
+> fixture in any test package whose apps enter the lifespan; `clear_backend_selection(monkeypatch)`
+> when a test adds a backend module on purpose. Detail:
+> [§Testing](technical_docs/features/dependency-injection.md#testing-plan-052--di-11).
+
+---
+
 ## Table of Contents
 
 - [Quickstart — Example App](#quickstart--example-app)
 - [Wiring an app](#wiring-an-app)
+  - [The 8-line default app](#the-8-line-default-app)
+  - [Adding modules](#adding-modules-the-idiom-default_modules-)
+  - [Choosing a backend](#choosing-a-backend)
+  - [Settings and environment variables](#settings-and-environment-variables)
+  - [Enabling a feature](#enabling-a-feature)
+  - [Writing your own module](#writing-your-own-module)
+  - [Contributing from your own package](#contributing-from-your-own-package)
+  - [Lifecycle phases in one paragraph](#lifecycle-phases-in-one-paragraph)
+  - [varco diagnose](#varco-diagnose)
+  - [Testing a varco app](#testing-a-varco-app)
 - [Domain Model](#domain-model)
   - [Soft Delete](#soft-delete)
   - [Multi-tenancy models](#multi-tenancy-models)
@@ -101,7 +337,6 @@ policy engine, field encryption, observability, profiling, …) — see
   - [ServiceProtocol](#serviceprotocol)
   - [Authorization order](#authorization-order)
   - [DI wiring](#di-wiring)
-  - [Settings and environment variables](#settings-and-environment-variables)
 - [Authorization](#authorization)
   - [Action](#action)
   - [ResourceGrant](#resourcegrant)
@@ -209,135 +444,6 @@ policy engine, field encryption, observability, profiling, …) — see
 - [Durability preset (one-line opt-in)](#durability-preset-one-line-opt-in)
 - [Changelog summary](#changelog-summary)
 - [Health Checks](#health-checks)
-
----
-
-## Wiring an app
-
-`create_varco_app(container, *, modules=None, ...)` (Plan 049 / DI-1) builds a fully configured
-FastAPI app from a `DIContainer` and a list of `varco_core.di.VarcoModule` instances — one
-`VarcoModule` per subsystem, replacing the eleven keyword objects (`migrations`, `tenancy`,
-`reliability`, `retention`, `jwks_refresh`, `i18n`, `timezone`, `security_headers`,
-`body_limit`, `rate_limit`, `extra_lifespan_components`) a pre-4.0 app used to pass:
-
-```python
-from providify import DIContainer
-from varco_fastapi.app import create_varco_app
-
-container = DIContainer()
-app = create_varco_app(container)  # modules=None -> varco_fastapi.default_modules()
-```
-
-`modules=None` installs `varco_fastapi.default_modules()` — CORS, security headers, the error
-envelope, body limits, logging, tracing, localization, and (since Plan 049 / FLIP-1) the security
-posture preflight, all default-on and all switchable by one env var or an `exclude=`.
-`FastAPIModule` additionally, and **unconditionally**, contributes `RequestContextMiddleware` —
-unlike the others, this one is not itself switchable: with an `AbstractServerAuth` bound it runs
-the app's real auth strategy, and with none bound it still runs, in *anonymous mode* (every
-request gets a populated, unauthenticated `AuthContext`/`correlation_id`/`current_tenant()`
-rather than none at all) — the same "always present" contract `RequestContextMiddleware` had
-before Plan 049. An explicit `modules=[...]` list installs **exactly** those — nothing is inserted
-implicitly (NestJS `imports`/Django `INSTALLED_APPS` semantics) — so start from
-`[*default_modules(), ...]` and add what you need:
-
-```python
-from varco_fastapi.modules import MigrationsModule, default_modules
-from varco_sa.modules import SAModule
-
-app = create_varco_app(
-    container,
-    modules=[
-        MigrationsModule(my_migrator),      # list position no longer matters — INFRA phase (Plan 050)
-        *default_modules(),
-        SAModule(config=my_sa_config, entities=(User, Post)),
-    ],
-    routers=[UserRouter, PostRouter],
-)
-```
-
-One env var flips a default module off without touching code — the FLIP-1 example:
-
-```bash
-export VARCO_SECURITY_POSTURE_ENABLED=false   # or default_modules(exclude=(SecurityPostureModule,))
-export VARCO_SECURITY_ENFORCE=warn            # keep it, but restore the 3.x warn-only consequence (FLIP-2)
-```
-
-RO-4 (a redactor for request logs) is a constructor argument on the logging module, not a
-`create_varco_app` keyword:
-
-```python
-from varco_core.redaction import PolicyRedactor
-from varco_fastapi.modules import LoggingModule, default_modules
-
-app = create_varco_app(
-    container,
-    modules=[*default_modules(exclude=(LoggingModule,)), LoggingModule(redactor=PolicyRedactor())],
-)
-```
-
-### varco diagnose
-
-`varco diagnose --modules myapp.wiring:modules [--static] [--json] [--check]` prints what every
-seam is bound to, where each binding came from, active deprecations, module phases, settings
-provenance and providify's `validate()` result - without starting anything. In CI:
-`varco diagnose --modules myapp.wiring:modules --static --json --check`. `create_varco_app` logs
-the same report at INFO on startup (`VARCO_DIAGNOSE_STARTUP_REPORT=false` to silence) and refuses
-to start on a `validate()` ERROR (`validate=False` is the escape; `strict_validation=True` also
-refuses on WARNING). Detail: `technical_docs/features/dependency-injection.md` section Diagnostics.
-
-### Testing a varco app
-
-```python
-from varco_core.testing import in_memory_modules, register_modules
-
-@pytest.fixture(scope="session")
-def app_container():
-    c = DIContainer(); register_modules(c, in_memory_modules()); return c
-
-@pytest.fixture
-def di_container(app_container):
-    c = app_container.copy(); yield c; c.shutdown()
-
-async def test_uses_fake_cache(di_container, di_overrides):
-    di_overrides.instance(CacheBackend, FakeCache())
-```
-
-`di_container`/`di_overrides` are providify's own fixtures - varco ships none. For a whole FastAPI app
-under `TestClient`, `varco_fastapi.testing.in_memory_app_modules()` is the equivalent module set. ⚠️ On providify
-2.1.0 two interim workarounds apply (P32/P33): set `c._collection_points =
-set(app_container._collection_points)` after `copy()`, and have a singleton consumer take the
-overridden interface as `Instance[CacheBackend]` (`.get()`) rather than `Inject[...]`. The working
-form is `varco_core/tests/test_single_override_recipe.py`.
-
-Every package ships exactly one `VarcoModule` (`varco_sa.modules.SAModule`,
-`varco_kafka.modules.KafkaModule`, `varco_casbin.modules.CasbinModule`, …) — its `_register()`
-calls that package's own `bootstrap()` first. `LifecycleModule(component)` and
-`MiddlewareModule(entries)` wrap a hand-built `start()`/`stop()` object or a raw middleware entry
-without requiring a `VarcoModule` subclass, for whatever the shipped modules don't cover. Full
-model (slots, the tri-state `enabled=`, `depends_on`, `EdgeSlot`/`HttpContributor`, writing an
-app's own module, a Pitfalls table): [technical_docs/features/dependency-injection.md](technical_docs/features/dependency-injection.md)'s §Modules.
-Full old-keyword → new-module migration table: `CHANGELOG.md`'s `[Unreleased]` →
-**BREAKING — VarcoModule and create_varco_app(modules=…)** entry.
-
-**Lifecycle phases (Plan 050 / DI-9)** — every module also declares a `phase` (`INFRA` → `BUS` →
-`CONSUMERS` (the default) → `SCHEDULERS` → `EDGE`); `create_varco_app` starts modules ascending
-by `(phase, depends_on)` and stops the **exact reverse of what actually started**, so a
-`WebhookModule`/`TrustStoreModule` listed anywhere in `modules=[...]` still starts before the bus
-comes up:
-
-```python
-from varco_core.webhook import WebhookModule
-from varco_core.tls import TrustStoreModule
-from varco_fastapi.modules import default_modules
-
-app = create_varco_app(
-    container,
-    modules=[*default_modules(), WebhookModule(), TrustStoreModule(spec=my_trust_store)],
-)
-```
-
-Full model (the five phases and their owners, `components()`, the `@Disposes`-or-owner rule, a
-Pitfalls table): `technical_docs/features/dependency-injection.md`'s §Lifecycle phases.
 
 ---
 
@@ -839,6 +945,10 @@ async def list_handler(
 
 ### DI wiring
 
+Wiring moved to [Wiring an app](#wiring-an-app) — container, modules, backend selection,
+settings, feature switches, overriding a default. What stays here is the service-specific part:
+a service and its assembler are ordinary `@Singleton`s.
+
 ```python
 from providify import Singleton, DIContainer
 
@@ -866,176 +976,9 @@ container.register(PostAssembler)
 container.register(PostService)
 ```
 
-Overriding a framework default — registered *after* `container.scan(...)`, and still wins,
-because every varco default is declared `@Fallback` (see
-[technical_docs/features/dependency-injection.md](technical_docs/features/dependency-injection.md)):
-
-```python
-from providify import Singleton, DIContainer
-from varco_core.auth import AbstractAuthorizer
-
-
-@Singleton
-class MyAuthorizer(AbstractAuthorizer):
-    async def authorize(self, ctx, action, resource) -> None:
-        ...  # your real authorization logic
-
-
-container = DIContainer()
-container.scan("varco_core", recursive=True)  # BaseAuthorizer: a @Fallback default, development only
-container.bind(AbstractAuthorizer, MyAuthorizer)  # wins — registered AFTER, order doesn't matter
-```
-
-### Contributing from your own package
-
-Five seams (`EventConsumer`, `RetentionPolicy`, `TenantSource`, `PostureCollector`,
-`HealthCheck`) are `@Multibound` collection points (Plan 051 / DI-5) — a package that never
-imports `varco_fastapi` (or anything beyond `varco_core`) contributes to all of them with plain
-`container.scan()` + an ordinary `@Singleton`/`@Configuration`, no framework edit:
-
-```python
-from datetime import timedelta
-
-from providify import Configuration, Inject, Provider, Singleton
-from varco_core.event.consumer import EventConsumer, listen
-from varco_core.event.dlq import AbstractDeadLetterQueue
-from varco_core.posture import PostureCollector, PostureFinding, PostureSeverity
-from varco_core.retention.policy import RetentionPolicy
-from varco_core.retention.targets import DlqRetentionTarget
-from varco_core.tenancy.source import TenantSource, TenantTrust
-
-
-@Singleton
-class PartnerHeaderTenantSource(TenantSource):  # name = "partner", trust = MEDIUM
-    name = "partner"
-    trust = TenantTrust.MEDIUM
-
-    def resolve(self, request):
-        ...
-
-
-@Singleton
-class PluginPostureCollector(PostureCollector):  # name = "plugin"
-    name = "plugin"
-
-    def collect(self) -> list[PostureFinding]:
-        return [PostureFinding(check="plugin.example", severity=PostureSeverity.INFO, ...)]
-
-
-@Singleton
-class PluginConsumer(EventConsumer):
-    @listen(SomeEvent, channel="plugin")
-    async def on(self, event: SomeEvent) -> None: ...
-
-
-@Configuration
-class PluginRetention:
-    @Provider(singleton=True)
-    def policy(self, dlq: Inject[AbstractDeadLetterQueue]) -> RetentionPolicy:
-        return RetentionPolicy(
-            name="plugin-dlq",
-            target=DlqRetentionTarget(dlq=dlq, acknowledge_dead_letter_deletion=True),
-            cron_expr="0 3 * * *",
-            timezone="UTC",
-            dry_run=True,
-            older_than=timedelta(days=30),
-        )
-```
-
-`varco_core.di.bootstrap(container); container.scan("my_plugin_package")` is all it takes — see
-`testkit/varco_plugin_example` for the full, tested, four-seam worked example (never packaged).
-Full model, the `priority=`/`InjectInstances` pitfalls, and the `contribute()`/`bind_instance()`
-double-call table: `technical_docs/features/dependency-injection.md`'s §Multi-binding.
-
-### Settings and environment variables
-
-Every varco settings class is a `pydantic_settings.BaseSettings` subclass with a
-`VARCO_<FEATURE>_` prefix, registered through one recipe — `bind_settings()` — which constructs
-it eagerly, fail-fast, at the call:
-
-```python
-from providify import DIContainer
-from varco_core.settings import bind_settings
-from varco_redis.config import RedisEventBusSettings
-
-container = DIContainer()
-bind_settings(container, RedisEventBusSettings)  # raises SettingsValidationError on a bad env value, right here
-```
-
-Precedence, per field: an explicit `instance=` kwarg (code) > the process environment
-(`VARCO_X_FIELD`) > the class default. varco never reads a `.env` file — call
-`dotenv.load_dotenv()` yourself before `bootstrap()` if you want one.
-
-Named instances (DI-16) — build a second, independently-configured instance of one settings
-class:
-
-```python
-bind_settings(container, RedisCacheSettings)  # VARCO_REDIS_CACHE_*
-bind_settings(
-    container, RedisCacheSettings, qualifier="sessions", env_prefix="VARCO_REDIS_SESSIONS_CACHE_"
-)
-```
-
-The full, **generated** `VARCO_*` reference — every registered class, its env vars, types, and
-defaults — lives at
-[technical_docs/settings-reference.md](technical_docs/settings-reference.md) (regenerate with
-`make settings-reference`; `make lint` fails on drift). Full design:
-[technical_docs/features/dependency-injection.md](technical_docs/features/dependency-injection.md)'s
-"Settings" section.
-
-### Choosing a backend
-
-Six seams — `cache`, `dlq`, `idempotency`, `job_store`, `event_bus`, `revocation` — are each
-selected by **one environment variable**, `VARCO_<SEAM>_BACKEND=<name>`. **Bootstrapping a
-package no longer makes its backend live** — you must also name the seam:
-
-```bash
-export VARCO_EVENT_BUS_BACKEND=redis   # RedisEventBus (Pub/Sub) or RedisStreamEventBus,
-                                        # depending on VARCO_REDIS_USE_STREAMS
-export VARCO_CACHE_BACKEND=redis       # RedisCacheConfiguration.redis_cache
-export VARCO_DLQ_BACKEND=redis         # or "redis-streams" for RedisStreamDLQConfiguration
-```
-
-```python
-from providify import DIContainer
-import varco_core.di
-import varco_redis.di
-
-container = DIContainer()
-varco_core.di.bootstrap(container)
-varco_redis.di.bootstrap(container)  # a no-op selector until the env vars above are set
-```
-
-Unset means the in-process default (`memory`, or `null` for `revocation`) — the correct
-zero-config posture for dev/test, and a `SecurityPosture` `WARN` finding in production. A dotted
-path also works, for your own zero-argument class or factory:
-`VARCO_EVENT_BUS_BACKEND=myapp.buses:MyBus`. Code always wins over either env form —
-`bind_instance(container, AbstractEventBus, my_bus)` is unaffected by any of these variables.
-Full detail (the three-tier precedence, the redis `use_streams`/`redis-streams` asymmetry,
-`check_backend_selection()`): [technical_docs/features/dependency-injection.md](technical_docs/features/dependency-injection.md#selecting-a-backend).
-
-### Enabling a feature
-
-Three binding-shaped features are switchable by `enable_*(container)` (code) **or**
-`VARCO_<FEATURE>_ENABLED=true` (env), code always beating env:
-
-```python
-from varco_core.flags.di import enable_feature_flags
-
-enable_feature_flags(container)   # code form
-# — or, before bootstrap —
-# export VARCO_FEATURE_FLAGS_ENABLED=true
-```
-
-| Feature | Env var | Code verb |
-|---|---|---|
-| `feature_flags` | `VARCO_FEATURE_FLAGS_ENABLED` | `enable_feature_flags(container)` |
-| `tenant_membership` | `VARCO_TENANT_MEMBERSHIP_ENABLED` | `enable_tenant_membership(container)` |
-| `policy_authorizer` | `VARCO_POLICY_AUTHORIZER_ENABLED` | `enable_policy_authorizer(container)` |
-
-`enable_authorization_audit(container)` is the one exception — code-only, no env form (call it
-last, after the real authorizer is wired). Full matrix (categories, defaults):
-[technical_docs/features/dependency-injection.md](technical_docs/features/dependency-injection.md#enabling-a-feature).
+Any varco default (`BaseAuthorizer`, `InMemoryCache`, …) is `@Fallback`, so your own binding of
+the same interface wins in any registration order — see the guide's
+[§Default bindings](technical_docs/features/dependency-injection.md#default-bindings).
 
 ---
 
@@ -2332,6 +2275,9 @@ pip install varco-sa
 
 ### Bootstrap (one-liner setup)
 
+DI wiring of `varco_sa` (`SAModule(config=…, entities=…)`, `VARCO_<SEAM>_BACKEND=sa`) moved to
+[Wiring an app](#wiring-an-app); what stays here is the standalone, container-free engine/UoW setup.
+
 `SAFastrestApp` wires engine, ORM generation, and UoW provider in one place:
 
 ```python
@@ -2442,7 +2388,8 @@ pip install "varco-sa[migrations]"
 ```python
 from varco_sa.migration import AlembicMigrator
 from varco_fastapi import create_varco_app
-from varco_fastapi.modules import MigrationsModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import MigrationsModule
 
 migrator = AlembicMigrator(engine, script_location="alembic")
 app = create_varco_app(
@@ -3237,7 +3184,8 @@ waiting for a `verify()` call:
 ```python
 from varco_core.authority import TrustedIssuerRegistry
 from varco_fastapi import create_varco_app
-from varco_fastapi.modules import JwksRefreshModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import JwksRefreshModule
 
 registry = TrustedIssuerRegistry.from_env()
 await registry.load_all()  # unchanged — the documented startup step
@@ -3420,7 +3368,7 @@ might need TLS is up:
 ```python
 from pathlib import Path
 from varco_core.tls import TrustStore, TrustStoreModule
-from varco_fastapi.modules import default_modules
+from varco_fastapi import default_modules
 
 app = create_varco_app(
     container,
@@ -3815,8 +3763,8 @@ class OrderRouter(CreateMixin, VarcoCRUDRouter[...]):
     _auth = auth  # ClassVar — all routes use this auth strategy
 ```
 
-Or inject via DI (installed automatically by `VarcoFastAPIConfiguration`, renamed from
-`VarcoFastAPIModule` by Plan 049 §D-names):
+Or inject via DI (installed automatically by `VarcoFastAPIConfiguration`, Plan 049
+§D-names):
 
 ```python
 from varco_fastapi.di import VarcoFastAPIConfiguration
@@ -3884,39 +3832,20 @@ await runner.recover()
 
 ### Bootstrap helpers
 
-One-liner setup for each backend (also registered by `container.install(VarcoFastAPIConfiguration)`
-— renamed from `VarcoFastAPIModule` by Plan 049 §D-names; `VarcoFastAPIModule` now names the
-`VarcoModule` in `varco_fastapi.modules`). This hand-rolled shape (calling each package's
-`bootstrap()` directly and building `VarcoLifespan` yourself) still works unchanged — it is what
-`FastAPIModule`/`SAModule`/`RedisModule`/`WsModule`'s own `_register()`/`async_init()` do under
-the hood. **"Wiring an app" above is the recommended path** for a new app; reach for this one only
-when you need something `create_varco_app(modules=[...])` cannot express yet.
+Wiring moved to [Wiring an app](#wiring-an-app). The hand-rolled shape — each package's
+`bootstrap(container)` plus a hand-built `VarcoLifespan` — still works (it is what the modules'
+own `_register()` calls), for the rare case `create_varco_app(modules=[...])` cannot express:
 
 ```python
-from varco_sa.di import bootstrap as sa_bootstrap
-from varco_redis.di import bootstrap as redis_bootstrap
-from varco_ws.di import bootstrap as ws_bootstrap
+from varco_core.di import bootstrap as core_bootstrap
 from varco_fastapi.di import bootstrap as fastapi_bootstrap
 from varco_fastapi.lifespan import VarcoLifespan
-
-from varco_core.di import bind_instance, bootstrap as core_bootstrap
-from varco_redis.config import RedisEventBusSettings
-
-# Plan 047 — bootstrapping varco_redis/varco_sa no longer selects them; each
-# seam they serve needs VARCO_<SEAM>_BACKEND set too (see "Choosing a backend" above).
-# export VARCO_EVENT_BUS_BACKEND=redis
-# export VARCO_DLQ_BACKEND=sa
+from varco_sa.di import bootstrap as sa_bootstrap
 
 container = DIContainer()
-# Redis Streams (at-least-once) — an explicit non-fallback settings instance
-# replaces the removed bootstrap(streams=True) (Plan 046 §D-streams).
-bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))
-sa_bootstrap(container)
-redis_bootstrap(container)
-ws_bootstrap(container)
-core_bootstrap(container)      # AbstractEventProducer → BusEventProducer, etc.
+core_bootstrap(container)      # AbstractEventProducer → BusEventProducer, every @Fallback default
+sa_bootstrap(container)        # selection still needs VARCO_<SEAM>_BACKEND=sa
 fastapi_bootstrap(container)
-
 app = FastAPI(lifespan=VarcoLifespan(container))
 ```
 
@@ -4134,6 +4063,9 @@ class OrderService(
 
 ### OtelConfig and DI wiring
 
+Container/module wiring moved to [Wiring an app](#wiring-an-app) (`ObservabilityModule` is in
+`default_modules()`); what stays here is supplying your own `OtelConfig` fields:
+
 ```python
 from varco_core.observability import OtelConfig, OtelConfiguration
 from providify import DIContainer, Provider
@@ -4306,7 +4238,8 @@ print(session.report.format())  # human-readable table to stderr/logs
 
 # 3. FastAPI: enable via env var or a module
 #    VARCO_PROFILING_ENABLED=true VARCO_PROFILING_ATTACH_HEADERS=true
-from varco_fastapi.modules import ProfilingModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import ProfilingModule
 app = create_varco_app(container, modules=[*default_modules(), ProfilingModule()])
 # → X-Profile-Wall-Ms + X-Profile-Mem-Kb headers on each response
 ```
@@ -4743,7 +4676,7 @@ auto-registered to the bus at the `CONSUMERS` phase (051's auto-`register_to`):
 
 ```python
 from varco_core.webhook import WebhookModule
-from varco_fastapi.modules import default_modules
+from varco_fastapi import default_modules
 
 app = create_varco_app(container, modules=[*default_modules(), WebhookModule()])
 ```
@@ -5018,7 +4951,8 @@ from varco_core.di.collect import contribute
 from varco_core.retention.policy import RetentionPolicy
 from varco_core.retention.targets import AuditRetentionTarget, DlqRetentionTarget
 from varco_fastapi.app import create_varco_app
-from varco_fastapi.modules import RetentionModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import RetentionModule
 
 contribute(
     container,
@@ -5178,7 +5112,8 @@ Opt into `STRICT` for CSP/COOP/CORP/Permissions-Policy (breaks `/docs`/`/redoc` 
 
 ```python
 from varco_fastapi.middleware.security_headers import SecurityHeadersPreset, SecurityHeadersSettings
-from varco_fastapi.modules import SecurityHeadersModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import SecurityHeadersModule
 
 app = create_varco_app(
     container,
@@ -5219,7 +5154,8 @@ app = create_varco_app(container)
 
 ```python
 from varco_fastapi.middleware.body_limit import BodyLimitSettings
-from varco_fastapi.modules import BodyLimitModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import BodyLimitModule
 
 app = create_varco_app(
     container,
@@ -5271,7 +5207,8 @@ bundle = RateLimitBundle(
         ),
     ),
 )
-from varco_fastapi.modules import RateLimitModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import RateLimitModule
 app = create_varco_app(container, modules=[*default_modules(), RateLimitModule(bundle)])
 # RateLimitModule partitions rules by scope automatically: IP/GLOBAL -> stage=PRE_AUTH
 # (before auth), SUBJECT/TENANT -> stage=POST_AUTH (after RequestContextMiddleware).
@@ -5385,7 +5322,8 @@ Pass `collectors=[...]` to `SecurityPostureModule` to replace the built-in four 
 accepts `PostureCollector` instances or the pre-051 zero-argument callable shape):
 
 ```python
-from varco_fastapi.modules import SecurityPostureModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import SecurityPostureModule
 from varco_fastapi.posture import HttpEdgeCollector, SecurityPostureSettings
 
 app = create_varco_app(
@@ -5504,7 +5442,8 @@ Design detail: `technical_docs/features/composite-deployment.md`.
 ```python
 from varco_core.reliability import ReliabilityPreset
 from varco_fastapi import create_varco_app
-from varco_fastapi.modules import ReliabilityModule, default_modules
+from varco_fastapi import default_modules
+from varco_fastapi.modules import ReliabilityModule
 from varco_sa.dlq import SADeadLetterQueue
 
 dlq = SADeadLetterQueue(engine)
@@ -5526,6 +5465,16 @@ byte-identical to not using this feature. See `technical_docs/features/reliabili
 ## Changelog summary
 
 Full migration notes live under `technical_docs/migrations/`.
+
+**4.0.0 — DI standardization + the security-default flip list (Plans 045–058)**
+([migration guide](technical_docs/migrations/3-to-4.md)): one wiring contract
+(`bootstrap(container) -> DIContainer`, `AlreadyBoundError`, no service locator); every varco
+default `@Fallback`; backends selected by `VARCO_<SEAM>_BACKEND`; one settings recipe
+(`bind_settings()`); `create_varco_app(container, modules=[...])` with phased lifecycle;
+`@Multibound` collection seams; `varco diagnose` and a runtime `validate()` gate; and the
+security-default flips (credentials, HTTP edge, tenancy, data layer, redaction). ⚠️ Breaking
+throughout — follow the guide top to bottom and finish with `varco diagnose --check`. Nothing
+deprecated in 3.x is removed: the 3.x windows now name 5.0.0 (the 12-month floor).
 
 **Plan 009 — Reliability & Service Integration**
 ([full note](technical_docs/migrations/009-reliability-and-integration.md)):

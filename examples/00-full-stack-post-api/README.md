@@ -172,23 +172,54 @@ curl -N http://localhost:8000/events/posts
 
 ### `example/app.py` — bootstrap
 
-`create_app()` is a synchronous factory that:
+`create_app()` is a synchronous factory that builds one `DIContainer`, binds
+`bind_settings(container, RedisEventBusSettings, instance=RedisEventBusSettings(use_streams=True))`
+on it first (a settings override must precede every module), and hands it to
+`create_varco_app(container, modules=modules(os.environ["DATABASE_URL"]), routers=[], ...)`
+(Plan 049 — there is no hand-built `FastAPI` and no hand-wired lifespan; the module list *is*
+the bootstrap sequence). `modules()` is a separate, Docker-free and env-free function — the
+same list `create_app()` boots, so `varco diagnose --modules example.app:modules --static`
+can inspect the real wiring (minus the streams override, which lives in `create_app()` — set
+`VARCO_REDIS_USE_STREAMS=true` to see it there). It:
 
-1. Builds a `JwtAuthority` (RSA-2048 key from env, or ephemeral in dev mode).
-2. Creates a `DIContainer` and provides an `SAConfig` via `make_sa_provider(Base, Post)`.
-3. Scans all backend packages in one pass:
-   - `bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))` — opt into Redis Streams (Plan 046 §D-streams; replaces the removed `redis_bootstrap(container, streams=True)`)
-   - `sa_bootstrap(container)` — SQLAlchemy repo provider + UoW binding
-   - `redis_bootstrap(container)` — Redis Streams event bus (per the settings above)
-   - `ws_bootstrap(container)` — WebSocket + SSE adapters
-   - `core_bootstrap(container)` — `varco_core` Class-A defaults, incl. `AbstractEventProducer → BusEventProducer`
-   - `fastapi_bootstrap(container)` — FastAPI defaults
-   - `container.scan("example")` — app-level singletons (service, assembler, authorizer, consumer)
-4. Wires the `VarcoLifespan` with an async `_bootstrap` hook that runs at startup:
-   - `create_tables(container)` — creates DB schema
-   - `redis_async_bootstrap(container)` — starts Redis cache (always installs now, Plan 046)
-   - Resolves and registers lifecycle components (bus → consumer → ws_bus → sse_bus → job_runner)
-   - Resolves `PostService`, builds routers, and calls `app.include_router()`
+1. Builds a `JwtAuthority` (`build_jwt_authority()` — RSA-2048 key from
+   `VARCO_JWT_PRIVATE_KEY_PEM`, or ephemeral in dev mode), a `TrustedIssuerRegistry`, and a
+   `JwtBearerAuth(registry=..., required=False, allow_any_audience=True)` — all outside DI.
+2. Builds an `SAConfig(engine=create_async_engine(...), base=Base, entity_classes=(Post,))`
+   (the engine connects lazily, so no database is touched here).
+3. Returns the module list:
+
+```python
+[
+    *default_modules(),                     # CoreModule, ObservabilityModule, FastAPIModule, ...
+    SAModule(config=sa_config, entities=(Post,)),  # varco_sa defaults + SAConfig + AsyncRepository[Post]
+    RedisModule(cache=True),                # varco_redis defaults; async_init() runs async_bootstrap
+    WsModule(),                             # varco_ws defaults; starts/stops the WS + SSE buses
+    PostAppModule(authority, registry, server_auth),
+]
+```
+
+`PostAppModule` (`example/module.py`) is the app's own `VarcoModule`, with
+`depends_on = (SAModule, RedisModule, WsModule)`:
+
+- `_register()` runs **after** `RedisModule`'s bootstrap (because of `depends_on`), so it does
+  **not** bind `RedisEventBusSettings` — `create_app()` binds
+  `bind_settings(container, RedisEventBusSettings, instance=RedisEventBusSettings(use_streams=True))`
+  before calling `create_varco_app()` (Plan 046 §D-streams). A settings override is always bound
+  first: `bind_settings(..., instance=...)` raises `SettingsAlreadyBoundError` against the
+  `@Fallback` binding `RedisModule` records, by design.
+  It also binds the pre-built `AbstractServerAuth` (so `FastAPIModule` installs
+  `RequestContextMiddleware`), runs `container.scan("example", recursive=True)`, and
+  self-binds `PostRouter` and `PostService`. It does **not** call `bind_repositories` —
+  `SAModule(entities=(Post,))` already did.
+- `async_init()` runs inside the ASGI lifespan: `await create_tables(container)` (DDL — not
+  for production migrations), `await registry.load_all()`, then resolves `PostService` /
+  `StreamsRouter` and mounts the `PostRouter`, `AuthRouter`, and `StreamsRouter` routers
+  with `app.include_router()`. They are mounted here, not via `routers=`, because each needs a
+  DI-resolved or hand-built constructor argument that `create_varco_app`'s no-argument
+  router construction cannot supply.
+- No `start()`/`stop()` override: `PostEventConsumer` is a `@Singleton` `EventConsumer`, so
+  `CoreModule.start()` registers it to the bus once the bus has started (Plan 051).
 
 ### `example/models.py` — domain model
 
@@ -360,10 +391,10 @@ VARCO_REDIS_USE_STREAMS=true uv run uvicorn example.app:create_app --factory
 Or in code:
 
 ```python
-from varco_core.di import bind_instance
+from varco_core.settings import bind_settings
 from varco_redis.config import RedisEventBusSettings
 
-bind_instance(container, RedisEventBusSettings, RedisEventBusSettings(use_streams=True))
+bind_settings(container, RedisEventBusSettings, instance=RedisEventBusSettings(use_streams=True))
 redis_bootstrap(container)
 ```
 

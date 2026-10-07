@@ -568,7 +568,7 @@ proves a stale claim did not survive.
 
 ### Phase 0 — Preflight
 
-0. [ ] **Prove the thirteen plans landed; record the tree.** Write
+0. [x] **Prove the thirteen plans landed; record the tree.** Write
        `/tmp/claude-1000/…/scratchpad/058-preflight.txt` with, in order:
        (a) providify: `uv run python -c "import importlib.metadata as m; print(m.version('providify'))"` → `2.1.0`.
        (b) One Done-criterion grep per plan, all green: 045 `rg -n 'sys\.maxsize|2\*\*31' varco_*/varco_*` → 0 and `rg -c '@Fallback' varco_*/varco_*` ≥ 55; 046 `rg -n 'def bootstrap\(container: DIContainer\) -> DIContainer' varco_*/varco_*/di.py varco_core/varco_core/di/__init__.py | wc -l` → 10 and `rg -n 'DIContainer\.current\(' varco_*/varco_*` → 0; 047 `ls scripts/di_catalogue.py technical_docs/di-catalogue.md` and `rg -n 'selected_by\(' varco_*/varco_* | wc -l` ≥ 20; 048 `ls scripts/settings_reference.py technical_docs/settings-reference.md varco_core/varco_core/settings/bind.py` and `rg -n 'FASTREST_|VARCO_PROFILER_' --type py` → 0; 049 `rg -n 'class VarcoModule' varco_core/varco_core/di/module.py` and `rg -n 'extra_lifespan_components|enable_logging=' varco_*/varco_* README.md` → 0; 050 `rg -n 'class LifecycleRunner' varco_core/varco_core/di/lifecycle.py` and `rg -n '@PostConstruct' varco_kafka/varco_kafka/bus.py varco_nats/varco_nats/bus.py` → 0; 051 `rg -c '@Multibound' varco_*/varco_*` → 5 files and `rg -n 'bind_retention_registry' varco_*/varco_*` → 0; 052 `ls varco_core/varco_core/di/report.py varco_core/varco_core/di/diagnose.py varco_core/varco_core/cli/diagnose.py varco_core/varco_core/testing.py` and `rg -n 'def warn_deprecated' varco_core/varco_core/deprecation.py`; 053 `rg -n 'Requires\(env="VARCO_SECURITY_ENV"' varco_core/varco_core/auth/authorizer.py`; 054 `rg -n 'effective_enforce' varco_fastapi/varco_fastapi/posture.py`; 055 `rg -n 'TENANT_RESOLUTION' varco_fastapi/varco_fastapi/middleware/slots.py` → `= 95` and `rg -n 'removed_in="5\.0\.0"' varco_fastapi/varco_fastapi/middleware/tenant_resolution.py` → 1; 056 `rg -n 'class PlaintextFieldEncryptor' varco_core/varco_core/encryption.py`; 057 `rg -n 'AUDIT_REDACTION_POLICY' varco_core/varco_core/redaction/`. **Any red → stop; that plan is not landed.**
@@ -585,7 +585,7 @@ proves a stale claim did not survive.
 
 ### Phase A — OQ3: the deprecation floor
 
-1. [ ] `varco_core/tests/test_deprecation_floor.py` (**new, failing first**) — per §D-floor:
+1. [x] `varco_core/tests/test_deprecation_floor.py` (**new, failing first**) — per §D-floor:
        `parse_release_dates(changelog_text) -> dict[str, date]` (the `## [X.Y.Z] — YYYY-MM-DD`
        regex; `[Unreleased]` skipped), `find_deprecation_sites(root) -> list[Site(path, line,
        since, removed_in)]` (one regex over each `varco_*/varco_*/**/*.py` matching
@@ -605,7 +605,7 @@ proves a stale claim did not survive.
        and the OQ3 pointer. **Verify**: `uv run pytest varco_core/tests/test_deprecation_floor.py -q`
        → (a)(b)(d) green, (c) red with nine sites named.
 
-2. [ ] **Re-label + convert.** (i) `varco_sa/varco_sa/rls.py:259` → `removed_in="5.0.0"`, comment
+2. [x] **Re-label + convert.** (i) `varco_sa/varco_sa/rls.py:259` → `removed_in="5.0.0"`, comment
        `:256` → "Removed in 5.0.0 (deprecated since 3.0.0; the 12-month floor put 4.0.0 out of
        reach — CONTRIBUTING.md §Removal window)"; (ii) `varco_core/varco_core/migration/__init__.py:66,71`
        + docstring `:16`; (iii) `varco_beanie/varco_beanie/__init__.py:133` + comment `:128`;
@@ -636,7 +636,7 @@ proves a stale claim did not survive.
        | rg -v deprecation.py | rg -i deprecat` → 0; `make test PKG=varco_core`, `PKG=varco_sa`,
        `PKG=varco_beanie`, `PKG=varco_fastapi` green.
 
-3. [ ] **Prose + the `api_surface` proof.** `CONTRIBUTING.md:112-118` → "Plan 022 shipped four
+3. [x] **Prose + the `api_surface` proof.** `CONTRIBUTING.md:112-118` → "Plan 022 shipped four
        worked examples, all `since="3.0.0"`; **re-labelled `removed_in="5.0.0"` in 4.0.0** — the
        12-month floor (2027-08-31) fell after 4.0.0's date, which is the case the floor exists
        for: a major bump is necessary, never sufficient. `test_deprecation_floor.py` computes the
@@ -650,7 +650,7 @@ proves a stale claim did not survive.
 
 ### Phase B — the generated entry-point table
 
-4. [ ] `varco_core/tests/test_entry_points_script.py` (**new, failing first**) — runs the
+4. [x] `varco_core/tests/test_entry_points_script.py` (**new, failing first**) — runs the
        script's functions in-process against `varco_core` only (048/047's script-test shape):
        (a) every `bootstrap`/`bind_*`/`enable_*` module-level function in `varco_core.di`,
        `varco_core.tls.di`, `varco_core.flags.di`, `varco_core.tenancy.di`, `varco_core.revocation.di`,
@@ -672,7 +672,7 @@ proves a stale claim did not survive.
        block with §D-entrypoints' four-row table. **Verify**: test green; `uv run python
        scripts/entry_points.py --packages varco_core` prints ≥ 12 rows.
 
-5. [ ] **Generate + wire.** `uv run python scripts/entry_points.py` → commit
+5. [x] **Generate + wire.** `uv run python scripts/entry_points.py` → commit
        `design/api-freeze-and-standards/measurements/entry-points.json`,
        `technical_docs/entry-points.md`, and the marked block in `ARCHITECTURE.md` (replace
        `:1562-1626`'s hand-written code block and the four "Corrected DI call shapes" bullets —
@@ -693,7 +693,7 @@ proves a stale claim did not survive.
        does not; `make docs-strict` (the nav/page pair cannot drift — `gen_guide_pages.py:33-34`'s
        rule).
 
-6. [ ] **Counts that the table must reproduce (the DI-14 acceptance):** the generated table
+6. [x] **Counts that the table must reproduce (the DI-14 acceptance):** the generated table
        lists exactly ten `bootstrap` rows (one per package), two `async_bootstrap` (`varco_redis`,
        `varco_memcached`), every `bind_*` 046 §Context enumerated (rows 9, 10, 13, 16, 18, 19,
        25–30 + `bind_instance`, `bind_settings`, `bind_core_settings`, `bind_env_overrides`,
@@ -710,7 +710,7 @@ proves a stale claim did not survive.
 
 ### Phase C — the documents
 
-7. [ ] **`technical_docs/features/dependency-injection.md` — restructure per §D-guide.** (a)
+7. [x] **`technical_docs/features/dependency-injection.md` — restructure per §D-guide.** (a)
        Delete the 045 banner; (b) reorder the `##` sections to the fourteen-entry order (bodies
        moved, not edited — `git diff --stat` on this file should show mostly moved hunks); (c)
        write §1 "The contract" (ten rules, each one sentence + anchor: container required &
@@ -733,7 +733,7 @@ proves a stale claim did not survive.
        `rg -n 'PostConstruct' …` → only the "do not" sentence; `rg -n 'list it before|before \*default_modules' …`
        → 0; `rg -n 'bind_instance\(container, RedisEventBusSettings' …` → 0; `make docs-strict`.
 
-8. [ ] **`README.md` — the "Wiring an app" chapter (§D-readme).** Move 049/047/048/051/052's
+8. [x] **`README.md` — the "Wiring an app" chapter (§D-readme).** Move 049/047/048/051/052's
        subsections under one `## Wiring an app` after `## Quickstart — Example App` (`:50-80`),
        in §D-readme's order, trimming each to its snippet + ≤ 6 lines of prose + a guide link;
        reduce `:709` "DI wiring", `:1951` SA "Bootstrap (one-liner setup)", `:3479` "Bootstrap
@@ -749,7 +749,7 @@ proves a stale claim did not survive.
        → 0; `python - <<'EOF'` link check: every `(#anchor)` in the TOC resolves to a heading
        (a 15-line script in the preflight file).
 
-9. [ ] **`CLAUDE.md` — §D-claude.** (a) §"DI wiring (providify)": replace the "Typical app
+9. [x] **`CLAUDE.md` — §D-claude.** (a) §"DI wiring (providify)": replace the "Typical app
        bootstrap" block with the 8-line default app (049 already did — confirm), replace the
        six-row taxonomy table with the four-line pointer, regroup every plan's rule lines under
        the five bold leads (one line + anchor each; keep the AB-1/AB-3 bullets); (b) §Commands:
@@ -771,7 +771,7 @@ proves a stale claim did not survive.
        greps (`@Fallback`, `AlreadyBoundError`, `selected_by`, `bind_settings`, `never a
        `@Configuration``, `exact reverse`, `@Multibound`, `di_overrides`) → ≥ 1 each.
 
-10. [ ] **`ARCHITECTURE.md` polish.** (a) The "DI Wiring" section (`:1560`) = one paragraph +
+10. [x] **`ARCHITECTURE.md` polish.** (a) The "DI Wiring" section (`:1560`) = one paragraph +
         the marked generated block (Step 5) + the landmine paragraph; (b) "Package Overview"
         (`:7-173`): `varco_core.di` (package: `__init__`, `seams`, `select`, `features`,
         `introspect`, `module`, `lifecycle`, `collect`, `report`, `diagnose`), `varco_core.settings`,
@@ -786,7 +786,7 @@ proves a stale claim did not survive.
         — confirm gone. **Verify**: `rg -n 'install\(SAModule\)|first one registered|before `install\(\)`|priority=-sys|SAModule\b' ARCHITECTURE.md | rg -v 'SAModule\(VarcoModule\)|class SAModule'`
         → 0; `rg -n 'entry-points:begin' ARCHITECTURE.md` → 1; `uv run python scripts/entry_points.py --check` → 0.
 
-11. [ ] **`technical_docs/migrations/3-to-4.md` (§D-migration).** (a) Scratch: concatenate the
+11. [x] **`technical_docs/migrations/3-to-4.md` (§D-migration).** (a) Scratch: concatenate the
         thirteen §Migration sections verbatim into `/tmp/claude-1000/…/scratchpad/058-migration-raw.md`
         (in plan order) — the audit trail; (b) write the guide in §D-migration's eleven-part
         order, applying the four rules; (c) §10 = §D-removals-5's table; (d) §11 = the `varco
@@ -799,7 +799,7 @@ proves a stale claim did not survive.
         − merges (record both numbers); `rg -n 'Plan 0(4[5-9]|5[0-7])' technical_docs/migrations/3-to-4.md | wc -l` ≥ 13;
         `rg -n 'varco diagnose' technical_docs/migrations/3-to-4.md` ≥ 2; `make docs-strict`.
 
-12. [ ] **The stale-claim sweep (the whole tree).** One script in the preflight file, run and
+12. [x] **The stale-claim sweep (the whole tree).** One script in the preflight file, run and
         pasted; every hit outside `CHANGELOG.md`, `plans/`, `design/` (history) is fixed in this
         step:
         ```
@@ -821,7 +821,7 @@ proves a stale claim did not survive.
 
 ### Phase D — CHANGELOG, BACKLOG, the ledger
 
-13. [ ] **`CHANGELOG.md` — the `[4.0.0]` section (§D-changelog).** (a) Rename `## [Unreleased]`
+13. [x] **`CHANGELOG.md` — the `[4.0.0]` section (§D-changelog).** (a) Rename `## [Unreleased]`
         (`:10`) to `## [4.0.0] — <placeholder, set in Step 18>` and insert a fresh, empty
         `## [Unreleased]` above it; (b) the two-line header quote (migration guide, providify
         floor sentence); (c) reorder the `### BREAKING — …` blocks to §D-changelog's list, bodies
@@ -838,7 +838,7 @@ proves a stale claim did not survive.
         — the first eight hits are in that order and above `## [3.2.0]`; `rg -n 'migrations/3-to-4.md' CHANGELOG.md` ≥ 1;
         `rg -n 'P2[4-9]|P3[0-9]' CHANGELOG.md` covers every id from Step 0(e).
 
-14. [ ] **`BACKLOG.md` rollup (§D-backlog).** Delete the shipped `DI-*`/`FLIP-*` rows; thirteen
+14. [x] **`BACKLOG.md` rollup (§D-backlog).** Delete the shipped `DI-*`/`FLIP-*` rows; thirteen
         Shipped bullets; `FLIP-14` → Parked (designed); OQ1/OQ2/OQ3 → Answered decisions; the new
         parks (the `Literal[True]` sweep, `scripts/_packages.py`, list-valued redaction,
         `register_webhook_signer`, `PostureFinding` deprecation, the wiring-report endpoint, the
@@ -849,7 +849,7 @@ proves a stale claim did not survive.
         → in "Answered decisions" only; `rg -c 'plans/05[0-8]' BACKLOG.md` ≥ 13;
         `rg -n '^## Open questions' BACKLOG.md` → 0.
 
-15. [ ] **`UPSTREAM-GAPS.md` audit (§D-upstream).** For each open row: `ls` the report; `rg -n
+15. [x] **`UPSTREAM-GAPS.md` audit (§D-upstream).** For each open row: `ls` the report; `rg -n
         'GAP: <ID>' varco_*/tests/` → exactly one strict xfail; `rg -n '^## ' design/upstream-gaps/<file>`
         → eight sections; the CHANGELOG `Upstream` block names it. Move "Recently closed" bullets
         into the CHANGELOG and delete them here; footer → `**Last updated:** <date> · Plan 058 /
@@ -860,7 +860,7 @@ proves a stale claim did not survive.
 
 ### Phase E — snapshots and gates
 
-16. [ ] **Every snapshot regenerated and checked, in this order** (each may move because of Steps
+16. [x] **Every snapshot regenerated and checked, in this order** (each may move because of Steps
         2–12's edits — e.g. `warn_deprecated` already in `__all__` from 053; the entry-points
         snapshot from Step 5): `uv run python scripts/api_surface.py` → `git diff --stat
         design/api-freeze-and-standards/measurements/api-surface.*` → **expected empty** (this
@@ -872,7 +872,7 @@ proves a stale claim did not survive.
         `uv run python scripts/bump.py --check` → coherent. **Verify**: all seven exit 0; the
         api-surface diff is empty.
 
-17. [ ] **Gates + the index.** `make lint` (no-`PKG`: ruff + `api-check` + `import-budget` +
+17. [x] **Gates + the index.** `make lint` (no-`PKG`: ruff + `api-check` + `import-budget` +
         `asyncapi-check` + `settings-check` + `di-catalogue-check` + `entry-points-check`);
         `make type-check` (M1 delta recorded — expected 0); `make test` (all eleven suites on the
         local interpreter; `0 xpassed`; `xfailed` = Step 15's N); `make docs-strict`; on a

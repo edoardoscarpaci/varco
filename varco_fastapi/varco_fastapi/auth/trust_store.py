@@ -2,7 +2,7 @@
 varco_fastapi.auth.trust_store
 ==============================
 
-⚠️ DEPRECATED (Plan 026 / T3c, §D-T3-oq1) — removed in 4.0.0.
+⚠️ DEPRECATED (Plan 026 / T3c, §D-T3-oq1) — removed in 5.0.0 (deprecated since 3.1.0; floor 2027-09-05).
 
 ``varco_fastapi.auth.trust_store.TrustStore`` is now a thin subclass of
 ``varco_core.tls.TrustStore`` that **pins its 3.0 semantics** (non-recursive folder scan,
@@ -37,7 +37,7 @@ DESIGN: subclass over a plain re-export alias (§D-T3-oq1)
        ``HttpConnectionSettings.to_trust_store()``, which by design still returns a legacy
        instance — see §D-T3-bridge — so that check keeps passing unchanged), and the
        ``DeprecationWarning`` tells the user to stop importing the old name.
-    ❌ Two live classes instead of one until 4.0.0. Accepted — that is what a deprecation
+    ❌ Two live classes instead of one until 5.0.0. Accepted — that is what a deprecation
        window is.
 
 The ``DeprecationWarning`` fires **at construction**, not at import — merely having
@@ -50,11 +50,11 @@ Async safety:   ✅ ``build_ssl_context()`` is synchronous, same as the base cla
 from __future__ import annotations
 
 import ssl
-import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from varco_core.deprecation import warn_deprecated
 from varco_core.tls.store import TrustStore as _CoreTrustStore
 from varco_core.tls.store import normalize_ca_folders
 
@@ -65,7 +65,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class TrustStore(_CoreTrustStore):
     """
-    ⚠️ Deprecated — use ``varco_core.tls.TrustStore`` instead. Removed in 4.0.0.
+    ⚠️ Deprecated — use ``varco_core.tls.TrustStore`` instead. Removed in 5.0.0.
 
     TLS trust configuration — merges system CAs, env-configured cert folders, explicit CA
     certs, and optional mTLS client identity. This subclass pins the exact behaviour this
@@ -125,13 +125,20 @@ class TrustStore(_CoreTrustStore):
             folders = (*(folders or ()), Path(self.ca_folder))
         object.__setattr__(self, "ca_folders", folders)
 
-        warnings.warn(
-            "varco_fastapi.auth.TrustStore is deprecated and will be removed in 4.0.0. "
-            "Use varco_core.tls.TrustStore instead — it is recursive by default, globs a "
-            "wider cert-file set, and is reachable from any backend (not just varco_fastapi). "
-            "See technical_docs/features/tls-trust-and-hot-reload.md.",
-            DeprecationWarning,
-            stacklevel=3,
+        # Plan 058 / §D-floor: routed through warn_deprecated() so the floor test reads the
+        # literal since=/removed_in= pair and 052's ledger records the fire. stacklevel=4
+        # counts from inside the helper: warn_deprecated (1) → __post_init__ (2) → the
+        # dataclass-generated __init__ (3) → the code that constructed the store (4) — the
+        # same frame the pre-058 direct warnings.warn(stacklevel=3) blamed.
+        warn_deprecated(
+            "varco_fastapi.auth.TrustStore",
+            since="3.1.0",
+            removed_in="5.0.0",
+            replacement=(
+                "varco_core.tls.TrustStore (recursive, wider cert globs, any backend — see "
+                "technical_docs/features/tls-trust-and-hot-reload.md)"
+            ),
+            stacklevel=4,
         )
 
     # ── Factory methods ────────────────────────────────────────────────────────

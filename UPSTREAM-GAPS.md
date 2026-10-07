@@ -65,45 +65,9 @@ Full workflow, including when *not* to file: CLAUDE.md's
 
 ## Recently closed
 
-*(Kept only until the next clearing — a closed row's evidence lives in its report
-file and in the CHANGELOG, not here.)*
-
-- **P22-PROVIDER-PREDESTROY** — resolved 2026-09-02 (Plan 024 / C2). providify
-  2.0.1 declared the leaked-teardown behaviour intentional (Jakarta CDI
-  producer-method rule) and shipped only a `WARNING`-severity detector
-  (`IssueKind.UNREACHABLE_PRE_DESTROY`); varco adopted `@Disposes` — upstream's
-  own supported teardown mechanism — at all nine affected sites. See
-  [providify-provider-predestroy.md](design/upstream-gaps/providify-provider-predestroy.md)
-  §8 for the full resolution.
-- **P24-DISPOSES-FIRSTMATCH** — resolved 2026-09-14 (providify 2.1.0, Plan 045
-  / DI-15 close-out). Disposer wiring is now scoped to the bindings the same
-  `install()`/`ainstall()` call registered; converted guard:
-  `varco_redis/tests/test_redis_cache_disposes.py::test_both_cache_configurations_installed_together_both_get_stopped`.
-  See [providify-disposes-first-match.md](design/upstream-gaps/providify-disposes-first-match.md) §7.
-- **P25-CONDITIONAL-REGISTRATION** — resolved 2026-09-14 (providify 2.1.0,
-  Plan 045 / DI-15 close-out). `@Requires(condition=..., env=..., value=...)`
-  shipped as the third activation conjunct; converted guard:
-  `varco_core/tests/test_providify_contracts.py::TestP25ConditionalRegistration::test_requires_decorator_is_exported`.
-  See [providify-conditional-registration.md](design/upstream-gaps/providify-conditional-registration.md) §9.
-- **P26-OPEN-GENERIC-BINDING** — resolved 2026-09-14 (providify 2.1.0, Plan
-  045 / DI-15 close-out). `returns=Repo[T]` now registers an open binding
-  served by any closed request; converted guard:
-  `varco_core/tests/test_providify_contracts.py::TestP26OpenGenericBinding::test_open_alias_registration_resolves_closed_request`.
-  See [providify-open-generic-binding.md](design/upstream-gaps/providify-open-generic-binding.md) §8.
-- **P27-FALLBACK-BINDING** — resolved 2026-09-14 (providify 2.1.0, Plan 045 /
-  DI-15 close-out). `@Fallback`/`FallbackMarker`/`IssueKind.FALLBACK_SHADOWED`
-  shipped exactly under the recommended name and semantics; converted guards:
-  `varco_core/tests/test_providify_contracts.py::TestP27FallbackBinding::test_fallback_decorator_is_exported`
-  + `::test_validate_reports_shadowed_fallback`.
-  See [providify-fallback-binding.md](design/upstream-gaps/providify-fallback-binding.md) §9.
-
-- **P34-VALIDATE-INACTIVE-OWNER-DEPS** — resolved 2026-10-02 (providify 2.1.1,
-  Plan 052 amendment 4). `validate()`'s graph tier now skips owners whose
-  `@Requires`/`@Profile` condition is inactive; varco pins `providify>=2.1.1`.
-  Converted guard:
-  `varco_core/tests/test_providify_contracts.py::TestP34ValidateInactiveOwnerDeps::test_inactive_owner_dependencies_are_not_missing_binding_errors`.
-  See [providify-validate-inactive-owner-deps.md](design/upstream-gaps/providify-validate-inactive-owner-deps.md) §Resolution.
+*(Cleared by the Plan 058 / 4.0.0 audit — P22, P24–P27 and P34 moved to `CHANGELOG.md`
+`[4.0.0]` → Upstream; each closed row's evidence lives in its report file.)*
 
 ---
 
-**Last updated:** 2026-10-02 · Plan 052 filed and closed P34 (fixed in providify 2.1.1). 2026-09-27 · Plan 050 filed P30, P31 (providify 2.1.0). Plan 045 closed P24, P25, P26, P27 (providify 2.1.0).
+**Last updated:** 2026-10-06 · Plan 058 / 4.0.0 audit — 6 open (P28, P29, P30, P31, P32, P33); P22, P24–P27, P34 closed (moved to CHANGELOG [4.0.0] §Upstream).
