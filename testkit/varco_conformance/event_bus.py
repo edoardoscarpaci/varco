@@ -35,11 +35,11 @@ from varco_core.event.base import AbstractEventBus, Event
 # delivery is already synchronous (the loop exits on the first check).
 _DELIVERY_TIMEOUT = 30.0
 _DELIVERY_POLL_INTERVAL = 0.1
-#: Settle time between subscribe() and publish() for broker-backed buses
-#: whose consumer group join / topic auto-create is asynchronous (observed
-#: necessary for Kafka in this environment). Free for backends where
-#: delivery is already synchronous.
-_SUBSCRIBE_SETTLE = 2.0
+# The subscribe() -> publish() settle is NOT free for synchronous backends:
+# `asyncio.sleep(2.0)` always costs 2 s of wall clock (3 × 2 s per unit run
+# before Plan 059). It is therefore a per-class knob,
+# `EventBusConformance.subscribe_settle_seconds`, which in-process buses set
+# to 0.0.
 
 
 async def _wait_until(predicate, timeout: float = _DELIVERY_TIMEOUT) -> None:
@@ -70,11 +70,26 @@ class EventBusConformance:
     so that backends whose ``bus`` fixture is backed by a session-scoped
     shared broker container (Plan 012 Step 8's isolation rule) never
     collide across tests or across concurrent CI shards.
+
+    Edge cases:
+        ``subscribe_settle_seconds`` (default ``2.0``, inherited by every
+        broker subclass) is the wait between ``subscribe()`` and
+        ``publish()``. An in-process bus that delivers synchronously sets it
+        to ``0.0`` (Plan 059) — the wait is then skipped entirely.
     """
 
     #: Subclasses set this False if the concrete bus genuinely has no
     #: start()/stop()/async-context-manager lifecycle (e.g. InMemoryEventBus).
     supports_lifecycle: ClassVar[bool] = True
+
+    #: Seconds to wait between subscribe() and publish() so a broker-backed
+    #: consumer can join its group / auto-create its topic (observed necessary
+    #: for Kafka). The 2.0 default is what every broker subclass (Kafka, NATS,
+    #: Redis) inherits — integration behaviour unchanged by Plan 059.
+    #: Edge cases: an in-process bus that delivers synchronously sets 0.0 —
+    #: `_settle()` then returns without yielding to the loop at all. Delivery
+    #: is still proven by `_wait_until` polling, so no assertion is weakened.
+    subscribe_settle_seconds: ClassVar[float] = 2.0
 
     @pytest.fixture
     async def bus(self) -> AbstractEventBus:
@@ -87,6 +102,15 @@ class EventBusConformance:
     def _channel(self) -> str:
         return f"conformance-{uuid4().hex[:8]}"
 
+    async def _settle(self) -> None:
+        """Wait ``subscribe_settle_seconds`` between subscribe and publish.
+
+        Returns:
+            None — immediately when the knob is ``0`` (in-process buses).
+        """
+        if self.subscribe_settle_seconds > 0:
+            await asyncio.sleep(self.subscribe_settle_seconds)
+
     async def test_publish_subscribe_round_trip(self, bus: AbstractEventBus) -> None:
         channel = self._channel()
         received: list[Event] = []
@@ -96,8 +120,8 @@ class EventBusConformance:
 
         bus.subscribe(_ConformanceEventA, handler, channel=channel)
         # Give a broker-backed consumer a moment to join/settle before
-        # publishing — see the module docstring above _wait_until.
-        await asyncio.sleep(_SUBSCRIBE_SETTLE)
+        # publishing — see `subscribe_settle_seconds`.
+        await self._settle()
         await bus.publish(_ConformanceEventA(value="hello"), channel=channel)
         if hasattr(bus, "drain"):
             await bus.drain()
@@ -119,7 +143,7 @@ class EventBusConformance:
 
         bus.subscribe(_ConformanceEventA, handler_1, channel=channel)
         bus.subscribe(_ConformanceEventA, handler_2, channel=channel)
-        await asyncio.sleep(_SUBSCRIBE_SETTLE)
+        await self._settle()
         await bus.publish(_ConformanceEventA(value="x"), channel=channel)
         if hasattr(bus, "drain"):
             await bus.drain()
@@ -174,7 +198,7 @@ class EventBusConformance:
             received.append(event)
 
         bus.subscribe(_ConformanceEventA, handler, channel=channel)
-        await asyncio.sleep(_SUBSCRIBE_SETTLE)
+        await self._settle()
         sent = _ConformanceEventA(value="round-trip-value")
         await bus.publish(sent, channel=channel)
         if hasattr(bus, "drain"):

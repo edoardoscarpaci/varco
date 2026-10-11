@@ -81,8 +81,10 @@ formatter is a CI gate as of Plan 020 / RL-17, adopted at zero `.py` churn), `ma
 format` + `ruff check --fix`), `make type-check` (`mypy`), `make test` (now delegates to `scripts/unit_tests.sh`
 — runs **all eleven** workspace suites (ten packages + `examples/00-full-stack-post-api`) and
 *accumulates* pass/fail/skip into one summary instead of aborting at the first red package; `make
-test PKG=varco_redis` narrows to one), `make integration-test` / `make integration-test-clean`,
-`make build`, `make publish`, `make docs` / `make docs-serve`. Run `make help` for the full list.
+test PKG=varco_redis` narrows to one; since Plan 059 the big suites run under xdist, then the rest
+in a pool of ≤ `nproc` concurrent suites, in pytest-randomly order with the seed printed — lanes
+and the `VARCO_UNIT_*` knobs: [CONTRIBUTING.md](CONTRIBUTING.md)), `make integration-test` / `make
+integration-test-clean`, `make build`, `make publish`, `make docs` / `make docs-serve`. Run `make help` for the full list.
 `pytest-asyncio` is installed with `asyncio_mode = "auto"` in every package — all `async def
 test_*` functions run automatically without `@pytest.mark.asyncio`.
 
@@ -1307,6 +1309,12 @@ All code in this repo follows the **coding-practice** skill. Key non-obvious rul
 - `InMemoryEventBus` is the standard bus for unit tests. Use `bus.drain()` after publishes when `DispatchMode.BACKGROUND` is active.
 - `InMemoryDeadLetterQueue` is the standard DLQ for unit tests.
 - If a timing-sensitive test becomes flaky, increase its sleep margin rather than marking it xfail.
+- Unit tests run under xdist + pytest-randomly (Plan 059): every test must be order-independent
+  (reset any process-global it touches — `monkeypatch`, a reset fixture), bind no fixed port
+  (port `0`), and write nothing outside `tmp_path`; reproduce a failure with the printed seed
+  (`VARCO_UNIT_SEED=N`, plus `VARCO_UNIT_WORKERS=0` for an exact replay).
+- `-s` / `--pdb` need `VARCO_UNIT_WORKERS=0` (and `VARCO_UNIT_JOBS=1`, or one `PKG=`) — xdist
+  relays no worker stdout and has no `--pdb`. Knob table: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 **Shared, session-scoped integration containers** (Plan 012 / RT1) — each package's
 `tests/conftest.py` exposes ONE session-scoped fixture per external service (`redis_url`,
@@ -1401,6 +1409,8 @@ class TestRedisEventBusConformance(EventBusConformance):
 
 The base classes are deliberately not named `Test*` — pytest never collects them standalone, so
 an unimplemented fixture fails loudly (`NotImplementedError`) instead of silently passing.
+`EventBusConformance.subscribe_settle_seconds` (default `2.0`, what every broker subclass inherits)
+is the subscribe→publish settle; an in-process, synchronously-delivering bus sets `0.0` (Plan 059).
 `varco_core/tests/test_conformance_inmemory.py` runs the other five suites (`event_bus`, `cache`,
 `job_store`, `dlq`, `token_revocation`) against every in-process implementation with no Docker
 required — the fast feedback loop. `channel_manager.py` has no in-process implementation to run

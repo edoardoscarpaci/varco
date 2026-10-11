@@ -82,19 +82,16 @@ class TestRetentionPolicyContribution:
         from varco_core.di.collect import contribute  # noqa: PLC0415
         from varco_core.retention.policy import RetentionPolicy  # noqa: PLC0415
 
-        before = None
-        try:
+        # Plan 059 / Step 3: `DIContainer.current()` lazily CREATES the
+        # process-global container, which then leaked into every later test
+        # (test_providify_pytest_plugin.py asserts `_global is None`). The
+        # scoped block installs a fresh global and restores the previous one.
+        with DIContainer.scoped():
             before = DIContainer.current()
-        except Exception:
-            before = None
 
-        container = DIContainer()
-        contribute(container, RetentionPolicy, _policy())
+            container = DIContainer()
+            contribute(container, RetentionPolicy, _policy())
 
-        after = None
-        try:
             after = DIContainer.current()
-        except Exception:
-            after = None
 
         assert before is after

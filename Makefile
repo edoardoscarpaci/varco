@@ -12,7 +12,10 @@
 #   make type-check        — mypy (all ten source dirs; PKG= narrows to one package)
 #   make test              — unit tests, all ten packages + the example suite
 #                            (scripts/unit_tests.sh — accumulates pass/fail/skip
-#                            instead of aborting on the first red package)
+#                            instead of aborting on the first red package; big
+#                            suites under xdist -n $(nproc), the rest in a
+#                            bounded pool, random order with a printed seed —
+#                            VARCO_UNIT_WORKERS=0 VARCO_UNIT_JOBS=1 = serial)
 #   make test PKG=varco_core — unit tests for one package
 #   make integration-test — integration tests (requires Docker; honors any
 #                            VARCO_TEST_*_URL override present in the shell)
@@ -114,7 +117,7 @@ help:
 	@echo "  make format                  ruff format + fix (whole repo)"
 	@echo "  make format PKG=varco_redis  ruff format + fix (one package's source dirs)"
 	@echo "  make type-check              mypy (all ten source dirs)"
-	@echo "  make test                    unit tests, all ten packages + example suite"
+	@echo "  make test                    unit tests, all ten packages + example suite (xdist + pool lanes, seed printed)"
 	@echo "                                (scripts/unit_tests.sh; same script CI runs)"
 	@echo "  make test PKG=varco_core     unit tests (one package)"
 	@echo "  make integration-test        integration tests (requires Docker; honors"
@@ -323,8 +326,9 @@ type-check:
 # pass/fail/skip across every suite instead of aborting on the first red
 # package — the same script CI runs (bash scripts/unit_tests.sh), so a green
 # `make test` means a green CI `unit` leg. `PKG=` narrows to one package
-# (forwarded as a positional arg); unset runs all ten packages + the example
-# suite.
+# (forwarded as a positional arg; one suite, foreground, live); unset runs all
+# ten packages + the example suite in two lanes — xdist for the big suites,
+# then a pool of at most $(nproc) concurrent suites (Plan 059).
 .PHONY: test
 test:
 	@bash scripts/unit_tests.sh $(PKG)

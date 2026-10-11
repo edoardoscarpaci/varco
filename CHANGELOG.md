@@ -16,6 +16,17 @@ Varco packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Workspace / test infrastructure** — `make test` (`scripts/unit_tests.sh`) runs the big suites
+  under pytest-xdist (`-n $(nproc)`, one at a time) and the rest in a pool of at most `nproc`
+  concurrent suites, with pytest-randomly order and a printed seed (`VARCO_UNIT_SEED`); `make test
+  PKG=x` stays one live command; `VARCO_UNIT_WORKERS=0 VARCO_UNIT_JOBS=1` is the serial escape
+  hatch. The in-process event-bus conformance class no longer sleeps 2 s three times
+  (`EventBusConformance.subscribe_settle_seconds`, `0.0` in-process, `2.0` broker default
+  unchanged). New root dev group `test` (`pytest-xdist==3.8.0`, `pytest-randomly==5.0.0`);
+  integration/chaos runs pass `-p no:randomly`. No product-code change. (Plan 059)
+
 ## [4.0.0] — YYYY-MM-DD (date set at release, Plan 058 Step 18)
 
 > **Migration guide:** [technical_docs/migrations/3-to-4.md](technical_docs/migrations/3-to-4.md) — read it before upgrading.

@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib
 import pkgutil
 
+import pytest
 from sqlalchemy import MetaData
 from sqlalchemy.orm import DeclarativeBase
 
@@ -109,9 +110,18 @@ async def test_framework_metadata_tables_match_expected_literal_set() -> None:
     assert set(framework_metadata().tables.keys()) == EXPECTED_FRAMEWORK_TABLE_NAMES
 
 
-async def test_register_framework_metadata_adds_a_new_metadata_source() -> None:
+async def test_register_framework_metadata_adds_a_new_metadata_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import varco_sa.metadata as metadata_module
     from varco_sa.metadata import framework_metadata, register_framework_metadata
 
+    # Plan 059 / Step 3: the registry is process-global — register into a
+    # throwaway copy so the two exact-name guards above stay green when
+    # pytest-randomly runs them after this test.
+    monkeypatch.setattr(
+        metadata_module, "_FRAMEWORK_METADATA", dict(metadata_module._FRAMEWORK_METADATA)
+    )
     md = MetaData()
     from sqlalchemy import Column, Integer, Table
 

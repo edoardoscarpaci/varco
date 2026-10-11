@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from providify import DIContainer
 from varco_core.di import CoreModule
 
@@ -109,10 +110,29 @@ def test_b_json_flag_prints_parseable_document_with_schema_version_1(capsys) -> 
     assert parsed["schema_version"] == 1
 
 
-def test_c_check_exits_0_on_a_clean_profile(capsys, monkeypatch) -> None:
+def _isolate_backend_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make ``di.bootstrapped_unselected`` silent whatever ran earlier.
+
+    Plan 059 order fix: emptying the process-global ``_REGISTERED_VALUES``
+    alone is not enough — a backend module (re-)imported *during* ``main()``
+    registers into the fresh dict, and the resulting WARNING fails
+    ``--check``. Which modules are already imported depends on what ran
+    earlier in the process (xdist worker, random order), so every seam is
+    also pinned to its own default value, which silences the finding.
+
+    Args:
+        monkeypatch: The test's monkeypatch; both changes are undone at teardown.
+    """
     from varco_core.di import select
+    from varco_core.di.seams import SEAMS
 
     monkeypatch.setattr(select, "_REGISTERED_VALUES", {})
+    for seam in SEAMS:
+        monkeypatch.setenv(seam.env, seam.default_value)
+
+
+def test_c_check_exits_0_on_a_clean_profile(capsys, monkeypatch) -> None:
+    _isolate_backend_selection(monkeypatch)
     from varco_core.cli.main import main
 
     exit_code = main(
@@ -200,9 +220,8 @@ def test_f_async_init_raising_exits_1_one_line_stderr_no_traceback(capsys) -> No
 def test_check_ignores_info_only_findings(capsys, monkeypatch) -> None:
     """A fired deprecation is an INFO finding — it must never fail ``--check``."""
     from varco_core.cli.main import main
-    from varco_core.di import select
 
-    monkeypatch.setattr(select, "_REGISTERED_VALUES", {})
+    _isolate_backend_selection(monkeypatch)
     exit_code = main(
         ["diagnose", "--modules", "tests.test_cli_diagnose:deprecating_modules", "--check"]
     )

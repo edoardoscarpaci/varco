@@ -59,10 +59,27 @@ class TestInMemoryEventBusConformance(EventBusConformance):
     # base suite's lifecycle tests self-skip via hasattr() guards, but this
     # flag documents the reason explicitly for this backend.
     supports_lifecycle = False
+    # Plan 059 / §D-settle: delivery is synchronous in-process, so the 2 s
+    # broker settle was pure wall clock (3 × 2 s per run) — opt out.
+    subscribe_settle_seconds = 0.0
 
     @pytest.fixture
     async def bus(self) -> InMemoryEventBus:
         return InMemoryEventBus()
+
+
+def test_in_process_bus_needs_no_settle() -> None:
+    """Plan 059 Step 4 / §D-settle — structural guard, no timing assertion.
+
+    The shared suite keeps the 2.0 s broker settle (integration behaviour
+    byte-identical), while the synchronous in-process bus opts out with 0.0 —
+    the 6 s of pure sleep this suite used to pay on every unit run.
+    """
+    # Broker subclasses inherit this default; changing it would alter the
+    # nightly integration signal.
+    assert EventBusConformance.subscribe_settle_seconds == 2.0
+    # InMemoryEventBus delivers synchronously — any settle is wasted wall time.
+    assert TestInMemoryEventBusConformance.subscribe_settle_seconds == 0.0
 
 
 # ── Cache ────────────────────────────────────────────────────────────────────

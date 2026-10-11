@@ -22,6 +22,31 @@ make test                                # all eleven suites, accumulated summar
 make test PKG=varco_redis                # narrow to one package
 ```
 
+`make test` (`scripts/unit_tests.sh`, Plan 059) runs suites with ≥ 125 non-integration test files
+under pytest-xdist, one at a time, then every other suite concurrently in a bounded pool. A suite
+whose `pyproject.toml` sets `asyncio_default_test_loop_scope = "session"` (`varco_ws`, the example)
+always runs in the pool, never under xdist. Test order is randomized by pytest-randomly and the
+seed is printed in the summary. pytest-randomly is installed by `uv sync`, so a direct `uv run
+pytest` is shuffled too — pass `--randomly-seed=N` to replay a seed, or `-p no:randomly`
+to turn it off for that run. Knobs (environment variables read by the script only):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `VARCO_UNIT_WORKERS` | `nproc` | `-n` for the xdist lane; `0`/`1` = no xdist anywhere |
+| `VARCO_UNIT_JOBS` | `nproc` | pool width; `1` = sequential, foreground, live |
+| `VARCO_UNIT_XDIST_MIN_FILES` | `125` | test-file count at which a suite joins the xdist lane |
+| `VARCO_UNIT_DIST` | `worksteal` | xdist `--dist` mode |
+| `VARCO_UNIT_SEED` | random, printed | `--randomly-seed` for every suite — reproduce a failure with it |
+| `VARCO_UNIT_LOG_DIR` | fresh `mktemp -d`, printed | per-suite logs |
+| `VARCO_UNIT_SYNC` | `1` | `0` skips the up-front `uv sync` |
+| `VARCO_UNIT_PYTEST` | `uv run --no-sync pytest` | pytest command prefix |
+| `PYTEST_EXTRA_ARGS` | — | appended last to every pytest call (a `-n0` here wins) |
+
+`-s` and `--pdb` need `VARCO_UNIT_WORKERS=0 VARCO_UNIT_JOBS=1` (or a single `PKG=`): xdist relays
+no worker stdout and has no `--pdb`. An exact replay of an order-dependent failure is the printed
+seed plus `VARCO_UNIT_WORKERS=0`. `bash scripts/unit_tests.sh --plan` prints the lane plan without
+running anything.
+
 ## Before you open a PR
 
 | Command | What it checks |

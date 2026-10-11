@@ -74,9 +74,13 @@ class TestClaimTenantMembershipSelfTenant:
 
 class TestClaimTenantMembershipMissingClaim:
     async def test_missing_claim_with_allow_policy_allows_and_warns_once(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         mod = _mod()
+        # Plan 059 / Step 3: the flag is once-per-PROCESS, so any earlier test
+        # that hit the ALLOW path (e.g. test_tenant_posture.py) already
+        # consumed the warning. Reset it for this test only.
+        monkeypatch.setattr(mod, "_missing_claim_warned", False)
         provider = mod.ClaimTenantMembership(on_missing_claim=mod.MissingClaimPolicy.ALLOW)
         ctx = _auth_ctx()
 

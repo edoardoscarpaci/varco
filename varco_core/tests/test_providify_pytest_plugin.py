@@ -41,9 +41,9 @@ from providify.testing import ContainerOverrides
 # di_acontainer, di_overrides, or di_global.
 
 
-# NOTE: this test intentionally runs FIRST in file/definition order (pytest's
-# default collection order) so that no other test in this module has had a
-# chance to install a global container via `di_global` yet.
+# NOTE: `di_global` restores the previous global at teardown, so this holds in
+# any order — provided no OTHER test leaks a global via a bare
+# `DIContainer.current()` (Plan 059 / Step 3 fixed test_retention_di.py's).
 def test_requesting_no_providify_fixture_observes_no_container_related_global_state() -> None:
     """
     A test that requests none of the four fixtures must see the same
@@ -60,14 +60,28 @@ def test_di_container_fixture_yields_a_fresh_di_container(
     assert isinstance(di_container, DIContainer)
 
 
-# Module-level accumulator — used by the next two tests to prove function
-# scope produces a DIFFERENT container object per test.
-_seen_container_ids: list[int] = []
+# Module-level accumulator shared by the next two tests to prove function
+# scope produces a DIFFERENT container object per test. Plan 059 / Step 3:
+# the two tests are symmetric, so whichever pytest-randomly runs second does
+# the comparison — no ordering assumption. The containers themselves are
+# kept (not their id()s) so a garbage-collected first container can never
+# have its id reused by the second.
+_seen_containers: list[DIContainer] = []
+
+
+def _record_and_assert_fresh(di_container: DIContainer) -> None:
+    """Assert ``di_container`` is not one an earlier test of the pair received.
+
+    Args:
+        di_container: The fixture value this test received.
+    """
+    assert all(seen is not di_container for seen in _seen_containers)
+    _seen_containers.append(di_container)
 
 
 def test_di_container_fixture_first_observation(di_container: DIContainer) -> None:
-    """First of a pair of tests recording the container's identity."""
-    _seen_container_ids.append(id(di_container))
+    """One of a symmetric pair of tests recording the container's identity."""
+    _record_and_assert_fresh(di_container)
 
 
 def test_di_container_fixture_is_function_scoped(di_container: DIContainer) -> None:
@@ -75,8 +89,7 @@ def test_di_container_fixture_is_function_scoped(di_container: DIContainer) -> N
     A second test requesting `di_container` must get a DIFFERENT object —
     function scope, not session/module scope.
     """
-    assert _seen_container_ids, "the first-observation test must run before this one"
-    assert id(di_container) not in _seen_container_ids
+    _record_and_assert_fresh(di_container)
 
 
 def test_di_overrides_fixture_is_container_overrides_bound_to_the_container(

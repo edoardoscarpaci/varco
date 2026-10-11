@@ -1,10 +1,11 @@
 # BACKLOG
 
-**No cycle is live.** 4.0 (dependency-injection standardization + the security-default flip
-list) is built — plans/045–058, index `plans/000-index-4-0-di-standardization.md` — and awaits its
-`v4.0.0` release (Plan 058 Phase F: bump, rc rehearsal, tag).
+**Cycle live: 4.0.0 feature extension** (discover 2026-10-07; **planned 2026-10-11** → `plans/000-index-4-0-feature-extension.md`, plans 059–069b, ready for `/build`). The 4.0 DI standardization +
+security-default flip list is built (plans/045–058, index `plans/000-index-4-0-di-standardization.md`);
+its `v4.0.0` tag (Plan 058 Phase F) is **held** until the rows below ship, so they ride the same
+major and may break without a deprecation cycle.
 
-Everything from earlier cycles (3.0.0, 3.0.1, both 3.1 cycles, 3.2, and the 4.0 build) is
+Everything from earlier cycles (3.0.0, 3.0.1, both 3.1 cycles, 3.2, and the 4.0 DI build) is
 **complete** — compressed under `## ✅ Shipped`; the detail lives in `plans/`, `CHANGELOG.md`, and git
 history. What is *never* trimmed are the **parks** (with their un-park triggers) and the
 **answered decisions**: they are the reason this project does not re-argue settled questions
@@ -15,67 +16,87 @@ every cycle.
 
 ---
 
-# 4.0 — dependency-injection standardization (discover 2026-09-12; built, plans/045–058)
+# 4.0.0 feature extension (discover 2026-10-07)
 
-Every row of this cycle is built; the design of record is `plans/000-index-4-0-di-standardization.md`
-and plans/045–058, the user-facing record `CHANGELOG.md` `[4.0.0]` and
-`technical_docs/migrations/3-to-4.md`. The decisions below are kept because they are answered
-decisions, not work.
+Research: [018 — transactionally correct endpoints & GDPR](design/research/018-transactionally-correct-endpoints-and-gdpr-frameworks.md),
+[019 — streaming, orchestration & test performance](design/research/019-streaming-orchestration-and-test-performance-2026.md).
+⚠️ A few citations in both briefs (DBOSify July 2026, FastAPI JSON Lines 0.134, EDPB 02/2025 on
+crypto-shredding) were not independently verified at discover time — each row's `/plan` re-checks
+the ones it relies on.
 
-## Locked decisions (4.0 cycle)
+## Locked decisions (4.0.0 feature extension)
+
+| Decision | Choice | Consequence |
+|---|---|---|
+| **Release vehicle** | **Ship inside 4.0.0**, not 4.1 | The `v4.0.0` tag waits for these rows; breaking changes allowed outright (same rule as the DI cycle), each with a `3-to-4.md` migration section |
+| **Orchestration scope** | **First stage only** (`ORCH-1`) | Worker + schedule driver + chaining + fan-in; durable workflow replay stays parked |
+| **ACID retry/isolation** | **Merged into `ACID-1`** | One `@transactional(isolation=…, retry=…)` boundary, designed once — retry must re-run the whole transaction |
+| **Consent records (`GDPR-3`)** | **Cut → parked** | Consent shape is domain-specific; `GDPR-1`+`GDPR-2` cover Art. 15/17/20 |
+| **Arrow/Parquet export** | **Parked** | NDJSON in/out is the big-data story for a REST server; no `pyarrow` extra |
+| **`RO-14`** | **Pulled into 4.0.0** | Breaking behaviour change that was deferred only for want of a major |
+| **Build order** | **`TEST-1` first**, despite 🟢 | Every other row's build loop runs the suites; faster tests pay back inside this cycle |
+
+## Locked decisions (4.0 DI cycle, discover 2026-09-12 — still in force)
 
 | Decision | Choice | Consequence |
 |---|---|---|
 | **Breaking changes** | **Allowed outright** — wiring APIs may change shape without a parallel deprecated path | No two-shape cycle; a written migration guide is part of every breaking row's done criteria |
 | **Version number** | **4.0.0, not 3.3.0** | CONTRIBUTING.md's SemVer policy stands unamended. ⚠️ The **12-month removal floor still applies**: symbols deprecated `since="3.0.0", removed_in="4.0.0"` (nine sites, `v3.0.0` tagged 2026-08-31) may not be removed before 2027-08-31 — the major-version gate is necessary, not sufficient. 4.0.0 breaks *wiring*; it does not sweep aliases |
-| **Missing providify features** | **Filed upstream, never worked around** — `design/upstream-gaps/providify-*.md` + `UPSTREAM-GAPS.md` row + `strict=True` xfail, per CLAUDE.md's rule | `DI-15` is a gating row: the providify asks land first so the varco rows build on the real feature |
-| **Scope** | **All 16 DI rows live; nothing cut for size** | "A huge jump" — more rows may be added mid-cycle. `DI-13` (wiring tests) and `DI-14` (the guide) are standalone rows *and* done criteria of every other row |
+| **Missing providify features** | **Filed upstream, never worked around** — `design/upstream-gaps/providify-*.md` + `UPSTREAM-GAPS.md` row + `strict=True` xfail, per CLAUDE.md's rule | `DI-15` was a gating row: the providify asks landed first so the varco rows built on the real feature |
+| **Scope** | **All 16 DI rows live; nothing cut for size** | `DI-13` (wiring tests) and `DI-14` (the guide) were standalone rows *and* done criteria of every other row |
 | **The recorded 4.0 flip list** | **Absorbed** as `FLIP-*` rows | A user migrates once. Rows 8 and 11 of Plan 036 §D-S9-flip are recorded non-flips and are **not** carried |
 
 ## Live
 
-Only carried-over rows remain; every 4.0 `DI-*`/`FLIP-*` row shipped (see `## ✅ Shipped`) or is
-parked with a trigger (`FLIP-14`, see `## Parked`).
+### 4.0.0 scope
 
-### Carried over from 3.2 (open, not this cycle's theme)
+All nine rows planned 2026-10-11 → index [`plans/000-index-4-0-feature-extension.md`](plans/000-index-4-0-feature-extension.md);
+folded into `## ✅ Shipped` as **planned, not yet built**. The `v4.0.0` tag waits for them.
 
-Roll-forward rows that lost their un-IDed status here; none is DI-shaped and none blocks a `DI-*` row.
+| ID | Feature | Severity | Complexity | Status | Rationale | Evidence |
+|----|---------|----------|------------|--------|-----------|----------|
+_(empty — run /discover)_
+
+### Carried over from 3.2 (open, unscheduled — not in the 4.0.0 scope)
+
+Non-breaking fixes; none blocks a 4.0.0 row (except `RO-17`, which `GDPR-2`'s encrypted-field promise needs — schedule it with 065/066). `RO-6`/`RO-9` were absorbed into `ORCH-1`, `RO-14` into the scope above. `RO-15`–`RO-17` were found while planning (2026-10-11).
 
 | ID | Feature | Severity | Complexity | Status | Rationale | Evidence |
 |----|---------|----------|------------|--------|-----------|----------|
 | `RO-1` | `MetricsMiddleware` records `status_code="500"` for exceptions `ErrorMiddleware` renders as 4xx | 🟡 should | S | todo | Every error-rate dashboard over `http.server.request.duration` is wrong for mapped exceptions; out of Plan 041's scope | `varco_fastapi/varco_fastapi/middleware/metrics.py:368,375-388`; `app.py:636-642` |
 | `RO-3` | Confirm Stripe's inbound HMAC secret encoding against a real delivery | 🟡 should | S | todo | `StripeWebhookVerifier` pins `RAW_UTF8` against brief 013 §2's conflicting description; if wrong, one enum value on one class | `plans/038` Risks table |
-| `RO-6` | `varco_core.schedule` general driver (a materialization loop for non-retention schedules) | 🟡 should | S | todo | Plan 032 shipped `ScheduleMaterializer` with no general caller; 039 closed it for retention only | `plans/039` §D-S20-driver |
 | `RO-7` | `0007_schedules_table.py` vs. `materializer.py:29`'s claimed `UNIQUE(schedule_id, run_at)` index — fix the DESIGN block (the index cannot exist; `uuid5` `job_id` is the real backstop) | 🟡 should | S | todo | Verified absent by Plan 039 / Step 12 | `varco_sa/varco_sa/schedule.py:11-19` |
-| `RO-8` | DLQ and `WebhookDelivery` payload redaction (fifth/sixth redaction surfaces) | 🟡 should | M | todo | Out of Plan 040's scope | `plans/040` §Parked |
-| `RO-9` | A generic `JobDispatcher` poll loop over `claim_next()` | 🟡 should | M | todo | Plan 039 rode `JobRunner.recover()` instead; a second execution path belongs to Plan 005's subsystem | `plans/039` §D-S20-dispatch |
+| `RO-8` | DLQ and `WebhookDelivery` payload redaction (fifth/sixth redaction surfaces) | 🟡 should | M | todo | Out of Plan 040's scope; natural follow-on to `GDPR-1` | `plans/040` §Parked |
 | `RO-10` | `CONF-AUDIT6` — assertion-audit the six unaudited conformance suites for Kind-B gaps | 🟡 should | M | todo | Plan 042 audited `cache` and `dlq` only | `testkit/varco_conformance/` |
 | `RO-11` | Verify `opentelemetry-exporter-prometheus` emits exemplars end-to-end | 🟢 nice | S | todo | Plan 041 proves the SDK layer only; `router/metrics.py:45-51`'s promise is half-verified | brief 012 Evidence Gaps 2/3 |
 | `RO-12` | `CONF-COUNT` — strengthen `DeadLetterQueueConformance.test_count_reflects_pushed_entries` (trivially true at `KafkaDLQ.count()`'s `-1`) | 🟢 nice | S | todo | May surface a Kind-A `KafkaDLQ` finding needing its own xfail + register row | `varco_kafka/tests/test_kafka_conformance.py:80-88` |
 | `RO-13` | `CONF-RG` — automate the register↔marker cross-check in `make lint`'s no-`PKG` path | 🟢 nice | S | todo | Plan 042 Q2 left it manual | `COVERAGE.md` findings register |
-| `RO-14` | `CoreModule.start()`'s 051 auto-`register_to()` loop passes no `dlq=` to any auto-registered `EventConsumer` — the app's own DLQ never reaches a consumer unless it hand-calls `register_to(bus, dlq=...)` | 🟡 should | S | todo | Deliberately out of Plan 050's scope (§Non-goals) — a behaviour change for every consumer; `WebhookDispatcher` got its own injected `dlq` instead, precisely to avoid needing this | `plans/050` §Non-goals |
+| `RO-15` | `EventConsumer` retry wrapper catches `BaseException` — `asyncio.CancelledError` (shutdown) is dead-lettered as a failure when no retry policy is set; re-raise non-`Exception`s first | 🔴 must | S | todo | Found by Plan 060's scout; out of its scope (060 Open Q3) — a cancelled handler at pod shutdown pollutes the DLQ | `varco_core/varco_core/event/consumer.py:589` |
+| `RO-16` | `varco_casbin`'s `beanie` extra still pulls Motor (EOL May 2026) — migrate its Beanie adapter to PyMongo's `AsyncMongoClient` like `varco_beanie` | 🟡 should | S–M | todo | Found by Plan 063 (Open Q7); `varco_beanie` already migrated, `motor` 3.7.1 is in the lock only through casbin | `uv.lock:2866-2870`; `plans/063` premise 5 |
+| `RO-17` | `EncryptedHint` is inert on the standard repository path — the DI-wired `SQLAlchemyRepositoryProvider` (and the Beanie factory) pass no encryptor, so the mapper silently no-ops | 🔴 must | M | todo | Contradicts 065 §D-reads ("encrypted fields arrive decrypted") and 064's posture remedy ("add `EncryptedHint()`"); should land before or with `GDPR-2` | `varco_sa/varco_sa/provider.py:168,174`; `mapper.py:130-132`; `plans/066` Open Q9 |
 
 ## ✅ Shipped
 
 Most recent individually; older cycles rolled up by theme. Detail: `plans/`, `CHANGELOG.md`.
 
-**4.0 — DI standardization + the flip list: 27 rows shipped (plans/045–058)**
-- `DI-14` — one DI guide, the 3.x → 4.0 migration guide, generated entry-point table, the 5.0.0 deprecation-floor re-label (plan: plans/058-di-guide-migration-and-4-0-release.md)
-- `FLIP-040-1`, `FLIP-040-2`, `RO-5` — word-boundary redaction, audit redaction on by default, redaction posture collector (plan: plans/057-redaction-flips.md)
-- `FLIP-12`, `FLIP-13` — `enforce_rls=True` via `SAModule` posture, required webhook-secret encryptor (plan: plans/056-data-layer-flips.md)
-- `FLIP-6`, `FLIP-7`, `FLIP-9` — chain-by-default tenant resolution, fail-closed membership, single tenant writer (plan: plans/055-tenant-provenance-flips.md); `FLIP-14` designed there, parked below
-- `FLIP-2`, `FLIP-3`, `FLIP-4`, `FLIP-10` — `enforce` derives `refuse`, admin mounts require `server_auth`, no `str(exc)` detail (plan: plans/054-http-edge-and-admin-surface-flips.md)
-- `FLIP-5`, `FLIP-034-1`…`FLIP-034-4` — `BaseAuthorizer` development-only, `jti` by default, `ApiKeyAuth(keys=)` deprecated, `PassthroughAuth` acknowledgement (plan: plans/053-credential-and-auth-flips.md)
-- `DI-7`, `DI-11`, `RO-2` — `varco diagnose`/`WiringReport`, runtime `validate()` gate, in-memory test profile, JWKS/retention posture collectors (plan: plans/052-diagnose-report-and-test-profile.md)
-- `DI-5` — `@Multibound` collection seams (plan: plans/051-multi-binding-registries.md)
-- `DI-9`, `DI-10` — phased lifecycle, `@Disposes` reachability, DI-wired infrastructure (plan: plans/050-phased-lifecycle-and-di-wired-infrastructure.md)
-- `DI-1`, `FLIP-1`, `RO-4` — `VarcoModule` + `create_varco_app(modules=…)`, posture default-on, `LoggingModule(redactor=…)` (plan: plans/049-varco-module-and-composable-app.md)
-- `DI-6`, `DI-16` — `bind_settings()`, generated settings reference, named instances (plan: plans/048-settings-standardization.md)
-- `DI-4`, `DI-12`, `DI-17` — `VARCO_<SEAM>_BACKEND` selection, `enable_*`/`VARCO_<FEATURE>_ENABLED`, generated DI catalogue (plan: plans/047-config-driven-backend-selection-and-catalogue.md)
-- `DI-2`, `DI-8`, `DI-13` — explicit-container wiring contract, `AlreadyBoundError`, `di_wiring` conformance (plan: plans/046-wiring-verb-collapse-and-explicit-container.md)
-- `DI-15`, `DI-3` — providify 2.1.0 asks closed (P24–P27), `@Fallback` framework defaults (plans: plans/043, plans/044, plans/045)
+**4.0.0 feature extension — ✅ planned 2026-10-11, not yet built** (index: plans/000-index-4-0-feature-extension.md)
+- `TEST-1` faster unit tests — xdist per suite, order audit, measured (plan: plans/059)
+- `RO-14` auto-registered consumers get the app DLQ (plan: plans/060)
+- `ACID-2` optimistic concurrency — `row_version` check in SQL, ETag/If-Match, 412/428 (plan: plans/061)
+- `ACID-1` ambient transactions — `@transactional`, propagation, isolation, retry; SA + Mongo (plans: plans/062, plans/063)
+- `GDPR-1` personal-data classification + `varco gdpr inventory` (plan: plans/064)
+- `GDPR-2` data-subject export and erasure as jobs (plans: plans/065, plans/066)
+- `STREAM-1` NDJSON export, keyset cursors, SA `stream()` fixed (plan: plans/067)
+- `STREAM-2` streaming NDJSON bulk ingest with per-line report (plan: plans/068)
+- `ORCH-1` (+`RO-9`, `RO-6`) job dispatcher, enqueue, schedule driver, chains/fan-in (plans: plans/069a, plans/069b)
+
+Correction recorded at planning time: `ACID-2`'s discover rationale ("no version column … anywhere")
+was wrong — `row_version` already exists, but the version check runs in Python after a read, so
+lost updates are still possible between read and write; Plan 061 moves the check into the
+`UPDATE`/`replace_one` filter.
 
 **Earlier**
+- 4.0 DI standardization + flip list: 37 items shipped — DI foundations (`DI-2`–`DI-4`, `DI-6`, `DI-8`, `DI-12`, `DI-13`, `DI-15`–`DI-17`; plans/043–048), modules/lifecycle/multi-binding/diagnostics (`DI-1`, `DI-5`, `DI-7`, `DI-9`–`DI-11`, `DI-14`, `RO-2`, `RO-4`; plans/049–052, 058), security-default flips (`FLIP-1`–`FLIP-7`, `FLIP-9`, `FLIP-10`, `FLIP-12`, `FLIP-13`, `FLIP-034-1`…`4`, `FLIP-040-1`/`2`, `RO-5`; plans/053–057). `v4.0.0` tag held for the feature extension
 - 3.2 security & tenancy: 11 items shipped (`S4`, `S5`, `S6`, `S9`, `S11`, `S12`, `S15`, `S16`, `S17`, `S19`–`S23`; `S18` answered, not built — `extra_middleware=` landed outside `ErrorMiddleware`, dedicated modules instead) (plans/033, plans/036–042)
 - 3.2 credential/HTTP-edge hardening: 8 items shipped (`S1`–`S3`, `S7`, `S8`, `S10`, `S13`, `S14`; plans/034, plans/035)
 - 3.1 API surface & interop: 8 items shipped (`D1`, `D4`–`D8`, `N1`–`N3`; plans/029–032)
@@ -88,7 +109,28 @@ Most recent individually; older cycles rolled up by theme. Detail: `plans/`, `CH
 Killed and deferred ideas with the reason and the un-park trigger. A row leaves only when its
 trigger fires. Grouped by theme; each line is `item — why · ⏵ trigger`.
 
-**This cycle (4.0)**
+**4.0.0 feature extension (discover 2026-10-07)**
+- **`GDPR-3` — consent ledger (Art. 7) + processing-purpose records** — consent shape (what, which terms version, which channel) is domain-specific; no framework precedent (brief 018 §B); `GDPR-1`/`GDPR-2` cover the strict Art. 15/17/20 requirements · ⏵ a consumer with a concrete consent model
+- **Apache Arrow / Parquet export** (was part of `STREAM-2`) — `pyarrow` is a ~40 MB native extra; an optional differentiator, not table stakes (brief 019 §A) · ⏵ a consumer exporting to an analytics tool (pandas/DuckDB/Spark)
+- **Full durable workflows** (`@workflow`/`@step` replay, durable timers, signals, compensation replacing the saga orchestrator) — XL; `ORCH-1` is the first stage · ⏵ `ORCH-1` shipped, plus a consumer whose workflow must survive a crash mid-step
+
+**4.0.0 feature extension — parks recorded by the plans (2026-10-11)**. Full trigger tables live in each plan's `## Parked`/`## Out of scope` section.
+- **looptime fake loop clock** (059) — xdist + settle removal first · ⏵ a loop-time-only wait adds ≥ 3 s / ≥ 10 % to a suite's post-xdist wall
+- **Integration/chaos parallelism** (059) — needs an async FileLock pattern for session containers · ⏵ its own research brief
+- **`OutboxEventProducer` — atomic audit/events inside a boundary** (062) — audit stays post-commit in 4.0 · ⏵ a user needs atomic audit, or 062 Open Q3 answered yes
+- **`SUPPORTS`/`NOT_SUPPORTED`/`NEVER` propagation; snapshot-consistent multi-statement export** (062) · ⏵ a concrete caller
+- **Retrying `23505` under `SERIALIZABLE`; `IntegrityError` → `ServiceConflictError` in `varco_sa`; `SQLAlchemyUnitOfWork.commit()` not closing its session** (062) — separate gaps · ⏵ a real report
+- **Per-UoW Mongo transactions outside a boundary; Beanie `IUoWProvider` for `TenantIsolation.DATABASE`; removing `BeanieSettings.transactional`** (063) · ⏵ SA-parity request / a `BeanieTenantPool` service user / 5.0.0 (not before 2027-10)
+- **Flip `ListMixin` default to cursor pagination** (067) · ⏵ two apps report offset drift *and* a major that can warn their clients
+- **Null-aware keyset, Postgres row-value fast path, `rel="prev"`, export in `gen-client`/MCP/A2A** (067) · ⏵ per-item, see plans/067
+- **Upsert / all-or-nothing / job-backed / compressed ingest; `Idempotency-Key` on ingest** (068) · ⏵ per-item, see plans/068
+- **Push wake-up (`LISTEN/NOTIFY`, change streams), job metrics, poison-pill detection, named queues/priorities, cross-instance cancel of RUNNING jobs** (069a) · ⏵ per-item, see plans/069a
+- **General DAG enqueue, implicit result passing, relative step delays, `ScheduleConcurrency.REPLACE`** (069b) · ⏵ per-item, see plans/069b
+- **"Forgettable payloads" — per-subject encryption of audit diff values** (066) — erasure keeps past diffs under the Art. 17(3) assessment + one tombstone · ⏵ a regulator/DPA position that retained audit diffs are not covered by 17(3)
+- **`varco gdpr erase --replay` — re-apply erasures after a backup restore** (066 §D-backups) — tombstones' `subject_key` makes it possible; procedure is documented · ⏵ the first real restore, or 066 Open Q8 answered "now"
+- **Field-level crypto-shred strategy (`FieldErasure.SHRED`)** (066) — needs async per-subject key resolution in the mapper · ⏵ `RO-17` fixed plus a consumer needing it
+
+**4.0 DI cycle**
 - **`FLIP-14` — provisioning-authority model for `mount_tenant_admin`** — **designed** (plans/055 §D-flip14, recorded in `technical_docs/features/admin-surface-tenancy.md`); building it is its own plan · ⏵ a second control-plane consumer, or an IdP that can mint a provisioning profile
 - **`Literal[True]` sweep of the four `acknowledge_*: bool = False` → `ValueError` sites** (plans/053, plans/056 left them; the newer sites are `Literal[True]` → `TypeError`) — no unification in 4.0 · ⏵ a fifth acknowledgement kwarg is added, or mypy `strict` flags a `bool` site
 - **A shared `scripts/_packages.py`** for the four verbatim `discover_packages()` copies (`api_surface.py`, `settings_reference.py`, `di_catalogue.py`, `entry_points.py`) · ⏵ a fifth script needs it
@@ -114,12 +156,12 @@ trigger fires. Grouped by theme; each line is `item — why · ⏵ trigger`.
 - **Bounded/LRU key space on `InMemoryRateLimiter`** — changes a public class's memory semantics · ⏵ a memory-growth report
 - **Token-bucket rate limiter** — two sliding-window impls exist · ⏵ burst intolerance reported
 - **JSON nesting/complexity limits** — belongs in Pydantic validators (brief 008 §2) · ⏵ a standardized middleware approach
-- **Per-route body ceilings / per-route CSP / per-route limits for A2A-MCP** — `exempt_paths` covers it; no authoritative pattern (brief 008 gap 1, brief 011 §E) · ⏵ two consumers needing different ceilings on two routes of one app
+- **Per-route body ceilings / per-route CSP / per-route limits for A2A-MCP** — `exempt_paths` covers it; no authoritative pattern (brief 008 gap 1, brief 011 §E) · ⏵ two consumers needing different ceilings on two routes of one app (⚠️ `STREAM-2` needs a body-limit exemption for its ingest route — resolve inside its plan, not by un-parking this)
 - **`SATokenRevocationStore` / `BeanieTokenRevocationStore`** — TTL model is Redis-native · ⏵ a denylist that must survive a cache flush
 - **`RevocationFailureMode.FAIL_OPEN_WITHIN_GRACE`** — no data to size the grace window (brief 009 gap 2) · ⏵ a performance brief measuring cache-miss rate at realistic QPS
 - **`TenantFanoutSupervisor`-backed per-tenant retention** — sequential loop is correct today · ⏵ a consumer with >100 tenants and per-tenant policies
 - **OCSF / ECS audit-log export** ⭐ — strongest compliance candidate; same "second `Serializer`" shape as CloudEvents · ⏵ a consumer needs SIEM ingestion, or OCSF ratification completes (check ITU/OCSF status; NIS2's Jun-2026 date alone is not a trigger)
-- **DSAR / right-to-erasure orchestration** — every primitive shipped, nothing composes them; no prior art; L · ⏵ a consumer with a real DSAR obligation, and its own cycle
+- ~~**DSAR / right-to-erasure orchestration**~~ — **un-parked 2026-10-07 as `GDPR-2`** (trigger fired: its own cycle, with appetite)
 - **Signed / externally-verifiable audit export** — pointless without OCSF export · ⏵ together with OCSF, or an auditor asks, or Sigstore Rekor gets a stable Python client
 - **Crypto agility for field encryption** — cipher welded into `FernetFieldEncryptor`; cheap now, expensive later · ⏵ a PQC/FIPS requirement or a shipped cipher deprecated — un-park *before* the need
 - **WebAuthn / passkeys** and **SCIM 2.0** — both need a user/credential/org model varco deliberately does not own · ⏵ varco decides to own a user model
@@ -127,10 +169,10 @@ trigger fires. Grouped by theme; each line is `item — why · ⏵ trigger`.
 - **Post-quantum algorithms (FIPS 203/204/205)** — substrate not there in 2026 · ⏵ a maintained Python PQC binding; crypto-agility row is the prerequisite
 - **Ed25519 Standard Webhooks verification** — needs a crypto dependency `varco_core` lacks · ⏵ an asymmetric-mode sender, or a crypto dep for another reason
 - **Inbound `Rfc9421Verifier`** — additive behind the ABC; no provider uses it (brief 013 §2) · ⏵ a consumer receives RFC 9421-signed webhooks
-- **`SecurityPosture` wiring for `inspect_retention_posture()`** — see `RO-2` (un-parked into a live row)
+- **`SecurityPosture` wiring for `inspect_retention_posture()`** — see `RO-2` (un-parked into a live row, shipped in plans/052)
 
 **Standing parks (all cycles)**
-- **Durable execution / workflow-as-code** — XL, parked on size alone; brief 001 names it the largest strategic gap · ⏵ a major-version horizon with appetite, or a consumer requirement making the saga orchestrator's limits concrete. ⚠️ 4.0 is such a horizon — deliberately *not* absorbed: this cycle is DI-shaped
+- **Durable execution / workflow-as-code** — XL; brief 001 names it the largest strategic gap. **Partially un-parked 2026-10-07**: the first stage is `ORCH-1`; replay/timers/compensation are the "Full durable workflows" park above · ⏵ see that park
 - **OpenFeature provider** — checked 2026-09-04, NOT FIRED (`openfeature-sdk` 0.10.0, spec 0.9.0); seam shipped, provider did not · ⏵ `openfeature-sdk` 1.0.0 (the SDK, not the spec)
 - **RRULE / RFC 5545** — needs `dateutil` in `varco_core` · ⏵ a recurrence 5-field cron cannot express, and the dependency accepted
 - **Seconds-precision / 6-field cron** — a different tool · ⏵ sub-minute scheduling needed
@@ -158,11 +200,16 @@ trigger fires. Grouped by theme; each line is `item — why · ⏵ trigger`.
 | **Cache-key tenancy** | `tenancy_cache_key()` fails closed outside `tenant_context()` — the house pattern |
 | **Admin mount acknowledgement** | Three barriers per mount, uniformly, since Plan 054 (`server_auth=None` → `ValueError` on all three mounts — `FLIP-3`/`FLIP-4` closed the gap) |
 | **providify pytest fixtures** | `di_container`/`di_acontainer`/`di_overrides`/`di_global` are used under providify's own names (RL-3); `DI-11` documents, never wraps |
+| **Repository streaming & bulk writes** | `AsyncRepository.stream_by_query()` (Beanie), `AsyncService.stream()`, and `save_many()` exist. ⚠️ **Corrected 2026-10-11**: the SQLAlchemy `stream()` is **broken** (`varco_sa/repository.py:392` — `stream_scalars` is a coroutine function, not awaited), so the 2026-10-07 "verified" claim was wrong for SA; Plan 067 fixes it. `STREAM-*` otherwise builds the HTTP layer, not the repository layer |
 
 ---
 
 # Answered decisions (do not relitigate)
 
+- **4.0.0 feature extension — release vehicle** (discover 2026-10-07) → the `ACID-*`/`GDPR-*`/`STREAM-*`/
+  `ORCH-1`/`TEST-1`/`RO-14` rows ship **inside 4.0.0**, holding the tag; breaking changes allowed.
+- **4.0.0 feature extension — orchestration scope** (discover 2026-10-07) → first stage only
+  (`ORCH-1`); durable replay parked behind it.
 - **3.2 OQ1 — `SecurityPosture`'s production signal** (Plan 036 §D-S9-oq1) → an explicit
   `VARCO_SECURITY_ENV`, default `production`, governing severity presentation only; inference
   rejected because every inferable signal is itself one of the things the preflight checks.

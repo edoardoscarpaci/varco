@@ -56,9 +56,22 @@ clients = [
 bench = [
     "pytest-codspeed>=3",
 ]
+# Plan 059 / TEST-1 — parallel + order-randomized unit runs (scripts/unit_tests.sh).
+# Brief design/research/020-pytest-parallelism-and-fake-clocks.md: pytest-xdist 3.8.0 is the
+# release that adds pytest 9 support (this workspace runs pytest 9.0.2 + pytest-asyncio 1.3.0);
+# pytest-randomly shuffles module → class → function and reseeds `random` per test, and is
+# "best added from the start". Exact `==` pins for the same reason as `lint` above: a new
+# xdist/randomly release changes scheduling or collection, and with `>=` CI could go red on a
+# commit that changed nothing. Installed into every `uv sync` via `dev`, so pytest-randomly is
+# active in EVERY pytest invocation — integration_tests.sh opts out with `-p no:randomly`.
+test = [
+    "pytest-xdist==3.8.0",
+    "pytest-randomly==5.0.0",
+]
 dev = [
     "asyncpg>=0.31.0",
     { include-group = "lint" },   # PEP 735 — `uv sync` installs lint tooling by default
+    { include-group = "test" },   # Plan 059 — xdist + randomly for scripts/unit_tests.sh
     { include-group = "clients" },   # Plan 027 / T4a — test-only HTTP clients, see above
     # tomlkit powers scripts/bump.py's style-preserving TOML edits (Plan 023 /
     # §RL-9-bump) — a regex cannot distinguish a shipped [project].dependencies

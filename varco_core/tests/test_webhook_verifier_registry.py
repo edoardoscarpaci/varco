@@ -13,6 +13,23 @@ import pytest
 from varco_core.webhook.inbound.verifiers import WebhookVerifier, get_verifier
 
 
+@pytest.fixture(autouse=True)
+def _isolated_provider_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give every test a throwaway copy of the process-global provider registry.
+
+    Plan 059 / Step 3: ``replace=True`` below swaps the built-in ``"stripe"``
+    for ``_CustomVerifier``; without a reset that leaked into every later
+    test resolving ``"stripe"`` (``test_webhook_settings_wiring.py``) under
+    pytest-randomly. ``monkeypatch`` restores the original dict at teardown.
+
+    Args:
+        monkeypatch: pytest's monkeypatch fixture.
+    """
+    from varco_core.webhook.inbound import verifiers
+
+    monkeypatch.setattr(verifiers, "_PROVIDERS", dict(verifiers._PROVIDERS))
+
+
 class _CustomVerifier(WebhookVerifier):
     provider = "custom"
 

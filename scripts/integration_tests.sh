@@ -207,17 +207,29 @@ for suite in "${SUITES[@]}"; do
   # shellcheck disable=SC2086  # PYTEST_EXTRA_ARGS intentionally word-splits
   # `set -e` must not abort the loop on a non-zero pytest exit — we want to run
   # every suite and summarise at the end, so the status is captured explicitly.
+  # DESIGN: pytest-randomly disabled below (Plan 059 / §D-randomly). It is
+  # installed via the root `test` group and so is active in every pytest run;
+  # unit runs keep it on (scripts/unit_tests.sh), integration/chaos runs opt out.
+  #   ✅ Chaos modules sequence container restarts within one module
+  #      (`*_container_chaos` is module-scoped) — a shuffle would reorder them.
+  #   ✅ A reseeded `random` could make two tests' random names collide on a
+  #      SHARED session container (the namespacing rule assumes uuid4, which
+  #      reads os.urandom and is unaffected — a test using `random` would not be).
+  #   ❌ Order-dependence among integration tests stays unaudited (out of
+  #      scope: reproducing it needs Docker).
   status=0
   if [[ "$suite_run_from" == "root" ]]; then
     (cd "$ROOT" && VARCO_RUN_INTEGRATION=1 uv run pytest \
         "$suite_dir/$suite_testpath/" \
         -m "$MARKER_EXPR" \
+        -p no:randomly \
         -v \
         ${PYTEST_EXTRA_ARGS:-}) || status=$?
   else
     (cd "$ROOT/$suite_dir" && VARCO_RUN_INTEGRATION=1 uv run pytest \
         "$suite_testpath/" \
         -m "$MARKER_EXPR" \
+        -p no:randomly \
         -v \
         ${PYTEST_EXTRA_ARGS:-}) || status=$?
   fi

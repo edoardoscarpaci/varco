@@ -92,6 +92,10 @@ jobs:
   unit:
     name: Unit tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    # Plan 059 / §D-ci: scripts/unit_tests.sh buffers pool-lane suite output
+    # until each suite finishes, so a hung suite is visible only via its 60 s
+    # heartbeat — bound the job instead of GitHub's 6 h default.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
