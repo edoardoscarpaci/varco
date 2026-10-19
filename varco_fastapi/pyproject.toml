@@ -54,7 +54,7 @@ ws  = ["varco-ws~=3.0"]
 # both, and the ecosystem precedent (IBM mcp-context-forge,
 # langchain-mcp-adapters) is "pin, then migrate wholesale" — exactly this.
 # BREAKING (optional extra) — see CHANGELOG.
-mcp = ["mcp>=2,<3"]
+mcp = ["mcp>=2.2.0,<3"]
 # A2A (Agent-to-Agent / Google A2A protocol) support
 # SkillAdapter works without this extra (it uses FastAPI directly);
 # install for the google-a2a SDK types if you need A2A client utilities.
