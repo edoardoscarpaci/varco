@@ -39,7 +39,7 @@ lint = [
 # urllib3 v2 because v1.26 is EOL; httpx 0.28 is where `verify=` accepts an SSLContext and
 # `cert=` is deprecated; aiohttp 3.14 for its TCPConnector(ssl=) shape.
 clients = [
-    "aiohttp>=3.14",
+    "aiohttp>=3.14.4",
     "urllib3>=2",
     "requests>=2.32.3",
     "httpx>=0.28",
