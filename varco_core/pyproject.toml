@@ -37,7 +37,7 @@ dependencies = [
     # The SDK and OTLP exporter are required (not just the API) because
     # OtelConfiguration builds TracerProvider / MeterProvider from the SDK and
     # attaches the OTLP gRPC exporter when an endpoint is configured.
-    "opentelemetry-api>=1.20",
+    "opentelemetry-api>=1.45.1",
     "opentelemetry-sdk>=1.20",
     "opentelemetry-exporter-otlp-proto-grpc>=1.20",
     # psutil is used by varco_core.profiling for RSS memory delta tracking
